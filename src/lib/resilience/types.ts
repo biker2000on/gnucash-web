@@ -16,6 +16,40 @@ export type ResilienceSection =
   | 'farm_production'
   | 'retirement_income';
 
+/**
+ * Roles a household member can hold in household settings (Settings → entity
+ * profile). Business roles ('owner', 'officer') are deliberately excluded —
+ * they are not household members and must never appear in household pickers.
+ */
+export type HouseholdRole = 'self' | 'spouse' | 'dependent';
+
+/**
+ * One person from household settings (`gnucash_web_entity_members`), loaded by
+ * the resilience service and passed into the pure engines as data.
+ *
+ * The roster is the single source of truth for who the household is: packs
+ * store a `memberRole` link plus name/birth-year snapshots used only as
+ * fallbacks. There is no stable per-member id in the entity API contract, so
+ * the role is the link key (at most one 'self' and one 'spouse' are allowed).
+ */
+export interface HouseholdMember {
+  role: HouseholdRole;
+  /** Display name; '' when the roster row has no name recorded. */
+  name: string;
+  /** ISO date (YYYY-MM-DD) from household settings, or null when unset. */
+  birthday: string | null;
+}
+
+/**
+ * Filing status as the planning packs model it. The entity profile stores the
+ * full 1040 set ('single' | 'mfj' | 'mfs' | 'hoh' | 'qss'); the packs only
+ * distinguish joint from non-joint, so entity values are mapped defensively by
+ * `mapEntityFilingStatus` in `./household`.
+ *
+ * `null` in a pack profile means "inherit from household settings".
+ */
+export type PlanningFilingStatus = 'single' | 'married_joint';
+
 export interface RentalPayment {
   id: string;
   date: string;
@@ -95,6 +129,17 @@ export interface CapitalProfile {
 
 export interface LifePerson {
   id: string;
+  /**
+   * Household member this person is, when linked. The name then comes from
+   * household settings; `null`/absent means a manually entered person (an
+   * uninsured business partner, for example) who keeps the stored `name`.
+   */
+  memberRole?: HouseholdRole | null;
+  /**
+   * Display name. A fallback only: when `memberRole` resolves against the
+   * roster, the roster's name wins. Legacy profiles have no `memberRole`, so
+   * their stored name is always used.
+   */
   name: string;
   annualIncome: number;
   replacementYears: number;
@@ -230,7 +275,31 @@ export interface EducationContribution {
 
 export interface EducationChild {
   id: string;
+  /**
+   * Household member this student is, when linked. In practice only
+   * 'dependent' is meaningful here.
+   *
+   * Unlike 'self' and 'spouse', 'dependent' is NOT unique — a household can
+   * have several — and the entity API exposes no stable per-member id. The link
+   * is therefore role + name: `memberName` (falling back to `name`) is matched
+   * against the dependent roster. A student who is not a household member at
+   * all (a grandchild or a niece) simply leaves this null.
+   */
+  memberRole?: HouseholdRole | null;
+  /**
+   * Display snapshot of the linked member's name, and the disambiguator that
+   * picks which dependent this is. Falls back to `name` when absent.
+   */
+  memberName?: string | null;
+  /**
+   * Display name. A fallback only: when the link resolves to exactly one
+   * dependent, that member's name wins.
+   */
   name: string;
+  /**
+   * Birth year. A fallback only: when the link resolves and that member has a
+   * birthday recorded, the roster's birthday wins.
+   */
   birthYear: number;
   collegeStartYear: number;
   schoolType: 'public_in_state' | 'public_out_of_state' | 'private';
@@ -371,7 +440,13 @@ export interface Donation {
 }
 
 export interface GivingSettings {
-  filingStatus: 'single' | 'married_joint';
+  /**
+   * `null` (the default for new profiles) inherits the household's filing
+   * status from Settings. An explicit value overrides it for this pack only.
+   * Profiles saved before inheritance existed always carry a concrete value,
+   * so they keep behaving exactly as they did.
+   */
+  filingStatus: PlanningFilingStatus | null;
   marginalRatePct: number;
   stateRatePct?: number | null;
   agiEstimate?: number | null;
@@ -584,7 +659,21 @@ export interface FarmProductionProfile {
 
 export interface RetirementPerson {
   id: string;
+  /**
+   * Household member this person is, when linked. Name and birth year then
+   * come from household settings; `null`/absent means a manually entered
+   * person who keeps the stored `name` and `birthYear`.
+   */
+  memberRole?: HouseholdRole | null;
+  /**
+   * Display name. A fallback only: when `memberRole` resolves against the
+   * roster and that member has a name, the roster's name wins.
+   */
   name: string;
+  /**
+   * Birth year. A fallback only: when `memberRole` resolves against the roster
+   * and that member has a birthday recorded, the roster's birthday wins.
+   */
   birthYear: number;
   /**
    * Monthly primary insurance amount at full retirement age, user-entered.
@@ -601,7 +690,11 @@ export interface RetirementPerson {
 export type RetirementSequencingPreference = 'taxable_first' | 'traditional_first' | 'proportional';
 
 export interface RetirementIncomeSettings {
-  filingStatus: 'single' | 'married_joint';
+  /**
+   * `null` (the default for new profiles) inherits the household's filing
+   * status from Settings. An explicit value overrides it for this pack only.
+   */
+  filingStatus: PlanningFilingStatus | null;
   annualSpending: number;
   /** Last modeled age for the primary person (inclusive). */
   horizonAge: number;

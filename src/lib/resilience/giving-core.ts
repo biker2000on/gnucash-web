@@ -1,6 +1,7 @@
 import { getYearStatusParams } from '@/lib/tax/federal';
 import { isSupportedTaxYear, type FilingStatus, type TaxYear } from '@/lib/tax/types';
-import type { Donation, GivingProfile } from './types';
+import { LEGACY_PACK_FILING_STATUS } from './household';
+import type { Donation, GivingProfile, PlanningFilingStatus } from './types';
 
 function round2(value: number): number {
   return Math.round((value + Number.EPSILON) * 100) / 100;
@@ -37,8 +38,17 @@ function toTaxYear(year: number): TaxYear {
   return isSupportedTaxYear(year) ? year : year < 2024 ? 2024 : 2026;
 }
 
+/**
+ * The service resolves `settings.filingStatus` from household settings before
+ * calling in. A `null` reaching the engine directly means "unresolved" and
+ * falls back to the pack's historical default.
+ */
+function packFilingStatus(status: GivingProfile['settings']['filingStatus']): PlanningFilingStatus {
+  return status ?? LEGACY_PACK_FILING_STATUS;
+}
+
 function toFilingStatus(status: GivingProfile['settings']['filingStatus']): FilingStatus {
-  return status === 'married_joint' ? 'mfj' : 'single';
+  return packFilingStatus(status) === 'married_joint' ? 'mfj' : 'single';
 }
 
 /**
@@ -100,7 +110,7 @@ export function calculateGivingPlan(
     .length;
 
   const selfEligible = qcdEligible(settings.birthYear, currentYear);
-  const spouseEligible = settings.filingStatus === 'married_joint'
+  const spouseEligible = packFilingStatus(settings.filingStatus) === 'married_joint'
     && qcdEligible(settings.spouseBirthYear, currentYear);
   const qcdThisYear = currentYearRow?.qcdTotal ?? 0;
   const eligiblePeople = Number(selfEligible) + Number(spouseEligible);

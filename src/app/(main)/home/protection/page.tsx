@@ -6,9 +6,12 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { useToast } from '@/contexts/ToastContext';
 import { formatCurrency } from '@/lib/format';
 import type { InsurancePolicySuggestion } from '@/lib/resilience/insurance-parse';
+import { HOUSEHOLD_ROLE_LABELS } from '@/lib/resilience/household';
 import type {
   CapitalAsset,
   CapitalProfile,
+  HouseholdMember,
+  HouseholdRole,
   InsurancePolicy,
   InsuranceProfile,
   LifePerson,
@@ -70,6 +73,14 @@ interface LifeResponse {
     survivorGap: number;
     recommendedCoverage: number;
   }>;
+  /** Household roster from Settings; absent on responses from an older server. */
+  household?: { members: HouseholdMember[] };
+}
+
+/** "Cara Crawford (Spouse)" when named, else just the role label. */
+function memberLabel(member: HouseholdMember): string {
+  const role = HOUSEHOLD_ROLE_LABELS[member.role];
+  return member.name ? `${member.name} (${role})` : role;
 }
 
 /** Whole days until an ISO date (negative when past). */
@@ -333,10 +344,16 @@ export default function ProtectionPage() {
     setDirty(current => ({ ...current, capital: true }));
   };
 
+  // Household roster from Settings — the source of truth for who these people
+  // are. Empty when no household members are configured; manual entry then
+  // works exactly as it did before.
+  const householdMembers = life?.household?.members ?? [];
+
   const addPerson = () => {
     if (!life) return;
     const person: LifePerson = {
       id: uid(),
+      memberRole: null,
       name: '',
       annualIncome: 0,
       replacementYears: 10,
@@ -577,7 +594,39 @@ export default function ProtectionPage() {
         <button type="button" onClick={() => closeEditor(person.id)} className={EDIT_BUTTON}>Done</button>
       </div>
       <FieldGrid>
-        <Field label="Person"><input className={INPUT} value={person.name} onChange={event => updatePerson(person.id, { name: event.target.value })} /></Field>
+        <Field label="Household member">
+          <select
+            className={INPUT}
+            aria-label="Household member"
+            value={person.memberRole ?? ''}
+            onChange={event => {
+              const value = event.target.value;
+              if (value === '') {
+                updatePerson(person.id, { memberRole: null });
+                return;
+              }
+              const member = householdMembers.find(item => item.role === value);
+              if (!member) return;
+              // Snapshot the name so the record still reads correctly if the
+              // roster row is later renamed; the roster wins while it exists.
+              updatePerson(person.id, {
+                memberRole: member.role as HouseholdRole,
+                name: member.name || HOUSEHOLD_ROLE_LABELS[member.role],
+              });
+            }}
+          >
+            <option value="">Not a household member — enter manually</option>
+            {householdMembers
+              .filter(member => member.role === person.memberRole
+                || !life?.profile.people.some(item => item.id !== person.id && item.memberRole === member.role))
+              .map(member => (
+                <option key={member.role} value={member.role}>{memberLabel(member)}</option>
+              ))}
+          </select>
+        </Field>
+        {person.memberRole == null && (
+          <Field label="Person (manual)"><input className={INPUT} value={person.name} onChange={event => updatePerson(person.id, { name: event.target.value })} /></Field>
+        )}
         {([
           ['Annual income', 'annualIncome'],
           ['Replacement years', 'replacementYears'],
@@ -695,7 +744,12 @@ export default function ProtectionPage() {
 
       {tab === 'life' && life && (
         <>
-          <Panel title="Coverage needs" description="Compares DIME with a survivor cash-flow model. This is planning support, not insurance advice." action={<button type="button" onClick={addPerson} className={SMALL_PRIMARY}>Add person</button>}>
+          <Panel title="Coverage needs" description="People come from your household members; only the financial inputs live here. Compares DIME with a survivor cash-flow model. This is planning support, not insurance advice." action={<button type="button" onClick={addPerson} className={SMALL_PRIMARY}>Add person</button>}>
+            <p className="mb-3 text-xs text-foreground-muted">
+              {householdMembers.length === 0
+                ? <>No household members are configured yet. Add them in <Link href="/settings" className="text-primary underline-offset-2 hover:underline">Settings</Link> and names fill in here automatically; until then, enter people manually.</>
+                : <>Names come from your household members — <Link href="/settings" className="text-primary underline-offset-2 hover:underline">change them in Settings</Link> and every planning pack follows.</>}
+            </p>
             {life.profile.people.length === 0 ? <Empty>Add each income-earning or caregiving spouse.</Empty> : (
               <div className="space-y-4">
                 {life.profile.people.map(person => {

@@ -1,11 +1,16 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { useToast } from '@/contexts/ToastContext';
 import { formatCurrency } from '@/lib/format';
+import { HOUSEHOLD_ROLE_LABELS, birthYearFromBirthday } from '@/lib/resilience/household';
 import type { analyzeRetirementIncome } from '@/lib/resilience/retirement-income-core';
 import type {
+  HouseholdMember,
+  HouseholdRole,
+  PlanningFilingStatus,
   RetirementIncomeProfile,
   RetirementIncomeSettings,
   RetirementPerson,
@@ -16,16 +21,40 @@ const uid = () => crypto.randomUUID();
 const numberValue = (value: string) => Number(value) || 0;
 
 type RetirementAnalysis = ReturnType<typeof analyzeRetirementIncome>;
-type RetirementResponse = { profile: RetirementIncomeProfile; analysis: RetirementAnalysis };
+interface HouseholdContext {
+  members: HouseholdMember[];
+  filingStatus: PlanningFilingStatus | null;
+  effectiveFilingStatus: PlanningFilingStatus;
+  filingStatusInherited: boolean;
+}
+type RetirementResponse = {
+  profile: RetirementIncomeProfile;
+  analysis: RetirementAnalysis;
+  household?: HouseholdContext;
+};
 
 const DEFAULT_SETTINGS: RetirementIncomeSettings = {
-  filingStatus: 'married_joint',
+  // null = inherit the household filing status configured in Settings.
+  filingStatus: null,
   annualSpending: 0,
   horizonAge: 90,
   colaPct: 2.5,
   realReturnPct: 4,
   sequencingPreference: 'taxable_first',
 };
+
+const FILING_STATUS_LABELS: Record<PlanningFilingStatus, string> = {
+  single: 'Single',
+  married_joint: 'Married filing jointly',
+};
+
+const SETTINGS_LINK = 'text-primary underline-offset-2 hover:underline';
+
+/** "Cara Crawford (Spouse)" when named, else just the role label. */
+function memberLabel(member: HouseholdMember): string {
+  const role = HOUSEHOLD_ROLE_LABELS[member.role];
+  return member.name ? `${member.name} (${role})` : role;
+}
 
 const SEQUENCING_LABELS: Record<RetirementIncomeSettings['sequencingPreference'], string> = {
   taxable_first: 'Taxable first (default)',
@@ -86,6 +115,103 @@ function useSection<P, R extends { profile: P }>(section: string, initial: P) {
   return { response, profile, change, dirty, saving, loading, save };
 }
 
+/**
+ * Identity fields for one person.
+ *
+ * Household members are the source of truth: picking one takes the name and
+ * birthday from Settings and shows them read-only. Manual name/birth-year entry
+ * stays available for a person who is not on the household roster, and for a
+ * linked member whose birthday has not been recorded yet.
+ */
+function PersonIdentityFields(props: {
+  person: RetirementPerson;
+  members: HouseholdMember[];
+  onChange: (patch: Partial<RetirementPerson>) => void;
+}) {
+  const { person, members } = props;
+  const linked = members.find(member => member.role === person.memberRole) ?? null;
+  const linkedBirthYear = birthYearFromBirthday(linked?.birthday);
+
+  const selectMember = (value: string) => {
+    if (value === '') {
+      props.onChange({ memberRole: null });
+      return;
+    }
+    const member = members.find(item => item.role === value);
+    if (!member) return;
+    // Snapshot name and birth year so the record still reads correctly if the
+    // roster row is later renamed or removed; the roster wins while it exists.
+    props.onChange({
+      memberRole: member.role,
+      name: member.name || HOUSEHOLD_ROLE_LABELS[member.role],
+      birthYear: birthYearFromBirthday(member.birthday) ?? person.birthYear,
+    });
+  };
+
+  return (
+    <>
+      <Field label="Household member">
+        <select
+          className={INPUT}
+          aria-label="Household member"
+          value={person.memberRole ?? ''}
+          onChange={event => selectMember(event.target.value)}
+        >
+          <option value="">Not a household member — enter manually</option>
+          {members.map(member => (
+            <option key={member.role} value={member.role}>{memberLabel(member)}</option>
+          ))}
+        </select>
+      </Field>
+      {linked ? (
+        <Field label="Birth year">
+          {linkedBirthYear != null ? (
+            <p className="rounded-md border border-transparent px-3 py-2.5 text-sm text-foreground">
+              <span className="font-mono">{linkedBirthYear}</span>
+              <span className="text-foreground-muted"> · born {linked.birthday} (household settings)</span>
+            </p>
+          ) : (
+            <>
+              <input
+                type="number"
+                min={1900}
+                max={2100}
+                className={`${INPUT} font-mono`}
+                value={person.birthYear}
+                onChange={event => props.onChange({ birthYear: numberValue(event.target.value) })}
+              />
+              <span className="mt-1 block text-xs text-foreground-muted">
+                No birthday recorded for this member — add one in Settings to share it everywhere.
+              </span>
+            </>
+          )}
+        </Field>
+      ) : (
+        <>
+          <Field label="Name (manual)">
+            <input
+              className={INPUT}
+              placeholder="Name"
+              value={person.name}
+              onChange={event => props.onChange({ name: event.target.value })}
+            />
+          </Field>
+          <Field label="Birth year (manual)">
+            <input
+              type="number"
+              min={1900}
+              max={2100}
+              className={`${INPUT} font-mono`}
+              value={person.birthYear}
+              onChange={event => props.onChange({ birthYear: numberValue(event.target.value) })}
+            />
+          </Field>
+        </>
+      )}
+    </>
+  );
+}
+
 const TH = 'px-2 py-1.5 text-left text-[10px] font-semibold uppercase tracking-wider text-foreground-muted';
 const TD = 'px-2 py-1.5 text-sm text-foreground';
 const TD_NUM = `${TD} text-right font-mono`;
@@ -100,6 +226,13 @@ export function RetirementIncomePage() {
   const analysis = state.response?.analysis;
   const sequencing = analysis?.sequencing ?? null;
   const irmaa = analysis?.irmaa ?? null;
+  const household = state.response?.household;
+  const members = household?.members ?? [];
+  // Roles already taken by another row, so one member can't be picked twice.
+  const takenRoles = (role: HouseholdRole | null | undefined) =>
+    state.profile.people
+      .map(person => person.memberRole)
+      .filter((value): value is HouseholdRole => value != null && value !== role);
 
   const updatePerson = (id: string, patch: Partial<RetirementPerson>) =>
     state.change({ ...state.profile, people: state.profile.people.map(item => item.id === id ? { ...item, ...patch } : item) });
@@ -107,7 +240,7 @@ export function RetirementIncomePage() {
     state.change({ ...state.profile, people: state.profile.people.filter(item => item.id !== id) });
   const addPerson = () => state.change({
     ...state.profile,
-    people: [...state.profile.people, { id: uid(), name: '', birthYear: 1965, pia: 0, annualEarnings: null, plannedClaimAge: 67 }],
+    people: [...state.profile.people, { id: uid(), memberRole: null, name: '', birthYear: 1965, pia: 0, annualEarnings: null, plannedClaimAge: 67 }],
   });
   const updateBalances = (patch: Partial<RetirementIncomeProfile['balances']>) =>
     state.change({ ...state.profile, balances: { ...state.profile.balances, ...patch } });
@@ -148,15 +281,23 @@ export function RetirementIncomePage() {
 
       <Panel
         title="People"
-        description="Up to two people. Enter the monthly PIA from your SSA statement; with a PIA of 0 and annual earnings entered, the SSA formula estimates it from constant real earnings."
+        description="Up to two people, taken from your household members. Enter the monthly PIA from your SSA statement; with a PIA of 0 and annual earnings entered, the SSA formula estimates it from constant real earnings."
         action={state.profile.people.length < 2
           ? <button type="button" onClick={addPerson} className="rounded-md bg-primary px-3 py-1.5 text-sm font-semibold text-primary-foreground hover:bg-primary-hover">Add person</button>
           : null}
       >
+        {members.length === 0 && (
+          <p className="mb-3 text-xs text-foreground-muted">
+            No household members are configured yet. Add them (with birthdays) in{' '}
+            <Link href="/settings" className={SETTINGS_LINK}>Settings</Link> and this page fills in
+            names and birth years automatically. Until then, enter people manually below.
+          </p>
+        )}
         {state.profile.people.length === 0 ? <Empty>Add yourself (and a spouse) with birth year and monthly PIA to compare claiming ages.</Empty> : (
           <div className="space-y-2">
             {state.profile.people.map(person => {
               const row = analysis?.people.find(item => item.personId === person.id);
+              const taken = takenRoles(person.memberRole);
               return (
                 <RecordCard
                   key={person.id}
@@ -165,8 +306,11 @@ export function RetirementIncomePage() {
                   onRemove={() => removePerson(person.id)}
                 >
                   <FieldGrid>
-                    <Field label="Name"><input className={INPUT} placeholder="Name" value={person.name} onChange={event => updatePerson(person.id, { name: event.target.value })} /></Field>
-                    <Field label="Birth year"><input type="number" min={1900} max={2100} className={`${INPUT} font-mono`} value={person.birthYear} onChange={event => updatePerson(person.id, { birthYear: numberValue(event.target.value) })} /></Field>
+                    <PersonIdentityFields
+                      person={person}
+                      members={members.filter(member => !taken.includes(member.role))}
+                      onChange={patch => updatePerson(person.id, patch)}
+                    />
                     <Field label="Monthly PIA at FRA"><input type="number" min={0} className={`${INPUT} font-mono`} value={person.pia} onChange={event => updatePerson(person.id, { pia: numberValue(event.target.value) })} /></Field>
                     <Field label="Annual earnings (if PIA 0)"><input type="number" min={0} className={`${INPUT} font-mono`} value={person.annualEarnings ?? ''} onChange={event => updatePerson(person.id, { annualEarnings: event.target.value === '' ? null : numberValue(event.target.value) })} /></Field>
                     <Field label="Planned claim age">
@@ -188,6 +332,13 @@ export function RetirementIncomePage() {
             })}
           </div>
         )}
+        {members.length > 0 && (
+          <p className="mt-3 text-xs text-foreground-muted">
+            Names and birthdays come from your household members —{' '}
+            <Link href="/settings" className={SETTINGS_LINK}>change them in Settings</Link> and every
+            planning pack follows. Only the Social Security and balance inputs live here.
+          </p>
+        )}
       </Panel>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
@@ -203,9 +354,20 @@ export function RetirementIncomePage() {
         <Panel title="Settings" description="Filing status, spending, horizon, and return assumptions shared by every projection.">
           <FieldGrid cols={2}>
             <Field label="Filing status">
-              <select className={INPUT} value={state.profile.settings.filingStatus} onChange={event => updateSettings({ filingStatus: event.target.value as RetirementIncomeSettings['filingStatus'] })}>
-                <option value="single">Single</option>
-                <option value="married_joint">Married filing jointly</option>
+              <select
+                className={INPUT}
+                value={state.profile.settings.filingStatus ?? ''}
+                onChange={event => updateSettings({
+                  filingStatus: event.target.value === '' ? null : event.target.value as PlanningFilingStatus,
+                })}
+              >
+                <option value="">
+                  {household?.filingStatus
+                    ? `From household settings — ${FILING_STATUS_LABELS[household.filingStatus]}`
+                    : `From household settings — ${FILING_STATUS_LABELS[household?.effectiveFilingStatus ?? 'married_joint']} (not set)`}
+                </option>
+                <option value="single">Single (override)</option>
+                <option value="married_joint">Married filing jointly (override)</option>
               </select>
             </Field>
             <Field label="Annual spending"><input type="number" min={0} className={`${INPUT} font-mono`} value={state.profile.settings.annualSpending} onChange={event => updateSettings({ annualSpending: numberValue(event.target.value) })} /></Field>
@@ -218,6 +380,13 @@ export function RetirementIncomePage() {
               </select>
             </Field>
           </FieldGrid>
+          {household && !household.filingStatus && (
+            <p className="mt-3 text-xs text-foreground-muted">
+              No household filing status is set, so this projection uses{' '}
+              {FILING_STATUS_LABELS[household.effectiveFilingStatus]}. Set it once in{' '}
+              <Link href="/settings" className={SETTINGS_LINK}>Settings</Link> to share it across every pack.
+            </p>
+          )}
         </Panel>
       </div>
 

@@ -15,6 +15,7 @@
 import type { AiConfig } from '@/lib/receipt-extraction';
 import { extractJsonObject } from '@/lib/ai-query/client';
 import { renderPdfToBase64 } from '@/lib/payslip-extraction';
+import { normalizePersonName } from './household';
 import type { EstateDocumentKind, EstateMemberRole } from './types';
 
 export interface EstateDocumentSuggestion {
@@ -187,10 +188,12 @@ export function parseEstateAiResponse(raw: string): EstateDocumentSuggestion {
   };
 }
 
-/** Normalize a person's name for comparison: lowercase, single-spaced, no punctuation. */
-function normalizeName(value: string): string {
-  return value.toLowerCase().replace(/[.,'’]/g, '').replace(/\s+/g, ' ').trim();
-}
+/**
+ * Normalize a person's name for comparison: lowercase, single-spaced, no
+ * punctuation. Shared with the household roster matching in ./household so
+ * every pack agrees on when two spellings are the same person.
+ */
+const normalizeName = normalizePersonName;
 
 /**
  * Match an extracted principal name against the household roster.

@@ -1,12 +1,20 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { useToast } from '@/contexts/ToastContext';
 import { formatCurrency } from '@/lib/format';
+import {
+  COLLEGE_START_AGE,
+  birthYearFromBirthday,
+  findDependentMember,
+  normalizePersonName,
+} from '@/lib/resilience/household';
 import type {
   EducationChild,
   EducationProfile,
+  HouseholdMember,
   FamilyBankChild,
   FamilyBankEntryKind,
   FamilyBankingProfile,
@@ -85,8 +93,122 @@ type EducationResult = EducationChild & {
   glidePath: { equityPercent: number; fixedIncomePercent: number; guidance: string };
 };
 
+type EducationResponse = {
+  profile: EducationProfile;
+  plans: EducationResult[];
+  /** Household roster from Settings; absent on responses from an older server. */
+  household?: { members: HouseholdMember[] };
+};
+
+const SETTINGS_LINK = 'text-primary underline-offset-2 hover:underline';
+
+/**
+ * Identity fields for one student.
+ *
+ * Household dependents are the source of truth: picking one takes the name and
+ * birthday from Settings and shows them read-only. Manual name/birth-year entry
+ * stays available for a student who is not a household dependent — a
+ * grandchild or a niece — and for a linked dependent with no birthday on file.
+ */
+function StudentIdentityFields(props: {
+  child: EducationChild;
+  members: HouseholdMember[];
+  /** Named dependents not already claimed by another student row. */
+  available: HouseholdMember[];
+  onChange: (patch: Partial<EducationChild>) => void;
+}) {
+  const { child, members } = props;
+  // Same matcher the server uses, so the picker and the analysis never disagree.
+  const linked = findDependentMember(child, members);
+  const linkedBirthYear = birthYearFromBirthday(linked?.birthday);
+
+  const selectMember = (value: string) => {
+    if (value === '') {
+      props.onChange({ memberRole: null, memberName: null });
+      return;
+    }
+    const member = props.available.find(item => normalizePersonName(item.name) === value)
+      ?? members.find(item => normalizePersonName(item.name) === value);
+    if (!member) return;
+    // Snapshot the name: it is both the display value and the link key.
+    const birthYear = birthYearFromBirthday(member.birthday);
+    props.onChange({
+      memberRole: 'dependent',
+      memberName: member.name.trim(),
+      name: member.name.trim(),
+      ...(birthYear != null
+        ? { birthYear, collegeStartYear: birthYear + COLLEGE_START_AGE }
+        : {}),
+    });
+  };
+
+  return (
+    <>
+      <Field label="Household member">
+        <select
+          className={INPUT}
+          aria-label="Household member"
+          value={linked ? normalizePersonName(linked.name) : ''}
+          onChange={event => selectMember(event.target.value)}
+        >
+          <option value="">Not a household dependent — enter manually</option>
+          {props.available.map(member => (
+            <option key={member.role + member.name} value={normalizePersonName(member.name)}>
+              {member.name}
+            </option>
+          ))}
+        </select>
+      </Field>
+      {linked ? (
+        <Field label="Birth year">
+          {linkedBirthYear != null ? (
+            <p className="rounded-md border border-transparent px-3 py-2.5 text-sm text-foreground">
+              <span className="font-mono">{linkedBirthYear}</span>
+              <span className="text-foreground-muted"> · born {linked.birthday} (household settings)</span>
+            </p>
+          ) : (
+            <>
+              <input
+                type="number"
+                min={1900}
+                max={2100}
+                className={`${INPUT} font-mono`}
+                value={child.birthYear}
+                onChange={event => props.onChange({ birthYear: numberValue(event.target.value) })}
+              />
+              <span className="mt-1 block text-xs text-foreground-muted">
+                No birthday recorded for this dependent — add one in Settings to share it everywhere.
+              </span>
+            </>
+          )}
+        </Field>
+      ) : (
+        <>
+          <Field label="Student (manual)">
+            <input
+              className={INPUT}
+              value={child.name}
+              onChange={event => props.onChange({ name: event.target.value })}
+            />
+          </Field>
+          <Field label="Birth year (manual)">
+            <input
+              type="number"
+              min={1900}
+              max={2100}
+              className={`${INPUT} font-mono`}
+              value={child.birthYear}
+              onChange={event => props.onChange({ birthYear: numberValue(event.target.value) })}
+            />
+          </Field>
+        </>
+      )}
+    </>
+  );
+}
+
 export function EducationPlannerPage() {
-  const state = useSection<EducationProfile, { profile: EducationProfile; plans: EducationResult[] }>(
+  const state = useSection<EducationProfile, EducationResponse>(
     'education',
     { children: [] },
   );
@@ -97,11 +219,28 @@ export function EducationPlannerPage() {
   const addChild = () => {
     const year = new Date().getFullYear();
     state.change({ children: [...state.profile.children, {
-      id: uid(), name: 'New student', birthYear: year - 5, collegeStartYear: year + 13,
+      id: uid(), memberRole: null, memberName: null,
+      name: 'New student', birthYear: year - 5, collegeStartYear: year + 13,
       schoolType: 'public_in_state', yearsOfSchool: 4, annualCostToday: 30_000,
       tuitionInflationRate: 5, current529Balance: 0, expectedAnnualReturn: 6,
       plannedMonthlyContribution: 250, stateDeductionLimit: 0, contributions: [],
     }] });
+  };
+  // Household dependents from Settings — the source of truth for who these
+  // students are. Empty when none are configured; manual entry then works
+  // exactly as it did before.
+  const householdMembers = state.response?.household?.members ?? [];
+  const dependents = householdMembers.filter(member => member.role === 'dependent' && member.name.trim());
+  /** Dependents free to pick: not already claimed by a different student row. */
+  const availableFor = (child: EducationChild) => {
+    const claimed = new Set(state.profile.children
+      .filter(item => item.id !== child.id && item.memberRole === 'dependent')
+      .map(item => normalizePersonName(item.memberName?.trim() || item.name)));
+    const own = normalizePersonName(child.memberName?.trim() || child.name);
+    return dependents.filter(member => {
+      const key = normalizePersonName(member.name);
+      return key === own || !claimed.has(key);
+    });
   };
   const recordContribution = (child: EducationChild) => {
     const amount = numberValue(contributions[child.id] ?? '');
@@ -118,12 +257,22 @@ export function EducationPlannerPage() {
         <Metric label="Projected 529 value" value={formatCurrency(totals.reduce((sum, row) => sum + row.projected529Balance, 0))} tone="positive" />
         <Metric label="Funding gap" value={formatCurrency(totals.reduce((sum, row) => sum + row.fundingGap, 0))} tone={totals.some(row => row.fundingGap > 0) ? 'warning' : 'positive'} />
       </div>
+      <p className="text-xs text-foreground-muted">
+        {dependents.length === 0
+          ? <>No household dependents are configured yet. Add them (with birthdays) in <Link href="/settings" className={SETTINGS_LINK}>Settings</Link> and this page fills in names and birth years automatically. Until then, enter students manually.</>
+          : <>Student names and birthdays come from your household dependents — <Link href="/settings" className={SETTINGS_LINK}>change them in Settings</Link> and every planning pack follows. Only the 529 inputs live here.</>}
+      </p>
       {state.profile.children.length === 0 ? <Empty>Add a child or student to model an education path.</Empty> : state.profile.children.map(child => {
         const result = state.response?.plans.find(row => row.id === child.id);
         return (
           <Panel key={child.id} title={child.name} description={result ? `${result.glidePath.equityPercent}% growth / ${result.glidePath.fixedIncomePercent}% preservation guidance` : undefined} action={<button type="button" onClick={() => state.change({ children: state.profile.children.filter(item => item.id !== child.id) })} className="text-xs text-negative">Remove</button>}>
             <FieldGrid>
-              <Field label="Student"><input className={INPUT} value={child.name} onChange={event => update(child.id, { name: event.target.value })} /></Field>
+              <StudentIdentityFields
+                child={child}
+                members={householdMembers}
+                available={availableFor(child)}
+                onChange={patch => update(child.id, patch)}
+              />
               <Field label="College start"><input type="number" className={`${INPUT} font-mono`} value={child.collegeStartYear} onChange={event => update(child.id, { collegeStartYear: numberValue(event.target.value) })} /></Field>
               <Field label="School type"><select className={INPUT} value={child.schoolType} onChange={event => update(child.id, { schoolType: event.target.value as EducationChild['schoolType'] })}><option value="public_in_state">Public in-state</option><option value="public_out_of_state">Public out-of-state</option><option value="private">Private</option></select></Field>
               <Field label="Years"><input type="number" min="1" max="10" className={`${INPUT} font-mono`} value={child.yearsOfSchool} onChange={event => update(child.id, { yearsOfSchool: numberValue(event.target.value) })} /></Field>

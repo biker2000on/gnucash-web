@@ -28,9 +28,11 @@ import { detectOpportunities, type OpportunitySignal, type OpportunitySnapshot }
 import { listJobsEx, generateJobReport } from '@/lib/business/jobs.service';
 import { get1099Compliance } from '@/lib/business/vendor-1099.service';
 import { getReconciliationCoverage } from '@/lib/reconciliation-coverage';
-import { getResilienceProfile, loadResilienceActions } from '@/lib/resilience/service';
+import {
+  getResolvedRetirementIncomeProfile,
+  loadResilienceActions,
+} from '@/lib/resilience/service';
 import { analyzeRetirementIncome } from '@/lib/resilience/retirement-income-core';
-import type { RetirementIncomeProfile } from '@/lib/resilience/types';
 import {
   getDocumentsBySources,
   listLinkedDocuments,
@@ -1263,7 +1265,9 @@ async function contributionSignals(
 const RETIREMENT_OPPORTUNITY_MIN_VALUE = 1_000;
 
 async function retirementSequencingSignals(bookGuid: string): Promise<OpportunitySignal[]> {
-  const profile = await getResilienceProfile(bookGuid, 'retirement_income') as RetirementIncomeProfile;
+  // People and filing status come from household settings, so this agrees with
+  // what /planning/retirement-income shows.
+  const profile = await getResolvedRetirementIncomeProfile(bookGuid);
   if (profile.people.length === 0) return [];
   const analysis = analyzeRetirementIncome(profile);
   const signals: OpportunitySignal[] = [];

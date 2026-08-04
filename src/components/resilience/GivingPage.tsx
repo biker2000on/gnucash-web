@@ -1,11 +1,17 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { useToast } from '@/contexts/ToastContext';
 import { formatCurrency } from '@/lib/format';
 import type { calculateGivingPlan } from '@/lib/resilience/giving-core';
-import type { Donation, GivingProfile, GivingSettings } from '@/lib/resilience/types';
+import type {
+  Donation,
+  GivingProfile,
+  GivingSettings,
+  PlanningFilingStatus,
+} from '@/lib/resilience/types';
 import { Empty, Field, FieldGrid, INPUT, Metric, Panel, RecordCard, SaveBar, TNUM } from './ui';
 import { LinkedDocumentsPanel } from '@/components/documents/LinkedDocumentsPanel';
 
@@ -23,10 +29,27 @@ const numberValue = (value: string) => Number(value) || 0;
 const optionalNumber = (value: string) => value.trim() === '' ? null : Number(value) || 0;
 
 type GivingPlan = ReturnType<typeof calculateGivingPlan>;
-type GivingResponse = { profile: GivingProfile; plan: GivingPlan };
+type GivingResponse = {
+  profile: GivingProfile;
+  plan: GivingPlan;
+  /** Household identity context; absent on responses from an older server. */
+  household?: {
+    filingStatus: PlanningFilingStatus | null;
+    effectiveFilingStatus: PlanningFilingStatus;
+    filingStatusInherited: boolean;
+  };
+};
+
+const FILING_STATUS_LABELS: Record<PlanningFilingStatus, string> = {
+  single: 'Single',
+  married_joint: 'Married filing jointly',
+};
+
+const SETTINGS_LINK = 'text-primary underline-offset-2 hover:underline';
 
 const DEFAULT_SETTINGS: GivingSettings = {
-  filingStatus: 'married_joint',
+  // null = inherit the household filing status configured in Settings.
+  filingStatus: null,
   marginalRatePct: 22,
   stateRatePct: 0,
   agiEstimate: null,
@@ -134,6 +157,7 @@ export function GivingPage() {
   const state = useSection<GivingProfile, GivingResponse>('giving', { donations: [], settings: DEFAULT_SETTINGS });
   if (state.loading) return <div className="p-6 text-sm text-foreground-muted">Loading charitable giving…</div>;
   const plan = state.response?.plan;
+  const household = state.response?.household;
   const updateDonation = (id: string, patch: Partial<Donation>) =>
     state.change({ ...state.profile, donations: state.profile.donations.map(donation => donation.id === id ? { ...donation, ...patch } : donation) });
   const updateSettings = (patch: Partial<GivingSettings>) =>
@@ -280,9 +304,20 @@ export function GivingPage() {
       <Panel title="Settings" description="Planning inputs for the deduction comparison and QCD eligibility.">
         <FieldGrid>
           <Field label="Filing status">
-            <select className={INPUT} value={state.profile.settings.filingStatus} onChange={event => updateSettings({ filingStatus: event.target.value as GivingSettings['filingStatus'] })}>
-              <option value="single">Single</option>
-              <option value="married_joint">Married filing jointly</option>
+            <select
+              className={INPUT}
+              value={state.profile.settings.filingStatus ?? ''}
+              onChange={event => updateSettings({
+                filingStatus: event.target.value === '' ? null : event.target.value as PlanningFilingStatus,
+              })}
+            >
+              <option value="">
+                {household?.filingStatus
+                  ? `From household settings — ${FILING_STATUS_LABELS[household.filingStatus]}`
+                  : `From household settings — ${FILING_STATUS_LABELS[household?.effectiveFilingStatus ?? 'married_joint']} (not set)`}
+              </option>
+              <option value="single">Single (override)</option>
+              <option value="married_joint">Married filing jointly (override)</option>
             </select>
           </Field>
           <Field label="Marginal rate %"><input type="number" step="0.1" className={`${INPUT} font-mono`} value={state.profile.settings.marginalRatePct} onChange={event => updateSettings({ marginalRatePct: numberValue(event.target.value) })} /></Field>
@@ -294,6 +329,13 @@ export function GivingPage() {
           <Field label="Other itemized (SALT, interest)"><input type="number" className={`${INPUT} font-mono`} value={state.profile.settings.otherItemizedAnnual} onChange={event => updateSettings({ otherItemizedAnnual: numberValue(event.target.value) })} /></Field>
           <Field label="Standard deduction override"><input type="number" className={`${INPUT} font-mono`} value={state.profile.settings.standardDeductionOverride ?? ''} onChange={event => updateSettings({ standardDeductionOverride: optionalNumber(event.target.value) })} /></Field>
         </FieldGrid>
+        {household && !household.filingStatus && (
+          <p className="mt-3 text-xs text-foreground-muted">
+            No household filing status is set, so this comparison uses{' '}
+            {FILING_STATUS_LABELS[household.effectiveFilingStatus]}. Set it once in{' '}
+            <Link href="/settings" className={SETTINGS_LINK}>Settings</Link> to share it across every pack.
+          </p>
+        )}
         {plan?.qcd.eligible && (
           <p className="mt-3 text-xs text-foreground-muted">
             QCD-eligible: up to {formatCurrency(plan.qcd.householdAnnualLimit)} per year can go directly from a traditional IRA to charity ({formatCurrency(plan.qcd.qcdThisYear)} used this year). Eligibility assumed once age 71 is reached by year end, since only birth years are on file.

@@ -4,6 +4,12 @@ import type { EstateDocumentKind, EstateMemberRole, EstateProfile } from './type
  * A household roster entry passed into the engine by the service layer.
  * The engine stays pure: it never reads the entity profile itself, exactly like
  * the giving pack takes its charity-mileage context as an argument.
+ *
+ * The service supplies `HouseholdMember` (see ./types), which is structurally
+ * assignable to this. This declaration stays deliberately wider — it also
+ * accepts business roles, which the engine simply ignores — so a caller can
+ * hand it a raw, unfiltered member list without the roster silently changing
+ * meaning.
  */
 export interface EstateHouseholdMember {
   role: EstateMemberRole | 'owner' | 'officer';

@@ -27,8 +27,15 @@ import { calculateGivingPlan, type GivingContext } from './giving-core';
 import {
   CORE_DOCUMENT_KINDS as CORE_ESTATE_DOCUMENT_KINDS,
   calculateEstateReadiness,
-  type EstateHouseholdMember,
 } from './estate-core';
+import {
+  mapEntityFilingStatus,
+  resolveEducationProfile,
+  resolveFilingStatus,
+  resolveLifeProfile,
+  resolveRetirementIncomeProfile,
+  withResolvedFilingStatus,
+} from './household';
 import {
   MARGIN_ALERT_PERCENT,
   MARGIN_ALERT_REVENUE_THRESHOLD,
@@ -63,9 +70,11 @@ import type {
   FuelProfile,
   GivingProfile,
   HealthcareProfile,
+  HouseholdMember,
   InsuranceProfile,
   LifeProfile,
   MileageProfile,
+  PlanningFilingStatus,
   RentalsProfile,
   ResilienceSection,
   RetirementIncomeProfile,
@@ -149,10 +158,25 @@ const capitalSchema = z.object({
   })).max(1000),
 });
 
+/**
+ * Link from a pack person to a household member (Settings → household). Absent
+ * on every profile saved before household integration existed, so it is
+ * optional and nullable — those people keep their stored name and birth year.
+ */
+const householdRole = z.enum(['self', 'spouse', 'dependent']).nullable().optional();
+/**
+ * Display name. Empty is allowed because a linked member supplies the name;
+ * previously-valid non-empty names are of course still valid.
+ */
+const personName = z.string().trim().max(120);
+/** null = inherit the household's filing status from Settings. */
+const packFilingStatus = z.enum(['single', 'married_joint']).nullable().default(null);
+
 const lifeSchema = z.object({
   people: z.array(z.object({
     id,
-    name: z.string().trim().min(1).max(120),
+    memberRole: householdRole,
+    name: personName,
     annualIncome: money,
     replacementYears: z.number().int().min(0).max(60),
     debts: money,
@@ -242,7 +266,10 @@ const fuelSchema = z.object({
 const educationSchema = z.object({
   children: z.array(z.object({
     id,
-    name: z.string().trim().min(1).max(120),
+    memberRole: householdRole,
+    /** Disambiguates which dependent this is; 'dependent' is not unique. */
+    memberName: z.string().trim().max(120).nullable().optional(),
+    name: personName,
     birthYear: z.number().int().min(1900).max(2300),
     collegeStartYear: z.number().int().min(1900).max(2300),
     schoolType: z.enum(['public_in_state', 'public_out_of_state', 'private']),
@@ -362,7 +389,7 @@ const givingSchema = z.object({
     documentRef: z.string().max(500).nullable().optional(),
   })).max(10_000),
   settings: z.object({
-    filingStatus: z.enum(['single', 'married_joint']),
+    filingStatus: packFilingStatus,
     marginalRatePct: percent,
     stateRatePct: percent.nullable().optional(),
     agiEstimate: money.nullable().optional(),
@@ -484,7 +511,8 @@ const farmProductionSchema = z.object({
 const retirementIncomeSchema = z.object({
   people: z.array(z.object({
     id,
-    name: z.string().trim().min(1).max(120),
+    memberRole: householdRole,
+    name: personName,
     birthYear: z.number().int().min(1900).max(2300),
     pia: money,
     annualEarnings: money.nullable().optional(),
@@ -497,7 +525,7 @@ const retirementIncomeSchema = z.object({
     hsa: money,
   }),
   settings: z.object({
-    filingStatus: z.enum(['single', 'married_joint']),
+    filingStatus: packFilingStatus,
     annualSpending: money,
     horizonAge: z.number().int().min(70).max(110),
     colaPct: z.number().finite().min(0).max(10),
@@ -554,7 +582,8 @@ const defaults = {
   giving: {
     donations: [],
     settings: {
-      filingStatus: 'married_joint',
+      // null = inherit the household's filing status from Settings.
+      filingStatus: null,
       marginalRatePct: 22,
       stateRatePct: 0,
       agiEstimate: null,
@@ -590,7 +619,8 @@ const defaults = {
     people: [],
     balances: { taxable: 0, traditional: 0, roth: 0, hsa: 0 },
     settings: {
-      filingStatus: 'married_joint',
+      // null = inherit the household's filing status from Settings.
+      filingStatus: null,
       annualSpending: 0,
       horizonAge: 90,
       colaPct: 2.5,
@@ -861,7 +891,15 @@ export async function getResilienceSection(bookGuid: string, section: Resilience
     return { profile, plan: calculateCapitalPlan((profile as CapitalProfile).assets) };
   }
   if (section === 'life') {
-    return { profile, analyses: (profile as LifeProfile).people.map(calculateLifeNeeds) };
+    // People come from the household roster; only the financial inputs are
+    // pack-specific. The resolved profile is what the page renders and saves.
+    const roster = await loadHouseholdRoster(bookGuid);
+    const resolved = resolveLifeProfile(profile as LifeProfile, roster);
+    return {
+      profile: resolved,
+      analyses: resolved.people.map(calculateLifeNeeds),
+      household: householdContext(roster, null),
+    };
   }
   if (section === 'healthcare') {
     const health = profile as HealthcareProfile;
@@ -874,9 +912,13 @@ export async function getResilienceSection(bookGuid: string, section: Resilience
     };
   }
   if (section === 'education') {
+    // Students are household dependents; only the 529 inputs are pack-specific.
+    const roster = await loadHouseholdRoster(bookGuid);
+    const resolved = resolveEducationProfile(profile as EducationProfile, roster);
     return {
-      profile,
-      plans: (profile as EducationProfile).children.map(child => calculateEducationPlan(child)),
+      profile: resolved,
+      plans: resolved.children.map(child => calculateEducationPlan(child)),
+      household: householdContext(roster, null),
     };
   }
   if (section === 'utilities') {
@@ -936,15 +978,25 @@ export async function getResilienceSection(bookGuid: string, section: Resilience
     };
   }
   if (section === 'giving') {
-    const mileage = await getResilienceProfile(bookGuid, 'mileage') as MileageProfile;
+    const [mileage, householdFilingStatus] = await Promise.all([
+      getResilienceProfile(bookGuid, 'mileage') as Promise<MileageProfile>,
+      loadHouseholdFilingStatus(bookGuid),
+    ]);
+    const giving = profile as GivingProfile;
     return {
-      profile,
-      plan: calculateGivingPlan(profile as GivingProfile, charityMileageContext(mileage)),
+      // The stored profile keeps filingStatus null so the page can still show
+      // "inherit from household"; only the engine sees the resolved value.
+      profile: giving,
+      plan: calculateGivingPlan(
+        withResolvedFilingStatus(giving, householdFilingStatus),
+        charityMileageContext(mileage),
+      ),
+      household: householdContext([], householdFilingStatus, giving.settings.filingStatus),
     };
   }
   // --- Estate readiness section ---
   if (section === 'estate') {
-    const roster = await loadEstateRoster(bookGuid);
+    const roster = await loadHouseholdRoster(bookGuid);
     return { profile, readiness: calculateEstateReadiness(profile as EstateProfile, new Date(), roster) };
   }
   // --- End estate readiness section ---
@@ -955,7 +1007,16 @@ export async function getResilienceSection(bookGuid: string, section: Resilience
   // --- End farm production section ---
   // --- Retirement income section ---
   if (section === 'retirement_income') {
-    return { profile, analysis: analyzeRetirementIncome(profile as RetirementIncomeProfile) };
+    const [roster, householdFilingStatus] = await Promise.all([
+      loadHouseholdRoster(bookGuid),
+      loadHouseholdFilingStatus(bookGuid),
+    ]);
+    const resolved = resolveRetirementIncomeProfile(profile as RetirementIncomeProfile, roster);
+    return {
+      profile: resolved,
+      analysis: analyzeRetirementIncome(withResolvedFilingStatus(resolved, householdFilingStatus)),
+      household: householdContext(roster, householdFilingStatus, resolved.settings.filingStatus),
+    };
   }
   // --- End retirement income section ---
   return { profile };
@@ -972,33 +1033,121 @@ function charityMileageContext(mileage: MileageProfile, now = new Date()): Givin
 }
 // --- End charitable giving section (context helper) ---
 
-// --- Estate readiness section (context helper) ---
+// --- Household identity (shared context helper) ---
 /**
- * Household roster for estate attribution, read straight from the entity
- * members table. Business roles (owner, officer) are excluded — they are not
- * household members. Books without an entity profile return an empty roster and
- * the engine falls back to household-level coverage.
+ * The household roster, read straight from the entity members table that backs
+ * Settings → household. Shared by every planning pack that has people in it
+ * (estate attribution, retirement income, life insurance) so identity is
+ * entered once and reused, never re-typed per pack.
+ *
+ * Business roles (owner, officer) are excluded — they are not household
+ * members. Books without an entity profile return an empty roster and every
+ * pack falls back to its stored, manually entered values.
+ *
+ * Read directly rather than through `getEntityProfile` because that needs a
+ * userId for its preference-synthesised fallback, and the resilience service is
+ * book-scoped only. The roster is the persisted truth; a synthesised profile
+ * has no names to contribute anyway.
  */
-async function loadEstateRoster(bookGuid: string): Promise<EstateHouseholdMember[]> {
+export async function loadHouseholdRoster(bookGuid: string): Promise<HouseholdMember[]> {
   try {
     const result = await query(
-      `SELECT role, COALESCE(name, '') AS name
+      `SELECT role, COALESCE(name, '') AS name, birthday
          FROM gnucash_web_entity_members
         WHERE book_guid = $1
           AND role IN ('self', 'spouse', 'dependent')
         ORDER BY sort_order ASC, id ASC`,
       [bookGuid],
     );
-    return (result.rows as Array<{ role: string; name: string }>).map(row => ({
-      role: row.role as EstateHouseholdMember['role'],
-      name: row.name,
-    }));
+    return (result.rows as Array<{ role: string; name: string; birthday: Date | string | null }>)
+      .map(row => ({
+        role: row.role as HouseholdMember['role'],
+        name: row.name,
+        birthday: toIsoBirthday(row.birthday),
+      }));
   } catch {
-    // A missing entity table (fresh install) must not break estate readiness.
+    // A missing entity table (fresh install) must not break any pack.
     return [];
   }
 }
-// --- End estate readiness section (context helper) ---
+
+/**
+ * Household identity block added to the section responses of every pack that
+ * sources people or filing status from Settings. Purely additive: existing
+ * response keys are untouched.
+ */
+export interface HouseholdSectionContext {
+  /** Household roster, so the page can render member pickers. Empty when unset. */
+  members: HouseholdMember[];
+  /** Household filing status mapped to the pack union; null when unset/unmapped. */
+  filingStatus: PlanningFilingStatus | null;
+  /** What the engine actually used: pack override → household → legacy default. */
+  effectiveFilingStatus: PlanningFilingStatus;
+  /** True when the pack is inheriting rather than overriding. */
+  filingStatusInherited: boolean;
+}
+
+function householdContext(
+  members: HouseholdMember[],
+  filingStatus: PlanningFilingStatus | null,
+  packFilingStatusValue: PlanningFilingStatus | null = null,
+): HouseholdSectionContext {
+  return {
+    members,
+    filingStatus,
+    effectiveFilingStatus: resolveFilingStatus(packFilingStatusValue, filingStatus),
+    filingStatusInherited: packFilingStatusValue == null,
+  };
+}
+
+/**
+ * Retirement income profile with its people resolved against the household and
+ * its filing status resolved from Settings — the exact input the engine should
+ * see. Used by the Action Center and money-timeline aggregations so they agree
+ * with the page.
+ */
+export async function getResolvedRetirementIncomeProfile(
+  bookGuid: string,
+): Promise<RetirementIncomeProfile> {
+  const [profile, roster, householdFilingStatus] = await Promise.all([
+    getResilienceProfile(bookGuid, 'retirement_income') as Promise<RetirementIncomeProfile>,
+    loadHouseholdRoster(bookGuid),
+    loadHouseholdFilingStatus(bookGuid),
+  ]);
+  return withResolvedFilingStatus(
+    resolveRetirementIncomeProfile(profile, roster),
+    householdFilingStatus,
+  );
+}
+
+/** Normalise a birthday column (Date from pg, string from a mock) to YYYY-MM-DD. */
+function toIsoBirthday(value: Date | string | null | undefined): string | null {
+  if (value == null) return null;
+  if (typeof value === 'string') return value.slice(0, 10) || null;
+  return isNaN(value.getTime()) ? null : value.toISOString().slice(0, 10);
+}
+
+/**
+ * The household's 1040 filing status from Settings, mapped onto the two-way
+ * union the planning packs model. Returns null when there is no entity profile
+ * or the stored token has no unambiguous mapping, in which case each pack keeps
+ * its own default.
+ */
+export async function loadHouseholdFilingStatus(
+  bookGuid: string,
+): Promise<PlanningFilingStatus | null> {
+  try {
+    const result = await query(
+      `SELECT filing_status FROM gnucash_web_entity_profiles WHERE book_guid = $1`,
+      [bookGuid],
+    );
+    const row = (result.rows as Array<{ filing_status: string | null }>)[0];
+    return mapEntityFilingStatus(row?.filing_status ?? null);
+  } catch {
+    return null;
+  }
+}
+// --- End household identity (shared context helper) ---
 
 // --- Estate readiness section (labels) ---
 const ESTATE_DOCUMENT_LABELS: Record<EstateDocument['kind'], string> = {
@@ -1480,7 +1629,19 @@ export async function loadResilienceActions(bookGuid: string): Promise<Financial
   ]);
   const actions: FinancialActionCandidate[] = [];
   const rentalProfile = rentals as RentalsProfile;
-  const givingProfile = giving as GivingProfile;
+  // Household identity is loaded once and threaded into every pack that needs
+  // it, so the Action Center sees exactly what the pages do.
+  const [householdRoster, householdFilingStatus] = await Promise.all([
+    loadHouseholdRoster(bookGuid),
+    loadHouseholdFilingStatus(bookGuid),
+  ]);
+  const givingProfile = withResolvedFilingStatus(giving as GivingProfile, householdFilingStatus);
+  const lifeProfile = resolveLifeProfile(life as LifeProfile, householdRoster);
+  const educationProfile = resolveEducationProfile(education as EducationProfile, householdRoster);
+  const retirementProfile = withResolvedFilingStatus(
+    resolveRetirementIncomeProfile(retirementIncome as RetirementIncomeProfile, householdRoster),
+    householdFilingStatus,
+  );
   const [rentalDocuments, givingDocuments] = await Promise.all([
     linkedDocumentsByTarget(
       bookGuid,
@@ -1623,7 +1784,7 @@ export async function loadResilienceActions(bookGuid: string): Promise<Financial
       evidence: [{ kind: 'home_item', id: row.id, label: row.name, source: 'manual', href: '/home/protection?tab=capital', verified: false }],
     }));
   }
-  for (const person of (life as LifeProfile).people.map(calculateLifeNeeds).filter(row => row.recommendedCoverage > 0)) {
+  for (const person of lifeProfile.people.map(calculateLifeNeeds).filter(row => row.recommendedCoverage > 0)) {
     actions.push(action({
       stableKey: `life-coverage:${person.person.id}`,
       lane: 'decide',
@@ -1681,7 +1842,7 @@ export async function loadResilienceActions(bookGuid: string): Promise<Financial
       evidence: unmatched.slice(0, 25).map(item => ({ kind: 'vehicle' as const, id: item.sourceId, label: `Fuel fill-up ${item.date.slice(0, 10)}`, source: 'system' as const, href: '/tools/mileage?tab=fuel', verified: false })),
     }));
   }
-  for (const plan of (education as EducationProfile).children.map(child => calculateEducationPlan(child))) {
+  for (const plan of educationProfile.children.map(child => calculateEducationPlan(child))) {
     if (plan.monthlyShortfall <= 0) continue;
     actions.push(action({
       stableKey: `education-funding:${plan.id}:${plan.collegeStartYear}`,
@@ -2010,7 +2171,7 @@ export async function loadResilienceActions(bookGuid: string): Promise<Financial
   }
   // --- End charitable giving section (actions) ---
   // --- Estate readiness section (actions) ---
-  const estateReadiness = calculateEstateReadiness(estate as EstateProfile, now, await loadEstateRoster(bookGuid));
+  const estateReadiness = calculateEstateReadiness(estate as EstateProfile, now, await loadHouseholdRoster(bookGuid));
   for (const designation of estateReadiness.designations) {
     if (!designation.stale) continue;
     actions.push(action({
@@ -2176,7 +2337,7 @@ export async function loadResilienceActions(bookGuid: string): Promise<Financial
   }
   // --- End farm production section (actions) ---
   // --- Retirement income section (actions) ---
-  const retirement = analyzeRetirementIncome(retirementIncome as RetirementIncomeProfile, now);
+  const retirement = analyzeRetirementIncome(retirementProfile, now);
   for (const person of retirement.people) {
     if (person.piaSource === 'missing') continue;
     if (person.recommendedClaimAge === person.plannedClaimAge) continue;
@@ -2354,7 +2515,12 @@ export async function loadResilienceEvents(
       metadata: { monthlyFunding: asset.monthlyFunding },
     });
   }
-  for (const plan of (education as EducationProfile).children.map(child => calculateEducationPlan(child, now))) {
+  const educationProfile = resolveEducationProfile(
+    education as EducationProfile,
+    await loadHouseholdRoster(bookGuid),
+    now,
+  );
+  for (const plan of educationProfile.children.map(child => calculateEducationPlan(child, now))) {
     const collegeDate = `${plan.collegeStartYear}-08-01`;
     if (collegeDate < today) continue;
     events.push({
@@ -2448,7 +2614,8 @@ export async function loadResilienceEvents(
     });
   }
   // --- Charitable giving section (events) ---
-  const givingProfile = giving as GivingProfile;
+  const householdFilingStatus = await loadHouseholdFilingStatus(bookGuid);
+  const givingProfile = withResolvedFilingStatus(giving as GivingProfile, householdFilingStatus);
   const givingPlan = calculateGivingPlan(
     givingProfile,
     charityMileageContext(givingMileage as MileageProfile, now),
@@ -2506,7 +2673,7 @@ export async function loadResilienceEvents(
   }
   // --- End charitable giving section (events) ---
   // --- Estate readiness section (events) ---
-  const estateReadiness = calculateEstateReadiness(estate as EstateProfile, now, await loadEstateRoster(bookGuid));
+  const estateReadiness = calculateEstateReadiness(estate as EstateProfile, now, await loadHouseholdRoster(bookGuid));
   const estateHorizon = new Date(now.getTime() + 365 * 86_400_000).toISOString().slice(0, 10);
   for (const document of estateReadiness.documents) {
     if (document.dueDate > estateHorizon) continue;
@@ -2570,7 +2737,13 @@ export async function loadResilienceEvents(
   }
   // --- End farm production section (events) ---
   // --- Retirement income section (events) ---
-  const retirementAnalysis = analyzeRetirementIncome(retirementIncome as RetirementIncomeProfile, now);
+  const retirementAnalysis = analyzeRetirementIncome(
+    withResolvedFilingStatus(
+      resolveRetirementIncomeProfile(retirementIncome as RetirementIncomeProfile, await loadHouseholdRoster(bookGuid)),
+      householdFilingStatus,
+    ),
+    now,
+  );
   for (const person of retirementAnalysis.people) {
     const rmdContext = retirementAnalysis.rmd.find(row => row.personId === person.personId);
     // Claim-eligibility milestones: 62, FRA, 70, RMD start, and the planned

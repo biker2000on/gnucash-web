@@ -25,7 +25,8 @@ import { DEFAULT_SEQUENCING, type Bucket } from '@/lib/drawdown/types';
 import { computeRmd, rmdStartAge } from '@/lib/drawdown/rmd';
 import { IRMAA_TIERS_2026, PART_B_STANDARD_MONTHLY_2026 } from '@/lib/drawdown/irmaa';
 import type { FilingStatus } from '@/lib/tax/types';
-import type { RetirementIncomeProfile, RetirementPerson } from './types';
+import { LEGACY_PACK_FILING_STATUS } from './household';
+import type { PlanningFilingStatus, RetirementIncomeProfile, RetirementPerson } from './types';
 
 function round2(value: number): number {
   return Math.round((value + Number.EPSILON) * 100) / 100;
@@ -150,8 +151,18 @@ const SEQUENCING_ORDERS: Record<SequencingVariantResult['id'], { label: string; 
   traditional_first: { label: 'Traditional first', order: ['traditional', 'taxable', 'roth', 'hsa'] },
 };
 
+/**
+ * The service resolves `settings.filingStatus` from household settings before
+ * calling in. A `null` that reaches the engine directly means "unresolved", and
+ * falls back to the pack's historical default so behaviour never changes
+ * silently.
+ */
+function packFilingStatus(profile: RetirementIncomeProfile): PlanningFilingStatus {
+  return profile.settings.filingStatus ?? LEGACY_PACK_FILING_STATUS;
+}
+
 function filingStatusFor(profile: RetirementIncomeProfile): FilingStatus {
-  return profile.settings.filingStatus === 'married_joint' ? 'mfj' : 'single';
+  return packFilingStatus(profile) === 'married_joint' ? 'mfj' : 'single';
 }
 
 /** Monthly benefit for a claiming age in months, 2dp, using the repo SSA adjustment factors. */
@@ -382,7 +393,7 @@ function analyzeIrmaa(
   if (!sequencing) return null;
   const chosenId = sequencing.preferredVariantId ?? 'taxable_first';
   const chosen = sequencing.variants.find(variant => variant.id === chosenId) ?? sequencing.variants[0];
-  const joint = profile.settings.filingStatus === 'married_joint';
+  const joint = packFilingStatus(profile) === 'married_joint';
   const tiers = irmaaTiersFor(joint);
   const magi = round2(chosen.firstYearAgi);
   const tier = tiers.filter(row => magi > row.threshold).length;
