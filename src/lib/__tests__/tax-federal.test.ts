@@ -716,3 +716,39 @@ describe('Additional Medicare thresholds by filing status', () => {
     expect(r.additionalMedicareTax).toBeCloseTo(0.009 * 50_000, 2);
   });
 });
+
+/* ------------------------------------------------------------------ */
+/* §63(c)(6)(A): MFS spouse-itemizes zero standard deduction           */
+/* ------------------------------------------------------------------ */
+
+describe('§63(c)(6)(A) — MFS filer whose spouse itemizes', () => {
+  it('zeroes the standard deduction (including the additional 65+ amounts)', () => {
+    const base = inputs({ year: 2025, filingStatus: 'mfs', wages: 60_000, filersAge65Plus: 1 });
+    const normal = computeFederalTax(base);
+    expect(normal.standardDeduction).toBe(15_750 + 1_600);
+
+    const forced = computeFederalTax({ ...base, mfsSpouseItemizes: true });
+    expect(forced.standardDeduction).toBe(0);
+    expect(forced.usedItemized).toBe(false); // nothing to itemize
+    expect(forced.deductionTaken).toBe(0);
+    expect(forced.taxableIncome).toBeGreaterThan(normal.taxableIncome);
+  });
+
+  it('makes any positive itemized total win the election', () => {
+    const r = computeFederalTax(inputs({
+      year: 2025, filingStatus: 'mfs', wages: 60_000,
+      stateLocalTaxesPaid: 2_000, mfsSpouseItemizes: true,
+    }));
+    expect(r.usedItemized).toBe(true);
+    expect(r.deductionTaken).toBe(2_000);
+  });
+
+  it('is ignored for every other filing status', () => {
+    for (const fs of ['single', 'mfj', 'hoh', 'qss'] as const) {
+      const withFlag = computeFederalTax(inputs({ year: 2025, filingStatus: fs, wages: 60_000, mfsSpouseItemizes: true }));
+      const without = computeFederalTax(inputs({ year: 2025, filingStatus: fs, wages: 60_000 }));
+      expect(withFlag.standardDeduction).toBe(without.standardDeduction);
+      expect(withFlag.totalTax).toBe(without.totalTax);
+    }
+  });
+});
