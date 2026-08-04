@@ -28,6 +28,7 @@ const {
             create: vi.fn(),
             count: vi.fn(),
         },
+        slots: { deleteMany: vi.fn() },
         accounts: { findMany: vi.fn() },
         commodities: { findUnique: vi.fn() },
         $transaction: vi.fn(),
@@ -151,6 +152,7 @@ beforeEach(() => {
     prismaMock.splits.findMany.mockResolvedValue([]);
     prismaMock.splits.count.mockResolvedValue(2);
     prismaMock.splits.deleteMany.mockResolvedValue({ count: 2 });
+    prismaMock.slots.deleteMany.mockResolvedValue({ count: 0 });
     prismaMock.splits.create.mockResolvedValue({});
     prismaMock.transactions.update.mockResolvedValue({});
     prismaMock.transactions.delete.mockResolvedValue({});

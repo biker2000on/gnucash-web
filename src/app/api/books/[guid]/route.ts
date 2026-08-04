@@ -294,10 +294,36 @@ export async function DELETE(
                 : [];
             const touchedTxGuids = touchedTxRows.map(r => r.tx_guid);
 
+            // The slots table has no FK on obj_guid, so every object removed
+            // below (splits, lots, transactions, accounts, the book row) must
+            // take its slots with it explicitly or they leak as orphans.
+            if (allAccountGuids.length > 0) {
+                await tx.$executeRaw`
+                    DELETE FROM slots WHERE obj_guid IN (
+                        SELECT guid FROM splits
+                        WHERE account_guid = ANY(${allAccountGuids}::text[])
+                    )
+                `;
+            }
+
             // Delete splits for these accounts
             await tx.splits.deleteMany({
                 where: { account_guid: { in: allAccountGuids } },
             });
+
+            // Lots belong to this book's accounts and their splits are gone;
+            // delete the lots and their slots (title, acquisition_date, ...).
+            if (allAccountGuids.length > 0) {
+                await tx.$executeRaw`
+                    DELETE FROM slots WHERE obj_guid IN (
+                        SELECT guid FROM lots
+                        WHERE account_guid = ANY(${allAccountGuids}::text[])
+                    )
+                `;
+                await tx.lots.deleteMany({
+                    where: { account_guid: { in: allAccountGuids } },
+                });
+            }
 
             // Delete exactly the touched transactions that now have no
             // splits left (a transaction shared with another book — should
@@ -308,6 +334,15 @@ export async function DELETE(
                     WHERE guid = ANY(${touchedTxGuids}::text[])
                       AND NOT EXISTS (
                         SELECT 1 FROM splits s WHERE s.tx_guid = transactions.guid
+                      )
+                `;
+                // Slots of exactly the transactions deleted above (a shared
+                // transaction that survived keeps its slots).
+                await tx.$executeRaw`
+                    DELETE FROM slots
+                    WHERE obj_guid = ANY(${touchedTxGuids}::text[])
+                      AND NOT EXISTS (
+                        SELECT 1 FROM transactions t WHERE t.guid = slots.obj_guid
                       )
                 `;
             }
@@ -321,6 +356,15 @@ export async function DELETE(
                     where: { guid: { in: batch } },
                 });
             }
+
+            // Account slots (notes, color, ...) and book slots (counters,
+            // gnucash-web/closed-through, ...) go with their objects.
+            if (allAccountGuids.length > 0) {
+                await tx.slots.deleteMany({
+                    where: { obj_guid: { in: allAccountGuids } },
+                });
+            }
+            await tx.slots.deleteMany({ where: { obj_guid: guid } });
 
             // Delete the book record
             await tx.books.delete({

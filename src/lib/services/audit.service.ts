@@ -226,6 +226,20 @@ export function buildUndoPlan(entry: AuditEntryLike): { plan: UndoPlan | null; r
 /** Write a snapshot within the caller's transaction (claim-first callers). */
 async function writeSnapshot(tx: DbClient, snapshot: TransactionSnapshot, replaceExisting: boolean): Promise<void> {
     if (replaceExisting) {
+        // The slots table has no FK on obj_guid: splits that exist now but
+        // are NOT part of the restored snapshot are gone for good, so their
+        // slots (lot-engine markers etc.) must go too. Splits recreated below
+        // under the same guid keep their slots; the transaction row is
+        // recreated under the same guid, so its slots stay attached.
+        const currentSplits = await tx.splits.findMany({
+            where: { tx_guid: snapshot.guid },
+            select: { guid: true },
+        });
+        const restoredGuids = new Set(snapshot.splits.map(s => s.guid));
+        const removedGuids = currentSplits.map(s => s.guid).filter(g => !restoredGuids.has(g));
+        if (removedGuids.length > 0) {
+            await tx.slots.deleteMany({ where: { obj_guid: { in: removedGuids } } });
+        }
         await tx.splits.deleteMany({ where: { tx_guid: snapshot.guid } });
         await tx.transactions.deleteMany({ where: { guid: snapshot.guid } });
     } else {
@@ -392,6 +406,11 @@ export async function undoAuditEntry(auditId: number, activeBookGuid: string): P
                     await claimUndo(tx, auditId, userId);
                     const live = await snapshotTransactionByGuid(plan.guid, tx);
                     if (!live) throw new UndoConflictError('Transaction no longer exists');
+                    // Slots have no FK — the deleted splits' and the
+                    // transaction's slots must be removed with them.
+                    await tx.slots.deleteMany({
+                        where: { obj_guid: { in: [...live.splits.map(s => s.guid), plan.guid] } },
+                    });
                     await tx.splits.deleteMany({ where: { tx_guid: plan.guid } });
                     await tx.transactions.delete({ where: { guid: plan.guid } });
                     return live;

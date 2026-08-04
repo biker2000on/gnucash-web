@@ -298,6 +298,25 @@ export async function PUT(
                 },
             });
 
+            // Splits that disappear in this edit take their slots with them:
+            // the slots table has no FK on obj_guid, so lot-engine markers
+            // (gnucash_web_generated, original_*) attached to dropped split
+            // guids would otherwise leak as orphans. Splits recreated below
+            // under the same guid keep their slots.
+            const recreatedGuids = new Set(
+                allSplits
+                    .map(split => (split.guid && /^[0-9a-f]{32}$/.test(split.guid) ? split.guid : null))
+                    .filter((g): g is string => g !== null)
+            );
+            const removedSplitGuids = existingSplits
+                .map(split => split.guid)
+                .filter(g => !recreatedGuids.has(g));
+            if (removedSplitGuids.length > 0) {
+                await tx.slots.deleteMany({
+                    where: { obj_guid: { in: removedSplitGuids } },
+                });
+            }
+
             // Delete existing splits
             await tx.splits.deleteMany({
                 where: { tx_guid: guid },
@@ -493,7 +512,10 @@ export async function DELETE(
             // Read via the transaction client so it shares this transaction's
             // connection instead of grabbing a second pool connection.
             const snapshot = await snapshotTransactionByGuid(guid, tx);
-            const splitCount = await tx.splits.count({ where: { tx_guid: guid } });
+            const splitRows = await tx.splits.findMany({
+                where: { tx_guid: guid },
+                select: { guid: true },
+            });
 
             // Preserve SimpleFin meta rows for dedup (NULL out transaction_guid, mark deleted)
             await tx.$executeRaw`
@@ -510,6 +532,13 @@ export async function DELETE(
                   AND simplefin_transaction_id IS NULL
             `;
 
+            // Slots have no FK on obj_guid: delete the slots attached to the
+            // splits and to the transaction itself, or they leak as orphans
+            // (scrub markers like gnucash_web_generated, date-posted, ...).
+            await tx.slots.deleteMany({
+                where: { obj_guid: { in: [...splitRows.map(s => s.guid), guid] } },
+            });
+
             // Delete splits first (even though cascade should handle it)
             await tx.splits.deleteMany({
                 where: { tx_guid: guid },
@@ -524,7 +553,7 @@ export async function DELETE(
                 deleteSnapshot: snapshot ?? {
                     description: lockedTx.description,
                     post_date: lockedTx.post_date,
-                    splits_count: splitCount,
+                    splits_count: splitRows.length,
                 },
                 deletedPostDate: lockedTx.post_date,
             };

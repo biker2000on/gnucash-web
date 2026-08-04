@@ -148,12 +148,26 @@ async function clearCollisionRows(tx: any, data: GnuCashXmlData, bookGuid: strin
   // splits still reference accounts that will be upserted (not deleted),
   // so the FK stays valid.
   if (transactionGuids.length) {
+    // The slots table has no FK on obj_guid: collect the split guids the
+    // cascade is about to remove and delete their slots plus the
+    // transactions' own slots, or they leak as orphans.
+    const splitRows = await tx.splits.findMany({
+      where: { tx_guid: { in: transactionGuids } },
+      select: { guid: true },
+    });
+    const slotObjGuids = [
+      ...splitRows.map((row: { guid: string }) => row.guid),
+      ...transactionGuids,
+    ];
+    await tx.slots.deleteMany({ where: { obj_guid: { in: slotObjGuids } } });
     await tx.transactions.deleteMany({ where: { guid: { in: transactionGuids } } });
   }
 
-  // Lots referenced by the splits we just deleted.
+  // Lots referenced by the splits we just deleted — slots first (no FK).
   if (lotGuids.size) {
-    await tx.lots.deleteMany({ where: { guid: { in: Array.from(lotGuids) } } });
+    const lotGuidList = Array.from(lotGuids);
+    await tx.slots.deleteMany({ where: { obj_guid: { in: lotGuidList } } });
+    await tx.lots.deleteMany({ where: { guid: { in: lotGuidList } } });
   }
 
   // Accounts and the book row are NOT deleted — the import path upserts

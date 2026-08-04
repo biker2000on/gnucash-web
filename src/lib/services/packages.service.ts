@@ -276,6 +276,16 @@ async function createTwoSplitTxn(
 
 /** Delete a GnuCash transaction with its splits and slots (idempotent). */
 async function deleteTxn(db: PrismaTx, txnGuid: string): Promise<void> {
+    // Slots have no FK on obj_guid — split slots must be removed explicitly.
+    const splitRows = await db.splits.findMany({
+        where: { tx_guid: txnGuid },
+        select: { guid: true },
+    });
+    if (splitRows.length > 0) {
+        await db.slots.deleteMany({
+            where: { obj_guid: { in: splitRows.map((s) => s.guid) } },
+        });
+    }
     await db.splits.deleteMany({ where: { tx_guid: txnGuid } });
     await db.slots.deleteMany({ where: { obj_guid: txnGuid } });
     await db.transactions.deleteMany({ where: { guid: txnGuid } });
