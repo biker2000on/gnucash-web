@@ -187,45 +187,62 @@ function formatShares(shares: number): string {
 }
 
 /**
- * Extract the realized sale from a closed (or partially-closed) lot. Returns
- * null when the lot has no sell splits (nothing realized yet). PURE given the
+ * Extract the realized sales from a lot — one RealizedSaleInput PER SELL
+ * SPLIT, closed and open (partially-sold) lots alike. PURE given the
  * LotSummary — no DB access.
  *
+ * Per-sale rows (rather than one per-lot row) matter for three reasons the
+ * 8949 report and the tax estimator both depend on:
+ *  - YEAR attribution: a lot sold across multiple years realizes each sale's
+ *    gain in that sale's year, not the whole gain in the close year.
+ *  - Open lots: the realized portion of a partially-sold lot is reported.
+ *  - Per-sale holding term: each sale's ST/LT is judged on its own sale date.
+ *
  * Basis / proceeds use native GnuCash split signs: buys have positive value,
- * sells negative. For a fully-closed lot the basis is the total buy cost; for
- * a partial lot only the sold shares' pro-rata basis is realized.
+ * sells negative. Each sale realizes its shares' pro-rata slice of the lot's
+ * basis pool = buy cost + carried basis. A transfer-destination lot's shares
+ * arrive on a $0-value transfer-in split with the original cost carried in
+ * the `carried_basis` lot slot (same formula as the scrub engine's
+ * generateCapitalGains), and `acquisitionDate` carries the original purchase
+ * date, so transferred lots keep their true basis and holding period.
+ *
+ * Zero-value share disposals are NOT sales and yield no row: an in-kind
+ * TRANSFER-OUT split moves shares at $0 value (its basis travels to the
+ * destination lot's carried_basis slot — not a taxable event), and the scrub
+ * engine likewise refuses to book gains for zero-proceeds disposals
+ * (unvalued trades). Either way there is no realized gain/loss to report.
  */
-export function lotToRealizedSale(lot: LotSummary, ticker: string): RealizedSaleInput | null {
+export function lotToRealizedSales(lot: LotSummary, ticker: string): RealizedSaleInput[] {
   const sells = lot.splits.filter(s => s.shares < -EPS);
-  if (sells.length === 0) return null;
+  if (sells.length === 0) return [];
 
   const buys = lot.splits.filter(s => s.shares > EPS);
   const boughtShares = buys.reduce((sum, s) => sum + s.shares, 0);
   const buyCost = buys.reduce((sum, s) => sum + Math.abs(s.value), 0);
-  const soldShares = sells.reduce((sum, s) => sum + Math.abs(s.shares), 0);
-  const proceeds = -sells.reduce((sum, s) => sum + s.value, 0);
-  const costPerShare = boughtShares > EPS ? buyCost / boughtShares : 0;
-  const costBasis = lot.isClosed ? buyCost : soldShares * costPerShare;
+  const basisPool = buyCost + (lot.carriedBasis ?? 0);
+  const costPerShare = boughtShares > EPS ? basisPool / boughtShares : 0;
 
-  // dateSold = latest sell split; dateAcquired = acquisition slot -> open date
-  const dateSold = sells.reduce(
-    (latest, s) => (s.postDate > latest ? s.postDate : latest),
-    sells[0].postDate,
-  );
+  // dateAcquired = acquisition slot -> open date -> earliest buy split
   const earliestBuy = buys.length > 0
     ? buys.reduce((earliest, s) => (s.postDate < earliest ? s.postDate : earliest), buys[0].postDate)
     : null;
-  const dateAcquired = lot.acquisitionDate || lot.openDate || earliestBuy || dateSold;
 
-  return {
-    accountGuid: lot.accountGuid,
-    ticker,
-    shares: soldShares,
-    dateAcquired,
-    dateSold,
-    proceeds,
-    costBasis,
-  };
+  const sales: RealizedSaleInput[] = [];
+  for (const sell of sells) {
+    const proceeds = -sell.value;
+    if (Math.abs(proceeds) < 0.005) continue; // transfer-out / unvalued trade
+    const shares = Math.abs(sell.shares);
+    sales.push({
+      accountGuid: lot.accountGuid,
+      ticker,
+      shares,
+      dateAcquired: lot.acquisitionDate || lot.openDate || earliestBuy || sell.postDate,
+      dateSold: sell.postDate,
+      proceeds,
+      costBasis: shares * costPerShare,
+    });
+  }
+  return sales;
 }
 
 /**
@@ -521,13 +538,16 @@ export function generateScheduleDCSV(report: CapitalGainsReport): string {
 // -----------------------------------------------------------------------------
 
 /**
- * Load every realized sale (closed lots + closed portions of partial lots) in
- * the book's TAXABLE STOCK/MUTUAL accounts whose sale date falls in `year`.
+ * Load every realized sale (one row PER SELL SPLIT, from closed lots and the
+ * realized portions of open lots) in the book's TAXABLE STOCK/MUTUAL accounts
+ * whose sale date falls in `year` (UTC calendar year of the sale's post date).
  *
  * Tax-advantaged accounts are excluded — sales inside a 401k/IRA/HSA never
  * appear on Form 8949 — and so are accounts whose effective tax-estimator
- * mapping is 'exclude' (user-marked non-taxable), matching the Schedule D
- * numbers produced by aggregateBookTaxData in src/lib/tax/book-income.ts.
+ * mapping is 'exclude' (user-marked non-taxable). This loader is the SINGLE
+ * extraction shared by the 8949 report and the tax estimator
+ * (aggregateBookTaxData in src/lib/tax/book-income.ts), so the two surfaces
+ * cannot drift on Schedule D numbers or on the exclusion rules.
  */
 export async function loadRealizedSales(
   bookAccountGuids: string[],
@@ -577,10 +597,10 @@ export async function loadRealizedSales(
     const ticker = account.commodity?.mnemonic || 'Unknown';
     const lots = await getAccountLots(account.guid);
     for (const lot of lots) {
-      const sale = lotToRealizedSale(lot, ticker);
-      if (!sale) continue;
-      if (new Date(sale.dateSold).getUTCFullYear() !== year) continue;
-      sales.push(sale);
+      for (const sale of lotToRealizedSales(lot, ticker)) {
+        if (new Date(sale.dateSold).getUTCFullYear() !== year) continue;
+        sales.push(sale);
+      }
     }
   }
 
