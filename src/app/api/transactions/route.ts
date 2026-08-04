@@ -14,6 +14,7 @@ import { requireRole } from '@/lib/auth';
 import { buildAccountPathMap } from '@/lib/reports/utils';
 import { parseSearchQuery } from '@/lib/tags';
 import { getTagsForTransactions } from '@/lib/services/tag.service';
+import { writeTransactionNotes } from '@/lib/transaction-notes';
 import {
     withPeriodLockCheck,
     assertNotLocked,
@@ -398,6 +399,9 @@ export async function POST(request: Request) {
                     },
                 });
             }
+
+            // Transaction-level notes (slots, name='notes')
+            await writeTransactionNotes(tx, txGuid, body.notes);
 
             // Return the created transaction with splits
             return await tx.transactions.findUnique({

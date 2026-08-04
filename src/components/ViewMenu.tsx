@@ -10,6 +10,9 @@ interface ViewMenuProps {
   showUnreviewedOnly: boolean;
   onToggleUnreviewed: () => void;
   hasSubaccounts: boolean;
+  /** GnuCash-style double-line view for the edit surfaces (notes + memo row). */
+  doubleLine?: boolean;
+  onToggleDoubleLine?: () => void;
 }
 
 const VIEW_MODES: { value: LedgerViewStyle; label: string; shortcut: string }[] = [
@@ -24,6 +27,8 @@ export default function ViewMenu({
   showUnreviewedOnly,
   onToggleUnreviewed,
   hasSubaccounts,
+  doubleLine,
+  onToggleDoubleLine,
 }: ViewMenuProps) {
   const [isOpen, setIsOpen] = useState(false);
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -115,6 +120,19 @@ export default function ViewMenu({
               <span>{showUnreviewedOnly ? '\u2611' : '\u2610'}</span>
               Unreviewed Only
             </button>
+            {onToggleDoubleLine && (
+              <button
+                type="button"
+                onClick={() => {
+                  onToggleDoubleLine();
+                  setIsOpen(false);
+                }}
+                className="w-full px-3 py-2 text-sm text-left text-foreground-secondary hover:bg-surface-hover flex items-center gap-2"
+              >
+                <span>{doubleLine ? '\u2611' : '\u2610'}</span>
+                Double Line (edit mode)
+              </button>
+            )}
           </div>
         </div>,
         document.body

@@ -170,6 +170,7 @@ export function inlineTwoSplitPayload({
     amountChanged,
     transferChanged,
     ownReconcileState,
+    ownMemo,
 }: {
     accountGuid: string;
     ownSplit?: Split;
@@ -179,13 +180,19 @@ export function inlineTwoSplitPayload({
     amountChanged: boolean;
     transferChanged: boolean;
     ownReconcileState?: string | null;
+    /**
+     * Double-line edit: the memo typed for this account's split. Undefined
+     * means the memo was not edited — the stored memo is carried through.
+     * A memo edit never touches reconcile state (only amount/account do).
+     */
+    ownMemo?: string;
 }): InlineSplitPayload[] {
     return [
         {
             ...(ownSplit ? { guid: ownSplit.guid } : {}),
             account_guid: accountGuid,
             ...splitFractions(ownSplit, signedAmount, !amountChanged),
-            memo: ownSplit?.memo ?? '',
+            memo: ownMemo !== undefined ? ownMemo : (ownSplit?.memo ?? ''),
             reconcile_state: amountChanged ? 'n' : (ownReconcileState || 'n'),
         },
         {
@@ -198,6 +205,31 @@ export function inlineTwoSplitPayload({
                 : (otherSplit?.reconcile_state || 'n'),
         },
     ];
+}
+
+/**
+ * Double-line edit view preference (GnuCash desktop's View > Double Line
+ * mode). Persisted to localStorage like the other ledger view state
+ * (AccountHierarchy uses the same pattern for its expansion/sort toggles).
+ */
+export const DOUBLE_LINE_STORAGE_KEY = 'accountLedger.doubleLineEdit';
+
+export function readDoubleLinePreference(): boolean {
+    if (typeof window === 'undefined') return false;
+    try {
+        return localStorage.getItem(DOUBLE_LINE_STORAGE_KEY) === 'true';
+    } catch {
+        return false;
+    }
+}
+
+export function writeDoubleLinePreference(value: boolean): void {
+    if (typeof window === 'undefined') return;
+    try {
+        localStorage.setItem(DOUBLE_LINE_STORAGE_KEY, String(value));
+    } catch {
+        // localStorage unavailable (private mode/quota) — preference just won't persist
+    }
 }
 
 type HoldingPeriod = 'short_term' | 'long_term' | null;
@@ -357,6 +389,20 @@ export default function AccountLedger({
     const [accountCostBasisMethod, setAccountCostBasisMethod] = useState<string | null>(null);
 
     const isSlimEditMode = isEditMode && (ledgerViewStyle === 'journal' || ledgerViewStyle === 'autosplit');
+
+    // Double-line edit view (transaction notes + split memo on a second row).
+    // Loaded after mount so SSR markup stays deterministic.
+    const [doubleLineEdit, setDoubleLineEdit] = useState(false);
+    useEffect(() => {
+        setDoubleLineEdit(readDoubleLinePreference());
+    }, []);
+    const toggleDoubleLineEdit = useCallback(() => {
+        setDoubleLineEdit(prev => {
+            const next = !prev;
+            writeDoubleLinePreference(next);
+            return next;
+        });
+    }, []);
 
     // View mode keyboard shortcuts
     useKeyboardShortcut('view-basic', 'v b', 'Basic Ledger view', () => setLedgerViewStyle('basic'), 'page');
@@ -681,6 +727,10 @@ export default function AccountLedger({
         amount: string;
         original_enter_date?: string | null;
         splits?: Array<{ accountGuid: string; accountName: string; amount: number }>;
+        /** Double-line edit: this account's split memo. Undefined = untouched. */
+        memo?: string;
+        /** Double-line edit: transaction-level notes. Undefined = untouched. */
+        notes?: string;
     }) => {
         try {
             const tx = transactions.find(t => t.guid === guid);
@@ -761,15 +811,20 @@ export default function AccountLedger({
                     amountChanged,
                     transferChanged,
                     ownReconcileState: tx.account_split_reconcile_state,
+                    ownMemo: data.memo,
                 });
             }
 
             const body: Record<string, unknown> = {
                 currency_guid: currencyGuid,
+                // The PUT handler rewrites num from this body; carry the
+                // stored value through so an inline save cannot wipe it.
+                num: tx.num || '',
                 post_date: data.post_date,
                 description: data.description,
                 splits: bodySplits,
             };
+            if (data.notes !== undefined) body.notes = data.notes;
 
             let res: Response;
             if (isNewTransaction) {
@@ -818,13 +873,16 @@ export default function AccountLedger({
                     setTransactions(prev => prev.map(t => {
                         if (t.guid !== guid) return t;
                         const updatedSplits = t.splits?.map(s => {
-                            if (s.account_guid === accountGuid) return s;
+                            if (s.account_guid === accountGuid) {
+                                return data.memo !== undefined ? { ...s, memo: data.memo } : s;
+                            }
                             return { ...s, account_guid: data.accountGuid, account_name: data.accountName, account_fullname: data.accountName };
                         });
                         return {
                             ...t,
                             post_date: new Date(data.post_date + 'T12:00:00Z') as unknown as Date,
                             description: data.description,
+                            ...(data.notes !== undefined ? { notes: data.notes } : {}),
                             account_split_value: data.amount,
                             splits: updatedSplits,
                         };
@@ -866,10 +924,14 @@ export default function AccountLedger({
         const isNewTransaction = !tx.currency_guid;
         const body: Record<string, unknown> = {
             currency_guid: txData.currency_guid || accountCommodityGuid || '',
+            // Preserve the stored num — the PUT handler rewrites it from
+            // this body and would otherwise blank it on every journal save.
+            num: tx.num || '',
             post_date: txData.post_date,
             description: txData.description,
             splits: splitPayload,
         };
+        if (txData.notes !== undefined) body.notes = txData.notes;
 
         try {
             let res: Response;
@@ -2288,6 +2350,8 @@ export default function AccountLedger({
                         showUnreviewedOnly={showUnreviewedOnly}
                         onToggleUnreviewed={() => setShowUnreviewedOnly(prev => !prev)}
                         hasSubaccounts={hasChildren}
+                        doubleLine={doubleLineEdit}
+                        onToggleDoubleLine={toggleDoubleLineEdit}
                     />
                     {isInvestmentAccount && (
                         <button
@@ -2765,6 +2829,7 @@ export default function AccountLedger({
                                             onDuplicate={handleDuplicate}
                                             columnCount={table.getVisibleFlatColumns().length}
                                             columnIds={visibleColumnIds}
+                                            doubleLine={doubleLineEdit}
                                             onClick={() => { setFocusedRowIndex(index); setFocusedSplitIndex(-1); }}
                                             focusedColumn={index === focusedRowIndex && focusedSplitIndex === -1 ? focusedColumnIndex : undefined}
                                             onEnter={async () => {
@@ -2866,6 +2931,7 @@ export default function AccountLedger({
                                         onDuplicate={handleDuplicate}
                                         columnCount={table.getVisibleFlatColumns().length}
                                             columnIds={visibleColumnIds}
+                                        doubleLine={doubleLineEdit}
                                         onClick={() => setFocusedRowIndex(index)}
                                         focusedColumn={index === focusedRowIndex ? focusedColumnIndex : undefined}
                                         onEnter={async () => {
@@ -2929,6 +2995,7 @@ export default function AccountLedger({
                                             columnCount={row.getVisibleCells().length}
                                             onSave={handleInlineSave}
                                             onCancel={() => setEditingGuid(null)}
+                                            doubleLine={doubleLineEdit}
                                         />
                                     );
                                 }

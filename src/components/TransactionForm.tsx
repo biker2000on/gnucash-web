@@ -43,6 +43,53 @@ const createEmptySplit = (): SplitFormData => ({
     reconcile_state: 'n',
 });
 
+/**
+ * Build the two splits for a simple-mode (from -> to) entry.
+ *
+ * Memo placement matches GnuCash desktop's Transfer dialog
+ * (gnc-xfer-dialog.c), which writes the SAME memo onto BOTH splits of a
+ * simple two-split entry so it stays visible from either account's register.
+ * `memo === null` means "the user did not touch the memo field": each side
+ * then keeps its own stored memo, so differing per-split memos on an edited
+ * transaction are preserved rather than flattened.
+ *
+ * When editing an existing 2-split transaction, each side reuses the loaded
+ * split for the same account, so the split guid survives (the PUT handler
+ * keys action/lot/reconcile_date off it). Reconcile state follows the ledger
+ * inline-save rule: a split keeps its stored reconcile state only while its
+ * own amount and account are untouched.
+ */
+export function buildSimpleModeSplits(
+    simple: { amount: string; fromAccountGuid: string; toAccountGuid: string; memo: string | null },
+    priorSplits: SplitFormData[],
+): SplitFormData[] {
+    const amount = parseFloat(simple.amount) || 0;
+    const claimed = new Set<string>();
+    const makeSide = (accountGuid: string, side: 'from' | 'to'): SplitFormData => {
+        const prior = priorSplits.find(s => s.account_guid === accountGuid && !claimed.has(s.id));
+        if (prior) claimed.add(prior.id);
+        const debit = side === 'to' ? amount.toFixed(2) : '';
+        const credit = side === 'from' ? amount.toFixed(2) : '';
+        const amountUnchanged = Boolean(prior)
+            && Math.abs((parseFloat(prior!.debit) || 0) - (parseFloat(debit) || 0)) < 0.005
+            && Math.abs((parseFloat(prior!.credit) || 0) - (parseFloat(credit) || 0)) < 0.005;
+        return {
+            id: prior ? prior.id : crypto.randomUUID(),
+            account_guid: accountGuid,
+            account_name: prior?.account_name ?? '',
+            debit,
+            credit,
+            memo: simple.memo === null ? (prior?.memo ?? '') : simple.memo,
+            reconcile_state: amountUnchanged ? prior!.reconcile_state : 'n',
+            ...(prior?.exchange_rate !== undefined ? { exchange_rate: prior.exchange_rate } : {}),
+        };
+    };
+    return [
+        makeSide(simple.fromAccountGuid, 'from'),
+        makeSide(simple.toAccountGuid, 'to'),
+    ];
+}
+
 export function TransactionForm({
     transaction,
     onSave,
@@ -68,7 +115,12 @@ export function TransactionForm({
         amount: '',
         fromAccountGuid: defaultFromAccount,
         toAccountGuid: defaultToAccount,
+        memo: '',
     });
+    // The memo value simple mode was seeded with. While the field still holds
+    // this value the user hasn't touched it, and buildSimpleModeSplits keeps
+    // each split's own stored memo instead of overwriting both.
+    const initialSimpleMemoRef = useRef('');
     const formRef = useRef<HTMLDivElement>(null);
     const dateInputRef = useRef<HTMLInputElement>(null);
     const saveAndAnotherRef = useRef<(() => Promise<void>) | null>(null);
@@ -187,10 +239,15 @@ export function TransactionForm({
                 const debitSplit = splits.find(s => parseFloat(s.debit) > 0);
                 const creditSplit = splits.find(s => parseFloat(s.credit) > 0);
                 if (debitSplit && creditSplit) {
+                    // Seed the memo only when both splits agree; otherwise
+                    // leave it blank and preserve per-split memos on save.
+                    const sharedMemo = debitSplit.memo === creditSplit.memo ? debitSplit.memo : '';
+                    initialSimpleMemoRef.current = sharedMemo;
                     setSimpleData({
                         amount: debitSplit.debit,
                         fromAccountGuid: creditSplit.account_guid,
                         toAccountGuid: debitSplit.account_guid,
+                        memo: sharedMemo,
                     });
                 }
             }
@@ -233,11 +290,12 @@ export function TransactionForm({
             const debitSplit = split1.amount > 0 ? split1 : split2;
             const creditSplit = split1.amount < 0 ? split1 : split2;
 
-            setSimpleData({
+            setSimpleData(prev => ({
+                ...prev,
                 amount: Math.abs(debitSplit.amount).toFixed(2),
                 fromAccountGuid: creditSplit.accountGuid,
                 toAccountGuid: debitSplit.accountGuid,
-            });
+            }));
 
             success(`Auto-filled: ${Math.abs(debitSplit.amount).toFixed(2)} from ${creditSplit.accountName} to ${debitSplit.accountName}`);
         }
@@ -327,31 +385,16 @@ export function TransactionForm({
     };
 
     const switchToAdvanced = () => {
-        // Convert simple data to splits format
+        // Convert simple data to splits format, reusing loaded splits so an
+        // edit round-trip through modes keeps guids/reconcile states/memos.
         if (simpleData.amount && simpleData.fromAccountGuid && simpleData.toAccountGuid) {
-            const amount = parseFloat(simpleData.amount);
+            const memoEdited = simpleData.memo !== initialSimpleMemoRef.current;
             setFormData(prev => ({
                 ...prev,
-                splits: [
-                    {
-                        id: crypto.randomUUID(),
-                        account_guid: simpleData.fromAccountGuid,
-                        account_name: '',
-                        debit: '',
-                        credit: amount.toFixed(2),
-                        memo: '',
-                        reconcile_state: 'n',
-                    },
-                    {
-                        id: crypto.randomUUID(),
-                        account_guid: simpleData.toAccountGuid,
-                        account_name: '',
-                        debit: amount.toFixed(2),
-                        credit: '',
-                        memo: '',
-                        reconcile_state: 'n',
-                    },
-                ],
+                splits: buildSimpleModeSplits(
+                    { ...simpleData, memo: memoEdited ? simpleData.memo : null },
+                    prev.splits,
+                ),
             }));
         }
         setIsSimpleMode(false);
@@ -363,11 +406,15 @@ export function TransactionForm({
             const debitSplit = formData.splits.find(s => parseFloat(s.debit) > 0);
             const creditSplit = formData.splits.find(s => parseFloat(s.credit) > 0);
             if (debitSplit && creditSplit) {
-                setSimpleData({
+                const sharedMemo = debitSplit.memo === creditSplit.memo ? debitSplit.memo : '';
+                initialSimpleMemoRef.current = sharedMemo;
+                setSimpleData(prev => ({
+                    ...prev,
                     amount: debitSplit.debit,
                     fromAccountGuid: creditSplit.account_guid,
                     toAccountGuid: debitSplit.account_guid,
-                });
+                    memo: sharedMemo,
+                }));
             }
         }
         setIsSimpleMode(true);
@@ -494,28 +541,15 @@ export function TransactionForm({
         let submissionSplits: SplitFormData[];
 
         if (isSimpleMode) {
-            // Generate splits from simple data
-            const amount = parseFloat(simpleData.amount);
-            submissionSplits = [
-                {
-                    id: crypto.randomUUID(),
-                    account_guid: simpleData.fromAccountGuid,
-                    account_name: '',
-                    debit: '',
-                    credit: amount.toFixed(2),
-                    memo: '',
-                    reconcile_state: 'n',
-                },
-                {
-                    id: crypto.randomUUID(),
-                    account_guid: simpleData.toAccountGuid,
-                    account_name: '',
-                    debit: amount.toFixed(2),
-                    credit: '',
-                    memo: '',
-                    reconcile_state: 'n',
-                },
-            ];
+            // Generate splits from simple data. When editing, loaded splits
+            // are reused so guids and reconcile states survive; the memo is
+            // written to BOTH splits (GnuCash desktop Transfer dialog
+            // behavior) unless the user left a seeded memo untouched.
+            const memoEdited = simpleData.memo !== initialSimpleMemoRef.current;
+            submissionSplits = buildSimpleModeSplits(
+                { ...simpleData, memo: memoEdited ? simpleData.memo : null },
+                formData.splits,
+            );
         } else {
             submissionSplits = formData.splits;
         }
@@ -566,10 +600,12 @@ export function TransactionForm({
             num: '',
             splits: [createEmptySplit(), createEmptySplit()],
         }));
+        initialSimpleMemoRef.current = '';
         setSimpleData({
             amount: '',
             fromAccountGuid: defaultFromAccount,
             toAccountGuid: defaultToAccount,
+            memo: '',
         });
         setErrors([]);
         setFieldErrors({});
@@ -730,9 +766,10 @@ export function TransactionForm({
                 </div>
             )}
 
-            {/* Header Fields */}
+            {/* Header Fields — GnuCash register proportions: narrow Date and
+                Num beside each other, Description takes the width. */}
             <div className="flex flex-col md:flex-row gap-3">
-                <div className="md:w-1/3">
+                <div className="md:w-40">
                     <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-1">
                         Date
                     </label>
@@ -790,6 +827,19 @@ export function TransactionForm({
                         />
                     )}
                 </div>
+                {/* Num recedes: check-number width, mono digits, muted text */}
+                <div className="md:w-24">
+                    <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-1">
+                        Num
+                    </label>
+                    <input
+                        type="text"
+                        value={formData.num}
+                        onChange={(e) => setFormData(f => ({ ...f, num: e.target.value }))}
+                        placeholder="Check #"
+                        className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm font-mono text-foreground-secondary placeholder-foreground-muted focus:outline-none focus:border-primary/50"
+                    />
+                </div>
                 <div className="md:flex-1">
                     <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-1">
                         Description
@@ -803,19 +853,6 @@ export function TransactionForm({
                         hasError={!!fieldErrors.description}
                     />
                 </div>
-            </div>
-
-            <div>
-                <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-1">
-                    Number/Reference
-                </label>
-                <input
-                    type="text"
-                    value={formData.num}
-                    onChange={(e) => setFormData(f => ({ ...f, num: e.target.value }))}
-                    placeholder="Check #, reference, etc."
-                    className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder-foreground-muted focus:outline-none focus:border-primary/50"
-                />
             </div>
 
             {/* Mode Toggle and Content */}
@@ -908,6 +945,21 @@ export function TransactionForm({
                                 placeholder="Select destination account..."
                             />
                         </div>
+                    </div>
+
+                    {/* Memo — written to both splits, like GnuCash desktop's
+                        Transfer dialog for a simple two-split entry */}
+                    <div>
+                        <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-1">
+                            Memo
+                        </label>
+                        <input
+                            type="text"
+                            value={simpleData.memo}
+                            onChange={(e) => setSimpleData(prev => ({ ...prev, memo: e.target.value }))}
+                            placeholder="Optional memo (saved on both splits)"
+                            className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder-foreground-muted focus:outline-none focus:border-primary/50"
+                        />
                     </div>
                 </div>
             ) : (

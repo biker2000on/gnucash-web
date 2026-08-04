@@ -7,17 +7,47 @@
  * so nothing downstream flags it.
  */
 
-import { describe, it, expect } from 'vitest';
-import { createRef } from 'react';
-import { render } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { createRef, type ComponentProps } from 'react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import type { Split } from '@/lib/types';
 import EditableSplitRows, {
     hasNonCurrencySplit,
     isNonCurrencySplit,
     type EditableSplitRowsHandle,
 } from '../EditableSplitRows';
-import { splitFractions, inlineTwoSplitPayload } from '@/components/AccountLedger';
+import { EditableRow, type EditableRowHandle } from '../EditableRow';
+import {
+    splitFractions,
+    inlineTwoSplitPayload,
+    DOUBLE_LINE_STORAGE_KEY,
+    readDoubleLinePreference,
+    writeDoubleLinePreference,
+} from '@/components/AccountLedger';
 import type { AccountTransaction } from '@/components/AccountLedger';
+
+// EditableRow pulls in preference context and autocomplete cells; stub the
+// heavy ones so the double-line tests exercise only the row's own logic.
+vi.mock('@/contexts/UserPreferencesContext', () => ({
+    useUserPreferences: () => ({
+        balanceReversal: 'none',
+        dateFormat: 'MM/DD/YYYY',
+        defaultTaxRate: 0,
+    }),
+}));
+vi.mock('@/contexts/ToastContext', () => ({
+    useToast: () => ({ success: vi.fn(), error: vi.fn() }),
+}));
+vi.mock('../cells/DescriptionCell', () => ({
+    DescriptionCell: (props: { value: string; onChange: (v: string) => void }) => (
+        <input aria-label="Description" value={props.value} onChange={e => props.onChange(e.target.value)} />
+    ),
+}));
+vi.mock('../cells/AccountCell', () => ({
+    AccountCell: (props: { value: string; onChange: (guid: string, name: string) => void }) => (
+        <input aria-label="Account" value={props.value} onChange={e => props.onChange(e.target.value, e.target.value)} />
+    ),
+}));
 
 const CASH_GUID = 'cash0000000000000000000000000001';
 const STOCK_GUID = 'stok0000000000000000000000000001';
@@ -239,6 +269,41 @@ describe('inlineTwoSplitPayload', () => {
         expect(other).toMatchObject({ memo: '', reconcile_state: 'n', value_num: -1_234, value_denom: 100 });
         expect(own.guid).toBeUndefined();
     });
+
+    it('applies a double-line memo edit without resetting either reconcile state', () => {
+        const [own, other] = inlineTwoSplitPayload({
+            ...base,
+            amountChanged: false,
+            transferChanged: false,
+            ownMemo: 'edited via double-line',
+        });
+
+        // The memo edit lands on this account's split only...
+        expect(own.memo).toBe('edited via double-line');
+        expect(other.memo).toBe('employer deposit');
+        // ...and reconcile states survive on BOTH sides: a memo is a user
+        // annotation, unrelated to the amounts a statement was reconciled
+        // against.
+        expect(own.reconcile_state).toBe('y');
+        expect(other.reconcile_state).toBe('c');
+        expect(own.guid).toBe(OWN.guid);
+        expect(other.guid).toBe(OTHER.guid);
+        // Stored fractions come back verbatim — a memo edit is not an
+        // amount edit.
+        expect(own.value_num).toBe(150_000);
+        expect(own.quantity_num).toBe(150_000);
+    });
+
+    it('clears a memo explicitly when ownMemo is the empty string', () => {
+        const [own] = inlineTwoSplitPayload({
+            ...base,
+            amountChanged: false,
+            transferChanged: false,
+            ownMemo: '',
+        });
+        expect(own.memo).toBe('');
+        expect(own.reconcile_state).toBe('y');
+    });
 });
 
 describe('EditableSplitRows.getSplitPayload', () => {
@@ -314,5 +379,150 @@ describe('EditableSplitRows.getSplitPayload', () => {
             memo: 'lot A',
             reconcile_state: 'c',
         });
+    });
+});
+
+describe('EditableRow double-line view', () => {
+    const INCOME_GUID = 'inco0000000000000000000000000001';
+    const OWN = makeSplit({
+        guid: 'split000000000000000000000000021',
+        account_guid: CASH_GUID,
+        account_name: 'Checking',
+        memo: 'stored own memo',
+        reconcile_state: 'y',
+        value_num: 150_000, value_denom: 100,
+        quantity_num: 150_000, quantity_denom: 100,
+    });
+    const OTHER = makeSplit({
+        guid: 'split000000000000000000000000022',
+        account_guid: INCOME_GUID,
+        account_name: 'Salary',
+        memo: 'other memo',
+        reconcile_state: 'c',
+        value_num: -150_000, value_denom: 100,
+        quantity_num: -150_000, quantity_denom: 100,
+    });
+    const TX = {
+        guid: 'tx00000000000000000000000000002',
+        currency_guid: 'usd0000000000000000000000000001',
+        num: '1042',
+        post_date: new Date('2026-01-15T12:00:00Z'),
+        enter_date: new Date('2026-01-15T12:00:00Z'),
+        description: 'Paycheck',
+        notes: 'stored notes',
+        splits: [OWN, OTHER],
+        running_balance: '1500.00',
+        account_split_value: '1500.00',
+        commodity_mnemonic: 'USD',
+        account_split_guid: OWN.guid,
+        account_split_reconcile_state: 'y',
+    } as AccountTransaction;
+
+    function renderRow(overrides: Partial<ComponentProps<typeof EditableRow>> = {}) {
+        const ref = createRef<EditableRowHandle>();
+        const onSave = vi.fn().mockResolvedValue(undefined);
+        render(
+            <table><tbody>
+                <EditableRow
+                    ref={ref}
+                    transaction={TX}
+                    accountGuid={CASH_GUID}
+                    accountType="BANK"
+                    isActive={true}
+                    showCheckbox={false}
+                    isChecked={false}
+                    onToggleCheck={() => {}}
+                    onSave={onSave}
+                    onEditModal={() => {}}
+                    columnCount={7}
+                    doubleLine={true}
+                    {...overrides}
+                />
+            </tbody></table>,
+        );
+        return { ref, onSave };
+    }
+
+    it('shows notes and the account split memo on the second line', () => {
+        renderRow();
+        expect(screen.getByLabelText('Transaction notes')).toHaveValue('stored notes');
+        expect(screen.getByLabelText('Split memo')).toHaveValue('stored own memo');
+    });
+
+    it('renders no second line when the toggle is off', () => {
+        renderRow({ doubleLine: false });
+        expect(screen.queryByLabelText('Transaction notes')).not.toBeInTheDocument();
+        expect(screen.queryByLabelText('Split memo')).not.toBeInTheDocument();
+    });
+
+    it('saves edited memo and notes without touching amount fields', async () => {
+        const { ref, onSave } = renderRow();
+
+        fireEvent.change(screen.getByLabelText('Transaction notes'), { target: { value: 'new notes' } });
+        fireEvent.change(screen.getByLabelText('Split memo'), { target: { value: 'new memo' } });
+
+        expect(ref.current!.isDirty()).toBe(true);
+        await ref.current!.save();
+
+        expect(onSave).toHaveBeenCalledTimes(1);
+        const [, data] = onSave.mock.calls[0];
+        expect(data).toMatchObject({
+            memo: 'new memo',
+            notes: 'new notes',
+            // Amount is untouched, so handleInlineSave computes
+            // amountChanged=false and reconcile states survive.
+            amount: '1500.00',
+            description: 'Paycheck',
+        });
+    });
+
+    it('omits memo and notes from the payload when untouched', async () => {
+        const { ref, onSave } = renderRow();
+
+        fireEvent.change(screen.getByLabelText('Transaction notes'), { target: { value: 'only notes changed' } });
+        await ref.current!.save();
+
+        const [, data] = onSave.mock.calls[0];
+        expect(data.notes).toBe('only notes changed');
+        expect(data).not.toHaveProperty('memo');
+    });
+
+    it('is not dirty until a double-line field actually changes', () => {
+        const { ref } = renderRow();
+        expect(ref.current!.isDirty()).toBe(false);
+    });
+
+    it('carries edited notes through getTransactionData for journal saves', () => {
+        const { ref } = renderRow({ ledgerViewStyle: 'journal' });
+        fireEvent.change(screen.getByLabelText('Transaction notes'), { target: { value: 'journal notes' } });
+        expect(ref.current!.isDirty()).toBe(true);
+        expect(ref.current!.getTransactionData()).toMatchObject({
+            description: 'Paycheck',
+            notes: 'journal notes',
+        });
+    });
+});
+
+describe('double-line view preference persistence', () => {
+    beforeEach(() => {
+        localStorage.clear();
+    });
+
+    it('defaults to single-line', () => {
+        expect(readDoubleLinePreference()).toBe(false);
+    });
+
+    it('round-trips through localStorage like other ledger view state', () => {
+        writeDoubleLinePreference(true);
+        expect(localStorage.getItem(DOUBLE_LINE_STORAGE_KEY)).toBe('true');
+        expect(readDoubleLinePreference()).toBe(true);
+
+        writeDoubleLinePreference(false);
+        expect(readDoubleLinePreference()).toBe(false);
+    });
+
+    it('treats junk stored values as off', () => {
+        localStorage.setItem(DOUBLE_LINE_STORAGE_KEY, 'banana');
+        expect(readDoubleLinePreference()).toBe(false);
     });
 });

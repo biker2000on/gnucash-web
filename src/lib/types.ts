@@ -85,6 +85,8 @@ export interface Transaction {
     post_date: Date;
     enter_date: Date;
     description: string;
+    /** Transaction-level notes (GnuCash stores these in the `slots` table, name='notes'). */
+    notes?: string | null;
     splits?: Split[];
     tags?: TransactionTag[];
 }
@@ -148,6 +150,11 @@ export interface CreateTransactionRequest {
     num?: string;
     post_date: string;
     description: string;
+    /**
+     * Transaction-level notes. Omitted = leave stored notes untouched;
+     * '' = clear; non-empty = set. Stored in the `slots` table (name='notes').
+     */
+    notes?: string;
     splits: {
         guid?: string; // Client-generated split GUID for optimistic matching
         account_guid: string;
