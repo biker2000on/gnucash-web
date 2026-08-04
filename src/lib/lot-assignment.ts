@@ -16,6 +16,9 @@ import {
   splitSellAcrossLots,
   splitTransferAcrossSourceLots,
   generateCapitalGains,
+  valueZeroValueTrade,
+  assignAdjustmentToLots,
+  qtyEpsilonForScu,
   type OpenLot,
   type PrismaTx,
 } from './lot-scrub';
@@ -106,6 +109,55 @@ async function createLot(
   return guid;
 }
 
+/** Read a lot's acquisition_date slot (carried through transfers), if any. */
+async function readLotAcquisitionDate(lotGuid: string, tx: PrismaTx): Promise<Date | null> {
+  const slot = await tx.slots.findFirst({
+    where: { obj_guid: lotGuid, name: 'acquisition_date' },
+    select: { string_val: true },
+  });
+  if (!slot?.string_val) return null;
+  const d = new Date(slot.string_val);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/**
+ * Order open lots for consumption by one sale. `openLots` holds only lots
+ * that exist AT the sale date (the caller replays events chronologically), so
+ * LIFO here is true LIFO: the newest lot existing at the sell date, never a
+ * buy dated after the sell. Ordering uses each lot's openDate, which for
+ * transferred lots is the CARRIED acquisition date, not the transfer date.
+ * The returned array holds the SAME lot objects (mutation flows through).
+ */
+export function orderLotsForConsumption(openLots: OpenLot[], strategy: 'fifo' | 'lifo'): OpenLot[] {
+  const ordered = [...openLots].sort(
+    (a, b) => (a.openDate?.getTime() || 0) - (b.openDate?.getTime() || 0),
+  );
+  return strategy === 'lifo' ? ordered.reverse() : ordered;
+}
+
+type ScrubEventKind = 'transfer_in' | 'buy' | 'sell' | 'adjustment';
+
+interface ScrubEvent {
+  kind: ScrubEventKind;
+  split: SplitForAssignment;
+  /** Stable tiebreak for same-date events: original fetch order. */
+  seq: number;
+}
+
+/**
+ * Chronological event order: post_date ascending, original order as tiebreak.
+ * A sale replayed at its own date can only consume lots that existed then —
+ * this ordering (not a lots-first pass) is what makes LIFO time-correct.
+ */
+export function sortScrubEvents(events: ScrubEvent[]): ScrubEvent[] {
+  return [...events].sort((a, b) => {
+    const da = a.split.post_date?.getTime() || 0;
+    const db = b.split.post_date?.getTime() || 0;
+    if (da !== db) return da - db;
+    return a.seq - b.seq;
+  });
+}
+
 async function assignWithStrategy(
   accountGuid: string,
   tx: PrismaTx,
@@ -114,14 +166,15 @@ async function assignWithStrategy(
   const runId = generateGuid();
   const warnings: string[] = [];
 
-  // Fetch account commodity_guid for transfer detection
+  // Fetch account commodity for transfer detection + commodity-aware epsilon
   const account = await tx.accounts.findUnique({
     where: { guid: accountGuid },
-    select: { commodity_guid: true },
+    select: { commodity_guid: true, commodity_scu: true },
   });
   if (!account) {
     throw new Error(`Account not found: ${accountGuid}`);
   }
+  const qtyEps = qtyEpsilonForScu(account.commodity_scu);
 
   const splits = await getUnassignedSplits(accountGuid, tx);
   if (splits.length === 0) {
@@ -132,45 +185,79 @@ async function assignWithStrategy(
     };
   }
 
-  // Classify splits: transfers-in, buys, sells
-  const transferIns: SplitForAssignment[] = [];
-  const buys: SplitForAssignment[] = [];
-  const sells: SplitForAssignment[] = [];
+  // ── Classify splits: transfer-in, buy, sell, or stock-split adjustment ──
+  // Zero-value legs get special treatment BEFORE classification:
+  //  - opposite-commodity counter with quantity (crypto-for-crypto trade):
+  //    value both legs from the price DB (valueZeroValueTrade);
+  //  - no counter quantity anywhere (true stock split / reverse split):
+  //    scale existing lots instead of buying at $0 / selling for $0.
+  const events: ScrubEvent[] = [];
+  let seq = 0;
+  let splitsCreated = 0;
 
   for (const s of splits) {
     const qty = toDecimalNumber(s.quantity_num, s.quantity_denom);
-    if (qty < 0) {
-      sells.push(s);
+    if (Math.abs(qty) <= qtyEps) continue;
+
+    const txSplits = (await tx.splits.findMany({
+      where: { tx_guid: s.tx_guid },
+      include: {
+        account: { select: { guid: true, commodity_guid: true, account_type: true } },
+      },
+    })) ?? [];
+
+    const matchingSend = qty > 0
+      ? txSplits.find(
+          ts =>
+            ts.account_guid !== accountGuid &&
+            ts.account?.commodity_guid === account.commodity_guid &&
+            ts.account?.account_type !== 'TRADING' &&
+            toDecimalNumber(ts.quantity_num, ts.quantity_denom) < 0
+        )
+      : undefined;
+    if (matchingSend) {
+      events.push({ kind: 'transfer_in', split: s, seq: seq++ });
       continue;
     }
-    if (qty > 0) {
-      // Check if this is a transfer-in: same transaction has a negative-qty split
-      // from another account with the same commodity
-      const txSplits = await tx.splits.findMany({
-        where: { tx_guid: s.tx_guid },
-        include: {
-          account: { select: { guid: true, commodity_guid: true, account_type: true } },
-        },
-      });
-      const matchingSend = txSplits.find(
+
+    const value = toDecimalNumber(s.value_num, s.value_denom);
+    if (Math.abs(value) < 0.005) {
+      const hasSameCommodityCounter = txSplits.some(
         ts =>
           ts.account_guid !== accountGuid &&
           ts.account?.commodity_guid === account.commodity_guid &&
           ts.account?.account_type !== 'TRADING' &&
-          toDecimalNumber(ts.quantity_num, ts.quantity_denom) < 0
+          Math.abs(toDecimalNumber(ts.quantity_num, ts.quantity_denom)) > 0
       );
-      if (matchingSend) {
-        transferIns.push(s);
-      } else {
-        buys.push(s);
+      const hasOtherCommodityCounter = txSplits.some(
+        ts =>
+          ts.account_guid !== s.account_guid &&
+          ts.account?.commodity_guid &&
+          ts.account.commodity_guid !== account.commodity_guid &&
+          ts.account?.account_type !== 'TRADING' &&
+          Math.abs(toDecimalNumber(ts.quantity_num, ts.quantity_denom)) > 0
+      );
+
+      if (!hasSameCommodityCounter && hasOtherCommodityCounter) {
+        // Zero-value commodity-for-commodity trade — value it from the price DB.
+        const traded = await valueZeroValueTrade(s.guid, runId, tx);
+        if (traded.warning) warnings.push(traded.warning);
+        events.push({ kind: qty > 0 ? 'buy' : 'sell', split: s, seq: seq++ });
+        continue;
       }
+      if (!hasSameCommodityCounter && !hasOtherCommodityCounter) {
+        // Stock split / reverse split: single-account quantity change.
+        events.push({ kind: 'adjustment', split: s, seq: seq++ });
+        continue;
+      }
+      // Same-commodity counter (transfer-out) or unrecognized shape: fall
+      // through to buy/sell handling below.
     }
+
+    events.push({ kind: qty > 0 ? 'buy' : 'sell', split: s, seq: seq++ });
   }
 
-  buys.sort((a, b) => (a.post_date?.getTime() || 0) - (b.post_date?.getTime() || 0));
-
   let lotsCreated = 0;
-  let splitsCreated = 0;
 
   // Load existing open lots
   const existingLots = await tx.lots.findMany({
@@ -182,73 +269,96 @@ async function assignWithStrategy(
     },
   });
 
-  // Build openLots array
+  // Build openLots array. openDate = carried acquisition date when present
+  // (transferred lots must be consumed by their ORIGINAL purchase date, not
+  // the transfer date), else the earliest split date.
   const openLots: OpenLot[] = [];
 
   for (const lot of existingLots) {
     const shares = lot.splits.reduce(
       (sum, s) => sum + toDecimalNumber(s.quantity_num, s.quantity_denom), 0
     );
-    if (shares > 0.0001) {
-      // Get the earliest split date for the lot
-      const lotSplits = await tx.splits.findMany({
-        where: { lot_guid: lot.guid },
-        include: { transaction: { select: { post_date: true } } },
-        orderBy: { transaction: { post_date: 'asc' } },
-        take: 1,
-      });
-      const openDate = lotSplits[0]?.transaction?.post_date ?? null;
+    if (shares > qtyEps) {
+      const acqDate = await readLotAcquisitionDate(lot.guid, tx);
+      let openDate = acqDate;
+      if (!openDate) {
+        const lotSplits = await tx.splits.findMany({
+          where: { lot_guid: lot.guid },
+          include: { transaction: { select: { post_date: true } } },
+          orderBy: { transaction: { post_date: 'asc' } },
+          take: 1,
+        });
+        openDate = lotSplits[0]?.transaction?.post_date ?? null;
+      }
       openLots.push({ guid: lot.guid, shares, openDate });
     }
   }
 
-  // Process transfer-ins first (they create new lots, potentially multiple per transfer)
-  for (const transfer of transferIns) {
-    const result = await splitTransferAcrossSourceLots(transfer.guid, runId, tx);
-    lotsCreated += result.lotsCreated;
-    splitsCreated += result.subSplitsCreated;
-    // Add each created lot to openLots
-    for (const lotGuid of result.lotGuids) {
-      // Look up the lot's splits to determine its share count
-      const lotSplits = await tx.splits.findMany({
-        where: { lot_guid: lotGuid },
-        select: { quantity_num: true, quantity_denom: true },
-      });
-      const shares = lotSplits.reduce(
-        (sum, s) => sum + toDecimalNumber(s.quantity_num, s.quantity_denom), 0,
-      );
-      openLots.push({ guid: lotGuid, shares, openDate: transfer.post_date });
-    }
-  }
+  // ── Chronological per-event replay ──────────────────────────────────────
+  // Events are processed in post-date order so every sale sees exactly the
+  // lots that existed at its date. This is what makes LIFO consume "the
+  // newest lot existing AT the sell date" instead of buys made afterwards.
+  let sellCount = 0;
+  let buyCount = 0;
+  let transferCount = 0;
+  let adjustmentCount = 0;
 
-  // Process buys — each buy creates a new lot
-  for (const buy of buys) {
-    const dateStr = buy.post_date
-      ? buy.post_date.toISOString().split('T')[0]
-      : 'Unknown';
-    const title = `Buy ${dateStr}`;
-    const lotGuid = await createLot(accountGuid, title, runId, tx);
-    lotsCreated++;
+  for (const event of sortScrubEvents(events)) {
+    const s = event.split;
+    switch (event.kind) {
+      case 'transfer_in': {
+        const result = await splitTransferAcrossSourceLots(s.guid, runId, tx);
+        lotsCreated += result.lotsCreated;
+        splitsCreated += result.subSplitsCreated;
+        transferCount++;
+        // Add each created lot to openLots, ordered by CARRIED acquisition date
+        for (const lotGuid of result.lotGuids) {
+          const lotSplits = await tx.splits.findMany({
+            where: { lot_guid: lotGuid },
+            select: { quantity_num: true, quantity_denom: true },
+          });
+          const shares = lotSplits.reduce(
+            (sum, ls) => sum + toDecimalNumber(ls.quantity_num, ls.quantity_denom), 0,
+          );
+          const acqDate = await readLotAcquisitionDate(lotGuid, tx);
+          openLots.push({ guid: lotGuid, shares, openDate: acqDate ?? s.post_date });
+        }
+        break;
+      }
+      case 'buy': {
+        const dateStr = s.post_date
+          ? s.post_date.toISOString().split('T')[0]
+          : 'Unknown';
+        const lotGuid = await createLot(accountGuid, `Buy ${dateStr}`, runId, tx);
+        lotsCreated++;
+        buyCount++;
 
-    await tx.splits.update({
-      where: { guid: buy.guid },
-      data: { lot_guid: lotGuid },
-    });
+        await tx.splits.update({
+          where: { guid: s.guid },
+          data: { lot_guid: lotGuid },
+        });
 
-    const qty = toDecimalNumber(buy.quantity_num, buy.quantity_denom);
-    openLots.push({ guid: lotGuid, shares: qty, openDate: buy.post_date });
-  }
-
-  // Sort openLots by date for FIFO, reverse for LIFO
-  openLots.sort((a, b) => (a.openDate?.getTime() || 0) - (b.openDate?.getTime() || 0));
-  const searchOrder = strategy === 'lifo' ? [...openLots].reverse() : openLots;
-
-  // Process sells using scrub engine
-  for (const sell of sells) {
-    const result = await splitSellAcrossLots(sell.guid, searchOrder, runId, tx);
-    splitsCreated += result.subSplitsCreated.length;
-    if (result.warning) {
-      warnings.push(result.warning);
+        const qty = toDecimalNumber(s.quantity_num, s.quantity_denom);
+        openLots.push({ guid: lotGuid, shares: qty, openDate: s.post_date });
+        break;
+      }
+      case 'adjustment': {
+        const result = await assignAdjustmentToLots(s.guid, openLots, runId, tx, qtyEps);
+        splitsCreated += result.subSplitsCreated.length;
+        adjustmentCount++;
+        if (result.warning) warnings.push(result.warning);
+        break;
+      }
+      case 'sell': {
+        const searchOrder = orderLotsForConsumption(openLots, strategy);
+        const result = await splitSellAcrossLots(s.guid, searchOrder, runId, tx, qtyEps);
+        splitsCreated += result.subSplitsCreated.length;
+        sellCount++;
+        if (result.warning) {
+          warnings.push(result.warning);
+        }
+        break;
+      }
     }
   }
 
@@ -257,7 +367,7 @@ async function assignWithStrategy(
   let totalRealizedGain = 0;
 
   for (const lot of openLots) {
-    if (Math.abs(lot.shares) < 0.0001) {
+    if (Math.abs(lot.shares) < qtyEps) {
       const gainsResult = await generateCapitalGains(lot.guid, runId, tx);
       if (gainsResult.gainsTransactionGuid) {
         gainsTransactions++;
@@ -270,7 +380,7 @@ async function assignWithStrategy(
     }
   }
 
-  const splitsAssigned = transferIns.length + buys.length + sells.length;
+  const splitsAssigned = transferCount + buyCount + sellCount + adjustmentCount;
 
   return {
     lotsCreated,
@@ -544,7 +654,7 @@ export async function clearLotAssignments(
       await tx.slots.deleteMany({
         where: {
           obj_guid: { in: deleteGuids },
-          name: { in: ['title', 'source_lot_guid', 'acquisition_date', 'gnucash_web_generated'] },
+          name: { in: ['title', 'source_lot_guid', 'acquisition_date', 'carried_basis', 'gnucash_web_generated'] },
         },
       });
       await tx.lots.deleteMany({
@@ -964,21 +1074,52 @@ export async function detectWashSales(
   const MS_PER_DAY = 24 * 60 * 60 * 1000;
   const utcDayMs = (d: Date) => Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
 
-  for (const accounts of accountsByCommodity.values()) {
+  for (const [commodityGuid, accounts] of accountsByCommodity.entries()) {
     const accountGuids = accounts.map(a => a.guid);
     const ticker = accounts[0].commodity?.mnemonic || 'Unknown';
 
     const allSplits = await prisma.splits.findMany({
       where: { account_guid: { in: accountGuids } },
       include: {
-        transaction: { select: { post_date: true } },
+        transaction: {
+          select: {
+            post_date: true,
+            // Sibling splits let us tell a genuine purchase from a
+            // transfer-in sub-split (same-commodity negative counter in
+            // another non-TRADING account).
+            splits: {
+              select: {
+                guid: true,
+                account_guid: true,
+                quantity_num: true,
+                quantity_denom: true,
+                account: { select: { commodity_guid: true, account_type: true } },
+              },
+            },
+          },
+        },
       },
       orderBy: { transaction: { post_date: 'asc' } },
     });
 
-    // Identify sells and buys
+    type WashSplit = (typeof allSplits)[number];
+    /** Transfer-in: shares arriving from the user's own other account — NOT replacement shares. */
+    const isTransferInSplit = (s: WashSplit): boolean => {
+      const siblings = s.transaction?.splits ?? [];
+      return siblings.some(o =>
+        o.account_guid !== s.account_guid &&
+        o.account?.commodity_guid === commodityGuid &&
+        o.account?.account_type !== 'TRADING' &&
+        toDecimalNumber(o.quantity_num, o.quantity_denom) < 0,
+      );
+    };
+
+    // Identify sells and buys. Transfer-ins are excluded from BOTH the
+    // replacement-share candidates and the loss heuristic: moving shares
+    // between one's own accounts is not an acquisition under §1091.
     const buys = allSplits.filter(s =>
-      toDecimalNumber(s.quantity_num, s.quantity_denom) > 0
+      toDecimalNumber(s.quantity_num, s.quantity_denom) > 0 &&
+      !isTransferInSplit(s)
     );
 
     // For sells, determine if they were at a loss using lot data or heuristic
@@ -1020,8 +1161,14 @@ export async function detectWashSales(
         }
       }
 
-      // Fallback: compare sell proceeds per share against average buy cost per share
-      const accountBuys = buys.filter(b => b.account_guid === s.account_guid);
+      // Fallback: compare sell proceeds per share against average buy cost per
+      // share. Only buys ON OR BEFORE the sell date can have supplied the sold
+      // shares — averaging in later purchases distorts the cost basis.
+      const sellPostDate = s.transaction?.post_date ?? null;
+      const accountBuys = buys.filter(b =>
+        b.account_guid === s.account_guid &&
+        (!sellPostDate || (b.transaction?.post_date && b.transaction.post_date <= sellPostDate)),
+      );
       if (accountBuys.length > 0) {
         const totalBuyQty = accountBuys.reduce(
           (sum, b) => sum + toDecimalNumber(b.quantity_num, b.quantity_denom), 0
@@ -1048,6 +1195,10 @@ export async function detectWashSales(
       for (const buy of buys) {
         const buyDate = buy.transaction?.post_date;
         if (!buyDate) continue;
+        // The sold shares' OWN lot-opening buy is not replacement stock — a
+        // sale must never flag against the very purchase it disposes of
+        // (DRIP-heavy accounts would flag every sale otherwise).
+        if (buy.lot_guid && sell.lot_guid && buy.lot_guid === sell.lot_guid) continue;
         const daysApart = Math.abs(utcDayMs(buyDate) - sellDayMs) / MS_PER_DAY;
 
         if (daysApart <= WASH_WINDOW_DAYS && buy.guid !== sell.guid) {

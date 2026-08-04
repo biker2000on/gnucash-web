@@ -141,3 +141,78 @@ describe('the 30-day window is measured in CALENDAR days', () => {
     expect(await scenario(null)).toHaveLength(0);
   });
 });
+
+describe('false-positive exclusions', () => {
+  it('a sale does not flag against its OWN lot-opening buy', async () => {
+    // The purchase that opened the sold lot sits 12 days before the sale —
+    // inside the 30-day window — but those are the very shares being sold,
+    // not replacement stock. (DRIP-heavy accounts drown in noise otherwise.)
+    mockAccountsFindMany.mockResolvedValue([
+      { guid: ACCT, name: 'Brokerage', commodity_guid: COMMODITY, commodity: { mnemonic: 'AAPL' } },
+    ]);
+    mockLotsFindMany.mockResolvedValue([{
+      guid: 'lot-1',
+      splits: [
+        { quantity_num: 1_000_000n, quantity_denom: 10_000n, value_num: 500_000n, value_denom: 100n },
+        { quantity_num: -1_000_000n, quantity_denom: 10_000n, value_num: -400_000n, value_denom: 100n },
+      ],
+    }]);
+    mockSplitsFindMany.mockResolvedValue([
+      raw('buy-own-lot', '2024-05-20T12:00:00.000Z', 100, 5_000, 'lot-1'),
+      raw('sell', '2024-06-01T12:00:00.000Z', -100, -4_000, 'lot-1'),
+    ]);
+
+    const washes = await detectWashSales([ACCT]);
+    expect(washes).toHaveLength(0);
+  });
+
+  it('a transfer-in sub-split is not replacement stock', async () => {
+    // Shares moved in from the user's OWN other account within the window:
+    // §1091 replacement stock must be acquired, not relocated.
+    mockAccountsFindMany.mockResolvedValue([
+      { guid: ACCT, name: 'Brokerage', commodity_guid: COMMODITY, commodity: { mnemonic: 'AAPL' } },
+    ]);
+    mockLotsFindMany.mockResolvedValue([LOSS_LOT]);
+    const transferIn = {
+      ...raw('xfer-in', '2024-06-10T12:00:00.000Z', 50, 0),
+      transaction: {
+        post_date: new Date('2024-06-10T12:00:00.000Z'),
+        splits: [
+          {
+            guid: 'xfer-out',
+            account_guid: 'acct-other-brokerage',
+            quantity_num: -500_000n,
+            quantity_denom: 10_000n,
+            account: { commodity_guid: COMMODITY, account_type: 'STOCK' },
+          },
+        ],
+      },
+    };
+    mockSplitsFindMany.mockResolvedValue([
+      raw('buy-original', '2024-01-01T12:00:00.000Z', 100, 5_000, 'lot-1'),
+      raw('sell', '2024-06-01T12:00:00.000Z', -100, -4_000, 'lot-1'),
+      transferIn,
+    ]);
+
+    const washes = await detectWashSales([ACCT]);
+    expect(washes).toHaveLength(0);
+  });
+
+  it('the no-lot loss heuristic averages only buys ON OR BEFORE the sell date', async () => {
+    // Pre-sale basis $30/share, sold at $35/share — a GAIN. An expensive
+    // post-sale buy ($100/share) used to drag the average cost to $65 and
+    // fabricate a loss + wash-sale flag.
+    mockAccountsFindMany.mockResolvedValue([
+      { guid: ACCT, name: 'Brokerage', commodity_guid: COMMODITY, commodity: { mnemonic: 'AAPL' } },
+    ]);
+    mockLotsFindMany.mockResolvedValue([]);
+    mockSplitsFindMany.mockResolvedValue([
+      raw('buy-early', '2024-01-01T12:00:00.000Z', 100, 3_000),
+      raw('sell', '2024-06-01T12:00:00.000Z', -100, -3_500),
+      raw('buy-late', '2024-06-10T12:00:00.000Z', 100, 10_000),
+    ]);
+
+    const washes = await detectWashSales([ACCT]);
+    expect(washes).toHaveLength(0);
+  });
+});

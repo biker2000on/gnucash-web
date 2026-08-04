@@ -110,6 +110,8 @@ export interface Split {
     lot_guid: string | null;
     account_name?: string;
     account_fullname?: string;
+    /** GnuCash account type (INCOME, EXPENSE, TRADING, STOCK, ...) of the split's account. */
+    account_type?: string;
     value_decimal?: string;
     quantity_decimal?: string;
     commodity_mnemonic?: string;

@@ -11,6 +11,7 @@ import prisma from '@/lib/prisma';
 import { getRetirementAccountGuids } from '@/lib/reports/contribution-classifier';
 import { generateContributionSummary } from '@/lib/reports/contribution-summary';
 import { getAccountLots } from '@/lib/lots';
+import { isLongTerm } from '@/lib/holding-period';
 import type { BookTaxData, CategoryAggregate, TaxCategory } from './types';
 import { isTaxCategory } from './types';
 
@@ -21,8 +22,6 @@ interface AccountInfo {
   account_type: string;
   parent_guid: string | null;
 }
-
-const ONE_YEAR_MS = 365 * 24 * 60 * 60 * 1000;
 
 /** Sum as integer cents to avoid floating point drift */
 function sumCents(values: number[]): number {
@@ -232,10 +231,10 @@ export async function aggregateBookTaxData(
       const closed = new Date(lot.closeDate);
       if (closed.getFullYear() !== taxYear) continue;
       if (Math.abs(lot.realizedGain) < 0.005) continue;
-      // Holding period: close date vs (acquisition date || open date)
-      const openMs = new Date(lot.acquisitionDate || lot.openDate || lot.closeDate).getTime();
-      const isLongTerm = closed.getTime() - openMs > ONE_YEAR_MS;
-      if (isLongTerm) acctLt += lot.realizedGain;
+      // Holding period: close date vs (acquisition date || open date), using
+      // the shared IRS calendar-anniversary rule (see @/lib/holding-period).
+      const openDate = lot.acquisitionDate || lot.openDate || lot.closeDate;
+      if (isLongTerm(openDate, lot.closeDate)) acctLt += lot.realizedGain;
       else acctSt += lot.realizedGain;
     }
     if (Math.abs(acctSt) >= 0.005 || Math.abs(acctLt) >= 0.005) {

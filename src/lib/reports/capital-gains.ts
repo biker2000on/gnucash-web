@@ -29,10 +29,15 @@
 import type { LotSummary } from '@/lib/lots';
 import type { WashSaleResult } from '@/lib/lot-assignment';
 import { escapeCSVField } from '@/lib/reports/csv-export';
+import { isLongTerm, computeTerm, type Term } from '@/lib/holding-period';
+
+// The IRS holding-period rule lives in @/lib/holding-period (single source of
+// truth, shared with the lot-scrub engine and the tax estimator); re-exported
+// here for the report surfaces that historically imported it from this module.
+export { isLongTerm, computeTerm };
+export type { Term };
 
 const EPS = 0.0001;
-
-export type Term = 'short_term' | 'long_term';
 export type Form8949Box = 'A' | 'B' | 'C' | 'D' | 'E' | 'F';
 
 /** One realized disposal, before wash-sale / bucketing logic is applied. */
@@ -168,29 +173,6 @@ export function flagSuspectRows(rows: Form8949Row[]): string[] {
 /** Normalize an ISO / date string to its YYYY-MM-DD day. */
 function toDay(dateStr: string): string {
   return dateStr.slice(0, 10);
-}
-
-/**
- * IRS long-term = held MORE than one year. The holding period begins the day
- * after acquisition, so a sale is long-term only if it falls strictly after
- * the same calendar date one year later.
- *
- * Both arguments are normalized to their CALENDAR DAY first: post-date times of
- * day vary across a real book (legacy rows carry 05:59-10:59Z clock times,
- * app-written rows are T12:00:00Z) and the time of day must never decide the
- * holding term. Everything is anchored in UTC so the runtime timezone cannot
- * shift a day boundary either.
- */
-export function isLongTerm(dateAcquired: string, dateSold: string): boolean {
-  const acquired = new Date(`${toDay(dateAcquired)}T00:00:00.000Z`);
-  const sold = new Date(`${toDay(dateSold)}T00:00:00.000Z`);
-  const oneYearLater = new Date(acquired);
-  oneYearLater.setUTCFullYear(oneYearLater.getUTCFullYear() + 1);
-  return sold.getTime() > oneYearLater.getTime();
-}
-
-export function computeTerm(dateAcquired: string, dateSold: string): Term {
-  return isLongTerm(dateAcquired, dateSold) ? 'long_term' : 'short_term';
 }
 
 /** Box the row lands in given its term + whether basis was broker-reported. */

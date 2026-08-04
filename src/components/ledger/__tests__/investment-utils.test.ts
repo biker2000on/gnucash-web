@@ -181,3 +181,125 @@ describe('transformToInvestmentRow — realized gain/loss', () => {
         expect(sellRow.sellAmount).toBeCloseTo(1100);
     });
 });
+
+describe('transformToInvestmentRow — scrub sub-split summation', () => {
+    it('sums ALL same-account splits of a scrubbed multi-lot sell', () => {
+        // The scrub engine sub-splits a 10-share sell across three lots.
+        // The row must show the WHOLE trade (-10 shares / $1,500), not just
+        // the first sub-split.
+        const tx = makeTx([
+            makeSplit({
+                account_guid: STOCK_GUID,
+                account_fullname: 'Assets:Brokerage:VTSAX',
+                quantity_decimal: '-4',
+                value_decimal: '-600',
+                lot_guid: 'lot1',
+            }),
+            makeSplit({
+                account_guid: STOCK_GUID,
+                account_fullname: 'Assets:Brokerage:VTSAX',
+                quantity_decimal: '-3.5',
+                value_decimal: '-525',
+                lot_guid: 'lot2',
+            }),
+            makeSplit({
+                account_guid: STOCK_GUID,
+                account_fullname: 'Assets:Brokerage:VTSAX',
+                quantity_decimal: '-2.5',
+                value_decimal: '-375',
+                lot_guid: 'lot3',
+            }),
+            makeSplit({
+                account_fullname: 'Assets:Brokerage:Cash',
+                quantity_decimal: '1500',
+                value_decimal: '1500',
+            }),
+        ]);
+
+        const row = transformToInvestmentRow(tx, STOCK_GUID);
+        expect(row.transactionType).toBe('sell');
+        expect(row.shares).toBeCloseTo(-10);
+        expect(row.sellAmount).toBeCloseTo(1500);
+        // Per-share price from the summed trade, not the first sub-split
+        expect(row.price).toBeCloseTo(150);
+    });
+
+    it('sums sub-splits of a scrubbed transfer-in across multiple destination lots', () => {
+        const tx = makeTx([
+            makeSplit({
+                account_guid: STOCK_GUID,
+                account_fullname: 'Assets:Brokerage:VTSAX',
+                quantity_decimal: '6',
+                value_decimal: '0',
+                lot_guid: 'dest-lot-1',
+            }),
+            makeSplit({
+                account_guid: STOCK_GUID,
+                account_fullname: 'Assets:Brokerage:VTSAX',
+                quantity_decimal: '4',
+                value_decimal: '0',
+                lot_guid: 'dest-lot-2',
+            }),
+            makeSplit({
+                account_fullname: 'Assets:OldBrokerage:VTSAX',
+                quantity_decimal: '-10',
+                value_decimal: '0',
+            }),
+        ]);
+
+        const row = transformToInvestmentRow(tx, STOCK_GUID);
+        expect(row.shares).toBeCloseTo(10);
+    });
+});
+
+describe('classification prefers account_type over fullname prefixes', () => {
+    it('detects income/cash counterparties via account_type on renamed roots', () => {
+        // Renamed roots ("Einnahmen", "Girokonto") defeat the name walk; the
+        // DB-provided account_type must decide.
+        const tx = makeTx([
+            makeSplit({
+                account_guid: STOCK_GUID,
+                account_fullname: 'Vermoegen:Depot:VTSAX',
+                quantity_decimal: '0',
+                value_decimal: '0',
+                account_type: 'STOCK',
+            }),
+            makeSplit({
+                account_fullname: 'Einnahmen:Dividenden',
+                quantity_decimal: '-30',
+                value_decimal: '-30',
+                account_type: 'INCOME',
+            }),
+            makeSplit({
+                account_fullname: 'Girokonto',
+                quantity_decimal: '30',
+                value_decimal: '30',
+                account_type: 'BANK',
+            }),
+        ]);
+
+        expect(transformToInvestmentRow(tx, STOCK_GUID).transactionType).toBe('dividend');
+    });
+
+    it('treats an account named "Trading Cards" as cash-like when account_type says EXPENSE-free asset', () => {
+        // A name-prefix walk would classify "Trading Cards:..." as a TRADING
+        // account and mis-type the transaction.
+        const tx = makeTx([
+            makeSplit({
+                account_guid: STOCK_GUID,
+                account_fullname: 'Assets:Brokerage:VTSAX',
+                quantity_decimal: '10',
+                value_decimal: '1000',
+                account_type: 'STOCK',
+            }),
+            makeSplit({
+                account_fullname: 'Trading:Broker Sweep',
+                quantity_decimal: '-1000',
+                value_decimal: '-1000',
+                account_type: 'BANK',
+            }),
+        ]);
+
+        expect(transformToInvestmentRow(tx, STOCK_GUID).transactionType).toBe('buy');
+    });
+});
