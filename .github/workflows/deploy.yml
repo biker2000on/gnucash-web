@@ -27,6 +27,9 @@ jobs:
       - name: Install locked dependencies
         run: npm ci
 
+      - name: Generate Prisma client
+        run: npx prisma generate
+
       - name: Verify documentation coverage
         run: npm run docs:check
 
