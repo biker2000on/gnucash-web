@@ -20,6 +20,7 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith('/api/auth/') ||
     pathname.startsWith('/api/calendar/') ||
     pathname.startsWith('/api/public/') ||
+    pathname === '/api/health' ||
     pathname === '/api/docs' ||
     pathname === '/api/webhooks/stripe'
   ) {
