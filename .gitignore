@@ -56,3 +56,11 @@ data/
 
 # Syncthing conflict copies (working tree is synced across machines)
 *sync-conflict*
+
+# One-off repair/backfill scripts — kept locally, not tracked.
+# scripts/check-docs-coverage.ts, db-init-entrypoint.ts, and dev-run-db-init.ts
+# stay tracked: CI, the Docker image, and dev db-init depend on them.
+scripts/*
+!scripts/check-docs-coverage.ts
+!scripts/db-init-entrypoint.ts
+!scripts/dev-run-db-init.ts
