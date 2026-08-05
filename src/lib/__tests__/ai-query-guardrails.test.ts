@@ -300,14 +300,42 @@ describe('validateGeneratedSql', () => {
             const sql = 'SELECT s.guid FROM splits s WHERE s.account_guid = ANY($1::text[]) LIMIT 5';
             expect(validateGeneratedSql(sql).ok).toBe(true);
         });
+
+        it('rejects an unscoped relation even when another table uses $1', () => {
+            const sql =
+                'SELECT t.description FROM transactions t, splits s ' +
+                'WHERE s.account_guid = ANY($1) LIMIT 20';
+            expect(validateGeneratedSql(sql).ok).toBe(false);
+        });
+
+        it('accepts a transaction relation joined to a scoped split relation', () => {
+            const sql =
+                'SELECT t.description FROM transactions t ' +
+                'JOIN splits s ON s.tx_guid = t.guid ' +
+                'WHERE s.account_guid = ANY($1) LIMIT 20';
+            expect(validateGeneratedSql(sql).ok).toBe(true);
+        });
+
+        it('rejects transaction GUIDs bound directly to the account-guid parameter', () => {
+            const sql = 'SELECT t.description FROM transactions t WHERE t.guid = ANY($1) LIMIT 20';
+            expect(validateGeneratedSql(sql).ok).toBe(false);
+        });
+
+        it('rejects comma joins that could hide an unscoped relation', () => {
+            const sql =
+                'SELECT a.name, s.value_num FROM accounts a, splits s ' +
+                'WHERE a.guid = ANY($1) LIMIT 20';
+            expect(validateGeneratedSql(sql).ok).toBe(false);
+        });
     });
 
     describe('LIMIT must bound the outer result set', () => {
         it('injects a top-level LIMIT when the only LIMIT is inside a CTE', () => {
             // Returned 100 x every split without an outer bound.
             const sql =
-                'WITH t AS (SELECT guid FROM accounts WHERE guid = ANY($1) LIMIT 100) ' +
-                'SELECT t.guid, s.value_num FROM t CROSS JOIN splits s';
+                'WITH t AS (SELECT guid FROM accounts WHERE accounts.guid = ANY($1) LIMIT 100) ' +
+                'SELECT t.guid, s.value_num FROM t CROSS JOIN splits s ' +
+                'WHERE s.account_guid = ANY($1)';
             const result = validateGeneratedSql(sql);
             expect(result.ok).toBe(true);
             expect(result.sql).toMatch(new RegExp(`LIMIT ${MAX_LIMIT}$`));

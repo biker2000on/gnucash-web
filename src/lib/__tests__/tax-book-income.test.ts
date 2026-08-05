@@ -34,12 +34,13 @@ vi.mock('@/lib/reports/contribution-summary', () => ({
 }));
 vi.mock('@/lib/lots', () => ({
   getAccountLots: vi.fn(),
+  getLotsForAccounts: vi.fn(),
 }));
 
 import prisma from '@/lib/prisma';
 import { getRetirementAccountGuids } from '@/lib/reports/contribution-classifier';
 import { generateContributionSummary } from '@/lib/reports/contribution-summary';
-import { getAccountLots, type LotSummary, type LotSplit } from '@/lib/lots';
+import { getAccountLots, getLotsForAccounts, type LotSummary, type LotSplit } from '@/lib/lots';
 import { aggregateBookTaxData, expandMappingsToDescendants } from '@/lib/tax/book-income';
 import type { TaxCategory } from '@/lib/tax/types';
 
@@ -51,6 +52,7 @@ const mockPrisma = prisma as unknown as {
 const mockGetRetirementAccountGuids = vi.mocked(getRetirementAccountGuids);
 const mockGenerateContributionSummary = vi.mocked(generateContributionSummary);
 const mockGetAccountLots = vi.mocked(getAccountLots);
+const mockGetLotsForAccounts = vi.mocked(getLotsForAccounts);
 
 /* ------------------------------------------------------------------ */
 /* expandMappingsToDescendants (pure)                                  */
@@ -215,6 +217,12 @@ describe('aggregateBookTaxData', () => {
         return [simpleClosedLot({ guid: 'lot-2', accountGuid: 'muni-stock' }, 1000, 1500)]; // +500 LT
       }
       return [];
+    });
+    mockGetLotsForAccounts.mockImplementation(async (guids: string[]) => {
+      const entries = await Promise.all(
+        guids.map(async guid => [guid, await mockGetAccountLots(guid)] as const),
+      );
+      return new Map(entries);
     });
   });
 

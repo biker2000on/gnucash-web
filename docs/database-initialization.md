@@ -33,6 +33,18 @@ The Living Plan tables retain adopted versions, monthly reconciliations, and
 decision history; the Family Office schema stores typed book-link metadata and
 presentation-only inter-book elimination approvals.
 
+Startup also creates `gnucash_web_schema_meta`, which records destructive or
+data-normalizing steps so they run only once. Before a recorded migration
+removes or rewrites data, the affected rows are copied as JSON into
+`gnucash_web_migration_backups` under the same step name. These backups are a
+recovery aid and should be included in normal PostgreSQL backups; they do not
+replace a database-level backup before deployment.
+
+GnuCash's native indexes are left intact. GnuCash Web may add its own covering
+indexes and may retire redundant indexes that it created, but it does not drop
+indexes owned by the desktop schema because a production book can be shared
+with GnuCash desktop.
+
 This ensures that:
 1. New deployments work immediately without manual database setup
 2. The view definition stays in sync with the application code

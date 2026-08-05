@@ -3,6 +3,7 @@ import {
     resolveOidcUser,
     deriveUsername,
     hasVerifiedEmail,
+    oidcRegistrationAllowed,
     canUnlinkOidc,
     type OidcClaims,
     type OidcUserCandidate,
@@ -228,5 +229,19 @@ describe('canUnlinkOidc (lockout guard)', () => {
     it('refuses unlink when nothing is linked', () => {
         const result = canUnlinkOidc({ hasPassword: true, oidc_subject: null });
         expect(result.ok).toBe(false);
+    });
+});
+
+describe('OIDC registration gate', () => {
+    it('allows the first-user bootstrap while registration is closed', () => {
+        expect(oidcRegistrationAllowed(0, false)).toBe(true);
+    });
+
+    it('rejects automatic provisioning once a user exists and registration is closed', () => {
+        expect(oidcRegistrationAllowed(1, false)).toBe(false);
+    });
+
+    it('allows later accounts only when registration is explicitly open', () => {
+        expect(oidcRegistrationAllowed(3, true)).toBe(true);
     });
 });

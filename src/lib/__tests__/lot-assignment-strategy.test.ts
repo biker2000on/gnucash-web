@@ -334,6 +334,18 @@ describe('per-sale LIFO replay', () => {
   });
 });
 
+describe('average-cost labeling', () => {
+  it('states that assignment falls back to FIFO instead of claiming average gains', async () => {
+    addTrade('2024-01-01', 10, 1000);
+    addTrade('2024-02-01', -5, 600);
+
+    const result = await autoAssignLots(STOCK_ACCT, 'average');
+
+    expect(result.method).toContain('average cost not implemented');
+    expect(result.warnings.join(' ')).toMatch(/used FIFO/i);
+  });
+});
+
 describe('FIFO ordering of transferred lots', () => {
   it('orders a transferred lot by its CARRIED acquisition_date, not the transfer date', async () => {
     // Pre-existing transfer-destination lot: shares arrived 2024-05-01 but

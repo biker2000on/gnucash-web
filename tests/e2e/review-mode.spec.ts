@@ -1,8 +1,9 @@
 import { test, expect, Page } from '@playwright/test';
 
-const BASE_URL = 'http://localhost:3000';
-const USERNAME = 'biker2000on';
-const PASSWORD = '6ujn&dafyOaKWaTmI1OYR666EgpdkaGG';
+const USERNAME = process.env.E2E_USER ?? '';
+const PASSWORD = process.env.E2E_PASS ?? '';
+
+test.skip(!USERNAME || !PASSWORD, 'Set E2E_USER and E2E_PASS for the seeded ledger suite');
 
 /**
  * Login helper -- navigates to the login page, fills credentials, submits.
@@ -12,7 +13,7 @@ const PASSWORD = '6ujn&dafyOaKWaTmI1OYR666EgpdkaGG';
  * to change rather than a full navigation.
  */
 async function login(page: Page) {
-    await page.goto(`${BASE_URL}/login`, { waitUntil: 'domcontentloaded' });
+    await page.goto('/login', { waitUntil: 'domcontentloaded' });
     // Wait for the login form to hydrate (client component with auth check)
     const usernameInput = page.locator('input[placeholder="Enter username"]');
     await usernameInput.waitFor({ state: 'visible', timeout: 30000 });
@@ -39,7 +40,7 @@ async function login(page: Page) {
  * and waits for the ledger table to appear.
  */
 async function navigateToAccountWithTransactions(page: Page) {
-    await page.goto(`${BASE_URL}/accounts`);
+    await page.goto('/accounts');
     await page.waitForTimeout(3000);
 
     // Click the first account link in the account hierarchy

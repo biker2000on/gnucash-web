@@ -1,21 +1,27 @@
 import { chromium } from 'playwright';
 
+const targetUrl = process.env.E2E_BASE_URL ?? 'http://127.0.0.1:3000';
+const e2eUsername = process.env.E2E_USER ?? '';
+const e2ePassword = process.env.E2E_PASS ?? '';
 (async () => {
   const browser = await chromium.launch({ headless: false });
   const context = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
   const page = await context.newPage();
 
   try {
-    console.log('Navigating to http://localhost:3000...');
-    await page.goto('http://localhost:3000', { waitUntil: 'networkidle', timeout: 60000 });
+    console.log(`Navigating to ${targetUrl}...`);
+    await page.goto(targetUrl, { waitUntil: 'networkidle', timeout: 60000 });
     await page.waitForTimeout(3000);
     
     // Check if we're on the login page
     const usernameInput = page.locator('input[name="username"]');
     if (await usernameInput.isVisible({ timeout: 5000 })) {
+      if (!e2eUsername || !e2ePassword) {
+        throw new Error('Set E2E_USER and E2E_PASS before running the authenticated chart check');
+      }
       console.log('Login page detected. Logging in...');
-      await usernameInput.fill('biker2000on');
-      await page.fill('input[name="password"]', '6ujn&dafyOaKWaTmI1OYR666EgpdkaGG');
+      await usernameInput.fill(e2eUsername);
+      await page.fill('input[name="password"]', e2ePassword);
       await page.click('button[type="submit"]');
       await page.waitForTimeout(5000);
     }

@@ -483,7 +483,36 @@ export async function recordProcessedMessage(input: {
       ${input.detail ?? null},
       ${input.ingestedCount ?? 0}
     )
-    ON CONFLICT (message_key) DO NOTHING`;
+    ON CONFLICT (message_key) DO UPDATE SET
+      from_email = EXCLUDED.from_email,
+      subject = EXCLUDED.subject,
+      outcome = EXCLUDED.outcome,
+      detail = EXCLUDED.detail,
+      ingested_count = EXCLUDED.ingested_count,
+      processed_at = CURRENT_TIMESTAMP`;
+}
+
+/** Atomically claim a message before any attachment side effects occur. */
+export async function claimIngestMessage(input: {
+  messageKey: string;
+  fromEmail?: string | null;
+  subject?: string | null;
+}): Promise<boolean> {
+  await ensureEmailIngestTables();
+  const claimed = await prisma.$queryRaw<Array<{ message_key: string }>>`
+    INSERT INTO gnucash_web_ingest_messages
+      (message_key, from_email, subject, outcome, detail, ingested_count)
+    VALUES (
+      ${input.messageKey.slice(0, 512)},
+      ${input.fromEmail?.slice(0, 255) ?? null},
+      ${input.subject?.slice(0, 500) ?? null},
+      'processing',
+      'Claimed for ingestion',
+      0
+    )
+    ON CONFLICT (message_key) DO NOTHING
+    RETURNING message_key`;
+  return claimed.length === 1;
 }
 
 // ---------------------------------------------------------------------------
@@ -636,7 +665,29 @@ async function ingestOneAttachment(
  * `clientFactory` exists for tests; production callers omit it and get the
  * imapflow-backed client.
  */
+let emailPollInFlight = false;
+
 export async function pollEmailIngest(
+  clientFactory?: () => Promise<IngestMailClient>,
+): Promise<PollEmailIngestResult> {
+  if (emailPollInFlight) {
+    return {
+      configured: getEmailIngestConfig() !== null,
+      checked: 0,
+      ingested: 0,
+      skipped: 0,
+      errors: 0,
+    };
+  }
+  emailPollInFlight = true;
+  try {
+    return await pollEmailIngestPass(clientFactory);
+  } finally {
+    emailPollInFlight = false;
+  }
+}
+
+async function pollEmailIngestPass(
   clientFactory?: () => Promise<IngestMailClient>,
 ): Promise<PollEmailIngestResult> {
   const config = getEmailIngestConfig();
@@ -672,6 +723,19 @@ export async function pollEmailIngest(
           continue;
         }
         seenThisRun.add(key);
+
+        // Cross-job/process idempotency: acquire the unique dedupe row before
+        // downloading or ingesting attachments. A concurrent poll that lost
+        // this race performs no side effects.
+        if (!await claimIngestMessage({
+          messageKey: key,
+          fromEmail: envelope.from,
+          subject: envelope.subject,
+        })) {
+          await client.markSeen(envelope.uid);
+          result.skipped++;
+          continue;
+        }
 
         const sender = envelope.from ? matchAllowedSender(envelope.from, senders) : null;
         if (!sender) {

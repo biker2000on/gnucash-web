@@ -11,6 +11,7 @@
  */
 
 import YahooFinance from 'yahoo-finance2';
+import { Prisma } from '@prisma/client';
 import { getCurrencyByMnemonic } from './currency';
 import { fromDecimal, generateGuid } from './prisma';
 import { yahooSymbolFor } from './yahoo-symbol';
@@ -285,7 +286,8 @@ export async function fetchHistoricalPrices(
 export async function detectAndFillGaps(
   commodityGuid: string,
   symbol: string,
-  lookbackMonths: number = 3
+  lookbackMonths: number = 3,
+  currencyGuid?: string,
 ): Promise<number> {
   const endDate = new Date();
   const startDate = new Date(endDate);
@@ -308,21 +310,15 @@ export async function detectAndFillGaps(
     return 0;
   }
 
-  // Store only dates that are missing
-  let filled = 0;
-  for (const row of historicalPrices) {
-    const dateStr = formatDateYMD(row.date);
-    if (!existingDates.has(dateStr)) {
-      const stored = await storeFetchedPrice(commodityGuid, symbol, row.close, row.date);
-      if (stored) {
-        filled++;
-        // Add to set so we don't double-insert within this batch
-        existingDates.add(dateStr);
-      }
-    }
-  }
-
-  return filled;
+  const quoteCurrency = currencyGuid ?? (await getCurrencyByMnemonic('USD'))?.guid;
+  if (!quoteCurrency) return 0;
+  return (await storeMissingHistoricalPrices(
+    commodityGuid,
+    symbol,
+    historicalPrices,
+    existingDates,
+    quoteCurrency,
+  )).count;
 }
 
 /**
@@ -458,44 +454,101 @@ export async function storeFetchedPrice(
   price: number,
   date: Date
 ): Promise<string | null> {
+  const stored = await storeFetchedPrices([{ commodityGuid, symbol, price, date }]);
+  return stored.get(`${commodityGuid}:${formatDateYMD(date)}`) ?? null;
+}
+
+interface FetchedPriceInput {
+  commodityGuid: string;
+  symbol: string;
+  price: number;
+  date: Date;
+}
+
+/** Store fetched quotes in chunks while preserving the user-price conflict guard. */
+export async function storeFetchedPrices(
+  inputs: FetchedPriceInput[],
+  currencyGuid?: string,
+): Promise<Map<string, string>> {
   const { default: prisma } = await import('./prisma');
 
-  // TODO: Accept currencyGuid parameter instead of hardcoding USD lookup
-  // Currently hardcodes USD, but should use the commodity's quote currency or book's base currency
-  const usd = await getCurrencyByMnemonic('USD');
-  if (!usd) {
-    console.error(`Cannot store price for ${symbol}: USD currency not found`);
-    return null;
+  if (inputs.length === 0) return new Map();
+  let quoteCurrencyGuid = currencyGuid;
+  if (!quoteCurrencyGuid) {
+    const usd = await getCurrencyByMnemonic('USD');
+    quoteCurrencyGuid = usd?.guid;
+  }
+  if (!quoteCurrencyGuid) {
+    console.error('Cannot store fetched prices: USD currency not found');
+    return new Map();
   }
 
-  try {
-    const guid = generateGuid();
-    // Prices are quotes, not monetary amounts, so they need far more precision
-    // than the currency's 1/100 fraction — otherwise sub-cent assets (e.g. many
-    // cryptocurrencies) round to $0.00. Store at 1e8 resolution (well within
-    // int64 for any realistic price) to preserve small values exactly.
-    const { num, denom } = fromDecimal(price, PRICE_DENOM);
-
-    // Race-safe against the uq_prices_commodity_currency_date unique index:
-    // if a row already exists at this instant, the latest fetch wins ONLY
-    // when the existing row is also a Finance::Quote row — user-entered
-    // prices are never overwritten by a background fetch.
-    const rows = await prisma.$queryRaw<Array<{ guid: string }>>`
-      INSERT INTO prices (guid, commodity_guid, currency_guid, date, source, type, value_num, value_denom)
-      VALUES (${guid}, ${commodityGuid}, ${usd.guid}, ${date}, 'Finance::Quote', 'last', ${num}, ${denom})
-      ON CONFLICT (commodity_guid, currency_guid, date)
-      DO UPDATE SET value_num = EXCLUDED.value_num, value_denom = EXCLUDED.value_denom
-      WHERE prices.source = 'Finance::Quote'
-      RETURNING guid
-    `;
-
-    // Empty result: the conflicting row is user-entered and was left alone.
-    return rows[0]?.guid ?? null;
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    console.error(`Failed to store price for ${symbol}:`, errorMessage);
-    return null;
+  const stored = new Map<string, string>();
+  for (let offset = 0; offset < inputs.length; offset += 500) {
+    const chunk = inputs.slice(offset, offset + 500).map(input => {
+      const { num, denom } = fromDecimal(input.price, PRICE_DENOM);
+      return {
+        ...input,
+        guid: generateGuid(),
+        num,
+        denom,
+      };
+    });
+    try {
+      const values = Prisma.join(chunk.map(input => Prisma.sql`(
+        ${input.guid}, ${input.commodityGuid}, ${quoteCurrencyGuid}, ${input.date},
+        'Finance::Quote', 'last', ${input.num}, ${input.denom}
+      )`));
+      const rows = await prisma.$queryRaw<Array<{
+        guid: string;
+        commodity_guid: string;
+        date: Date;
+      }>>(Prisma.sql`
+        INSERT INTO prices
+          (guid, commodity_guid, currency_guid, date, source, type, value_num, value_denom)
+        VALUES ${values}
+        ON CONFLICT (commodity_guid, currency_guid, date)
+        DO UPDATE SET value_num = EXCLUDED.value_num, value_denom = EXCLUDED.value_denom
+        WHERE prices.source = 'Finance::Quote'
+        RETURNING guid, commodity_guid, date
+      `);
+      for (const row of rows) {
+        stored.set(`${row.commodity_guid}:${formatDateYMD(row.date)}`, row.guid);
+      }
+    } catch (error) {
+      const symbols = [...new Set(chunk.map(input => input.symbol))].join(', ');
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      console.error(`Failed to store fetched price batch for ${symbols}:`, message);
+    }
   }
+  return stored;
+}
+
+async function storeMissingHistoricalPrices(
+  commodityGuid: string,
+  symbol: string,
+  historicalPrices: HistoricalPriceRow[],
+  existingDates: Set<string>,
+  currencyGuid: string,
+): Promise<{ count: number; earliest: string | null; latest: string | null }> {
+  const missing = historicalPrices.filter(row => !existingDates.has(formatDateYMD(row.date)));
+  const stored = await storeFetchedPrices(missing.map(row => ({
+    commodityGuid,
+    symbol,
+    price: row.close,
+    date: row.date,
+  })), currencyGuid);
+
+  let earliest: string | null = null;
+  let latest: string | null = null;
+  for (const row of missing) {
+    const date = formatDateYMD(row.date);
+    if (!stored.has(`${commodityGuid}:${date}`)) continue;
+    existingDates.add(date);
+    if (!earliest || date < earliest) earliest = date;
+    if (!latest || date > latest) latest = date;
+  }
+  return { count: stored.size, earliest, latest };
 }
 
 /**
@@ -533,6 +586,8 @@ export async function fetchAndStorePrices(
   if (targetCommodities.length === 0) {
     return { stored: 0, backfilled: 0, gapsFilled: 0, failed: 0, results: [] };
   }
+  const usd = await getCurrencyByMnemonic('USD');
+  if (!usd) throw new Error('USD currency not found');
 
   const results: PriceFetchResult[] = [];
   let totalBackfilled = 0;
@@ -555,18 +610,12 @@ export async function fetchAndStorePrices(
         const existingDates = await getExistingPriceDates(commodity.guid, startDate, endDate);
         const historicalPrices = await fetchHistoricalPrices(symbol, startDate, endDate);
 
-        for (const row of historicalPrices) {
-          const dateStr = formatDateYMD(row.date);
-          if (!existingDates.has(dateStr)) {
-            const stored = await storeFetchedPrice(commodity.guid, symbol, row.close, row.date);
-            if (stored) {
-              pricesStored++;
-              existingDates.add(dateStr);
-              if (!earliestDate || dateStr < earliestDate) earliestDate = dateStr;
-              if (!latestDate || dateStr > latestDate) latestDate = dateStr;
-            }
-          }
-        }
+        const batch = await storeMissingHistoricalPrices(
+          commodity.guid, symbol, historicalPrices, existingDates, usd.guid,
+        );
+        pricesStored += batch.count;
+        earliestDate = batch.earliest;
+        latestDate = batch.latest;
 
         // Force counts toward backfilled (it is a full-range backfill)
         totalBackfilled += pricesStored;
@@ -581,18 +630,12 @@ export async function fetchAndStorePrices(
           const existingDates = await getExistingPriceDates(commodity.guid, startDate, endDate);
           const historicalPrices = await fetchHistoricalPrices(symbol, startDate, endDate);
 
-          for (const row of historicalPrices) {
-            const dateStr = formatDateYMD(row.date);
-            if (!existingDates.has(dateStr)) {
-              const stored = await storeFetchedPrice(commodity.guid, symbol, row.close, row.date);
-              if (stored) {
-                pricesStored++;
-                existingDates.add(dateStr);
-                if (!earliestDate || dateStr < earliestDate) earliestDate = dateStr;
-                if (!latestDate || dateStr > latestDate) latestDate = dateStr;
-              }
-            }
-          }
+          const batch = await storeMissingHistoricalPrices(
+            commodity.guid, symbol, historicalPrices, existingDates, usd.guid,
+          );
+          pricesStored += batch.count;
+          earliestDate = batch.earliest;
+          latestDate = batch.latest;
 
           totalBackfilled += pricesStored;
         } else {
@@ -608,25 +651,21 @@ export async function fetchAndStorePrices(
             const existingDates = await getExistingPriceDates(commodity.guid, backfillStart, endDate);
             const historicalPrices = await fetchHistoricalPrices(symbol, backfillStart, endDate);
 
-            for (const row of historicalPrices) {
-              const dateStr = formatDateYMD(row.date);
-              if (!existingDates.has(dateStr)) {
-                const stored = await storeFetchedPrice(commodity.guid, symbol, row.close, row.date);
-                if (stored) {
-                  backfillCount++;
-                  existingDates.add(dateStr);
-                  if (!earliestDate || dateStr < earliestDate) earliestDate = dateStr;
-                  if (!latestDate || dateStr > latestDate) latestDate = dateStr;
-                }
-              }
-            }
+            const batch = await storeMissingHistoricalPrices(
+              commodity.guid, symbol, historicalPrices, existingDates, usd.guid,
+            );
+            backfillCount += batch.count;
+            earliestDate = batch.earliest;
+            latestDate = batch.latest;
           }
 
           totalBackfilled += backfillCount;
           pricesStored += backfillCount;
 
           // Gap detection on the full lookback range
-          const gapsFilled = await detectAndFillGaps(commodity.guid, symbol, LOOKBACK_MONTHS);
+          const gapsFilled = await detectAndFillGaps(
+            commodity.guid, symbol, LOOKBACK_MONTHS, usd.guid,
+          );
           totalGapsFilled += gapsFilled;
           pricesStored += gapsFilled;
         }
@@ -680,6 +719,8 @@ export async function auditAndBackfillPrices(
   if (targetCommodities.length === 0) {
     return { stored: 0, audited: 0, failed: 0, results: [] };
   }
+  const usd = await getCurrencyByMnemonic('USD');
+  if (!usd) throw new Error('USD currency not found');
 
   const results: PriceFetchResult[] = [];
   let totalStored = 0;
@@ -694,24 +735,11 @@ export async function auditAndBackfillPrices(
       const existingDates = await getExistingPriceDates(commodity.guid, startDate, endDate);
       const historicalPrices = await fetchHistoricalPrices(symbol, startDate, endDate);
 
-      let pricesStored = 0;
-      let earliestStored: string | null = null;
-      let latestStored: string | null = null;
-
-      for (const row of historicalPrices) {
-        const dateStr = formatDateYMD(row.date);
-        if (existingDates.has(dateStr)) {
-          continue;
-        }
-
-        const stored = await storeFetchedPrice(commodity.guid, symbol, row.close, row.date);
-        if (stored) {
-          pricesStored++;
-          existingDates.add(dateStr);
-          if (!earliestStored || dateStr < earliestStored) earliestStored = dateStr;
-          if (!latestStored || dateStr > latestStored) latestStored = dateStr;
-        }
-      }
+      const batch = await storeMissingHistoricalPrices(
+        commodity.guid, symbol, historicalPrices, existingDates, usd.guid,
+      );
+      const pricesStored = batch.count;
+      const latestStored = batch.latest;
 
       totalStored += pricesStored;
       totalAudited++;

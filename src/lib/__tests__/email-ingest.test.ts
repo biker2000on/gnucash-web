@@ -371,6 +371,9 @@ describe('email-ingest', () => {
       db.$executeRaw.mockResolvedValue(1); // recordProcessedMessage inserts
       db.$queryRaw.mockImplementation((strings: TemplateStringsArray) => {
         const sql = strings.join('?');
+        if (sql.includes('INSERT INTO gnucash_web_ingest_messages')) {
+          return Promise.resolve([{ message_key: 'claimed' }]);
+        }
         if (sql.includes('FROM gnucash_web_ingest_senders')) {
           return Promise.resolve(options.senders ?? []);
         }
@@ -411,6 +414,28 @@ describe('email-ingest', () => {
       const result = await pollEmailIngest(factory);
       expect(result.configured).toBe(false);
       expect(factory).not.toHaveBeenCalled();
+    });
+
+    it('does not start a second mailbox pass while one is in flight', async () => {
+      let releaseList!: () => void;
+      const listGate = new Promise<void>(resolve => { releaseList = resolve; });
+      const firstClient: IngestMailClient = {
+        listUnseen: vi.fn(async () => { await listGate; return []; }),
+        fetchAttachments: vi.fn(async () => []),
+        markSeen: vi.fn(async () => {}),
+        close: vi.fn(async () => {}),
+      };
+      const firstFactory = vi.fn(async () => firstClient);
+      const secondFactory = vi.fn(async () => firstClient);
+
+      const firstPoll = pollEmailIngest(firstFactory);
+      await vi.waitFor(() => expect(firstFactory).toHaveBeenCalledTimes(1));
+      const secondResult = await pollEmailIngest(secondFactory);
+
+      expect(secondResult.checked).toBe(0);
+      expect(secondFactory).not.toHaveBeenCalled();
+      releaseList();
+      await firstPoll;
     });
 
     it('ingests an allowed sender attachment and marks the message seen', async () => {

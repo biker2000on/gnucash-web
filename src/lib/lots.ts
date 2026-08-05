@@ -112,13 +112,14 @@ function buildLotSplits(
 export function computeRealizedGain(
     splits: Array<{ shares: number; value: number }>,
     isClosed: boolean,
+    carriedBasis = 0,
 ): number {
     const EPS = 0.0001;
     if (isClosed) {
         // Exclude zero-quantity gains offset splits, negate basis - proceeds
         return -splits
             .filter(s => Math.abs(s.shares) > EPS)
-            .reduce((sum, s) => sum + s.value, 0);
+            .reduce((sum, s) => sum + s.value, 0) - carriedBasis;
     }
 
     // Open lot: realized portion only (shares sold so far)
@@ -127,7 +128,7 @@ export function computeRealizedGain(
     if (sells.length === 0) return 0;
 
     const boughtShares = buys.reduce((sum, s) => sum + s.shares, 0);
-    const buyCost = buys.reduce((sum, s) => sum + Math.abs(s.value), 0);
+    const buyCost = buys.reduce((sum, s) => sum + Math.abs(s.value), 0) + carriedBasis;
     const costPerShare = boughtShares > EPS ? buyCost / boughtShares : 0;
 
     const soldShares = sells.reduce((sum, s) => sum + Math.abs(s.shares), 0);
@@ -142,9 +143,21 @@ export function computeRealizedGain(
  * Lots are sorted with open lots first, then by open date descending.
  */
 export async function getAccountLots(accountGuid: string): Promise<LotSummary[]> {
-    // Fetch lots with their splits and transactions
+    return (await getLotsForAccounts([accountGuid])).get(accountGuid) ?? [];
+}
+
+/**
+ * Batch-load lot summaries for multiple investment accounts. The report paths
+ * call this once so lots, metadata slots, and account commodities are loaded
+ * in set-based queries instead of repeating the same query group per account.
+ */
+export async function getLotsForAccounts(accountGuids: string[]): Promise<Map<string, LotSummary[]>> {
+    const uniqueAccountGuids = [...new Set(accountGuids)];
+    const result = new Map(uniqueAccountGuids.map(guid => [guid, [] as LotSummary[]]));
+    if (uniqueAccountGuids.length === 0) return result;
+
     const lots = await prisma.lots.findMany({
-        where: { account_guid: accountGuid },
+        where: { account_guid: { in: uniqueAccountGuids } },
         include: {
             splits: {
                 include: {
@@ -159,64 +172,55 @@ export async function getAccountLots(accountGuid: string): Promise<LotSummary[]>
         },
     });
 
-    if (lots.length === 0) return [];
+    if (lots.length === 0) return result;
 
-    // Fetch lot titles from the slots table
     const lotGuids = lots.map(l => l.guid);
-    const titleSlots = await prisma.slots.findMany({
+    const metadataSlots = await prisma.slots.findMany({
         where: {
             obj_guid: { in: lotGuids },
-            name: 'title',
+            name: { in: ['title', 'source_lot_guid', 'acquisition_date', 'carried_basis'] },
         },
         select: {
             obj_guid: true,
+            name: true,
             string_val: true,
         },
     });
-    const titleMap = new Map(titleSlots.map(s => [s.obj_guid, s.string_val || '']));
+    const slotValue = new Map(
+        metadataSlots.map(slot => [`${slot.obj_guid}:${slot.name}`, slot.string_val]),
+    );
 
-    const sourceSlots = await prisma.slots.findMany({
-        where: { obj_guid: { in: lotGuids }, name: 'source_lot_guid' },
-        select: { obj_guid: true, string_val: true },
+    const accountRows = await prisma.accounts.findMany({
+        where: { guid: { in: uniqueAccountGuids } },
+        select: { guid: true, commodity_guid: true },
     });
-    const sourceMap = new Map(sourceSlots.map(s => [s.obj_guid, s.string_val || null]));
+    const commodityByAccount = new Map(accountRows.map(account => [account.guid, account.commodity_guid]));
 
-    const acqDateSlots = await prisma.slots.findMany({
-        where: { obj_guid: { in: lotGuids }, name: 'acquisition_date' },
-        select: { obj_guid: true, string_val: true },
-    });
-    const acqDateMap = new Map(acqDateSlots.map(s => [s.obj_guid, s.string_val || null]));
-
-    // carried_basis: original cost basis carried by a $0-value in-kind
-    // transfer (see lot-scrub's writeCarriedBasisSlot / readCarriedBasis).
-    const carriedSlots = await prisma.slots.findMany({
-        where: { obj_guid: { in: lotGuids }, name: 'carried_basis' },
-        select: { obj_guid: true, string_val: true },
-    });
-    const carriedMap = new Map(carriedSlots.map(s => {
-        const parsed = s.string_val ? parseFloat(s.string_val) : NaN;
-        return [s.obj_guid, Number.isFinite(parsed) ? parsed : 0] as const;
-    }));
-
-    // Get account commodity for price lookup
-    const account = await prisma.accounts.findUnique({
-        where: { guid: accountGuid },
-        select: { commodity_guid: true },
-    });
-    const commodityGuid = account?.commodity_guid || null;
-
-    // Fetch latest price once for unrealized gain calculations
-    let latestPrice: number | null = null;
-    if (commodityGuid) {
+    const commodityGuids = [...new Set(
+        accountRows.map(account => account.commodity_guid).filter((guid): guid is string => Boolean(guid)),
+    )];
+    const latestPriceEntries = await Promise.all(commodityGuids.map(async commodityGuid => {
         const priceData = await getLatestPrice(commodityGuid);
-        latestPrice = priceData?.value ?? null;
-    }
+        return [commodityGuid, priceData?.value ?? null] as const;
+    }));
+    const latestPriceByCommodity = new Map(latestPriceEntries);
 
     const nowIso = new Date().toISOString();
+    const lotNumberByAccount = new Map<string, number>();
 
-    const summaries: LotSummary[] = lots.map((lot, index) => {
-        const title = titleMap.get(lot.guid) || `Lot ${index + 1}`;
+    for (const lot of lots) {
+        const accountGuid = lot.account_guid || '';
+        const index = lotNumberByAccount.get(accountGuid) ?? 0;
+        lotNumberByAccount.set(accountGuid, index + 1);
+        const title = slotValue.get(`${lot.guid}:title`) || `Lot ${index + 1}`;
         const lotSplits = buildLotSplits(lot.splits);
+        const carriedRaw = slotValue.get(`${lot.guid}:carried_basis`);
+        const carriedParsed = carriedRaw ? parseFloat(carriedRaw) : NaN;
+        const carriedBasis = Number.isFinite(carriedParsed) ? carriedParsed : 0;
+        const commodityGuid = commodityByAccount.get(accountGuid) ?? null;
+        const latestPrice = commodityGuid
+            ? (latestPriceByCommodity.get(commodityGuid) ?? null)
+            : null;
 
         // Total shares = sum of all split quantities
         const computedShares = lotSplits.reduce((sum, s) => sum + s.shares, 0);
@@ -234,11 +238,11 @@ export async function getAccountLots(accountGuid: string): Promise<LotSummary[]>
         // Total cost = sum of values where quantity > 0 (buys)
         const totalCost = lotSplits
             .filter(s => s.shares > 0)
-            .reduce((sum, s) => sum + Math.abs(s.value), 0);
+            .reduce((sum, s) => sum + Math.abs(s.value), 0) + carriedBasis;
 
         // Realized gain: proceeds - basis, excluding zero-qty gains offset
         // splits (native GnuCash convention; see computeRealizedGain)
-        const realizedGain = computeRealizedGain(lotSplits, isClosed);
+        const realizedGain = computeRealizedGain(lotSplits, isClosed, carriedBasis);
 
         // Unrealized gain: (currentPrice * remaining shares) - cost basis of remaining shares
         let unrealizedGain: number | null = null;
@@ -261,13 +265,14 @@ export async function getAccountLots(accountGuid: string): Promise<LotSummary[]>
         // long-term, which is exactly backwards for tax-harvesting decisions.
         // Only still-open lots are measured against today.
         let holdingPeriod: 'short_term' | 'long_term' | null = null;
-        const effectiveOpenDate = acqDateMap.get(lot.guid) || openDate;
+        const acquisitionDate = slotValue.get(`${lot.guid}:acquisition_date`) || null;
+        const effectiveOpenDate = acquisitionDate || openDate;
         if (effectiveOpenDate) {
             const termEndDate = isClosed && closeDate ? closeDate : nowIso;
             holdingPeriod = isLongTerm(effectiveOpenDate, termEndDate) ? 'long_term' : 'short_term';
         }
 
-        return {
+        const summary: LotSummary = {
             guid: lot.guid,
             accountGuid: lot.account_guid || accountGuid,
             isClosed,
@@ -280,22 +285,26 @@ export async function getAccountLots(accountGuid: string): Promise<LotSummary[]>
             unrealizedGain,
             holdingPeriod,
             currentPrice: latestPrice,
-            sourceLotGuid: sourceMap.get(lot.guid) ?? null,
-            acquisitionDate: acqDateMap.get(lot.guid) ?? null,
-            carriedBasis: carriedMap.get(lot.guid) ?? 0,
+            sourceLotGuid: slotValue.get(`${lot.guid}:source_lot_guid`) || null,
+            acquisitionDate,
+            carriedBasis,
             splits: lotSplits,
         };
-    });
+        const summaries = result.get(accountGuid) ?? [];
+        summaries.push(summary);
+        result.set(accountGuid, summaries);
+    }
 
-    // Sort: open lots first, then by open date descending
-    summaries.sort((a, b) => {
-        if (a.isClosed !== b.isClosed) return a.isClosed ? 1 : -1;
-        const dateA = a.openDate ? new Date(a.openDate).getTime() : 0;
-        const dateB = b.openDate ? new Date(b.openDate).getTime() : 0;
-        return dateB - dateA;
-    });
+    for (const summaries of result.values()) {
+        summaries.sort((a, b) => {
+            if (a.isClosed !== b.isClosed) return a.isClosed ? 1 : -1;
+            const dateA = a.openDate ? new Date(a.openDate).getTime() : 0;
+            const dateB = b.openDate ? new Date(b.openDate).getTime() : 0;
+            return dateB - dateA;
+        });
+    }
 
-    return summaries;
+    return result;
 }
 
 /**

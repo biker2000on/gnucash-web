@@ -50,6 +50,11 @@ export type ResolveOidcAction =
     | { action: 'pending'; username: string }
     | { action: 'create'; username: string };
 
+/** Match password registration: first-user bootstrap is allowed; later users require opt-in. */
+export function oidcRegistrationAllowed(existingUserCount: number, registrationOpen: boolean): boolean {
+    return existingUserCount === 0 || registrationOpen;
+}
+
 /** Email is usable for matching/storing only when explicitly verified. */
 export function hasVerifiedEmail(claims: OidcClaims): boolean {
     return Boolean(claims.email) && claims.emailVerified === true;

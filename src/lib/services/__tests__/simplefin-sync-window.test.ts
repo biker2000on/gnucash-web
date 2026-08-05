@@ -3,7 +3,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { computeSyncStart } from '../simplefin-sync.service';
+import { computeSafeSyncCursor, computeSyncStart } from '../simplefin-sync.service';
 
 const NOW = new Date('2026-07-22T12:00:00.000Z');
 const DAY = 24 * 60 * 60 * 1000;
@@ -31,5 +31,17 @@ describe('computeSyncStart', () => {
     const staleSync = new Date(NOW.getTime() - 120 * DAY);
     const start = computeSyncStart([staleSync], NOW);
     expect(start.getTime()).toBe(staleSync.getTime() - 7 * DAY);
+  });
+});
+
+describe('computeSafeSyncCursor', () => {
+  it('advances to now when every fetched transaction succeeded', () => {
+    expect(computeSafeSyncCursor(NOW, [])).toBe(NOW);
+  });
+
+  it('stays at the oldest failed posting date so the next run re-fetches it', () => {
+    const oldFailure = new Date('2026-04-01T00:00:00.000Z');
+    const newFailure = new Date('2026-07-20T00:00:00.000Z');
+    expect(computeSafeSyncCursor(NOW, [newFailure, oldFailure])).toBe(oldFailure);
   });
 });

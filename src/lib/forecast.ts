@@ -14,7 +14,7 @@
  *   threshold (default $0), per account and for the combined total.
  */
 
-import { computeNextOccurrences, RecurrencePattern } from './recurrence';
+import { computeNextOccurrencesForPatterns, RecurrencePattern } from './recurrence';
 
 /* ------------------------------------------------------------------ */
 /* Types                                                               */
@@ -109,6 +109,12 @@ export interface ScheduledTxLike {
         periodStart: string;
         weekendAdjust: string;
     } | null;
+    recurrences?: Array<{
+        periodType: string;
+        mult: number;
+        periodStart: string;
+        weekendAdjust: string;
+    }>;
     splits: Array<{
         accountGuid: string;
         accountName: string;
@@ -201,20 +207,23 @@ export function expandScheduledEvents(
         if (sx.remainingOccurrences === 0) continue;
         if (!sx.splits.some(s => selectedAccountGuids.has(s.accountGuid))) continue;
 
-        const pattern: RecurrencePattern = {
-            periodType: sx.recurrence.periodType,
-            mult: sx.recurrence.mult,
-            periodStart: parseLocalDate(sx.recurrence.periodStart),
-            weekendAdjust: sx.recurrence.weekendAdjust,
-        };
+        const patterns: RecurrencePattern[] = (sx.recurrences?.length
+            ? sx.recurrences
+            : [sx.recurrence]
+        ).map(item => ({
+            periodType: item.periodType,
+            mult: item.mult,
+            periodStart: parseLocalDate(item.periodStart),
+            weekendAdjust: item.weekendAdjust,
+        }));
 
         const lastOccur = sx.lastOccur ? parseLocalDate(sx.lastOccur) : null;
         const sxEnd = sx.endDate ? parseLocalDate(sx.endDate) : null;
         const effectiveEnd = sxEnd && sxEnd < windowEnd ? sxEnd : windowEnd;
         const remOccur = sx.remainingOccurrences > 0 ? sx.remainingOccurrences : null;
 
-        const dates = computeNextOccurrences(
-            pattern,
+        const dates = computeNextOccurrencesForPatterns(
+            patterns,
             lastOccur,
             effectiveEnd,
             remOccur,

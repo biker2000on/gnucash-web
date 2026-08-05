@@ -4,8 +4,8 @@ FROM node:24-alpine AS deps
 RUN apk add --no-cache libc6-compat
 WORKDIR /app
 
-COPY package.json package-lock.json* ./
-RUN npm config set strict-ssl false && npm install
+COPY package.json package-lock.json ./
+RUN npm ci
 
 # Install only production dependencies for the runtime image.
 # This is a separate stage so dev deps (playwright, vitest, eslint, tsc, …)
@@ -13,7 +13,7 @@ RUN npm config set strict-ssl false && npm install
 FROM node:24-alpine AS prod-deps
 RUN apk add --no-cache libc6-compat
 WORKDIR /app
-COPY package.json package-lock.json* ./
+COPY package.json package-lock.json ./
 COPY prisma ./prisma
 # Install prod deps, then drop known dead weight:
 #   - @next/swc-linux-x64-gnu, @napi-rs/canvas-linux-x64-gnu,
@@ -24,8 +24,7 @@ COPY prisma ./prisma
 # --omit=peer prevents npm from auto-installing peer deps like typescript.
 # NOTE: @prisma/studio-core and @prisma/dev must stay — the prisma CLI
 # requires them at load time even for `prisma db push`.
-RUN npm config set strict-ssl false \
- && npm install --omit=dev --omit=peer \
+RUN npm ci --omit=dev --omit=peer \
  && rm -rf \
       node_modules/@next/swc-linux-x64-gnu \
       node_modules/@napi-rs/canvas-linux-x64-gnu \
@@ -44,7 +43,7 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
 # Generate Prisma client (required before build for TypeScript types)
-RUN NODE_TLS_REJECT_UNAUTHORIZED=0 npx prisma generate
+RUN npx prisma generate
 
 RUN npm run build
 
@@ -64,7 +63,7 @@ RUN npx esbuild worker.ts \
 
 # Generate the empty-database bootstrap SQL at build time so the runtime
 # image needs no prisma CLI. db-init.js applies it on fresh installs.
-RUN NODE_TLS_REJECT_UNAUTHORIZED=0 npx prisma migrate diff \
+RUN npx prisma migrate diff \
       --from-empty --to-schema prisma/schema.prisma --script \
       -o .next/standalone/bootstrap.sql \
  && grep -q "CREATE TABLE" .next/standalone/bootstrap.sql
@@ -135,6 +134,9 @@ EXPOSE 3000
 ENV PORT 3000
 # set hostname to localhost
 ENV HOSTNAME "0.0.0.0"
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD wget --spider -q http://127.0.0.1:3000/api/health || exit 1
 
 # server.js is created by next build from the standalone output
 # https://nextjs.org/docs/pages/api-reference/next-config-js/output

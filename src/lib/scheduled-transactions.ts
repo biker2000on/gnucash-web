@@ -1,7 +1,7 @@
 import prisma from '@/lib/prisma';
 import type { ExtendedPrismaClient } from '@/lib/prisma';
 import { toDecimal } from '@/lib/gnucash';
-import { computeNextOccurrences, RecurrencePattern } from '@/lib/recurrence';
+import { computeNextOccurrencesForPatterns, RecurrencePattern } from '@/lib/recurrence';
 
 /**
  * Either the global Prisma client or an interactive-transaction client
@@ -183,6 +183,13 @@ export interface ScheduledTransaction {
     periodStart: string;
     weekendAdjust: string;
   } | null;
+  /** All native recurrence rows. Composite desktop schedules have 2+. */
+  recurrences?: Array<{
+    periodType: string;
+    mult: number;
+    periodStart: string;
+    weekendAdjust: string;
+  }>;
   nextOccurrence: string | null;
   splits: Array<{
     accountGuid: string;
@@ -237,10 +244,15 @@ export async function fetchScheduledTransactions(
   const recurrenceList = sxGuids.length > 0
     ? await prisma.recurrences.findMany({ where: { obj_guid: { in: sxGuids } } })
     : [];
-  const recurrenceByGuid = new Map(recurrenceList.map(r => [r.obj_guid, r]));
+  const recurrenceByGuid = new Map<string, typeof recurrenceList>();
+  for (const recurrence of recurrenceList) {
+    const rows = recurrenceByGuid.get(recurrence.obj_guid) ?? [];
+    rows.push(recurrence);
+    recurrenceByGuid.set(recurrence.obj_guid, rows);
+  }
 
   const rows: ScheduledTransactionRow[] = sxList.map(s => {
-    const r = recurrenceByGuid.get(s.guid);
+    const r = recurrenceByGuid.get(s.guid)?.[0];
     return {
       guid: s.guid,
       name: s.name ?? '',
@@ -272,47 +284,39 @@ export async function fetchScheduledTransactions(
   for (const row of rows) {
     const splits = splitsByTemplate.get(row.template_act_guid) ?? [];
 
-    // Build recurrence info
+    // Build recurrence info. Keep the first row for backward-compatible UI
+    // display while exposing and evaluating the complete native row set.
     let recurrence: ScheduledTransaction['recurrence'] = null;
+    const recurrences: NonNullable<ScheduledTransaction['recurrences']> = [];
     let nextOccurrence: string | null = null;
 
-    if (row.recurrence_period_type && row.recurrence_period_start) {
-      const periodStart = parseGnuCashDate(row.recurrence_period_start);
+    const nativeRecurrences = recurrenceByGuid.get(row.guid) ?? [];
+    const patterns: RecurrencePattern[] = [];
+    for (const native of nativeRecurrences) {
+      const periodStart = parseGnuCashDate(native.recurrence_period_start);
       if (periodStart) {
-        recurrence = {
-          periodType: row.recurrence_period_type,
-          mult: row.recurrence_mult || 1,
+        const item = {
+          periodType: native.recurrence_period_type,
+          mult: native.recurrence_mult || 1,
           periodStart: formatDate(periodStart)!,
-          weekendAdjust: row.recurrence_weekend_adjust || 'none',
+          weekendAdjust: native.recurrence_weekend_adjust || 'none',
         };
-
-        // Compute next occurrence
-        if (row.enabled) {
-          const pattern: RecurrencePattern = {
-            periodType: row.recurrence_period_type,
-            mult: row.recurrence_mult || 1,
-            periodStart,
-            weekendAdjust: row.recurrence_weekend_adjust || 'none',
-          };
-
-          const lastOccur = parseGnuCashDate(row.last_occur);
-          const endDate = parseGnuCashDate(row.end_date);
-          const remOccur = row.rem_occur > 0 ? row.rem_occur : null;
-
-          const nextDates = computeNextOccurrences(
-            pattern,
-            lastOccur,
-            endDate,
-            remOccur,
-            1,
-            today
-          );
-
-          if (nextDates.length > 0) {
-            nextOccurrence = formatDate(nextDates[0]);
-          }
-        }
+        recurrences.push(item);
+        patterns.push({ ...item, periodStart });
       }
+    }
+    recurrence = recurrences[0] ?? null;
+
+    if (row.enabled && patterns.length > 0) {
+      const nextDates = computeNextOccurrencesForPatterns(
+        patterns,
+        parseGnuCashDate(row.last_occur),
+        parseGnuCashDate(row.end_date),
+        row.rem_occur > 0 ? row.rem_occur : null,
+        1,
+        today,
+      );
+      if (nextDates.length > 0) nextOccurrence = formatDate(nextDates[0]);
     }
 
     results.push({
@@ -326,6 +330,7 @@ export async function fetchScheduledTransactions(
       autoCreate: row.auto_create === 1,
       autoNotify: row.auto_notify === 1,
       recurrence,
+      recurrences,
       nextOccurrence,
       splits,
     });

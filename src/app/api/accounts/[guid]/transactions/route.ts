@@ -9,6 +9,7 @@ import { traceCostBasis, isTransferIn, createCostBasisCache, preloadLotSplits, t
 import { parseSearchQuery } from '@/lib/tags';
 import { getTagsForTransactions } from '@/lib/services/tag.service';
 import { readTransactionNotes } from '@/lib/transaction-notes';
+import { cacheGet, cacheSet } from '@/lib/cache';
 
 export async function GET(
     request: Request,
@@ -143,6 +144,20 @@ export async function GET(
         let investmentRunningTotals: Map<string, { shareBalance: number; costBasis: number }> | null = null;
 
         if (isInvestmentAccount && !unreviewedOnly && !includeSubaccounts) {
+            const cacheStart = startDate?.slice(0, 10) || '0001-01-01';
+            const cacheEnd = endDate?.slice(0, 10) || '9999-12-31';
+            const totalsCacheKey =
+                `cache:${roleResult.bookGuid}:investment-ledger:${accountGuid}:` +
+                `${costBasisMethod}:${costBasisCarryOver ? 'carry' : 'local'}:` +
+                `${cacheStart}-${cacheEnd}`;
+            const cachedTotals = await cacheGet<Array<[
+                string,
+                { shareBalance: number; costBasis: number },
+            ]>>(totalsCacheKey);
+            const totalsCacheHit = cachedTotals !== null;
+            if (cachedTotals) investmentRunningTotals = new Map(cachedTotals);
+
+            if (!investmentRunningTotals) {
             const accountCommodityGuid = account?.commodity_guid || '';
 
             if (costBasisCarryOver && accountCommodityGuid) {
@@ -312,6 +327,11 @@ export async function GET(
                         costBasis: runCostBasis,
                     });
                 }
+            }
+            }
+
+            if (!totalsCacheHit && investmentRunningTotals) {
+                await cacheSet(totalsCacheKey, [...investmentRunningTotals.entries()], 3600);
             }
         }
 

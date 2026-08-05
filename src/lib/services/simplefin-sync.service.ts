@@ -128,6 +128,12 @@ export function computeSyncStart(
   return new Date(earliest.getTime() - SYNC_OVERLAP_DAYS * 24 * 60 * 60 * 1000);
 }
 
+/** Keep a mapping cursor at the oldest failed posting date, if any. */
+export function computeSafeSyncCursor(now: Date, failedPostDates: Date[]): Date {
+  if (failedPostDates.length === 0) return now;
+  return failedPostDates.reduce((earliest, date) => date < earliest ? date : earliest);
+}
+
 export async function updateSimpleFinConnectionSyncStatus(
   connectionId: number,
   status: SimpleFinSyncStatus,
@@ -391,6 +397,7 @@ async function runSimpleFinSync(
     }
 
     result.accountsProcessed++;
+    let earliestFailedPostDate: Date | null = null;
 
     try {
       // Get existing SimpleFin transaction IDs for this account to dedup
@@ -540,24 +547,35 @@ async function runSimpleFinSync(
             account: mappedAccount.simplefin_account_name || mappedAccount.simplefin_account_id,
             error: `Failed to import transaction ${sfTxn.id}: ${err}`,
           });
+          const failedPostDate = normalizePostDate(sfTxn.posted);
+          if (!earliestFailedPostDate || failedPostDate < earliestFailedPostDate) {
+            earliestFailedPostDate = failedPostDate;
+          }
         }
       }
 
       // Update last_sync_at and balance on the account mapping
       const now = new Date();
+      // Keep the cursor at the oldest failed transaction so the next overlap
+      // necessarily re-fetches it. Advancing to now would permanently lose a
+      // failed row older than the normal seven-day overlap.
+      const safeSyncCursor = computeSafeSyncCursor(
+        now,
+        earliestFailedPostDate ? [earliestFailedPostDate] : [],
+      );
       if (sfAccount.balance !== undefined) {
         await prisma.gnucash_web_simplefin_account_map.update({
           where: { id: mappedAccount.id },
           data: {
             last_balance: parseFloat(sfAccount.balance),
             last_balance_date: now,
-            last_sync_at: now,
+            last_sync_at: safeSyncCursor,
           },
         });
       } else {
         await prisma.gnucash_web_simplefin_account_map.update({
           where: { id: mappedAccount.id },
-          data: { last_sync_at: now },
+          data: { last_sync_at: safeSyncCursor },
         });
       }
     } catch (err) {

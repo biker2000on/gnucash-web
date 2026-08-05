@@ -2117,3 +2117,135 @@ Before adding another feature to this file, answer:
 
 If those answers are weak, improve an existing workflow instead of adding
 another destination to the feature catalog.
+
+---
+
+# Engineering quality backlog — ASI review 2026-08-04
+
+Findings from the full-stack ASI review at commit 9c4c148. Full evidence,
+file:line citations, impact scenarios, and regression tests for every item are
+in [asi-review.md](asi-review.md) under the referenced ID. These are defect
+fixes and hardening, so the feature-backlog admission checklist does not apply.
+
+## Do immediately
+
+- [x] **Rotate the committed app password** and move Playwright specs to
+  `E2E_USER`/`E2E_PASS` env vars (`tests/test-reports.spec.ts`,
+  `tests/e2e/review-mode.spec.ts`, `tests/test-investment-charts.spec.ts`).
+  (ASI-3-001) — Password rotated 2026-08-05; the committed string is now
+  inert. Switching the specs to env vars (and deleting the two dead
+  root-level specs) is folded into the e2e cleanup item (ASI-2-002).
+
+## P1 — High findings
+
+- [x] **CI gate:** run `vitest run` + `lint` as a required job before the
+  image build in `deploy.yml`. (ASI-2-001)
+- [x] **Build integrity:** remove the four TLS-off lines in the Dockerfile and
+  switch both installs to `npm ci`. (ASI-3-002)
+- [x] **FX triangulation:** fix the `'triangulated'` exact-match guard at
+  `currency.ts:213` and bound the recursion so a missing USD/EUR price can't
+  hang requests. (ASI-1-001)
+- [x] **Carried basis in lot summaries:** make `lots.ts` gain/cost math use
+  `carried_basis` like the scrub engine and 8949 already do — fixes inflated
+  gains on transferred lots and missed tax-harvesting losses. (ASI-1-002)
+- [x] **db-init safety:** add a schema-meta tracking table, and
+  backup-or-gate the destructive statements (price dedupe delete, tool_config
+  deletes, native GnuCash index drops). Resolve first whether desktop GnuCash
+  still opens the prod DB. (ASI-7-001, ASI-8-001)
+- [x] **Rollback runbook:** document previous-SHA pin procedure for the
+  Dockhand stack; consider a `stable` tag pushed after a health probe.
+  (ASI-7-002)
+- [x] **`jh-401k-separate.mjs`:** flip to default-dry `--apply`, read
+  `DATABASE_URL`, print target DB, wrap mutations in a transaction.
+  (ASI-4-001) — Resolved 2026-08-05: one-off script already served its
+  purpose; retired from tracking (commit f4facea).
+
+## P2 — Medium findings
+
+Correctness:
+- [x] Wash-sale detection: carried-basis-aware loss test + consume replacement
+  shares per buy. (ASI-1-003)
+- [x] "Average" cost basis silently runs FIFO and books gains — implement or
+  label with a warning. (ASI-1-004)
+- [x] Monthly recurrence with forward weekend adjust skips a month after a
+  cross-month adjustment. (ASI-1-005)
+- [x] Composite/semi-monthly recurrences: honor multiple recurrence rows per
+  SX; derive semi-monthly anchors from `periodStart`; respect `mult`.
+  (ASI-1-006)
+
+Security:
+- [x] Gate OIDC auto-provisioning (registration gate / allowlist; no automatic
+  all-books readonly grant). (ASI-3-003)
+- [x] AI-query guardrail: require every scoped table reference to be bound to
+  the book's account set, not just one `$1` anywhere. (ASI-3-004)
+- [x] Dependency updates: `npm audit fix` batch; plan Next 16.3 + sharp 0.35
+  upgrades; replace unfixable `node-tesseract-ocr` (call tesseract via
+  `execFile` or use `tesseract.js`). (ASI-3-005)
+- [x] Pin GH Actions to SHAs; use `GITHUB_TOKEN` instead of CR_PAT; add a
+  secret to the Dockhand webhook and fail the job on webhook errors.
+  (ASI-3-006)
+
+Ops / reliability:
+- [x] Standardize repair scripts: shared target-DB banner, prod confirm guard,
+  default-dry `--apply` everywhere. (ASI-4-002, ASI-4-004) — Resolved
+  2026-08-05: the one-off repair scripts are done and retired from tracking
+  (commit f4facea). Adopt the banner/guard convention if a new repair script
+  is ever written.
+- [x] Dev compose: shared volume for `/app/data/receipts` (OCR worker
+  currently can't see app uploads; recreate deletes documents). (ASI-4-003)
+- [x] Worker: add BullMQ `error` listener + `unhandledRejection` backstop.
+  (ASI-5-001)
+- [x] Worker: guard schedule callbacks in `setScheduleGeneric` so one failure
+  can't end a schedule chain (backups). (ASI-5-002)
+- [x] Web Redis client: replace the permanent `connectionFailed` latch with a
+  cooldown retry. (ASI-5-003)
+- [x] Worker Redis connection: honor the `db` index in `REDIS_URL` like the
+  enqueue side. (ASI-5-004)
+- [x] SimpleFin: don't advance `last_sync_at` past failed transaction imports.
+  (ASI-5-005)
+- [x] Email ingest: claim dedup key before processing + in-flight guard to
+  prevent double-ingestion. (ASI-5-006)
+- [x] Startup env validation: assert `DATABASE_URL` and a ≥32-char session
+  secret in the entrypoint with named errors. (ASI-7-003)
+- [x] Health checks: Dockerfile/compose HEALTHCHECKs (worker health port
+  already exists); make deploy webhook failures fail the workflow. (ASI-7-004)
+
+Performance:
+- [x] Batch lot loading for capital-gains/tax surfaces (merge the 4 slot
+  queries; `getLotsForAccounts`). (ASI-6-001)
+- [x] Cache investment-ledger running totals so infinite scroll stops
+  recomputing full cost-basis history per page. (ASI-6-002)
+- [x] Price backfill: hoist USD lookup, batch inserts. (ASI-6-003)
+
+Tests:
+- [x] Unit-test `findExchangeRate`/`convertAmount` (direct/inverse/
+  triangulated/none/stale + recursion bound). (ASI-2-003)
+- [x] Fix or quarantine the e2e suite (testDir mismatch, hardcoded port,
+  data-dependent skips; use demo-seed). (ASI-2-002)
+
+## P4 — Low findings (backlog when touching the area)
+
+- [ ] Mortgage original-amount fallback double-counts (ASI-1-007); UTC age
+  calc for Dec 31 birthdays (ASI-1-008); price-staleness warnings (ASI-1-009);
+  balance-sheet `grandTotal` retained-earnings line (ASI-1-010).
+- [ ] Env-gated Postgres integration test for db-init + one report query
+  (ASI-2-004); fake timers in "today"-relative tests (ASI-2-005).
+- [ ] Webhook DNS re-resolution (ASI-3-007); security headers (ASI-3-008);
+  remove weak compose credential fallbacks (ASI-3-009).
+- [x] Backup precondition enforced in `fix-lot-scrub-sign-corruption.ts`
+  (ASI-4-005) — Resolved 2026-08-05: script already run and retired from
+  tracking (commit f4facea).
+- [ ] Gzip bomb cap in XML import (ASI-4-006); log rotation + `data/` in
+  `.dockerignore` (ASI-4-007).
+- [ ] Email-ingest retry-not-poison + failure notifications (ASI-5-007);
+  webhook idempotency claim expiry (ASI-5-008); SimpleFin get-or-create
+  advisory locks + book-scoped Imbalance lookup (ASI-5-009); OCR temp-file
+  entropy (ASI-5-010); validate `refresh_time` + per-book schedules
+  (ASI-5-011).
+- [ ] SimpleFin meta query hoist (ASI-6-004); push amount/reconcile filters
+  into SQL and verify the journal variant applies them at all (ASI-6-005);
+  wire up or remove `@tanstack/react-virtual` (ASI-6-006); dashboard SQL
+  GROUP BY + invalidation debounce + idx TTLs (ASI-6-007).
+- [ ] Worker `stop_grace_period` + timer drain (ASI-7-005); Prisma ↔ db-init
+  drift check in CI (ASI-7-006); bootstrap race lock (ASI-7-007); ESLint
+  ignore `.claude/` + triage unused-var warnings (ASI-8-002).

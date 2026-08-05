@@ -62,4 +62,12 @@ describe('computeRealizedGain', () => {
     ];
     expect(computeRealizedGain(splits, true)).toBeCloseTo(1500);
   });
+
+  it('subtracts carried basis from a transferred lot gain', () => {
+    const splits = [
+      { shares: 10, value: 0 },
+      { shares: -10, value: -1500 },
+    ];
+    expect(computeRealizedGain(splits, true, 900)).toBeCloseTo(600);
+  });
 });

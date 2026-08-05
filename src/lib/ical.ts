@@ -14,7 +14,7 @@
  * one failing source never breaks the whole feed.
  */
 
-import { computeNextOccurrences, type RecurrencePattern } from '@/lib/recurrence';
+import { computeNextOccurrencesForPatterns, type RecurrencePattern } from '@/lib/recurrence';
 import { parseGnuCashDate } from '@/lib/scheduled-transactions';
 import { rmdStartAge } from '@/lib/drawdown/rmd';
 import type { UpcomingMaturity, CouponPaymentEstimate } from '@/lib/fixed-income';
@@ -189,6 +189,12 @@ export interface ScheduledEventSource {
         periodStart: string;
         weekendAdjust: string;
     } | null;
+    recurrences?: Array<{
+        periodType: string;
+        mult: number;
+        periodStart: string;
+        weekendAdjust: string;
+    }>;
     splits: Array<{ accountGuid: string; accountName: string; amount: number }>;
 }
 
@@ -211,15 +217,19 @@ export function scheduledTransactionEvents(
     for (const tx of transactions) {
         if (!tx.enabled || !tx.recurrence) continue;
 
-        const periodStart = parseGnuCashDate(tx.recurrence.periodStart);
-        if (!periodStart) continue;
-
-        const pattern: RecurrencePattern = {
-            periodType: tx.recurrence.periodType,
-            mult: tx.recurrence.mult || 1,
-            periodStart,
-            weekendAdjust: tx.recurrence.weekendAdjust || 'none',
-        };
+        const patterns: RecurrencePattern[] = (tx.recurrences?.length
+            ? tx.recurrences
+            : [tx.recurrence]
+        ).flatMap(item => {
+            const periodStart = parseGnuCashDate(item.periodStart);
+            return periodStart ? [{
+                periodType: item.periodType,
+                mult: item.mult || 1,
+                periodStart,
+                weekendAdjust: item.weekendAdjust || 'none',
+            }] : [];
+        });
+        if (patterns.length === 0) continue;
 
         const lastOccur = parseGnuCashDate(tx.lastOccur);
         const txEnd = parseGnuCashDate(tx.endDate);
@@ -227,8 +237,8 @@ export function scheduledTransactionEvents(
         const remaining = tx.remainingOccurrences > 0 ? tx.remainingOccurrences : null;
 
         // afterDate is exclusive; step back one day so today's occurrence is kept.
-        const dates = computeNextOccurrences(
-            pattern, lastOccur, effectiveEnd, remaining, 100, addDays(today, -1),
+        const dates = computeNextOccurrencesForPatterns(
+            patterns, lastOccur, effectiveEnd, remaining, 100, addDays(today, -1),
         );
 
         const description = tx.splits.length > 0

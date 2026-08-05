@@ -1,6 +1,6 @@
 /**
  * Extract text from a PDF buffer using pdfjs-dist.
- * This is a standalone module with no BullMQ or node-tesseract-ocr dependencies,
+ * This is a standalone module with no BullMQ or system-tesseract dependencies,
  * safe to import in Next.js API routes. OCR is deliberately NOT imported here:
  * callers that want a scanned-PDF fallback inject one through `options.ocr`, so
  * this module keeps the dependency shape the production bundle relies on.

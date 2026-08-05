@@ -11,12 +11,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const mockAccountsFindMany = vi.fn();
 const mockSplitsFindMany = vi.fn();
 const mockLotsFindMany = vi.fn();
+const mockSlotsFindMany = vi.fn();
 
 vi.mock('../prisma', () => ({
   default: {
     accounts: { findMany: (...a: unknown[]) => mockAccountsFindMany(...a) },
     splits: { findMany: (...a: unknown[]) => mockSplitsFindMany(...a) },
     lots: { findMany: (...a: unknown[]) => mockLotsFindMany(...a) },
+    slots: { findMany: (...a: unknown[]) => mockSlotsFindMany(...a) },
   },
 }));
 
@@ -82,6 +84,7 @@ beforeEach(() => {
   mockAccountsFindMany.mockReset();
   mockSplitsFindMany.mockReset();
   mockLotsFindMany.mockReset();
+  mockSlotsFindMany.mockReset().mockResolvedValue([]);
 });
 
 describe('§1091(b) pro-rating', () => {
@@ -108,6 +111,55 @@ describe('§1091(b) pro-rating', () => {
   it('a fractional buyback pro-rates proportionally', async () => {
     const [wash] = await scenario({ date: '2024-06-05T12:00:00.000Z', shares: 2.5, cost: 100 });
     expect(wash.loss).toBeCloseTo(-25, 6);
+  });
+
+  it('uses carried basis to recognize a transferred-lot loss', async () => {
+    mockAccountsFindMany.mockResolvedValue([
+      { guid: ACCT, name: 'Brokerage', commodity_guid: COMMODITY, commodity: { mnemonic: 'AAPL' } },
+    ]);
+    mockLotsFindMany.mockResolvedValue([{
+      guid: 'transfer-lot',
+      splits: [
+        { quantity_num: 1_000_000n, quantity_denom: 10_000n, value_num: 0n, value_denom: 100n },
+        { quantity_num: -1_000_000n, quantity_denom: 10_000n, value_num: -400_000n, value_denom: 100n },
+      ],
+    }]);
+    mockSlotsFindMany.mockResolvedValue([
+      { obj_guid: 'transfer-lot', string_val: '5000' },
+    ]);
+    mockSplitsFindMany.mockResolvedValue([
+      raw('transfer-in', '2024-01-01T12:00:00.000Z', 100, 0, 'transfer-lot'),
+      raw('sell', '2024-06-01T12:00:00.000Z', -100, -4_000, 'transfer-lot'),
+      raw('buy-replacement', '2024-06-10T12:00:00.000Z', 10, 400),
+    ]);
+
+    const [wash] = await detectWashSales([ACCT]);
+    expect(wash.loss).toBeCloseTo(-100, 6);
+  });
+
+  it('consumes replacement shares so one buy cannot wash two sales', async () => {
+    mockAccountsFindMany.mockResolvedValue([
+      { guid: ACCT, name: 'Brokerage', commodity_guid: COMMODITY, commodity: { mnemonic: 'AAPL' } },
+    ]);
+    mockLotsFindMany.mockResolvedValue([{
+      guid: 'multi-sale-lot',
+      splits: [
+        { quantity_num: 2_000_000n, quantity_denom: 10_000n, value_num: 1_000_000n, value_denom: 100n },
+        { quantity_num: -1_000_000n, quantity_denom: 10_000n, value_num: -400_000n, value_denom: 100n },
+        { quantity_num: -1_000_000n, quantity_denom: 10_000n, value_num: -400_000n, value_denom: 100n },
+      ],
+    }]);
+    mockSplitsFindMany.mockResolvedValue([
+      raw('buy-original', '2024-01-01T12:00:00.000Z', 200, 10_000, 'multi-sale-lot'),
+      raw('sell-one', '2024-06-01T12:00:00.000Z', -100, -4_000, 'multi-sale-lot'),
+      raw('sell-two', '2024-06-02T12:00:00.000Z', -100, -4_000, 'multi-sale-lot'),
+      raw('one-replacement', '2024-06-10T12:00:00.000Z', 100, 4_000),
+    ]);
+
+    const washes = await detectWashSales([ACCT]);
+    expect(washes).toHaveLength(1);
+    expect(washes[0].replacementShares).toBeCloseTo(100, 6);
+    expect(washes[0].loss).toBeCloseTo(-1_000, 6);
   });
 });
 

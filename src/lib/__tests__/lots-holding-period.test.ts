@@ -11,13 +11,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const mockLotsFindMany = vi.fn();
 const mockSlotsFindMany = vi.fn();
-const mockAccountsFindUnique = vi.fn();
+const mockAccountsFindMany = vi.fn();
 
 vi.mock('../prisma', () => ({
   default: {
     lots: { findMany: (...a: unknown[]) => mockLotsFindMany(...a) },
     slots: { findMany: (...a: unknown[]) => mockSlotsFindMany(...a) },
-    accounts: { findUnique: (...a: unknown[]) => mockAccountsFindUnique(...a) },
+    accounts: { findMany: (...a: unknown[]) => mockAccountsFindMany(...a) },
   },
 }));
 
@@ -48,7 +48,9 @@ function lot(guid: string, isClosed: 0 | 1, splits: ReturnType<typeof split>[]) 
 beforeEach(() => {
   mockLotsFindMany.mockReset();
   mockSlotsFindMany.mockReset().mockResolvedValue([]);
-  mockAccountsFindUnique.mockReset().mockResolvedValue({ commodity_guid: 'commodity-aapl' });
+  mockAccountsFindMany.mockReset().mockResolvedValue([
+    { guid: ACCT, commodity_guid: 'commodity-aapl' },
+  ]);
 });
 
 describe('closed lots are classified against their CLOSE date', () => {
@@ -135,11 +137,13 @@ describe('the acquisition_date slot still wins over the open date', () => {
         split('sell', '2024-12-01', -10, -1_200),
       ]),
     ]);
-    mockSlotsFindMany.mockImplementation(async (args: { where: { name: string } }) =>
-      args.where.name === 'acquisition_date'
-        ? [{ obj_guid: 'transferred', string_val: '2019-01-01T12:00:00.000Z' }]
-        : [],
-    );
+    mockSlotsFindMany.mockResolvedValue([
+      {
+        obj_guid: 'transferred',
+        name: 'acquisition_date',
+        string_val: '2019-01-01T12:00:00.000Z',
+      },
+    ]);
     const [summary] = await getAccountLots(ACCT);
     // Acquired 2019, sold 2024 -> long term, even though the lot only opened
     // in the destination account a month before the sale.

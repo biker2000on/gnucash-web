@@ -37,12 +37,17 @@ describe('initializeDatabase', () => {
 
         const sqls = mocks.query.mock.calls.map((c) => String(c[0]));
 
-        // H5: prices — same-instant duplicates are deduped in place (best
-        // source wins: user-entered beats Finance::Quote) before indexing.
+        // H5: prices — same-instant duplicates are backed up and removed by a
+        // recorded one-time migration before the non-destructive guard runs.
+        const priceMigration = sqls.find((s) =>
+            s.includes('2026-08-05-prices-deduplicate') && s.includes('DELETE FROM prices'),
+        );
+        expect(priceMigration).toContain('gnucash_web_migration_backups');
+        expect(priceMigration).toContain("(source IS DISTINCT FROM 'Finance::Quote') DESC");
         const prices = sqls.find((s) => s.includes('uq_prices_commodity_currency_date'));
         expect(prices).toBeDefined();
-        expect(prices).toContain('DELETE FROM prices');
-        expect(prices).toContain("(source IS DISTINCT FROM 'Finance::Quote') DESC");
+        expect(prices).not.toContain('DELETE FROM prices');
+        expect(prices).toContain('RAISE WARNING');
         expect(prices).toContain("pg_advisory_xact_lock(hashtext('gnucash_web_prices_unique_guard'))");
 
         // Commodities — merging is not safe automatically: dirty data skips
@@ -120,11 +125,10 @@ describe('initializeDatabase', () => {
         expect(drop).toBeDefined();
         expect(drop).toContain("pg_advisory_xact_lock(hashtext('gnucash_web_drop_redundant_indexes'))");
 
-        // Prefix duplicates drop only once a superseding index exists
-        expect(drop).toContain('DROP INDEX IF EXISTS splits_account_guid_index');
-        expect(drop).toMatch(/to_regclass\('idx_splits_account_covering'\) IS NOT NULL[\s\S]*DROP INDEX IF EXISTS splits_account_guid_index/);
-        expect(drop).toContain('DROP INDEX IF EXISTS slots_guid_index');
-        expect(drop).toMatch(/to_regclass\('idx_slots_obj_name'\) IS NOT NULL[\s\S]*DROP INDEX IF EXISTS slots_guid_index/);
+        // Native GnuCash indexes stay intact because desktop GnuCash shares
+        // the production database.
+        expect(drop).not.toContain('DROP INDEX IF EXISTS splits_account_guid_index');
+        expect(drop).not.toContain('DROP INDEX IF EXISTS slots_guid_index');
 
         // The non-unique simplefin index goes only when the unique one exists
         expect(drop).toContain('DROP INDEX IF EXISTS idx_txn_meta_simplefin_id');

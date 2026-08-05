@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { query } from '../src/lib/db';
-import { initializeDatabase } from '../src/lib/db-init';
+import { validateStartupEnvironment } from '../src/lib/startup-env';
+
+type QueryFn = typeof import('../src/lib/db').query;
 
 /**
  * Bootstrap policy:
@@ -12,7 +13,7 @@ import { initializeDatabase } from '../src/lib/db-init';
  *     ongoing schema sync via idempotent DDL.
  * The `books` table is the marker for an initialized GnuCash schema.
  */
-async function bootstrapIfEmpty() {
+async function bootstrapIfEmpty(query: QueryFn) {
     const result = await query(
         "SELECT 1 FROM information_schema.tables WHERE table_name = 'books' LIMIT 1"
     );
@@ -35,7 +36,15 @@ async function bootstrapIfEmpty() {
 }
 
 async function main() {
-    await bootstrapIfEmpty();
+    // Validate before importing database modules so an absent URL/secret fails
+    // with the exact variable name instead of a localhost connection error or
+    // a request-time session failure.
+    validateStartupEnvironment();
+    const [{ query }, { initializeDatabase }] = await Promise.all([
+        import('../src/lib/db'),
+        import('../src/lib/db-init'),
+    ]);
+    await bootstrapIfEmpty(query);
     // initializeDatabase() rethrows on a structural failure, so this can now
     // actually reject — which is the point: a half-migrated schema must stop
     // the container rather than let the app serve traffic against it.

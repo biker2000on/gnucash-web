@@ -1,5 +1,9 @@
 import { Job } from 'bullmq';
-import { execSync } from 'child_process';
+import { execFile } from 'node:child_process';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { promisify } from 'node:util';
 import { updateOcrResults } from '@/lib/receipts';
 import { getStorageBackend } from '@/lib/storage/storage-backend';
 import { query } from '@/lib/db';
@@ -52,39 +56,32 @@ async function syncReceiptDocument(
   }
 }
 
-// Cache tesseract availability check at module level (checked once per worker process)
-let _systemTesseractAvailable: boolean | null = null;
+const execFileAsync = promisify(execFile);
 
-function isSystemTesseractAvailable(): boolean {
-  if (_systemTesseractAvailable !== null) return _systemTesseractAvailable;
+async function extractWithSystemTesseract(buffer: Buffer): Promise<string> {
+  // mkdtemp gives every concurrent worker job a private, unpredictable path.
+  // execFile bypasses a shell entirely, so neither the path nor options can be
+  // interpreted as commands (unlike the retired node-tesseract-ocr package).
+  const workDir = await mkdtemp(join(tmpdir(), 'gnucash-web-ocr-'));
+  const inputPath = join(workDir, 'input.png');
   try {
-    execSync('which tesseract', { stdio: 'ignore' });
-    _systemTesseractAvailable = true;
-  } catch {
-    _systemTesseractAvailable = false;
+    await writeFile(inputPath, buffer);
+    const { stdout } = await execFileAsync(
+      'tesseract',
+      [inputPath, 'stdout', '-l', 'eng'],
+      { maxBuffer: 16 * 1024 * 1024 },
+    );
+    return stdout.trim();
+  } finally {
+    await rm(workDir, { recursive: true, force: true });
   }
-  return _systemTesseractAvailable;
 }
 
 export async function extractTextFromImage(buffer: Buffer): Promise<string> {
-  if (isSystemTesseractAvailable()) {
-    try {
-      // node-tesseract-ocr expects a file path, not a buffer — write to temp file
-      const fs = await import('fs');
-      const path = await import('path');
-      const os = await import('os');
-      const tmpPath = path.join(os.tmpdir(), `receipt-ocr-${Date.now()}.png`);
-      fs.writeFileSync(tmpPath, buffer);
-      try {
-        const { recognize } = await import('node-tesseract-ocr');
-        const text = await recognize(tmpPath, { lang: 'eng' });
-        return text.trim();
-      } finally {
-        try { fs.unlinkSync(tmpPath); } catch { /* best effort cleanup */ }
-      }
-    } catch {
-      // Fall through to WASM fallback
-    }
+  try {
+    return await extractWithSystemTesseract(buffer);
+  } catch {
+    // Binary unavailable or failed: fall through to the WASM implementation.
   }
 
   const Tesseract = await import('tesseract.js');

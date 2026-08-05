@@ -136,7 +136,26 @@ export async function findExchangeRate(
     toGuid: string,
     date?: Date
 ): Promise<ExchangeRate | null> {
+    return findExchangeRateInternal(fromGuid, toGuid, date, true, new Set());
+}
+
+/**
+ * Internal bounded lookup. Triangulation legs are deliberately direct/inverse
+ * only: allowing a USD leg to triangulate through EUR (and vice versa) creates
+ * a mutual-recursion loop when neither currency has a stored price.
+ */
+async function findExchangeRateInternal(
+    fromGuid: string,
+    toGuid: string,
+    date: Date | undefined,
+    allowTriangulation: boolean,
+    visitedPairs: Set<string>,
+): Promise<ExchangeRate | null> {
     const asOfDate = date || new Date();
+    const pairKey = `${fromGuid}->${toGuid}`;
+    if (visitedPairs.has(pairKey)) return null;
+    const nextVisited = new Set(visitedPairs);
+    nextVisited.add(pairKey);
 
     // Same currency
     if (fromGuid === toGuid) {
@@ -201,16 +220,27 @@ export async function findExchangeRate(
         };
     }
 
+    if (!allowTriangulation) return null;
+
     // Try triangulation via USD
     const usd = await prisma.commodities.findFirst({
         where: { namespace: 'CURRENCY', mnemonic: 'USD' },
     });
 
     if (usd && usd.guid !== fromGuid && usd.guid !== toGuid) {
-        const fromToUsd = await findExchangeRate(fromGuid, usd.guid, date);
-        const usdToTo = await findExchangeRate(usd.guid, toGuid, date);
+        const fromToUsd = await findExchangeRateInternal(
+            fromGuid, usd.guid, date, false, nextVisited,
+        );
+        const usdToTo = await findExchangeRateInternal(
+            usd.guid, toGuid, date, false, nextVisited,
+        );
 
-        if (fromToUsd && usdToTo && fromToUsd.source !== 'triangulated' && usdToTo.source !== 'triangulated') {
+        if (
+            fromToUsd &&
+            usdToTo &&
+            !fromToUsd.source?.startsWith('triangulated') &&
+            !usdToTo.source?.startsWith('triangulated')
+        ) {
             return {
                 fromCurrency: fromToUsd.fromCurrency,
                 toCurrency: usdToTo.toCurrency,
@@ -227,8 +257,12 @@ export async function findExchangeRate(
     });
 
     if (eur && eur.guid !== fromGuid && eur.guid !== toGuid) {
-        const fromToEur = await findExchangeRate(fromGuid, eur.guid, date);
-        const eurToTo = await findExchangeRate(eur.guid, toGuid, date);
+        const fromToEur = await findExchangeRateInternal(
+            fromGuid, eur.guid, date, false, nextVisited,
+        );
+        const eurToTo = await findExchangeRateInternal(
+            eur.guid, toGuid, date, false, nextVisited,
+        );
 
         if (fromToEur && eurToTo && !fromToEur.source?.startsWith('triangulated') && !eurToTo.source?.startsWith('triangulated')) {
             return {

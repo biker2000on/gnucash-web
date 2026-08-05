@@ -99,11 +99,28 @@ function collectCteNames(masked: string): Set<string> {
  * Every identifier appearing in FROM/JOIN position. A `(` after FROM is a
  * derived table, whose own FROM is caught by the same global scan.
  */
-function collectRelationRefs(masked: string): string[] {
-    const refs: string[] = [];
-    const re = /\b(?:from|join)\s+([a-zA-Z_][a-zA-Z0-9_.$"]*)/gi;
+interface RelationRef {
+    table: string;
+    alias: string;
+}
+
+const ALIAS_STOP_WORDS = new Set([
+    'where', 'join', 'left', 'right', 'full', 'inner', 'outer', 'cross',
+    'on', 'group', 'order', 'limit', 'offset', 'union', 'having', 'window',
+]);
+
+function collectRelationRefs(masked: string): RelationRef[] {
+    const refs: RelationRef[] = [];
+    const re = /\b(?:from|join)\s+([a-zA-Z_][a-zA-Z0-9_.$"]*)(?:\s+(?:as\s+)?([a-zA-Z_][a-zA-Z0-9_]*))?/gi;
     let m: RegExpExecArray | null;
-    while ((m = re.exec(masked)) !== null) refs.push(m[1].toLowerCase());
+    while ((m = re.exec(masked)) !== null) {
+        const table = m[1].toLowerCase();
+        const candidateAlias = m[2]?.toLowerCase();
+        const alias = candidateAlias && !ALIAS_STOP_WORDS.has(candidateAlias)
+            ? candidateAlias
+            : table;
+        refs.push({ table, alias });
+    }
     return refs;
 }
 
@@ -116,6 +133,92 @@ function hasScopeBinding(masked: string): boolean {
     const anyForm = /\b(?:account_guid|guid)\s*(?:::\s*\w+(?:\[\])?\s*)?=\s*any\s*\(\s*\$1/i;
     const unnestForm = /\b(?:account_guid|guid)\s+in\s*\(\s*select\s+unnest\s*\(\s*\$1/i;
     return anyForm.test(masked) || unnestForm.test(masked);
+}
+
+function escapeRegex(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function aliasHasDirectScope(masked: string, ref: RelationRef, allowUnqualified: boolean): boolean {
+    // $1 contains account GUIDs, never transaction GUIDs. Transactions are
+    // scoped only by joining to a scoped split relation.
+    if (ref.table === 'transactions') return false;
+    const column = ref.table === 'splits' ? 'account_guid' : 'guid';
+    const alias = escapeRegex(ref.alias);
+    const prefix = allowUnqualified ? `(?:${alias}\\s*\\.\\s*)?` : `${alias}\\s*\\.\\s*`;
+    const anyForm = new RegExp(
+        `\\b${prefix}${column}\\s*(?:::\\s*\\w+(?:\\[\\])?\\s*)?=\\s*any\\s*\\(\\s*\\$1`,
+        'i',
+    );
+    const unnestForm = new RegExp(
+        `\\b${prefix}${column}\\s+in\\s*\\(\\s*select\\s+unnest\\s*\\(\\s*\\$1`,
+        'i',
+    );
+    return anyForm.test(masked) || unnestForm.test(masked);
+}
+
+function aliasesAreScopeJoined(masked: string, left: RelationRef, right: RelationRef): boolean {
+    const l = escapeRegex(left.alias);
+    const r = escapeRegex(right.alias);
+    const equality = (leftColumn: string, rightColumn: string) => {
+        const forward = new RegExp(
+            `\\b${l}\\s*\\.\\s*${leftColumn}\\s*=\\s*${r}\\s*\\.\\s*${rightColumn}\\b`,
+            'i',
+        );
+        const reverse = new RegExp(
+            `\\b${r}\\s*\\.\\s*${rightColumn}\\s*=\\s*${l}\\s*\\.\\s*${leftColumn}\\b`,
+            'i',
+        );
+        return forward.test(masked) || reverse.test(masked);
+    };
+
+    if (left.table === 'transactions' && right.table === 'splits') {
+        return equality('guid', 'tx_guid');
+    }
+    if (left.table === 'splits' && right.table === 'transactions') {
+        return equality('tx_guid', 'guid');
+    }
+    if (['accounts', 'account_hierarchy'].includes(left.table) && right.table === 'splits') {
+        return equality('guid', 'account_guid');
+    }
+    if (left.table === 'splits' && ['accounts', 'account_hierarchy'].includes(right.table)) {
+        return equality('account_guid', 'guid');
+    }
+    if (
+        ['accounts', 'account_hierarchy'].includes(left.table)
+        && ['accounts', 'account_hierarchy'].includes(right.table)
+    ) {
+        return equality('guid', 'guid');
+    }
+    return false;
+}
+
+/** Every base relation must be directly scoped or joined to a scoped relation. */
+function everyScopedRelationIsBound(masked: string, cteNames: Set<string>): boolean {
+    const refs = collectRelationRefs(masked).filter(ref =>
+        SCOPED_TABLES.includes(ref.table) && !cteNames.has(ref.table)
+    );
+    if (refs.length === 0) return true;
+
+    const scopedAliases = new Set<string>();
+    for (const ref of refs) {
+        if (aliasHasDirectScope(masked, ref, refs.length === 1)) scopedAliases.add(ref.alias);
+    }
+
+    let changed = true;
+    while (changed) {
+        changed = false;
+        for (const candidate of refs) {
+            if (scopedAliases.has(candidate.alias)) continue;
+            if (refs.some(scoped =>
+                scopedAliases.has(scoped.alias) && aliasesAreScopeJoined(masked, candidate, scoped)
+            )) {
+                scopedAliases.add(candidate.alias);
+                changed = true;
+            }
+        }
+    }
+    return refs.every(ref => scopedAliases.has(ref.alias));
 }
 
 /** Index of a top-level (paren-depth 0) LIMIT, or -1. Input must be masked. */
@@ -166,6 +269,12 @@ export function validateGeneratedSql(sql: string): GuardrailResult {
         return { ok: false, reason: 'Multiple SQL statements are not allowed' };
     }
 
+    // Comma joins make it easy to hide an additional unscoped relation from
+    // the deliberately small FROM/JOIN scanner. Require explicit JOIN syntax.
+    if (/\bfrom\s+[a-zA-Z_][a-zA-Z0-9_]*(?:\s+(?:as\s+)?[a-zA-Z_][a-zA-Z0-9_]*)?\s*,/i.test(masked)) {
+        return { ok: false, reason: 'Comma joins are not allowed; use an explicit scoped JOIN' };
+    }
+
     // Must be a plain SELECT (optionally starting with a CTE).
     if (!/^\s*(select|with)\b/i.test(masked)) {
         return { ok: false, reason: 'Only SELECT statements are allowed' };
@@ -190,17 +299,17 @@ export function validateGeneratedSql(sql: string): GuardrailResult {
     // a CTE defined in this statement.
     const cteNames = collectCteNames(masked);
     for (const ref of collectRelationRefs(masked)) {
-        if (ref.includes('.') || ref.includes('"')) {
+        if (ref.table.includes('.') || ref.table.includes('"')) {
             return {
                 ok: false,
-                reason: `Schema-qualified or quoted relation names are not allowed: ${ref}`,
+                reason: `Schema-qualified or quoted relation names are not allowed: ${ref.table}`,
             };
         }
-        if (!ALLOWED_RELATIONS.has(ref) && !cteNames.has(ref)) {
+        if (!ALLOWED_RELATIONS.has(ref.table) && !cteNames.has(ref.table)) {
             return {
                 ok: false,
                 reason:
-                    `Relation "${ref}" is not queryable. Allowed: ` +
+                    `Relation "${ref.table}" is not queryable. Allowed: ` +
                     `${[...ALLOWED_RELATIONS].join(', ')}.`,
             };
         }
@@ -209,7 +318,10 @@ export function validateGeneratedSql(sql: string): GuardrailResult {
     // Book scoping: any query touching account-linked tables must BIND $1, not
     // merely mention it.
     const scopedTables = new RegExp(`\\b(${SCOPED_TABLES.join('|')})\\b`, 'i');
-    if (scopedTables.test(masked) && !hasScopeBinding(masked)) {
+    if (
+        scopedTables.test(masked)
+        && (!hasScopeBinding(masked) || !everyScopedRelationIsBound(masked, cteNames))
+    ) {
         return {
             ok: false,
             reason:

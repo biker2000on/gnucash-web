@@ -22,7 +22,7 @@
 
 services:
   app:
-    image: ghcr.io/biker2000on/gnucash-web:latest
+    image: ghcr.io/biker2000on/gnucash-web:${IMAGE_TAG:-latest}
     pull_policy: always
     ports:
       - "${APP_PORT:-3000}:3000"
@@ -54,6 +54,12 @@ services:
       createbuckets:
         condition: service_completed_successfully
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.cash.rule=Host(`cash.adventureintandem.com`)"
@@ -65,12 +71,13 @@ services:
       - "traefik.http.services.cash.loadbalancer.server.port=3000"
 
   worker:
-    image: ghcr.io/biker2000on/gnucash-web:latest
+    image: ghcr.io/biker2000on/gnucash-web:${IMAGE_TAG:-latest}
     pull_policy: always
     command: ["node", "worker.js"]
     environment:
       - DATABASE_URL=postgresql://${POSTGRES_USER:-gnucash}:${POSTGRES_PASSWORD:-gnucash}@postgres:5432/${POSTGRES_DB:-gnucash}
       - REDIS_URL=redis://redis:6379
+      - WORKER_HEALTH_PORT=9090
       # The worker decrypts stored connector credentials (SimpleFin, Fuel
       # Tracker) and loads modules that seal sessions, so it needs the same
       # secret as the app. Without it the process refuses to start.
@@ -93,6 +100,12 @@ services:
       createbuckets:
         condition: service_completed_successfully
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
 
   postgres:
     image: postgres:17-alpine

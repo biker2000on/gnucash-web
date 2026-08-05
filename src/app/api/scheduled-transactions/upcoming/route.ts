@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
-import { computeNextOccurrences, RecurrencePattern } from '@/lib/recurrence';
+import { computeNextOccurrencesForPatterns, RecurrencePattern } from '@/lib/recurrence';
 import { fetchScheduledTransactions } from '@/lib/scheduled-transactions';
 import { getAccountGuidsForBook } from '@/lib/book-scope';
 
@@ -62,13 +62,15 @@ export async function GET(request: NextRequest) {
     for (const st of scheduledTransactions) {
       if (!st.recurrence) continue;
 
-      const periodStart = new Date(st.recurrence.periodStart);
-      const pattern: RecurrencePattern = {
-        periodType: st.recurrence.periodType,
-        mult: st.recurrence.mult,
-        periodStart,
-        weekendAdjust: st.recurrence.weekendAdjust,
-      };
+      const patterns: RecurrencePattern[] = (st.recurrences?.length
+        ? st.recurrences
+        : [st.recurrence]
+      ).map(item => ({
+        periodType: item.periodType,
+        mult: item.mult,
+        periodStart: new Date(item.periodStart),
+        weekendAdjust: item.weekendAdjust,
+      }));
 
       const lastOccur = st.lastOccur ? new Date(st.lastOccur) : null;
       const endDate = st.endDate ? new Date(st.endDate) : null;
@@ -76,8 +78,8 @@ export async function GET(request: NextRequest) {
       if (st.remainingOccurrences === 0) continue;
       const remOccur = st.remainingOccurrences > 0 ? st.remainingOccurrences : null;
 
-      const nextDates = computeNextOccurrences(
-        pattern,
+      const nextDates = computeNextOccurrencesForPatterns(
+        patterns,
         lastOccur,
         endDate,
         remOccur,

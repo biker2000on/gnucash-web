@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { computeNextOccurrences, RecurrencePattern } from '../recurrence';
+import {
+  computeNextOccurrences,
+  computeNextOccurrencesForPatterns,
+  RecurrencePattern,
+} from '../recurrence';
 
 function mkPattern(overrides: Partial<RecurrencePattern> & { periodType: string }): RecurrencePattern {
   return {
@@ -339,5 +343,76 @@ describe('weekday recurrences', () => {
     const fromJan = computeNextOccurrences(lastPattern, new Date(2025, 0, 28), null, null, 2, new Date(2025, 0, 28));
     expect(fromJan[0]).toEqual(new Date(2025, 1, 25));
     expect(fromJan[1]).toEqual(new Date(2025, 2, 25));
+  });
+});
+
+describe('ASI recurrence regressions', () => {
+  it('does not skip June after a May 30 occurrence adjusts forward to June 1', () => {
+    const pattern = mkPattern({
+      periodType: 'month',
+      periodStart: new Date(2026, 0, 30),
+      weekendAdjust: 'forward',
+    });
+
+    const results = computeNextOccurrences(
+      pattern,
+      new Date(2026, 5, 1), // adjusted execution of Sat May 30
+      null,
+      null,
+      2,
+      new Date(2026, 5, 1),
+    );
+
+    expect(results[0]).toEqual(new Date(2026, 5, 30));
+    expect(results[1]).toEqual(new Date(2026, 6, 30));
+  });
+
+  it('anchors semi-monthly schedules on periodStart and respects mult', () => {
+    const pattern = mkPattern({
+      periodType: 'semi_monthly',
+      periodStart: new Date(2026, 0, 5),
+      mult: 2,
+    });
+
+    const results = computeNextOccurrences(pattern, null, null, null, 4, new Date(2026, 0, 4));
+
+    expect(results).toEqual([
+      new Date(2026, 0, 5),
+      new Date(2026, 0, 20),
+      new Date(2026, 2, 5),
+      new Date(2026, 2, 20),
+    ]);
+  });
+
+  it('unions multiple GnuCash recurrence rows for one schedule', () => {
+    const results = computeNextOccurrencesForPatterns([
+      mkPattern({ periodType: 'month', periodStart: new Date(2026, 0, 1) }),
+      mkPattern({ periodType: 'month', periodStart: new Date(2026, 0, 15) }),
+    ], null, null, null, 4, new Date(2025, 11, 31));
+
+    expect(results).toEqual([
+      new Date(2026, 0, 1),
+      new Date(2026, 0, 15),
+      new Date(2026, 1, 1),
+      new Date(2026, 1, 15),
+    ]);
+  });
+
+  it('applies remaining occurrences to the composite stream as a whole', () => {
+    const results = computeNextOccurrencesForPatterns([
+      mkPattern({ periodType: 'month', periodStart: new Date(2026, 0, 1) }),
+      mkPattern({ periodType: 'month', periodStart: new Date(2026, 0, 15) }),
+    ], null, null, 1, 4, new Date(2025, 11, 31));
+
+    expect(results).toEqual([new Date(2026, 0, 1)]);
+  });
+
+  it('does not skip a later composite anchor in the last occurrence month', () => {
+    const results = computeNextOccurrencesForPatterns([
+      mkPattern({ periodType: 'month', periodStart: new Date(2026, 0, 1) }),
+      mkPattern({ periodType: 'month', periodStart: new Date(2026, 0, 15) }),
+    ], new Date(2026, 0, 1), null, null, 2, new Date(2026, 0, 1));
+
+    expect(results).toEqual([new Date(2026, 0, 15), new Date(2026, 1, 1)]);
   });
 });

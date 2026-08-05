@@ -12,6 +12,7 @@ import prisma from './prisma';
 import { generateGuid, toDecimalNumber } from './gnucash';
 import { BookBusyError, bookLockKey, tryAcquireBookLock } from './book-lock';
 import { tryWithDatabaseAdvisoryLock } from './db';
+import { computeRealizedGain } from './lots';
 import {
   splitSellAcrossLots,
   splitTransferAcrossSourceLots,
@@ -412,10 +413,18 @@ async function assignAverage(
   accountGuid: string,
   tx: PrismaTx
 ): Promise<AutoAssignResult> {
-  // Average method: each buy gets its own lot (same as FIFO for lot creation).
-  // Sells go to the earliest lot (same allocation as FIFO).
-  // The difference is in *display*: the UI shows averaged cost per share.
-  return assignFIFO(accountGuid, tx);
+  // GnuCash lots are discrete acquisitions; the current scrub engine cannot
+  // persist a true pooled average-cost election without rewriting every lot's
+  // basis. Fail visibly instead of claiming FIFO-generated gains are average.
+  const result = await assignFIFO(accountGuid, tx);
+  return {
+    ...result,
+    method: 'fifo (average cost not implemented)',
+    warnings: [
+      'Average-cost assignment is not implemented; this run used FIFO and generated FIFO gains.',
+      ...result.warnings,
+    ],
+  };
 }
 
 /** Thrown when a scrub-run revert targets accounts outside the active book. */
@@ -1134,6 +1143,16 @@ export async function detectWashSales(
         })
       : [];
     const lotMap = new Map(lotsWithSplits.map(l => [l.guid, l]));
+    const carriedBasisSlots = lotGuids.length > 0
+      ? await prisma.slots.findMany({
+          where: { obj_guid: { in: lotGuids }, name: 'carried_basis' },
+          select: { obj_guid: true, string_val: true },
+        })
+      : [];
+    const carriedBasisByLot = new Map(carriedBasisSlots.map(slot => {
+      const parsed = slot.string_val ? Number.parseFloat(slot.string_val) : NaN;
+      return [slot.obj_guid, Number.isFinite(parsed) ? parsed : 0] as const;
+    }));
 
     for (const s of allSplits) {
       const qty = toDecimalNumber(s.quantity_num, s.quantity_denom);
@@ -1147,15 +1166,30 @@ export async function detectWashSales(
       if (s.lot_guid) {
         const lot = lotMap.get(s.lot_guid);
         if (lot) {
-          const realizedGain = -lot.splits
-            .filter(ls => Math.abs(toDecimalNumber(ls.quantity_num, ls.quantity_denom)) > 0.0001)
-            .reduce((sum, ls) => sum + toDecimalNumber(ls.value_num, ls.value_denom), 0);
+          const lotSplits = lot.splits.map(ls => ({
+            shares: toDecimalNumber(ls.quantity_num, ls.quantity_denom),
+            value: toDecimalNumber(ls.value_num, ls.value_denom),
+          }));
           const totalQty = lot.splits.reduce(
             (sum, ls) => sum + toDecimalNumber(ls.quantity_num, ls.quantity_denom), 0
           );
-          // Closed lot with negative realized gain = realized loss
-          if (Math.abs(totalQty) < 0.0001 && realizedGain < 0) {
-            sells.push({ ...s, realizedLoss: realizedGain });
+          const isClosed = Math.abs(totalQty) < 0.0001;
+          const realizedGain = computeRealizedGain(
+            lotSplits,
+            isClosed,
+            carriedBasisByLot.get(lot.guid) ?? 0,
+          );
+          const totalSoldShares = lotSplits
+            .filter(ls => ls.shares < -0.0001)
+            .reduce((sum, ls) => sum + Math.abs(ls.shares), 0);
+          // Attribute a multi-sale lot's total realized loss pro rata to this
+          // sell instead of repeating the whole loss for every sell split.
+          if (realizedGain < 0 && totalSoldShares > 0) {
+            const thisSellShares = Math.abs(qty);
+            sells.push({
+              ...s,
+              realizedLoss: realizedGain * Math.min(1, thisSellShares / totalSoldShares),
+            });
             continue;
           }
         }
@@ -1185,14 +1219,25 @@ export async function detectWashSales(
       }
     }
 
+    // Replacement shares can disallow only one sale. Track the unconsumed
+    // quantity on every buy so a small DRIP cannot wash multiple full sales.
+    const remainingReplacementShares = new Map(
+      buys.map(buy => [
+        buy.guid,
+        Math.max(0, toDecimalNumber(buy.quantity_num, buy.quantity_denom)),
+      ]),
+    );
+
     // Check each loss-sell for wash sale: any buy of same commodity within 30 days
     for (const sell of sells) {
       const sellDate = sell.transaction?.post_date;
       if (!sellDate) continue;
       const sellDayMs = utcDayMs(sellDate);
       const soldShares = Math.abs(toDecimalNumber(sell.quantity_num, sell.quantity_denom));
+      let unmatchedSoldShares = soldShares;
 
       for (const buy of buys) {
+        if (unmatchedSoldShares <= 0.0001) break;
         const buyDate = buy.transaction?.post_date;
         if (!buyDate) continue;
         // The sold shares' OWN lot-opening buy is not replacement stock — a
@@ -1208,9 +1253,11 @@ export async function detectWashSales(
           // IRC §1091(b): when fewer replacement shares are acquired than were
           // sold, only the PROPORTIONATE part of the loss is disallowed. The
           // remainder stays deductible.
-          const replacementShares = toDecimalNumber(buy.quantity_num, buy.quantity_denom);
+          const availableReplacementShares = remainingReplacementShares.get(buy.guid) ?? 0;
+          const replacementShares = Math.min(availableReplacementShares, unmatchedSoldShares);
+          if (replacementShares <= 0.0001) continue;
           const disallowedRatio = soldShares > 0
-            ? Math.min(Math.max(0, replacementShares), soldShares) / soldShares
+            ? replacementShares / soldShares
             : 0;
 
           washSales.push({
@@ -1224,10 +1271,11 @@ export async function detectWashSales(
             washBuyDate: buyDate.toISOString(),
             washBuyAccountGuid: buy.account_guid,
             washBuyAccountName: buyAccount?.name || '',
-            replacementShares: Math.min(Math.max(0, replacementShares), soldShares),
+            replacementShares,
             daysApart,
           });
-          break; // One wash match per sell is enough
+          remainingReplacementShares.set(buy.guid, availableReplacementShares - replacementShares);
+          unmatchedSoldShares -= replacementShares;
         }
       }
     }

@@ -127,6 +127,13 @@ function endOfMonth(year: number, month: number): Date {
   );
 }
 
+/** Two user-anchored days for the app's semi-monthly shorthand (e.g. 5/20). */
+function semiMonthlyAnchorDays(periodStart: Date, year: number, month: number): number[] {
+  const first = clampDay(year, month, periodStart.getDate());
+  const second = clampDay(year, month, periodStart.getDate() + 15);
+  return first === second ? [first] : [first, second];
+}
+
 /**
  * Generate raw (unadjusted) occurrences for the pattern starting from a reference date.
  * Yields dates in chronological order indefinitely (caller must limit).
@@ -178,8 +185,8 @@ function* generateRawDates(
       }
     }
     case 'semi_monthly': {
-      // Generates 1st and 15th of each month (or last day if month < 15 days, which doesn't happen but we handle it)
-      // Start from the anchor month and go forward
+      // The first anchor comes from periodStart and the second is 15 days
+      // later (5th/20th, for example). mult controls the month interval.
       const baseYear = startFrom.getFullYear();
       const baseMonth = startFrom.getMonth();
       let monthOffset = 0;
@@ -187,12 +194,9 @@ function* generateRawDates(
         const totalMonth = baseMonth + monthOffset * mult;
         const y = baseYear + Math.floor(totalMonth / 12);
         const m = ((totalMonth % 12) + 12) % 12;
-        const last = lastDayOfMonth(y, m);
-
-        // 1st of the month
-        yield new Date(y, m, 1);
-        // 15th (or last day if month is shorter, though all months have >= 28 days)
-        yield new Date(y, m, Math.min(15, last));
+        for (const day of semiMonthlyAnchorDays(periodStart, y, m)) {
+          yield new Date(y, m, day);
+        }
 
         monthOffset++;
       }
@@ -296,6 +300,109 @@ export function computeNextOccurrences(
 }
 
 /**
+ * Union the occurrence streams for a composite GnuCash schedule. Desktop
+ * GnuCash represents patterns such as the 1st + 15th as two recurrence rows.
+ */
+export function computeNextOccurrencesForPatterns(
+  patterns: RecurrencePattern[],
+  lastOccur: Date | null,
+  endDate: Date | null,
+  remainingOccurrences: number | null,
+  count: number,
+  afterDate: Date,
+): Date[] {
+  if (patterns.length === 0 || count <= 0) return [];
+  const byTime = new Map<number, Date>();
+  for (const pattern of patterns) {
+    // lastOccur belongs to the composite schedule, not necessarily this row.
+    // Advancing every row from it would skip a later anchor in the same month
+    // (last overall = Jan 1, second row = Jan 15).
+    const rowLastOccur = lastOccur && occurrenceBelongsToMonthlyPattern(pattern, lastOccur)
+      ? lastOccur
+      : null;
+    for (const date of computeNextOccurrences(
+      pattern,
+      rowLastOccur,
+      endDate,
+      remainingOccurrences,
+      count,
+      afterDate,
+    )) {
+      byTime.set(date.getTime(), date);
+    }
+  }
+  return [...byTime.values()]
+    .sort((a, b) => a.getTime() - b.getTime())
+    .slice(0, Math.min(count, remainingOccurrences ?? count));
+}
+
+function sameCalendarDay(a: Date, b: Date): boolean {
+  return a.getFullYear() === b.getFullYear()
+    && a.getMonth() === b.getMonth()
+    && a.getDate() === b.getDate();
+}
+
+function matchesMonthlyAnchor(pattern: RecurrencePattern, candidate: Date): boolean {
+  const { periodType, periodStart } = pattern;
+  const year = candidate.getFullYear();
+  const month = candidate.getMonth();
+  switch (periodType) {
+    case 'month':
+      return candidate.getDate() === clampDay(year, month, periodStart.getDate());
+    case 'end of month':
+      return candidate.getDate() === lastDayOfMonth(year, month);
+    case 'nth weekday':
+    case 'last weekday':
+      return sameCalendarDay(candidate, weekdayOccurrence(periodType, periodStart, year, month));
+    case 'semi_monthly':
+      return semiMonthlyAnchorDays(periodStart, year, month).includes(candidate.getDate());
+    default:
+      return false;
+  }
+}
+
+function occurrenceBelongsToMonthlyPattern(
+  pattern: RecurrencePattern,
+  occurrence: Date,
+): boolean {
+  if (!['month', 'end of month', 'nth weekday', 'last weekday', 'semi_monthly']
+    .includes(pattern.periodType)) return true;
+  const raw = rawMonthlyOccurrence(pattern, occurrence);
+  if (!matchesMonthlyAnchor(pattern, raw)) return false;
+  const monthDelta = (raw.getFullYear() - pattern.periodStart.getFullYear()) * 12
+    + raw.getMonth() - pattern.periodStart.getMonth();
+  return monthDelta >= 0 && monthDelta % pattern.mult === 0;
+}
+
+/**
+ * Recover a raw monthly occurrence from a stored weekend-adjusted date. A
+ * forward-adjusted May 30 can be stored as June 1; advancing from June would
+ * skip June's occurrence. The adjustment is at most two days, so the search is
+ * small and deterministic.
+ */
+function rawMonthlyOccurrence(pattern: RecurrencePattern, lastOccur: Date): Date {
+  if (pattern.weekendAdjust === 'none') return lastOccur;
+  const candidates: Date[] = [];
+  for (let delta = -2; delta <= 2; delta++) {
+    const candidate = new Date(
+      lastOccur.getFullYear(),
+      lastOccur.getMonth(),
+      lastOccur.getDate() + delta,
+    );
+    if (
+      matchesMonthlyAnchor(pattern, candidate)
+      && sameCalendarDay(applyWeekendAdjust(candidate, pattern.weekendAdjust), lastOccur)
+    ) {
+      candidates.push(candidate);
+    }
+  }
+  if (candidates.length === 0) return lastOccur;
+  return candidates.sort((a, b) =>
+    Math.abs(a.getTime() - lastOccur.getTime()) - Math.abs(b.getTime() - lastOccur.getTime())
+  )[0];
+}
+
+/**
  * Compute the first occurrence after the last known occurrence.
  * This advances by one interval from lastOccur.
  *
@@ -306,6 +413,10 @@ export function computeNextOccurrences(
  */
 function computeFirstAfterLast(pattern: RecurrencePattern, lastOccur: Date): Date {
   const { periodType, mult, periodStart } = pattern;
+  const rawLast = ['month', 'end of month', 'nth weekday', 'last weekday', 'semi_monthly']
+    .includes(periodType)
+    ? rawMonthlyOccurrence(pattern, lastOccur)
+    : lastOccur;
 
   switch (periodType) {
     case 'daily':
@@ -315,30 +426,29 @@ function computeFirstAfterLast(pattern: RecurrencePattern, lastOccur: Date): Dat
       return new Date(lastOccur.getFullYear(), lastOccur.getMonth(), lastOccur.getDate() + mult * 7);
 
     case 'month':
-      return monthDay(lastOccur.getFullYear(), lastOccur.getMonth() + mult, periodStart.getDate());
+      return monthDay(rawLast.getFullYear(), rawLast.getMonth() + mult, periodStart.getDate());
 
     case 'end of month':
-      return endOfMonth(lastOccur.getFullYear(), lastOccur.getMonth() + mult);
+      return endOfMonth(rawLast.getFullYear(), rawLast.getMonth() + mult);
 
     case 'nth weekday':
     case 'last weekday':
       return weekdayOccurrence(
         periodType,
         periodStart,
-        lastOccur.getFullYear(),
-        lastOccur.getMonth() + mult,
+        rawLast.getFullYear(),
+        rawLast.getMonth() + mult,
       );
 
     case 'semi_monthly': {
-      // Advance to next semi-monthly date
-      const day = lastOccur.getDate();
-      if (day < 15) {
-        return new Date(lastOccur.getFullYear(), lastOccur.getMonth(), 15);
-      } else {
-        // Go to 1st of next month
-        const next = addMonths(lastOccur, 1);
-        return new Date(next.getFullYear(), next.getMonth(), 1);
+      const anchors = semiMonthlyAnchorDays(periodStart, rawLast.getFullYear(), rawLast.getMonth());
+      const nextAnchor = anchors.find(day => day > rawLast.getDate());
+      if (nextAnchor !== undefined) {
+        return new Date(rawLast.getFullYear(), rawLast.getMonth(), nextAnchor);
       }
+      const next = addMonths(rawLast, mult);
+      const [firstAnchor] = semiMonthlyAnchorDays(periodStart, next.getFullYear(), next.getMonth());
+      return new Date(next.getFullYear(), next.getMonth(), firstAnchor);
     }
 
     case 'year': {

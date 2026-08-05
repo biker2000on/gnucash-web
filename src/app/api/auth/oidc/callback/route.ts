@@ -15,6 +15,7 @@ import {
 import {
     resolveOidcUser,
     hasVerifiedEmail,
+    oidcRegistrationAllowed,
     type OidcClaims,
     type OidcUserCandidate,
 } from '@/lib/oidc-resolve';
@@ -282,6 +283,16 @@ export async function GET(request: NextRequest) {
                 );
 
             case 'create': {
+                const existingUserCount = await prisma.gnucash_web_users.count();
+                if (!oidcRegistrationAllowed(
+                    existingUserCount,
+                    process.env.ALLOW_REGISTRATION === 'true',
+                )) {
+                    return clearTxnCookie(
+                        loginRedirect(request, { oidc_registration_disabled: '1' })
+                    );
+                }
+
                 const user = await prisma.gnucash_web_users.create({
                     data: {
                         username: result.username,
@@ -299,11 +310,13 @@ export async function GET(request: NextRequest) {
                     select: { id: true, username: true },
                 });
 
-                // New OIDC users get readonly access to all existing books.
-                try {
+                // Only the first account bootstraps book administration. Later
+                // self-registered accounts start with no book roles and must
+                // receive an invitation, matching password registration.
+                if (existingUserCount === 0) try {
                     const books = await prisma.books.findMany({ select: { guid: true } });
                     for (const book of books) {
-                        await grantRole(user.id, book.guid, 'readonly', user.id);
+                        await grantRole(user.id, book.guid, 'admin', user.id);
                     }
                 } catch (rbacError) {
                     console.error('Failed to bootstrap RBAC for new OIDC user:', rbacError);

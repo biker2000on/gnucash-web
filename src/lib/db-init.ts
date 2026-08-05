@@ -12,6 +12,37 @@ import {
     LEGACY_DOCUMENT_BACKFILL_SQL,
 } from './documents/schema';
 
+const SCHEMA_META_DDL = `
+    CREATE TABLE IF NOT EXISTS gnucash_web_schema_meta (
+        step_name TEXT PRIMARY KEY,
+        applied_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS gnucash_web_migration_backups (
+        step_name TEXT NOT NULL,
+        source_table TEXT NOT NULL,
+        row_key TEXT NOT NULL,
+        row_data JSONB NOT NULL,
+        backed_up_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (step_name, source_table, row_key)
+    );
+`;
+
+async function runOneTimeMigration(stepName: string, operation: () => Promise<unknown>): Promise<boolean> {
+    const applied = await query(
+        'SELECT 1 FROM gnucash_web_schema_meta WHERE step_name = $1 LIMIT 1',
+        [stepName],
+    );
+    if (applied.rowCount) return false;
+    await operation();
+    await query(
+        `INSERT INTO gnucash_web_schema_meta (step_name)
+         VALUES ($1) ON CONFLICT (step_name) DO NOTHING`,
+        [stepName],
+    );
+    console.log(`✓ One-time database migration applied: ${stepName}`);
+    return true;
+}
+
 /**
  * Creates the account_hierarchy view if it doesn't exist.
  * This view provides a recursive hierarchy of accounts with their full paths.
@@ -572,10 +603,19 @@ async function createExtensionTables() {
         CREATE INDEX IF NOT EXISTS idx_tool_config_tool_type ON gnucash_web_tool_config(tool_type);
         CREATE INDEX IF NOT EXISTS idx_tool_config_user_book ON gnucash_web_tool_config(user_id, book_guid, tool_type);
 
-        -- Singleton configs used to be implemented as read-then-create, which
-        -- allowed duplicate rows under concurrent requests. Keep the newest
-        -- singleton and enforce both personal and shared-book scopes while
-        -- preserving account-associated multi-instance tools (mortgages).
+    `;
+
+    const toolConfigNormalizeDDL = `
+        INSERT INTO gnucash_web_migration_backups
+          (step_name, source_table, row_key, row_data)
+        SELECT
+          '2026-08-05-tool-config-scope-normalization',
+          'gnucash_web_tool_config',
+          id::text,
+          to_jsonb(config)
+        FROM gnucash_web_tool_config config
+        ON CONFLICT (step_name, source_table, row_key) DO NOTHING;
+
         DELETE FROM gnucash_web_tool_config older
         USING gnucash_web_tool_config newer
         WHERE older.id < newer.id
@@ -593,8 +633,6 @@ async function createExtensionTables() {
           AND older.account_guid = newer.account_guid
           AND older.account_guid IS NOT NULL;
 
-        -- Farm setup is book policy: promote the newest legacy per-user row
-        -- to the shared scope, then discard the stale personal copies.
         WITH newest_farm AS (
           SELECT DISTINCT ON (book_guid) id, book_guid
           FROM gnucash_web_tool_config
@@ -619,7 +657,9 @@ async function createExtensionTables() {
         WHERE tool_type = 'farm_analyzer'
           AND user_id IS NOT NULL
           AND account_guid IS NULL;
+    `;
 
+    const toolConfigUniqueIndexesDDL = `
         CREATE UNIQUE INDEX IF NOT EXISTS uq_tool_config_user_singleton
           ON gnucash_web_tool_config(user_id, book_guid, tool_type)
           WHERE user_id IS NOT NULL AND account_guid IS NULL;
@@ -2312,6 +2352,11 @@ async function createExtensionTables() {
         await query(transactionMetaAddMatchColumnsDDL);
         await query(transactionMetaAddOriginalDescriptionDDL);
         await query(toolConfigTableDDL);
+        await runOneTimeMigration(
+            '2026-08-05-tool-config-scope-normalization',
+            () => query(toolConfigNormalizeDDL),
+        );
+        await query(toolConfigUniqueIndexesDDL);
         await query(toolConfigTriggerDDL);
         await query(accountPreferencesTableDDL);
         await query(accountPreferencesRetirementDDL);
@@ -2481,32 +2526,15 @@ async function createPerformanceIndexes() {
 }
 
 /**
- * Drops indexes that live-DB analysis showed to be redundant duplicates or
- * unserviceable (0 scans). All drops are IF EXISTS and prefix-drops are
- * guarded on the superseding index actually existing, so this is safe to run
- * repeatedly and on databases where createPerformanceIndexes has not run yet.
- *
- * Note: this app owns its databases (books are not opened by GnuCash
- * desktop), so recreating GnuCash's native indexes is not a concern.
+ * Drops app-owned indexes that live-DB analysis showed to be redundant or
+ * unserviceable. Native GnuCash indexes are deliberately preserved because
+ * the same database may also be opened by the desktop application.
  */
 async function dropRedundantIndexes() {
     const dropDDL = `
         DO $$
         BEGIN
             PERFORM pg_advisory_xact_lock(hashtext('gnucash_web_drop_redundant_indexes'));
-
-            -- splits_account_guid_index (native GnuCash) is an exact prefix of
-            -- idx_splits_account_reconcile and idx_splits_account_covering;
-            -- only drop once a superseding index exists.
-            IF to_regclass('idx_splits_account_covering') IS NOT NULL
-               OR to_regclass('idx_splits_account_reconcile') IS NOT NULL THEN
-                DROP INDEX IF EXISTS splits_account_guid_index;
-            END IF;
-
-            -- slots_guid_index (native GnuCash) is a prefix of idx_slots_obj_name.
-            IF to_regclass('idx_slots_obj_name') IS NOT NULL THEN
-                DROP INDEX IF EXISTS slots_guid_index;
-            END IF;
 
             -- idx_txn_meta_simplefin_id is an exact duplicate of the unique
             -- partial index uq_txn_meta_simplefin_id. The unique guard skips
@@ -2531,6 +2559,47 @@ async function dropRedundantIndexes() {
         console.error('Error dropping redundant indexes:', error);
         // Don't throw - dropping duplicates is an optimization, not required
     }
+}
+
+async function migrateDuplicatePrices() {
+    const migrationDDL = `
+        WITH ranked AS (
+            SELECT guid, ROW_NUMBER() OVER (
+                PARTITION BY commodity_guid, currency_guid, date
+                ORDER BY (source IS DISTINCT FROM 'Finance::Quote') DESC, guid DESC
+            ) AS rn
+            FROM prices
+        ), doomed AS (
+            SELECT price.*
+            FROM prices price
+            JOIN ranked ON ranked.guid = price.guid
+            WHERE ranked.rn > 1
+        )
+        INSERT INTO gnucash_web_migration_backups
+          (step_name, source_table, row_key, row_data)
+        SELECT
+          '2026-08-05-prices-deduplicate',
+          'prices',
+          guid,
+          to_jsonb(doomed)
+        FROM doomed
+        ON CONFLICT (step_name, source_table, row_key) DO NOTHING;
+
+        WITH ranked AS (
+            SELECT guid, ROW_NUMBER() OVER (
+                PARTITION BY commodity_guid, currency_guid, date
+                ORDER BY (source IS DISTINCT FROM 'Finance::Quote') DESC, guid DESC
+            ) AS rn
+            FROM prices
+        )
+        DELETE FROM prices
+        WHERE guid IN (SELECT guid FROM ranked WHERE rn > 1);
+    `;
+
+    await runOneTimeMigration(
+        '2026-08-05-prices-deduplicate',
+        () => query(migrationDDL),
+    );
 }
 
 /**
@@ -2640,33 +2709,30 @@ async function reportSkippedUniqueGuard(
 }
 
 async function createUniqueConstraintGuards() {
-    // H5: duplicate prices. Deduping is safe and desired — two rows for the
-    // same (commodity, currency, instant) are exactly the race this index
-    // stops. Keep the best row per key: user-entered sources beat
-    // 'Finance::Quote'; ties keep the largest guid.
+    // Duplicate rows are handled by migrateDuplicatePrices(), which runs once
+    // and writes every removed row to gnucash_web_migration_backups first.
+    // The guard itself is non-destructive if later manual writes introduce new
+    // duplicates.
     const pricesUniqueDDL = `
         DO $$
         DECLARE
-            v_removed integer;
+            v_dirty integer;
         BEGIN
             PERFORM pg_advisory_xact_lock(hashtext('gnucash_web_prices_unique_guard'));
             IF to_regclass('uq_prices_commodity_currency_date') IS NULL THEN
-                WITH ranked AS (
-                    SELECT guid, ROW_NUMBER() OVER (
-                        PARTITION BY commodity_guid, currency_guid, date
-                        ORDER BY (source IS DISTINCT FROM 'Finance::Quote') DESC, guid DESC
-                    ) AS rn
+                SELECT COUNT(*) INTO v_dirty FROM (
+                    SELECT commodity_guid, currency_guid, date
                     FROM prices
-                )
-                DELETE FROM prices
-                WHERE guid IN (SELECT guid FROM ranked WHERE rn > 1);
-                GET DIAGNOSTICS v_removed = ROW_COUNT;
-                IF v_removed > 0 THEN
-                    RAISE WARNING 'gnucash-web: removed % duplicate price row(s) before creating uq_prices_commodity_currency_date', v_removed;
+                    GROUP BY commodity_guid, currency_guid, date
+                    HAVING COUNT(*) > 1
+                ) dupes;
+                IF v_dirty > 0 THEN
+                    RAISE WARNING 'gnucash-web: skipping unique price index: % duplicate group(s) exist after the recorded migration', v_dirty;
+                ELSE
+                    CREATE UNIQUE INDEX IF NOT EXISTS uq_prices_commodity_currency_date
+                        ON prices (commodity_guid, currency_guid, date);
                 END IF;
             END IF;
-            CREATE UNIQUE INDEX IF NOT EXISTS uq_prices_commodity_currency_date
-                ON prices (commodity_guid, currency_guid, date);
         END $$;
     `;
 
@@ -2901,8 +2967,10 @@ export async function initializeDatabase() {
     try {
         console.log('Initializing database schema...');
         await withDatabaseAdvisoryLock('gnucash-web:database-initialization', async () => {
+            await query(SCHEMA_META_DDL);
             await createAccountHierarchyView();
             await createExtensionTables();
+            await migrateDuplicatePrices();
             await createUniqueConstraintGuards();
             await createPerformanceIndexes();
             // After the superseding indexes exist, retire the redundant ones

@@ -12,6 +12,13 @@ import { PrismaClient } from '@prisma/client';
 import { Pool } from 'pg';
 import { PrismaPg } from '@prisma/adapter-pg';
 
+// Last-resort observability: scheduled callbacks and third-party clients must
+// not fail silently. Individual operations still own their normal retry/error
+// handling; this prevents an unobserved rejection from terminating Node.
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled worker promise rejection:', reason);
+});
+
 /**
  * Connection budget for the short-lived helper clients below.
  *
@@ -289,8 +296,14 @@ function setScheduleGeneric(name: string, timeUtc: string, callback: () => Promi
     console.log(`[schedule] ${name} next run at ${nextRun.toISOString()} (${timeUtc} UTC)`);
 
     const timer = setTimeout(async () => {
-      await callback();
-      scheduleNext();
+      try {
+        await callback();
+      } catch (err) {
+        console.error(`[schedule] ${name} callback failed:`, err);
+      } finally {
+        // A transient callback failure must never end the recurring chain.
+        scheduleNext();
+      }
     }, ms);
 
     genericTimers.set(name, timer);
@@ -365,11 +378,12 @@ async function main() {
   }
 
   const url = new URL(redisUrl);
-  const connection = {
-    host: url.hostname,
-    port: parseInt(url.port) || 6379,
-    password: url.password || undefined,
-  };
+  const { getBullMQConnection } = await import('./src/lib/redis');
+  const connection = getBullMQConnection();
+  if (!connection) {
+    console.error('REDIS_URL is invalid');
+    process.exit(1);
+  }
 
   const healthPort = parseInt(process.env.WORKER_HEALTH_PORT || '9090', 10);
 
@@ -675,6 +689,10 @@ async function main() {
 
   worker.on('failed', (job, err) => {
     console.error(`[${new Date().toISOString()}] Job ${job?.name} (${job?.id}) FAILED:`, err.message);
+  });
+
+  worker.on('error', (err) => {
+    console.error(`[${new Date().toISOString()}] BullMQ worker error:`, err);
   });
 
   // Schedule nightly thumbnail regeneration at 03:00 UTC

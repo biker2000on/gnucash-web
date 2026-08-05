@@ -258,14 +258,14 @@ function washAdjustmentFor(
 ): number {
   if (rawGain >= 0) return 0;
   const saleDay = toDay(sale.dateSold);
-  const match = washSales.find(
+  const matches = washSales.filter(
     ws =>
       ws.ticker === sale.ticker &&
       ws.sellAccountGuid === sale.accountGuid &&
       toDay(ws.sellDate) === saleDay,
   );
-  if (!match) return 0;
-  const disallowed = Math.abs(match.loss);
+  if (matches.length === 0) return 0;
+  const disallowed = matches.reduce((sum, match) => sum + Math.abs(match.loss), 0);
   return Math.min(disallowed, -rawGain);
 }
 
@@ -556,7 +556,7 @@ export async function loadRealizedSales(
   // Imported lazily-ish at top would pull prisma into pure test imports; keep
   // the imports here local to the loader boundary.
   const prisma = (await import('@/lib/prisma')).default;
-  const { getAccountLots } = await import('@/lib/lots');
+  const { getLotsForAccounts } = await import('@/lib/lots');
   const { getRetirementAccountGuids } = await import('@/lib/reports/contribution-classifier');
   const { expandMappingsToDescendants } = await import('@/lib/tax/book-income');
   const { isTaxCategory } = await import('@/lib/tax/types');
@@ -590,12 +590,15 @@ export async function loadRealizedSales(
   }
   const effectiveMappings = expandMappingsToDescendants(directMappings, accountRows);
 
+  const taxableAccounts = investmentAccounts.filter(account =>
+    !retirementGuids.has(account.guid) && effectiveMappings.get(account.guid) !== 'exclude'
+  );
+  const lotsByAccount = await getLotsForAccounts(taxableAccounts.map(account => account.guid));
+
   const sales: RealizedSaleInput[] = [];
-  for (const account of investmentAccounts) {
-    if (retirementGuids.has(account.guid)) continue;
-    if (effectiveMappings.get(account.guid) === 'exclude') continue;
+  for (const account of taxableAccounts) {
     const ticker = account.commodity?.mnemonic || 'Unknown';
-    const lots = await getAccountLots(account.guid);
+    const lots = lotsByAccount.get(account.guid) ?? [];
     for (const lot of lots) {
       for (const sale of lotToRealizedSales(lot, ticker)) {
         if (new Date(sale.dateSold).getUTCFullYear() !== year) continue;
