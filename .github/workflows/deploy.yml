@@ -6,7 +6,9 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+  # This repository-owned package is intentionally distinct from the legacy
+  # PAT-published package so GITHUB_TOKEN receives package admin on creation.
+  IMAGE_NAME: ${{ github.repository }}-app
 
 jobs:
   quality:

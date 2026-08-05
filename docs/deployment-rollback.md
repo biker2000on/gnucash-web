@@ -1,8 +1,11 @@
 # Deployment Rollback
 
 Production images are published with the full Git commit SHA. The TrueNAS
-Dockhand stack reads `IMAGE_TAG` from its regular environment and applies the
-same image to the web and worker services.
+Dockhand stack reads `IMAGE_REPOSITORY` and `IMAGE_TAG` from its regular
+environment and applies the same image to the web and worker services. New
+releases use `ghcr.io/biker2000on/gnucash-web-app`; releases predating the
+2026-08-05 package-access migration remain in the legacy
+`ghcr.io/biker2000on/gnucash-web` package.
 
 ## Before deployment
 
@@ -15,7 +18,10 @@ same image to the web and worker services.
 ## Roll back to the previous image
 
 1. In Dockhand, open the GnuCash Web stack and set `IMAGE_TAG` to the full
-   previously healthy commit SHA. Do not use `latest` during a rollback.
+   previously healthy commit SHA. Do not use `latest` during a rollback. When
+   rolling back to a release older than the 2026-08-05 package migration, also
+   set `IMAGE_REPOSITORY=ghcr.io/biker2000on/gnucash-web`; otherwise leave it
+   unset so the compose default selects the repository-owned package.
 2. Deploy/recreate the stack and wait for both the web and worker containers to
    report healthy.
 3. Verify `/api/health`, login, account loading, and the worker health endpoint.

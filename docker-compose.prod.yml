@@ -22,7 +22,7 @@
 
 services:
   app:
-    image: ghcr.io/biker2000on/gnucash-web:${IMAGE_TAG:-latest}
+    image: ${IMAGE_REPOSITORY:-ghcr.io/biker2000on/gnucash-web-app}:${IMAGE_TAG:-latest}
     pull_policy: always
     ports:
       - "${APP_PORT:-3000}:3000"
@@ -71,7 +71,7 @@ services:
       - "traefik.http.services.cash.loadbalancer.server.port=3000"
 
   worker:
-    image: ghcr.io/biker2000on/gnucash-web:${IMAGE_TAG:-latest}
+    image: ${IMAGE_REPOSITORY:-ghcr.io/biker2000on/gnucash-web-app}:${IMAGE_TAG:-latest}
     pull_policy: always
     command: ["node", "worker.js"]
     environment:
