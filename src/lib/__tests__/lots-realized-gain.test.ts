@@ -7,8 +7,31 @@
  * non-zero value, recorded inside the lot so it sums to zero.
  */
 
-import { describe, it, expect } from 'vitest';
-import { computeRealizedGain } from '../lots';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+const mockLotsFindMany = vi.fn();
+const mockSlotsFindMany = vi.fn();
+const mockAccountsFindMany = vi.fn();
+// Unlike lots-holding-period.test.ts (which pins getLatestPrice to null and so
+// never exercises unrealizedGain), these tests need a real price so the
+// carried-basis pro-rating is actually evaluated.
+let mockLatestPrice: number | null = null;
+
+vi.mock('../prisma', () => ({
+  default: {
+    lots: { findMany: (...a: unknown[]) => mockLotsFindMany(...a) },
+    slots: { findMany: (...a: unknown[]) => mockSlotsFindMany(...a) },
+    accounts: { findMany: (...a: unknown[]) => mockAccountsFindMany(...a) },
+  },
+}));
+
+vi.mock('../commodities', () => ({
+  getLatestPrice: vi.fn(async () =>
+    mockLatestPrice === null ? null : { value: mockLatestPrice },
+  ),
+}));
+
+import { computeRealizedGain, getAccountLots } from '../lots';
 
 describe('computeRealizedGain', () => {
   it('closed unscrubbed lot: gain = proceeds - basis = -(sum of values)', () => {
@@ -69,5 +92,132 @@ describe('computeRealizedGain', () => {
       { shares: -10, value: -1500 },
     ];
     expect(computeRealizedGain(splits, true, 900)).toBeCloseTo(600);
+  });
+});
+
+/**
+ * getAccountLots carried-basis tests.
+ *
+ * A transfer-destination lot holds a $0-value transfer-in split; the true basis
+ * of the transferred shares lives in the lot's `carried_basis` slot. If
+ * totalCost / unrealizedGain ignore it, an unchanged in-kind transfer looks
+ * like a 100% gain — and tax-loss harvesting (which keeps only lots whose
+ * unrealizedGain is negative) silently drops every harvestable transferred lot.
+ */
+const ACCT = 'acct-stock';
+const COMMODITY = 'commodity-aapl';
+
+function split(guid: string, postDate: string, shares: number, value: number) {
+  return {
+    guid,
+    tx_guid: `tx-${guid}`,
+    quantity_num: BigInt(Math.round(shares * 10_000)),
+    quantity_denom: 10_000n,
+    value_num: BigInt(Math.round(value * 100)),
+    value_denom: 100n,
+    transaction: { post_date: new Date(`${postDate}T12:00:00.000Z`), description: guid },
+  };
+}
+
+function lot(guid: string, isClosed: 0 | 1, splits: ReturnType<typeof split>[]) {
+  return { guid, account_guid: ACCT, is_closed: isClosed, splits };
+}
+
+function carriedBasisSlot(lotGuid: string, amount: string) {
+  return { obj_guid: lotGuid, name: 'carried_basis', string_val: amount };
+}
+
+beforeEach(() => {
+  mockLatestPrice = null;
+  mockLotsFindMany.mockReset();
+  mockSlotsFindMany.mockReset().mockResolvedValue([]);
+  mockAccountsFindMany.mockReset().mockResolvedValue([
+    { guid: ACCT, commodity_guid: COMMODITY },
+  ]);
+});
+
+describe('carried basis feeds totalCost and unrealizedGain', () => {
+  it('open transferred lot: unrealizedGain = marketValue - carriedBasis', async () => {
+    // 10 shares transferred in at $0 value, original basis $800 carried in the
+    // slot. Latest price $100 -> market value $1,000.
+    mockLotsFindMany.mockResolvedValue([
+      lot('xfer-open', 0, [split('in', '2024-02-01', 10, 0)]),
+    ]);
+    mockSlotsFindMany.mockResolvedValue([carriedBasisSlot('xfer-open', '800')]);
+    mockLatestPrice = 100;
+
+    const [summary] = await getAccountLots(ACCT);
+
+    expect(summary.isClosed).toBe(false);
+    expect(summary.carriedBasis).toBe(800);
+    expect(summary.currentPrice).toBe(100);
+    expect(summary.totalShares).toBeCloseTo(10);
+    // (b) totalCost is the carried basis, not $0
+    expect(summary.totalCost).toBeCloseTo(800);
+    // (a) 10 * 100 - 800 = 200
+    expect(summary.unrealizedGain).toBeCloseTo(200);
+    expect(summary.unrealizedGain).toBeCloseTo(100 * summary.totalShares - 800);
+  });
+
+  it('open transferred lot under water reports a NEGATIVE unrealized gain', async () => {
+    // The tax-harvesting screen keeps lots with unrealizedGain < 0. Basis $800,
+    // price $60 -> market value $600, a real $200 harvestable loss. Dropping
+    // carriedBasis would report +$600 and hide it.
+    mockLotsFindMany.mockResolvedValue([
+      lot('xfer-loss', 0, [split('in', '2024-02-01', 10, 0)]),
+    ]);
+    mockSlotsFindMany.mockResolvedValue([carriedBasisSlot('xfer-loss', '800')]);
+    mockLatestPrice = 60;
+
+    const [summary] = await getAccountLots(ACCT);
+
+    expect(summary.unrealizedGain).toBeCloseTo(-200);
+  });
+
+  it('partially-sold lot with BOTH real buy cost and carried basis pro-rates once', async () => {
+    // 10 shares transferred in at $0 value carrying $800 of basis, plus a real
+    // 10-share buy for $1,200, then 5 shares sold for $700.
+    //   boughtShares = 20, remaining = 15
+    //   totalCost    = |0| + |1200| + 800 = 2000  ($100/share)
+    //   remaining basis = 2000 * 15/20 = 1500, sold basis = 500 (sums to 2000:
+    //                     the carried basis is counted exactly once)
+    //   unrealized   = 150 * 15 - 1500 = 750
+    //   realized     = 700 - 5 * 100  = 200
+    mockLotsFindMany.mockResolvedValue([
+      lot('mixed', 0, [
+        split('in', '2024-01-10', 10, 0),
+        split('buy', '2024-02-10', 10, 1_200),
+        split('sell', '2024-03-10', -5, -700),
+      ]),
+    ]);
+    mockSlotsFindMany.mockResolvedValue([carriedBasisSlot('mixed', '800')]);
+    mockLatestPrice = 150;
+
+    const [summary] = await getAccountLots(ACCT);
+
+    expect(summary.isClosed).toBe(false);
+    expect(summary.totalShares).toBeCloseTo(15);
+    expect(summary.totalCost).toBeCloseTo(2_000);
+    expect(summary.realizedGain).toBeCloseTo(200);
+    expect(summary.unrealizedGain).toBeCloseTo(750);
+
+    // No double-counting: the basis attributed to the remaining shares plus the
+    // basis attributed to the sold shares must equal totalCost exactly.
+    const remainingBasis = 150 * summary.totalShares - summary.unrealizedGain!;
+    const soldBasis = 700 - summary.realizedGain;
+    expect(remainingBasis + soldBasis).toBeCloseTo(summary.totalCost);
+  });
+
+  it('a lot with no carried_basis slot is unaffected', async () => {
+    mockLotsFindMany.mockResolvedValue([
+      lot('plain', 0, [split('buy', '2024-01-10', 10, 1_000)]),
+    ]);
+    mockLatestPrice = 120;
+
+    const [summary] = await getAccountLots(ACCT);
+
+    expect(summary.carriedBasis).toBe(0);
+    expect(summary.totalCost).toBeCloseTo(1_000);
+    expect(summary.unrealizedGain).toBeCloseTo(200);
   });
 });

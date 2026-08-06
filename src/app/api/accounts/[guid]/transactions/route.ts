@@ -11,6 +11,63 @@ import { getTagsForTransactions } from '@/lib/services/tag.service';
 import { readTransactionNotes } from '@/lib/transaction-notes';
 import { cacheGet, cacheSet } from '@/lib/cache';
 
+type InvestmentTotals = Map<string, { shareBalance: number; costBasis: number }>;
+
+/**
+ * In-flight recomputes of the investment running totals, keyed by the same
+ * cache key used for Redis.
+ *
+ * The running totals are inherently O(full history): page 1 of the ledger is
+ * the NEWEST transactions, so its running share balance / cost basis depends on
+ * every earlier split. The Redis entry written on the first miss is what keeps
+ * that work to once per (account, method, carry-over, date range) — but
+ * `getRedis()` is allowed to return null (no REDIS_URL, or a 30s cooldown after
+ * a connection blip), and in that degraded state every concurrent ledger
+ * request would otherwise start its own full-history walk, including the
+ * per-transfer `traceCostBasis` lookups. Coalescing them onto a single promise
+ * keeps the recompute to one at a time per key without introducing a
+ * process-local cache that no mutation could invalidate (a stale share balance
+ * or cost basis is far worse than a slow one).
+ *
+ * Entries live only for the duration of the computation, so joiners always see
+ * data from an in-progress read of the current DB state.
+ */
+const inFlightInvestmentTotals = new Map<string, Promise<InvestmentTotals>>();
+
+/**
+ * Resolve the running totals for `cacheKey`: Redis first, then an in-flight
+ * recompute if one is already running for the same key, then a fresh
+ * computation (whose result is written back to Redis before it resolves, so the
+ * next page — whatever its offset — hits the cache instead of recomputing).
+ */
+async function loadInvestmentRunningTotals(
+    cacheKey: string,
+    compute: () => Promise<InvestmentTotals>,
+): Promise<InvestmentTotals> {
+    const cached = await cacheGet<Array<[
+        string,
+        { shareBalance: number; costBasis: number },
+    ]>>(cacheKey);
+    if (cached) return new Map(cached);
+
+    const inFlight = inFlightInvestmentTotals.get(cacheKey);
+    if (inFlight) return inFlight;
+
+    const pending = (async () => {
+        const totals = await compute();
+        await cacheSet(cacheKey, [...totals.entries()], 3600);
+        return totals;
+    })();
+    inFlightInvestmentTotals.set(cacheKey, pending);
+    try {
+        return await pending;
+    } finally {
+        if (inFlightInvestmentTotals.get(cacheKey) === pending) {
+            inFlightInvestmentTotals.delete(cacheKey);
+        }
+    }
+}
+
 export async function GET(
     request: Request,
     { params }: { params: Promise<{ guid: string }> }
@@ -141,7 +198,7 @@ export async function GET(
         }
 
         // Compute per-row investment running totals (share balance & cost basis)
-        let investmentRunningTotals: Map<string, { shareBalance: number; costBasis: number }> | null = null;
+        let investmentRunningTotals: InvestmentTotals | null = null;
 
         if (isInvestmentAccount && !unreviewedOnly && !includeSubaccounts) {
             const cacheStart = startDate?.slice(0, 10) || '0001-01-01';
@@ -150,16 +207,9 @@ export async function GET(
                 `cache:${roleResult.bookGuid}:investment-ledger:${accountGuid}:` +
                 `${costBasisMethod}:${costBasisCarryOver ? 'carry' : 'local'}:` +
                 `${cacheStart}-${cacheEnd}`;
-            const cachedTotals = await cacheGet<Array<[
-                string,
-                { shareBalance: number; costBasis: number },
-            ]>>(totalsCacheKey);
-            const totalsCacheHit = cachedTotals !== null;
-            if (cachedTotals) investmentRunningTotals = new Map(cachedTotals);
-
-            if (!investmentRunningTotals) {
             const accountCommodityGuid = account?.commodity_guid || '';
 
+            investmentRunningTotals = await loadInvestmentRunningTotals(totalsCacheKey, async () => {
             if (costBasisCarryOver && accountCommodityGuid) {
                 // Enhanced path: flat batched queries (account splits, sibling
                 // splits by tx, sibling accounts) instead of a 3-level nested
@@ -244,7 +294,7 @@ export async function GET(
 
                 let runShares = 0;
                 let runCostBasis = 0;
-                investmentRunningTotals = new Map();
+                const totals: InvestmentTotals = new Map();
                 const costBasisCache = createCostBasisCache();
 
                 // Preload lot splits for every transfer-in that carries a lot,
@@ -280,11 +330,12 @@ export async function GET(
                         }
                         runShares += shares;
                     }
-                    investmentRunningTotals.set(split.tx_guid, {
+                    totals.set(split.tx_guid, {
                         shareBalance: runShares,
                         costBasis: runCostBasis,
                     });
                 }
+                return totals;
             } else {
                 // Original path: simple raw SQL without transfer tracing
                 const allSplitsWithTx = await prisma.$queryRaw<{
@@ -305,7 +356,7 @@ export async function GET(
 
                 let runShares = 0;
                 let runCostBasis = 0;
-                investmentRunningTotals = new Map();
+                const totals: InvestmentTotals = new Map();
 
                 for (const split of allSplitsWithTx) {
                     const shares = Number(split.quantity_num) / Number(split.quantity_denom);
@@ -322,17 +373,14 @@ export async function GET(
                         }
                         runShares += shares;
                     }
-                    investmentRunningTotals.set(split.tx_guid, {
+                    totals.set(split.tx_guid, {
                         shareBalance: runShares,
                         costBasis: runCostBasis,
                     });
                 }
+                return totals;
             }
-            }
-
-            if (!totalsCacheHit && investmentRunningTotals) {
-                await cacheSet(totalsCacheKey, [...investmentRunningTotals.entries()], 3600);
-            }
+            });
         }
 
         // Build search filter
