@@ -4,6 +4,8 @@ import type {
   TripPlan,
   UtilitiesProfile,
   UtilityBill,
+  UtilityCharge,
+  UtilityChargeCategory,
   UtilityType,
   VehicleTcoAsset,
 } from './types';
@@ -99,32 +101,216 @@ export function calculateUtilityAnalysis(bills: UtilityBill[]) {
   };
 }
 
+const MONTHS: Record<string, number> = {
+  jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
+  jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
+};
+
+function isoDate(month: string, day: string, year: string): string | null {
+  const m = MONTHS[month.slice(0, 3).toLowerCase()];
+  const d = Number(day);
+  if (!m || !Number.isFinite(d) || d < 1 || d > 31) return null;
+  // Bills abbreviate the year ("Nov 06 24"), and these are utility statements,
+  // so a 2-digit year is always 20xx.
+  const y = year.length === 2 ? 2000 + Number(year) : Number(year);
+  if (!Number.isFinite(y) || y < 1900 || y > 2200) return null;
+  return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+}
+
+/**
+ * Service period, preferred over any date the app knows about: a bill uploaded
+ * today can be years old, and the usage belongs to the period it was metered,
+ * not to the upload.
+ */
+export function parseUtilityBillPeriod(text: string): { start: string | null; end: string | null } {
+  // "Billing Period - Oct 05 24 to Nov 06 24" — the only form carrying both
+  // endpoints AND their years, so it wins when present.
+  const explicit = text.match(
+    /billing period\s*[-–—]?\s*([a-z]{3,9})\.?\s+(\d{1,2}),?\s+(\d{2,4})\s*(?:to|-|–|through)\s*([a-z]{3,9})\.?\s+(\d{1,2}),?\s+(\d{2,4})/i,
+  );
+  if (explicit) {
+    const start = isoDate(explicit[1], explicit[2], explicit[3]);
+    const end = isoDate(explicit[4], explicit[5], explicit[6]);
+    if (start && end) return { start, end };
+  }
+
+  // "Service period 10/05/2024 - 11/06/2024"
+  const numeric = text.match(
+    /(?:billing|service)\s*period\s*[:-]?\s*(\d{1,2})\/(\d{1,2})\/(\d{2,4})\s*(?:to|-|–|through)\s*(\d{1,2})\/(\d{1,2})\/(\d{2,4})/i,
+  );
+  if (numeric) {
+    const start = isoDate(Object.keys(MONTHS)[Number(numeric[1]) - 1] ?? '', numeric[2], numeric[3]);
+    const end = isoDate(Object.keys(MONTHS)[Number(numeric[4]) - 1] ?? '', numeric[5], numeric[6]);
+    if (start && end) return { start, end };
+  }
+
+  // "Bill date  Account number Nov 8, 2024" — the label and the value are
+  // separated by other columns once OCR flattens the page, hence the gap.
+  const billDate = text.match(/bill date\b[^\n]{0,80}?\b([a-z]{3,9})\.?\s+(\d{1,2}),\s*(\d{4})/i);
+  if (billDate) {
+    const end = isoDate(billDate[1], billDate[2], billDate[3]);
+    if (end) return { start: null, end };
+  }
+
+  return { start: null, end: null };
+}
+
+/** Section headers and column labels that must never be read as charge names. */
+const NON_CHARGE_LABEL = /billing period|meter|account number|page \d|previous|payment received|amount enclosed|reading on|balance/i;
+const TOTAL_LABEL = /^total\b|^\|?\s*total\b|total (?:current )?(?:charges|taxes|amount)/i;
+const TAX_LABEL = /tax/i;
+const SUPPLY_LABEL = /energy charge|electric(?:ity)? charge|gas charge|water (?:usage|charge)|supply|generation|commodity|consumption charge/i;
+
+/**
+ * Itemized charges from the bill's detail section.
+ *
+ * Only the region from the first "Billing details" heading onward is scanned:
+ * the summary earlier in the bill mixes in the previous balance and payments,
+ * which are not charges for this period. Labels may not contain digits, which
+ * keeps meter numbers and period dates out of them.
+ */
+export function parseUtilityCharges(text: string): UtilityCharge[] {
+  // Split on the section headings and categorize by section, not by label
+  // alone: "Power Manager - Thermostat" reads like a fee but sits under
+  // "Products and Services", and a rebate booked as a fee would drag cost per
+  // unit down and show up as a rate change that never happened.
+  const bodies: string[] = [];
+  const headingRe = /billing details\s*[-–—]?\s*/gi;
+  let heading: RegExpExecArray | null;
+  let previousStart: number | null = null;
+  while ((heading = headingRe.exec(text)) !== null) {
+    if (previousStart !== null) bodies.push(text.slice(previousStart, heading.index));
+    previousStart = heading.index + heading[0].length;
+  }
+  if (previousStart === null) return [];
+  bodies.push(text.slice(previousStart));
+
+  return bodies.flatMap(raw => {
+    const { name, body } = splitSectionName(raw);
+    const sectionCategory: UtilityChargeCategory | null = /tax/i.test(name)
+      ? 'tax'
+      : /products?\b|merchandise|service charge/i.test(name)
+        ? 'other'
+        : null;
+    return parseChargeLines(body, sectionCategory);
+  });
+}
+
+/**
+ * Section names are not delimited from the first charge label once OCR
+ * flattens the page ("Taxes  Sales Tax For Utility   $10.93"), so they have to
+ * be consumed by name or they end up prefixed onto that label.
+ */
+const SECTION_NAME = /^(products and services|other charges|electricity|electric|natural gas|gas|water|sewer|taxes|tax|charges)\b\s*/i;
+
+function splitSectionName(raw: string): { name: string; body: string } {
+  const trimmed = raw.replace(/^[\s|.-]+/, '');
+  const known = SECTION_NAME.exec(trimmed);
+  if (known) return { name: known[1], body: trimmed.slice(known[0].length) };
+  // Unknown section: drop its first word so the label does not inherit it.
+  const firstWord = /^([A-Za-z]+)\s+/.exec(trimmed);
+  return firstWord
+    ? { name: firstWord[1], body: trimmed.slice(firstWord[0].length) }
+    : { name: trimmed.slice(0, 40), body: trimmed };
+}
+
+function parseChargeLines(region: string, sectionCategory: UtilityChargeCategory | null): UtilityCharge[] {
+  const charges: UtilityCharge[] = [];
+  // The sign is captured: credits appear as "$-2.38" and "-1.00" (a rebate's
+  // tax reversal, say), and dropping the minus silently overstates the bill.
+  const re = /([A-Za-z][A-Za-z .'&\/-]{2,60}?)\s+(?:[\d,]+(?:\.\d+)?\s*(?:kwh|therms?|gallons?|gal|ccf|units?)\s*@\s*\$?-?[\d.]+\s+)?(?:\$\s*)?(-)?(?:\$\s*)?([\d,]+\.\d{2})(?!\d)/gi;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(region)) !== null) {
+    const label = match[1].replace(/^[\s|.-]+/, '').trim();
+    const amount = Number(match[3].replaceAll(',', '')) * (match[2] ? -1 : 1);
+    if (!label || !Number.isFinite(amount)) continue;
+    if (NON_CHARGE_LABEL.test(label)) continue;
+    // Totals are derived, not line items — keeping them would double-count.
+    if (TOTAL_LABEL.test(label)) continue;
+    charges.push({
+      label,
+      amount,
+      category: sectionCategory
+        ?? (TAX_LABEL.test(label) ? 'tax' : SUPPLY_LABEL.test(label) ? 'supply' : 'fee'),
+    });
+  }
+  return charges;
+}
+
+function parseUsage(text: string): { usage: number; unit: string } | null {
+  const patterns = [
+    /energy used\s*[:\s]\s*([\d,]+(?:\.\d+)?)\s*(kwh|therms?|gallons?|gal|ccf)\b/i,
+    /billed\s+(kwh|therms?|gallons?|gal|ccf)\s*[:\s]\s*([\d,]+(?:\.\d+)?)/i,
+    /total (?:usage|consumption)\s*[:\s]\s*([\d,]+(?:\.\d+)?)\s*(kwh|therms?|gallons?|gal|ccf)\b/i,
+    /([\d,]+(?:\.\d+)?)\s*(kwh|therms?|gallons?|gal|ccf)\b/i,
+  ];
+  for (const [index, pattern] of patterns.entries()) {
+    const match = text.match(pattern);
+    if (!match) continue;
+    // The "Billed kWh" form puts the unit before the number.
+    const [rawUsage, rawUnit] = index === 1 ? [match[2], match[1]] : [match[1], match[2]];
+    const usage = Number(rawUsage.replaceAll(',', ''));
+    if (Number.isFinite(usage) && usage > 0) return { usage, unit: rawUnit.toLowerCase() };
+  }
+  return null;
+}
+
 export function parseUtilityBillText(input: {
   receiptId: number;
   date: string;
   provider: string;
   text: string;
 }): UtilityBill | null {
-  const usageMatch = input.text.match(/([\d,]+(?:\.\d+)?)\s*(kwh|therms?|gallons?|gal)\b/i);
-  if (!usageMatch) return null;
-  const amountMatches = [...input.text.matchAll(/(?:amount due|total due|total|new charges)\s*:?\s*\$?\s*([\d,]+(?:\.\d{2}))/gi)];
-  const fallbackAmounts = [...input.text.matchAll(/\$\s*([\d,]+(?:\.\d{2}))/g)];
-  const amountText = amountMatches.at(-1)?.[1] ?? fallbackAmounts.at(-1)?.[1];
-  if (!amountText) return null;
-  const rawUnit = usageMatch[2].toLowerCase();
-  const type: UtilityType = rawUnit === 'kwh' ? 'electric' : rawUnit.startsWith('therm') ? 'gas' : 'water';
+  const parsedUsage = parseUsage(input.text);
+  if (!parsedUsage) return null;
+
+  const charges = parseUtilityCharges(input.text);
+  const sumOf = (category: UtilityChargeCategory) =>
+    round2(charges.filter(charge => charge.category === category).reduce((sum, c) => sum + c.amount, 0));
+  const supplyCost = sumOf('supply');
+  const feeCost = sumOf('fee');
+  const taxCost = sumOf('tax');
+  const otherCost = sumOf('other');
+
+  // Prefer the itemized charges: they are exactly this period's cost of
+  // service. "Total Amount Due" is deliberately NOT the first choice — it also
+  // carries any unpaid prior balance and unrelated credits (an appliance rebate
+  // posted to the electric bill, say), which would distort cost per unit.
+  //
+  // The fallback matches "Total Amount Due" explicitly and tolerates the due
+  // date that sits between the label and the figure ("Total Amount Due Dec 03
+  // $167.12"); an unanchored search would otherwise settle on "Previous Amount
+  // Due" and import last month's total.
+  let totalCost = round2(supplyCost + feeCost + taxCost);
+  if (totalCost <= 0) {
+    const stated = input.text.match(/total amount due\b[^$]{0,40}\$\s*([\d,]+\.\d{2})/i)
+      ?? input.text.match(/(?:amount due|total due|new charges)\b[^$]{0,40}\$\s*([\d,]+\.\d{2})/i);
+    totalCost = stated ? Number(stated[1].replaceAll(',', '')) : 0;
+  }
+  if (!Number.isFinite(totalCost) || totalCost <= 0) return null;
+
+  const rawUnit = parsedUsage.unit;
+  const type: UtilityType = rawUnit === 'kwh'
+    ? 'electric'
+    : rawUnit.startsWith('therm') || rawUnit === 'ccf' ? 'gas' : 'water';
   const unit: UtilityBill['unit'] = type === 'electric' ? 'kWh' : type === 'gas' ? 'therms' : 'gallons';
-  const usage = Number(usageMatch[1].replaceAll(',', ''));
-  const totalCost = Number(amountText.replaceAll(',', ''));
-  if (!Number.isFinite(usage) || usage <= 0 || !Number.isFinite(totalCost) || totalCost <= 0) return null;
+
+  const period = parseUtilityBillPeriod(input.text);
   return {
     id: `receipt-${input.receiptId}-${type}`,
-    date: input.date.slice(0, 10),
+    date: (period.end ?? input.date).slice(0, 10),
     type,
     provider: input.provider,
-    usage,
+    usage: parsedUsage.usage,
     unit,
     totalCost,
+    periodStart: period.start,
+    periodEnd: period.end,
+    charges,
+    supplyCost,
+    feeCost,
+    taxCost,
+    otherCost,
     transactionGuid: null,
     receiptId: input.receiptId,
   };

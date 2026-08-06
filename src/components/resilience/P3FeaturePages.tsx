@@ -364,6 +364,45 @@ function UtilityBillCapture(props: { onUploaded: (succeeded: number) => void }) 
   );
 }
 
+/**
+ * Where the money went, beyond the headline figure. Fees are the part a
+ * household cannot reduce by using less, so they are worth showing next to
+ * usage rather than leaving buried on page 3 of the paper bill.
+ */
+function UtilityChargeBreakdown({ bill }: { bill: UtilityBill }) {
+  const charges = bill.charges ?? [];
+  if (charges.length === 0) return null;
+  const parts = [
+    { label: 'Supply', value: bill.supplyCost ?? 0 },
+    { label: 'Fees', value: bill.feeCost ?? 0 },
+    { label: 'Tax', value: bill.taxCost ?? 0 },
+    { label: 'Other', value: bill.otherCost ?? 0 },
+  ].filter(part => part.value !== 0);
+
+  return (
+    <details className="mt-1">
+      <summary className="cursor-pointer text-xs text-foreground-muted">
+        {parts.map(part => `${part.label} ${formatCurrency(part.value)}`).join(' · ')}
+      </summary>
+      <ul className="mt-1 space-y-0.5">
+        {charges.map((charge, index) => (
+          <li key={`${charge.label}-${index}`} className="flex justify-between gap-4 text-xs text-foreground-muted">
+            <span className="truncate">{charge.label}</span>
+            <span className={`shrink-0 font-mono ${charge.amount < 0 ? 'text-positive' : ''}`}>
+              {formatCurrency(charge.amount)}
+            </span>
+          </li>
+        ))}
+      </ul>
+      {(bill.otherCost ?? 0) !== 0 && (
+        <p className="mt-1 text-xs text-foreground-muted">
+          Non-utility items are excluded from the total so they do not distort cost per {bill.unit}.
+        </p>
+      )}
+    </details>
+  );
+}
+
 export function UtilitiesPlannerPage() {
   const state = useSection<UtilitiesProfile, UtilityResponse>('utilities', {
     bills: [],
@@ -424,9 +463,16 @@ export function UtilitiesPlannerPage() {
             {suggestionCount > 0 ? (
               <div className="space-y-2">
                 {suggestions.map(bill => (
-                  <div key={bill.id} className="flex flex-wrap items-center justify-between gap-3 border-b border-border py-2 text-sm">
-                    <span>{bill.date} · {bill.provider} · <span className="font-mono">{bill.usage} {bill.unit} / {formatCurrency(bill.totalCost)}</span></span>
-                    <button type="button" onClick={() => addBill(bill)} className="text-primary">Import</button>
+                  <div key={bill.id} className="flex flex-wrap items-start justify-between gap-3 border-b border-border py-2 text-sm">
+                    <div className="min-w-0">
+                      <span>
+                        {bill.periodStart ? `${bill.periodStart} → ${bill.periodEnd}` : bill.date} · {bill.provider}
+                        {' · '}
+                        <span className="font-mono">{bill.usage.toLocaleString()} {bill.unit} / {formatCurrency(bill.totalCost)}</span>
+                      </span>
+                      <UtilityChargeBreakdown bill={bill} />
+                    </div>
+                    <button type="button" onClick={() => addBill(bill)} className="shrink-0 text-primary">Import</button>
                   </div>
                 ))}
               </div>
@@ -456,6 +502,12 @@ export function UtilitiesPlannerPage() {
               <Field label={`Usage (${bill.unit})`}><input type="number" className={`${INPUT} font-mono`} value={bill.usage} onChange={event => updateBill(bill.id, { usage: numberValue(event.target.value) })} /></Field>
               <Field label="Total cost"><input type="number" className={`${INPUT} font-mono`} value={bill.totalCost} onChange={event => updateBill(bill.id, { totalCost: numberValue(event.target.value) })} /></Field>
             </FieldGrid>
+            {bill.periodStart && (
+              <p className="mt-2 text-xs text-foreground-muted">
+                Service period {bill.periodStart} → {bill.periodEnd}
+              </p>
+            )}
+            <UtilityChargeBreakdown bill={bill} />
           </RecordCard>
         ))}</div>}</Panel>
       </>}

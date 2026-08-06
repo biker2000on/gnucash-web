@@ -340,14 +340,43 @@ export interface EducationProfile {
 
 export type UtilityType = 'electric' | 'gas' | 'water';
 
+/**
+ * One line item from a bill's charge detail. `supply` is the commodity itself
+ * (the energy charge); `fee` is everything billed on top of it — customer
+ * charges, riders, recovery charges — which is the part a household can neither
+ * avoid by using less nor see without reading page 3.
+ */
+export type UtilityChargeCategory = 'supply' | 'fee' | 'tax' | 'other';
+
+export interface UtilityCharge {
+  label: string;
+  amount: number;
+  category: UtilityChargeCategory;
+}
+
 export interface UtilityBill {
   id: string;
+  /** Anchor for the usage series: the service period end when one was parsed. */
   date: string;
   type: UtilityType;
   provider: string;
   usage: number;
   unit: 'kWh' | 'therms' | 'gallons';
   totalCost: number;
+  /** Service period, when the bill states one. */
+  periodStart?: string | null;
+  periodEnd?: string | null;
+  /** Parsed charge detail; empty when the bill had no itemized section. */
+  charges?: UtilityCharge[];
+  supplyCost?: number | null;
+  feeCost?: number | null;
+  taxCost?: number | null;
+  /**
+   * Non-utility items billed alongside the service (an appliance rebate, a
+   * merchandise charge). Excluded from `totalCost` so they cannot distort cost
+   * per unit, but kept so the bill still reconciles to what was actually paid.
+   */
+  otherCost?: number | null;
   transactionGuid?: string | null;
   receiptId?: number | null;
 }

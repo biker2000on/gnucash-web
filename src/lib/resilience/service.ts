@@ -302,6 +302,18 @@ const utilitiesSchema = z.object({
     usage: z.number().finite().min(0).max(1_000_000_000),
     unit: z.enum(['kWh', 'therms', 'gallons']),
     totalCost: money,
+    periodStart: z.string().max(10).nullable().optional(),
+    periodEnd: z.string().max(10).nullable().optional(),
+    // Charge amounts are signed: credits and tax reversals are real line items.
+    charges: z.array(z.object({
+      label: z.string().trim().max(120),
+      amount: z.number().finite().min(-1_000_000).max(1_000_000),
+      category: z.enum(['supply', 'fee', 'tax', 'other']),
+    })).max(200).optional(),
+    supplyCost: z.number().finite().min(-1_000_000).max(1_000_000).nullable().optional(),
+    feeCost: z.number().finite().min(-1_000_000).max(1_000_000).nullable().optional(),
+    taxCost: z.number().finite().min(-1_000_000).max(1_000_000).nullable().optional(),
+    otherCost: z.number().finite().min(-1_000_000).max(1_000_000).nullable().optional(),
     transactionGuid: z.string().max(32).nullable().optional(),
     receiptId: z.number().int().positive().nullable().optional(),
   })).max(100_000),
