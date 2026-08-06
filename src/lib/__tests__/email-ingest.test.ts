@@ -38,6 +38,8 @@ import {
   getEmailIngestConfig,
   pollEmailIngest,
   MAX_ATTACHMENT_SIZE,
+  INGEST_CLAIM_STALE_MINUTES,
+  INGEST_MAX_ATTEMPTS,
   type IngestMailClient,
   type IngestEnvelope,
   type IngestAttachment,
@@ -384,6 +386,94 @@ describe('email-ingest', () => {
       });
     }
 
+    interface FakeMessageRow {
+      message_key: string;
+      outcome: string;
+      processed_at: Date;
+      attempts: number;
+    }
+
+    const minutesAgo = (minutes: number) => new Date(Date.now() - minutes * 60_000);
+
+    /**
+     * Stateful stand-in for gnucash_web_ingest_messages. Instead of a canned
+     * answer it evaluates the same predicates the SQL does, using the values
+     * the module actually binds — so the claim/skip decisions under test are
+     * the module's, and the recorded outcome feeds the next poll.
+     */
+    function primeStatefulDb(options: { senders?: unknown[]; messages?: FakeMessageRow[] }) {
+      const rows: FakeMessageRow[] = (options.messages ?? []).map(row => ({ ...row }));
+      const queries: string[] = [];
+
+      db.$executeRawUnsafe.mockResolvedValue(0); // ensure tables
+
+      // recordProcessedMessage: finalizes (or inserts) the row.
+      db.$executeRaw.mockImplementation((strings: TemplateStringsArray, ...values: unknown[]) => {
+        const sql = strings.join('?');
+        queries.push(sql);
+        if (sql.includes('INSERT INTO gnucash_web_ingest_messages')) {
+          const key = values[0] as string;
+          const outcome = values[3] as string;
+          const existing = rows.find(r => r.message_key === key);
+          if (existing) {
+            existing.outcome = outcome;
+            existing.processed_at = new Date();
+          } else {
+            rows.push({ message_key: key, outcome, processed_at: new Date(), attempts: 0 });
+          }
+        }
+        return Promise.resolve(1);
+      });
+
+      db.$queryRaw.mockImplementation((strings: TemplateStringsArray, ...values: unknown[]) => {
+        const sql = strings.join('?');
+        queries.push(sql);
+
+        // claimIngestMessage: INSERT ... ON CONFLICT DO UPDATE ... WHERE stale.
+        if (sql.includes('INSERT INTO gnucash_web_ingest_messages')) {
+          const key = values[0] as string;
+          const staleMinutes = values[3] as number;
+          const maxAttempts = values[4] as number;
+          const existing = rows.find(r => r.message_key === key);
+          if (!existing) {
+            rows.push({ message_key: key, outcome: 'processing', processed_at: new Date(), attempts: 1 });
+            return Promise.resolve([{ message_key: key }]);
+          }
+          const staleBefore = minutesAgo(staleMinutes);
+          const reclaimable =
+            (existing.outcome === 'processing' && existing.processed_at < staleBefore) ||
+            (existing.outcome === 'error' && existing.attempts < maxAttempts);
+          if (!reclaimable) return Promise.resolve([]); // live claim: no row returned
+          existing.outcome = 'processing';
+          existing.processed_at = new Date();
+          existing.attempts += 1;
+          return Promise.resolve([{ message_key: key }]);
+        }
+
+        if (sql.includes('FROM gnucash_web_ingest_senders')) {
+          return Promise.resolve(options.senders ?? []);
+        }
+
+        // getProcessedKeys: finished rows only.
+        if (sql.includes('FROM gnucash_web_ingest_messages')) {
+          const keys = values[0] as string[];
+          const maxAttempts = values[1] as number;
+          return Promise.resolve(
+            rows
+              .filter(r =>
+                keys.includes(r.message_key)
+                && r.outcome !== 'processing'
+                && !(r.outcome === 'error' && r.attempts < maxAttempts))
+              .map(r => ({ message_key: r.message_key })),
+          );
+        }
+
+        return Promise.resolve([]);
+      });
+
+      return { rows, queries };
+    }
+
     const senderRow = {
       id: 1,
       email: 'alice@example.com',
@@ -536,6 +626,136 @@ describe('email-ingest', () => {
 
       const result = await pollEmailIngest(async () => client);
       expect(result).toMatchObject({ checked: 2, ingested: 1, errors: 1 });
+    });
+
+    // -----------------------------------------------------------------------
+    // Stale / abandoned claim recovery (worker crash, OOM, redeploy)
+    // -----------------------------------------------------------------------
+    it('re-ingests a stale processing claim exactly once', async () => {
+      const { rows } = primeStatefulDb({
+        senders: [senderRow],
+        messages: [{
+          message_key: 'stale@x',
+          outcome: 'processing',
+          processed_at: minutesAgo(INGEST_CLAIM_STALE_MINUTES + 1),
+          attempts: 1,
+        }],
+      });
+      intakeReceiptMock.mockResolvedValue({ ok: true, id: 12, filename: 'lunch.jpg' });
+
+      const envelope: IngestEnvelope = {
+        uid: 20, messageId: '<stale@x>', from: 'alice@example.com', subject: 'Lunch', date: null,
+      };
+      const attachments = {
+        20: [{ filename: 'lunch.jpg', mimeType: 'image/jpeg', content: Buffer.alloc(100) }],
+      };
+
+      // The abandoned claim is stolen and the message finally ingested.
+      const first = makeFakeClient([envelope], attachments);
+      const firstResult = await pollEmailIngest(async () => first.client);
+      expect(firstResult).toMatchObject({ checked: 1, ingested: 1, skipped: 0, errors: 0 });
+      expect(intakeReceiptMock).toHaveBeenCalledTimes(1);
+      expect(first.seen).toEqual([20]);
+      expect(rows[0]).toMatchObject({ message_key: 'stale@x', outcome: 'ingested', attempts: 2 });
+
+      // ...and only once: the row is finalized, so a later poll skips it.
+      const second = makeFakeClient([envelope], attachments);
+      const secondResult = await pollEmailIngest(async () => second.client);
+      expect(secondResult).toMatchObject({ checked: 1, ingested: 0, skipped: 1 });
+      expect(intakeReceiptMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('skips a fresh processing claim and leaves it unread for the owner', async () => {
+      primeStatefulDb({
+        senders: [senderRow],
+        messages: [{
+          message_key: 'live@x',
+          outcome: 'processing',
+          processed_at: minutesAgo(1),
+          attempts: 1,
+        }],
+      });
+
+      const { client, seen } = makeFakeClient(
+        [{ uid: 21, messageId: '<live@x>', from: 'alice@example.com', subject: 'In flight', date: null }],
+        { 21: [{ filename: 'lunch.jpg', mimeType: 'image/jpeg', content: Buffer.alloc(100) }] },
+      );
+
+      const result = await pollEmailIngest(async () => client);
+
+      expect(result).toMatchObject({ checked: 1, ingested: 0, skipped: 1, errors: 0 });
+      expect(client.fetchAttachments).not.toHaveBeenCalled();
+      expect(intakeReceiptMock).not.toHaveBeenCalled();
+      // Not marked seen: the live claimant marks it, and if that claimant dies
+      // the message must stay unread so the stale claim can be reclaimed.
+      expect(seen).toEqual([]);
+    });
+
+    it('claims with a conditional upsert so a live claim yields no row', async () => {
+      const { queries } = primeStatefulDb({ senders: [senderRow] });
+      intakeReceiptMock.mockResolvedValue({ ok: true, id: 13, filename: 'a.jpg' });
+
+      const { client } = makeFakeClient(
+        [{ uid: 22, messageId: '<new@x>', from: 'alice@example.com', subject: 'New', date: null }],
+        { 22: [{ filename: 'a.jpg', mimeType: 'image/jpeg', content: Buffer.alloc(10) }] },
+      );
+      await pollEmailIngest(async () => client);
+
+      const claimSql = queries.find(q => q.includes('ON CONFLICT') && q.includes('RETURNING message_key'));
+      expect(claimSql).toBeDefined();
+      expect(claimSql).toContain('ON CONFLICT (message_key) DO UPDATE');
+      // The WHERE is what preserves exactly-once: a fresh row fails it.
+      expect(claimSql).toMatch(/WHERE[\s\S]*outcome = 'processing'/);
+      expect(claimSql).toContain("? * INTERVAL '1 minute'");
+      expect(claimSql).toMatch(/attempts < \?/);
+
+      const selectSql = queries.find(q => q.includes('SELECT message_key FROM gnucash_web_ingest_messages'));
+      expect(selectSql).toContain("outcome <> 'processing'");
+    });
+
+    it('retries an errored message until attempts are exhausted', async () => {
+      const { rows } = primeStatefulDb({
+        senders: [senderRow],
+        messages: [{
+          message_key: 'err@x',
+          outcome: 'error',
+          processed_at: minutesAgo(1),
+          attempts: INGEST_MAX_ATTEMPTS - 1,
+        }],
+      });
+      intakeReceiptMock.mockResolvedValue({ ok: true, id: 14, filename: 'retry.jpg' });
+
+      const { client, seen } = makeFakeClient(
+        [{ uid: 23, messageId: '<err@x>', from: 'alice@example.com', subject: 'Retry me', date: null }],
+        { 23: [{ filename: 'retry.jpg', mimeType: 'image/jpeg', content: Buffer.alloc(10) }] },
+      );
+
+      const result = await pollEmailIngest(async () => client);
+      expect(result).toMatchObject({ checked: 1, ingested: 1, errors: 0 });
+      expect(seen).toEqual([23]);
+      expect(rows[0]).toMatchObject({ outcome: 'ingested', attempts: INGEST_MAX_ATTEMPTS });
+    });
+
+    it('leaves a message alone once the retry budget is spent', async () => {
+      primeStatefulDb({
+        senders: [senderRow],
+        messages: [{
+          message_key: 'dead@x',
+          outcome: 'error',
+          processed_at: minutesAgo(1),
+          attempts: INGEST_MAX_ATTEMPTS,
+        }],
+      });
+
+      const { client, seen } = makeFakeClient(
+        [{ uid: 24, messageId: '<dead@x>', from: 'alice@example.com', subject: 'Poisoned', date: null }],
+        { 24: [{ filename: 'a.jpg', mimeType: 'image/jpeg', content: Buffer.alloc(10) }] },
+      );
+
+      const result = await pollEmailIngest(async () => client);
+      expect(result).toMatchObject({ checked: 1, ingested: 0, skipped: 1 });
+      expect(intakeReceiptMock).not.toHaveBeenCalled();
+      expect(seen).toEqual([24]);
     });
   });
 });

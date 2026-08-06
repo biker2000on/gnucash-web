@@ -11,7 +11,10 @@
  * INGEST_FOLDER, INGEST_DEFAULT_BOOK) — see .env.example. Sender → user/book
  * mapping lives in the lazily-created `gnucash_web_ingest_senders` table;
  * processed Message-IDs are recorded in `gnucash_web_ingest_messages` for
- * idempotency (a restart or overlapping poll never ingests twice).
+ * idempotency (a restart or overlapping poll never ingests twice). A claim is
+ * taken before any side effects and released only by finishing, so a claim
+ * abandoned by a crash/redeploy becomes reclaimable after
+ * INGEST_CLAIM_STALE_MINUTES rather than swallowing the message forever.
  *
  * The IMAP connection is hidden behind the small `IngestMailClient` interface
  * so unit tests never import imapflow (it is only loaded via dynamic import
@@ -317,8 +320,13 @@ export function ensureEmailIngestTables(): Promise<void> {
             outcome VARCHAR(50) NOT NULL,
             detail TEXT,
             ingested_count INTEGER NOT NULL DEFAULT 0,
+            attempts INTEGER NOT NULL DEFAULT 0,
             processed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
           );
+
+          -- Added after the table shipped; idempotent for existing installs.
+          ALTER TABLE gnucash_web_ingest_messages
+            ADD COLUMN IF NOT EXISTS attempts INTEGER NOT NULL DEFAULT 0;
 
           CREATE UNIQUE INDEX IF NOT EXISTS idx_ingest_messages_key
             ON gnucash_web_ingest_messages(message_key);
@@ -453,13 +461,48 @@ export async function listIngestLog(limit = 10): Promise<IngestLogEntry[]> {
   }));
 }
 
-/** Which of the given dedupe keys have already been processed. */
+/**
+ * How long an in-flight `outcome = 'processing'` claim is honored. A worker
+ * that crashes / OOMs / is redeployed between claiming and finalizing leaves
+ * the row stuck in 'processing' forever (nothing ever deletes a claim), and
+ * the message was never marked seen — so after this window any poll may steal
+ * the claim and retry, instead of silently skipping the message for good.
+ */
+export const INGEST_CLAIM_STALE_MINUTES = 15;
+
+/**
+ * How many times a message may be claimed before an `error` outcome is treated
+ * as permanent. Only messages still unread in the mailbox can be retried at
+ * all (every deliberate error path marks the message seen), so this bounds the
+ * crash/transient-failure retry loop rather than replaying real failures.
+ */
+export const INGEST_MAX_ATTEMPTS = 3;
+
+/**
+ * Which of the given dedupe keys have already been processed.
+ *
+ * "Processed" means *finished*: only a row whose work is done counts, because
+ * the poller marks a processed message seen (removing it from the mailbox for
+ * good). An in-flight 'processing' claim is deliberately NOT reported here —
+ * marking it seen would destroy the retry the stale-claim reclaim exists to
+ * provide, since a crashed claimant's row would go stale with the message no
+ * longer listed as unseen. In-flight claims are arbitrated by
+ * `claimIngestMessage` instead, which returns false while the claim is live
+ * and steals it once it is older than INGEST_CLAIM_STALE_MINUTES.
+ *
+ * An 'error' row with attempts left is likewise reclaimable, not processed.
+ */
 export async function getProcessedKeys(keys: string[]): Promise<Set<string>> {
   if (keys.length === 0) return new Set();
   await ensureEmailIngestTables();
   const rows = await prisma.$queryRaw<Array<{ message_key: string }>>`
     SELECT message_key FROM gnucash_web_ingest_messages
-    WHERE message_key = ANY(${keys}::text[])`;
+    WHERE message_key = ANY(${keys}::text[])
+      AND outcome <> 'processing'
+      AND NOT (
+        outcome = 'error'
+        AND attempts < ${INGEST_MAX_ATTEMPTS}
+      )`;
   return new Set(rows.map(r => r.message_key));
 }
 
@@ -492,7 +535,19 @@ export async function recordProcessedMessage(input: {
       processed_at = CURRENT_TIMESTAMP`;
 }
 
-/** Atomically claim a message before any attachment side effects occur. */
+/**
+ * Atomically claim a message before any attachment side effects occur.
+ *
+ * Returns true only for the caller that owns the claim. A fresh (live) claim
+ * or a finished row yields no RETURNING row, so the caller skips the message.
+ *
+ * Concurrency: `ON CONFLICT ... DO UPDATE` takes a row lock on the conflicting
+ * row, so two concurrent inserts of the same key serialize. The loser
+ * re-evaluates the WHERE against the *updated* row — whose processed_at the
+ * winner just bumped to now — so the stale/error predicate no longer holds and
+ * the loser updates nothing and returns no row. Exactly one claimant wins, for
+ * both a brand-new key and a stolen stale one.
+ */
 export async function claimIngestMessage(input: {
   messageKey: string;
   fromEmail?: string | null;
@@ -501,16 +556,32 @@ export async function claimIngestMessage(input: {
   await ensureEmailIngestTables();
   const claimed = await prisma.$queryRaw<Array<{ message_key: string }>>`
     INSERT INTO gnucash_web_ingest_messages
-      (message_key, from_email, subject, outcome, detail, ingested_count)
+      (message_key, from_email, subject, outcome, detail, ingested_count, attempts)
     VALUES (
       ${input.messageKey.slice(0, 512)},
       ${input.fromEmail?.slice(0, 255) ?? null},
       ${input.subject?.slice(0, 500) ?? null},
       'processing',
       'Claimed for ingestion',
-      0
+      0,
+      1
     )
-    ON CONFLICT (message_key) DO NOTHING
+    ON CONFLICT (message_key) DO UPDATE SET
+      from_email = EXCLUDED.from_email,
+      subject = EXCLUDED.subject,
+      outcome = 'processing',
+      detail = 'Reclaimed after stale or failed attempt',
+      ingested_count = 0,
+      attempts = gnucash_web_ingest_messages.attempts + 1,
+      processed_at = CURRENT_TIMESTAMP
+    WHERE (
+      gnucash_web_ingest_messages.outcome = 'processing'
+      AND gnucash_web_ingest_messages.processed_at
+          < (NOW() - ${INGEST_CLAIM_STALE_MINUTES} * INTERVAL '1 minute')::timestamp
+    ) OR (
+      gnucash_web_ingest_messages.outcome = 'error'
+      AND gnucash_web_ingest_messages.attempts < ${INGEST_MAX_ATTEMPTS}
+    )
     RETURNING message_key`;
   return claimed.length === 1;
 }
@@ -716,7 +787,9 @@ async function pollEmailIngestPass(
       const key = messageDedupeKey(envelope);
 
       try {
-        // Idempotency: skip anything already recorded (or repeated in-batch).
+        // Idempotency: skip anything already finished (or repeated in-batch).
+        // In-flight and reclaimable rows are not reported as processed — the
+        // claim below decides those.
         if (processedKeys.has(key) || seenThisRun.has(key)) {
           await client.markSeen(envelope.uid);
           result.skipped++;
@@ -726,13 +799,15 @@ async function pollEmailIngestPass(
 
         // Cross-job/process idempotency: acquire the unique dedupe row before
         // downloading or ingesting attachments. A concurrent poll that lost
-        // this race performs no side effects.
+        // this race performs no side effects — and deliberately does NOT mark
+        // the message seen: the live claimant marks it when it finishes, and
+        // if that claimant dies the message must stay unread so the stale
+        // claim can be reclaimed on a later poll.
         if (!await claimIngestMessage({
           messageKey: key,
           fromEmail: envelope.from,
           subject: envelope.subject,
         })) {
-          await client.markSeen(envelope.uid);
           result.skipped++;
           continue;
         }
