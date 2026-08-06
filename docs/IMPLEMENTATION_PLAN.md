@@ -778,6 +778,80 @@ CREATE TABLE audit_log (
 );
 ```
 
+### 5.6 Home Assistant Electricity Usage & Utility Bill Reconciliation
+
+**Goal**: Pull Emporia Vue electricity measurements from Home Assistant, retain
+normalized daily usage, and compare the measured usage and estimated cost with
+the electricity bills recorded in GnuCash over the utility's actual billing
+periods.
+
+**Validated deployment context (2026-08-06)**:
+- Home Assistant and GnuCash Web are both running on the TrueNAS Docker host.
+- Home Assistant exposes whole-home Emporia Vue entities including
+  `sensor.vue2_total_daily_energy` and `sensor.vue2_total_daily_energy_cost`,
+  along with daily energy entities for individual circuits.
+- The services use separate Docker networks, so implementation must include a
+  connectivity check from both the web and worker containers to the configured
+  Home Assistant URL.
+
+**Connection & source setup**:
+- Add a per-book Home Assistant connection using a base URL and long-lived
+  access token; encrypt the token at rest with the application's existing
+  connector-credential mechanism.
+- Provide "Test connection" and entity discovery, then let the user select the
+  whole-home energy entity, optional Home Assistant cost entity, and optional
+  per-circuit entities. Do not hard-code the current entity IDs.
+- Store the Home Assistant statistic/entity identity and display name so entity
+  renames can be detected and repaired without losing imported history.
+- Treat internal/private Home Assistant URLs as an explicit, user-approved
+  connector destination while preserving SSRF and URL-validation protections.
+
+**Daily ingestion**:
+- Use the Home Assistant history/statistics API to retrieve daily values rather
+  than relying on a single snapshot of a counter that resets at midnight.
+- Run an idempotent worker sync each day and re-fetch a short trailing window to
+  repair missed runs or late statistics; also support manual sync and historical
+  backfill.
+- Normalize readings to kWh and local calendar dates using the Home Assistant
+  timezone, including daylight-saving transitions. Record source timestamps,
+  coverage, and sync errors.
+- Upsert one row per book, source, and date. Never create GnuCash transactions
+  from measurements automatically.
+
+**Bill correlation**:
+- Let the user map an electricity expense account/payee and link a GnuCash bill
+  transaction to its service-period start and end dates.
+- Use the linked transaction amount as the billed dollar amount. Allow optional
+  entry of statement kWh and bill adjustments such as fixed fees, taxes, credits,
+  and rate changes when they are needed for an apples-to-apples comparison.
+- Sum daily measured kWh over the exact billing period (with documented
+  inclusive/exclusive date handling) and calculate modeled cost from either the
+  Home Assistant cost series or a configured utility rate plan.
+- Show billed dollars, statement kWh, measured kWh, modeled dollars, dollar and
+  percentage variance, missing-data coverage, a daily usage table/chart, and an
+  optional per-circuit breakdown. All monetary and numeric comparison columns
+  follow `DESIGN.md` financial-data formatting.
+
+**Proposed supporting data**:
+- Home Assistant connection and selected energy-source metadata.
+- Immutable daily energy readings with idempotency keys and provenance.
+- Utility billing periods linked to GnuCash transaction GUIDs, with optional
+  statement usage and adjustments.
+- Sync-run history containing status, imported date range, row counts, and
+  non-secret error details.
+
+**Acceptance criteria**:
+1. A user can connect Home Assistant, discover the Emporia Vue whole-home daily
+   energy source, and backfill a selected date range.
+2. Scheduled syncs produce exactly one normalized daily value per source/date
+   and safely repair missed days without duplicates.
+3. Linking an electricity bill shows measured usage and estimated cost for that
+   bill's exact service period, with clear variance and data-coverage indicators.
+4. Credentials never appear in logs or API responses, and one book cannot read
+   another book's connection, readings, or bill links.
+5. Unit, timezone, counter-reset, partial-day, missing-history, entity-rename,
+   retry, and duplicate-import behavior is covered by automated tests.
+
 ---
 
 ## Database Considerations
@@ -922,6 +996,12 @@ Add to sidebar:
 20. Keyboard shortcuts
 21. Mobile optimization
 22. User authentication
+
+### Milestone 6: Home Energy Integration
+23. Home Assistant connection, credential storage, and Emporia Vue entity discovery
+24. Daily electricity history sync, backfill, normalization, and monitoring
+25. Utility bill linking and billing-period usage/cost comparison
+26. Optional per-circuit analysis and richer utility rate plans
 
 ---
 
