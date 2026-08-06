@@ -24,11 +24,21 @@ import {
   type StatementSource,
 } from '@/lib/services/statement.service';
 
-export const RECEIPT_MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
-export const PAYSLIP_MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
-export const STATEMENT_MAX_FILE_SIZE = 15 * 1024 * 1024; // 15MB
-
-const RECEIPT_ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'application/pdf'];
+// Size caps and the receipt mime allow-list live in `@/lib/upload-limits` so the
+// browser drop zones can screen files against the same numbers without pulling
+// storage/queue code into the client bundle. Re-exported here because the
+// upload routes and services have always imported them from this module.
+export {
+  RECEIPT_MAX_FILE_SIZE,
+  PAYSLIP_MAX_FILE_SIZE,
+  STATEMENT_MAX_FILE_SIZE,
+} from '@/lib/upload-limits';
+import {
+  RECEIPT_ALLOWED_MIME_TYPES,
+  RECEIPT_MAX_FILE_SIZE,
+  PAYSLIP_MAX_FILE_SIZE,
+  STATEMENT_MAX_FILE_SIZE,
+} from '@/lib/upload-limits';
 
 export function sanitizeFilename(name: string): string {
   return name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 200);

@@ -1227,7 +1227,10 @@ async function loadUtilityBillSuggestions(bookGuid: string, profile: UtilitiesPr
        FROM gnucash_web_receipts r
        LEFT JOIN transactions t ON t.guid = r.transaction_guid
       WHERE r.book_guid = $1
-        AND r.ocr_status = 'completed'
+        -- The OCR job writes 'complete'; 'completed' exists only on rows that
+        -- came through the canonical documents backfill. Accept both, or a
+        -- freshly OCR'd bill never becomes a suggestion.
+        AND r.ocr_status IN ('complete', 'completed')
         AND r.ocr_text IS NOT NULL
       ORDER BY COALESCE(t.post_date, r.created_at) DESC
       LIMIT 500`,
@@ -1475,7 +1478,8 @@ export async function loadPersonalPriceIndex(bookGuid: string) {
             t.description AS merchant, r.ocr_text
        FROM gnucash_web_receipts r
        LEFT JOIN transactions t ON t.guid = r.transaction_guid
-      WHERE r.book_guid = $1 AND r.ocr_status = 'completed' AND r.ocr_text IS NOT NULL
+      -- See loadUtilityBillSuggestions: the OCR job writes 'complete'.
+      WHERE r.book_guid = $1 AND r.ocr_status IN ('complete', 'completed') AND r.ocr_text IS NOT NULL
       ORDER BY COALESCE(t.post_date, r.created_at)`,
     [bookGuid],
   );

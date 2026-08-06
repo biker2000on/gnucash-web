@@ -1,8 +1,16 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { FileDropZone, type FileUploadOutcome } from '@/components/ui/FileDropZone';
+import { receiptUploadOutcome, uploadReceiptFile } from '@/components/receipts/ReceiptUploadZone';
+import {
+  RECEIPT_ACCEPT_ATTRIBUTE,
+  RECEIPT_MAX_FILE_SIZE,
+  RECEIPT_SCREEN_RULES,
+  formatSizeLimit,
+} from '@/lib/upload-limits';
 import { useToast } from '@/contexts/ToastContext';
 import { formatCurrency } from '@/lib/format';
 import {
@@ -40,13 +48,21 @@ function useSection<P, R extends { profile: P }>(section: string, initial: P) {
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
 
-  const load = async () => {
+  /**
+   * Re-read the section. `keepProfile` refreshes only the server-computed
+   * half of the response (analysis, suggestions) and leaves the edit buffer
+   * alone — used by background polling, which must never discard unsaved work.
+   */
+  const load = async (keepProfile = false): Promise<R> => {
     const result = await fetch(`/api/resilience/${section}`, { cache: 'no-store' });
     const json = await result.json();
     if (!result.ok) throw new Error(json.error || 'Request failed');
     setResponse(json as R);
-    setProfile((json as R).profile);
-    setDirty(false);
+    if (!keepProfile) {
+      setProfile((json as R).profile);
+      setDirty(false);
+    }
+    return json as R;
   };
 
   useEffect(() => {
@@ -80,7 +96,7 @@ function useSection<P, R extends { profile: P }>(section: string, initial: P) {
     }
   };
 
-  return { response, profile, change, dirty, saving, loading, save };
+  return { response, profile, change, dirty, saving, loading, save, refresh: () => load(true) };
 }
 
 type EducationResult = EducationChild & {
@@ -302,12 +318,93 @@ type UtilityResponse = {
   suggestions: UtilityBill[];
 };
 
+/** How long to keep polling for OCR results after an upload, and how often. */
+const BILL_ANALYSIS_POLL_MS = 5_000;
+const BILL_ANALYSIS_TIMEOUT_MS = 120_000;
+
+/**
+ * Bill capture pane.
+ *
+ * Dropped or picked files ride the existing receipt intake pipeline —
+ * `POST /api/receipts/upload` → `intakeReceipt()` (storage, thumbnail, DB row)
+ * → the `ocr-receipt` job → OCR + AI extraction. `loadUtilityBillSuggestions()`
+ * then parses the stored OCR text into a candidate bill, which surfaces in the
+ * suggestion list. Nothing lands in the utility profile without an explicit
+ * Import, so the capture step stays evidence-only.
+ */
+function UtilityBillCapture(props: { onUploaded: (succeeded: number) => void }) {
+  const toast = useToast();
+  const { onUploaded } = props;
+
+  const upload = useCallback(async (file: File): Promise<FileUploadOutcome> => {
+    return receiptUploadOutcome(await uploadReceiptFile(file));
+  }, []);
+
+  const settled = useCallback(({ succeeded, failed }: { succeeded: number; failed: number }) => {
+    if (failed > 0) {
+      toast.error(`${failed} file${failed === 1 ? '' : 's'} could not be uploaded`);
+    }
+    if (succeeded > 0) {
+      toast.success(`${succeeded} bill${succeeded === 1 ? '' : 's'} uploaded — reading them now`);
+    }
+    onUploaded(succeeded);
+  }, [onUploaded, toast]);
+
+  return (
+    <FileDropZone
+      accept={RECEIPT_ACCEPT_ATTRIBUTE}
+      rules={RECEIPT_SCREEN_RULES}
+      label="Upload utility bills"
+      prompt="Drag and drop electric, gas, or water bills here"
+      hint={`JPEG, PNG, or PDF up to ${formatSizeLimit(RECEIPT_MAX_FILE_SIZE)}. Drop several at once.`}
+      buttonLabel="Choose bills"
+      onUploadFile={upload}
+      onBatchSettled={settled}
+    />
+  );
+}
+
 export function UtilitiesPlannerPage() {
   const state = useSection<UtilitiesProfile, UtilityResponse>('utilities', {
     bills: [],
     solar: { enabled: false, systemCost: 0, incentives: 0, annualProductionKwh: 0, degradationRate: 0.5, electricRateInflation: 3, annualMaintenance: 0, analysisYears: 25 },
   });
   const [tab, setTab] = useState<'usage' | 'solar'>('usage');
+  // OCR runs on a worker, so a fresh upload has no suggestion yet. Poll the
+  // section until one appears (or we give up), refreshing only the computed
+  // half of the response so unsaved bill edits survive.
+  const [analyzing, setAnalyzing] = useState(false);
+  const suggestionBaseline = useRef(0);
+  const refreshRef = useRef(state.refresh);
+  useEffect(() => { refreshRef.current = state.refresh; });
+
+  const suggestions = state.response?.suggestions ?? [];
+  const suggestionCount = suggestions.length;
+
+  useEffect(() => {
+    if (!analyzing) return;
+    const deadline = Date.now() + BILL_ANALYSIS_TIMEOUT_MS;
+    const timer = setInterval(() => {
+      // Stop as soon as a new suggestion lands, or when the worker has had
+      // long enough that a bill this OCR pass could not parse is the likelier
+      // explanation than a slow queue.
+      void refreshRef.current()
+        .then(next => {
+          if (next.suggestions.length > suggestionBaseline.current) setAnalyzing(false);
+        })
+        .catch(() => undefined)
+        .finally(() => { if (Date.now() > deadline) setAnalyzing(false); });
+    }, BILL_ANALYSIS_POLL_MS);
+    return () => clearInterval(timer);
+  }, [analyzing]);
+
+  const handleUploaded = useCallback((succeeded: number) => {
+    if (succeeded === 0) return;
+    suggestionBaseline.current = suggestionCount;
+    setAnalyzing(true);
+    void refreshRef.current().catch(() => undefined);
+  }, [suggestionCount]);
+
   if (state.loading) return <div className="p-6 text-sm text-foreground-muted">Loading utility history…</div>;
   const addBill = (bill?: UtilityBill) => state.change({ ...state.profile, bills: [...state.profile.bills, bill ?? { id: uid(), date: today(), type: 'electric', provider: '', usage: 0, unit: 'kWh', totalCost: 0, receiptId: null, transactionGuid: null }] });
   const updateBill = (id: string, patch: Partial<UtilityBill>) => state.change({ ...state.profile, bills: state.profile.bills.map(bill => bill.id === id ? { ...bill, ...patch } : bill) });
@@ -318,8 +415,34 @@ export function UtilitiesPlannerPage() {
       <Tabs value={tab} onChange={setTab} tabs={[{ value: 'usage', label: 'Usage & rates' }, { value: 'solar', label: 'Solar scenario' }]} />
       {tab === 'usage' && <>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-4"><Metric label="Trailing 12-month cost" value={formatCurrency(state.response?.analysis.trailing12Cost ?? 0)} />{state.response?.analysis.byType.map(row => <Metric key={row.type} label={`${row.type} unit rate`} value={`$${row.latestRate.toFixed(2)}`} tone={row.rateChangePercent > 15 ? 'warning' : undefined} />)}</div>
-        {(state.response?.suggestions.length ?? 0) > 0 && <Panel title="Bills found in receipt OCR" description="Review before importing; the source receipt remains attached as evidence."><div className="space-y-2">{state.response?.suggestions.map(bill => <div key={bill.id} className="flex flex-wrap items-center justify-between gap-3 border-b border-border py-2 text-sm"><span>{bill.date} · {bill.provider} · <span className="font-mono">{bill.usage} {bill.unit} / {formatCurrency(bill.totalCost)}</span></span><button type="button" onClick={() => addBill(bill)} className="text-primary">Import</button></div>)}</div></Panel>}
-        <Panel title="Utility bills" description="Rate and usage changes are calculated independently.">{state.profile.bills.length === 0 ? <Empty>Add a bill manually or import one from receipt OCR.</Empty> : <div className="space-y-3">{state.profile.bills.slice().sort((a, b) => b.date.localeCompare(a.date)).map(bill => (
+        <Panel
+          title="Capture bills from receipts"
+          description="Uploaded bills are stored as receipts, read by OCR, and returned here as suggestions. Review before importing; the source receipt stays attached as evidence."
+        >
+          <UtilityBillCapture onUploaded={handleUploaded} />
+          <div className="mt-4">
+            {suggestionCount > 0 ? (
+              <div className="space-y-2">
+                {suggestions.map(bill => (
+                  <div key={bill.id} className="flex flex-wrap items-center justify-between gap-3 border-b border-border py-2 text-sm">
+                    <span>{bill.date} · {bill.provider} · <span className="font-mono">{bill.usage} {bill.unit} / {formatCurrency(bill.totalCost)}</span></span>
+                    <button type="button" onClick={() => addBill(bill)} className="text-primary">Import</button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <Empty>
+                {analyzing
+                  ? 'Reading the uploaded bills — usage and amount appear here once OCR finishes.'
+                  : 'No bill suggestions yet. Drop a bill above, or add one by hand below.'}
+              </Empty>
+            )}
+          </div>
+          {analyzing && suggestionCount > 0 && (
+            <p className="mt-3 text-xs text-foreground-muted" aria-live="polite">Still reading the most recent upload…</p>
+          )}
+        </Panel>
+        <Panel title="Utility bills" description="Rate and usage changes are calculated independently.">{state.profile.bills.length === 0 ? <Empty>Add a bill manually, or drop one into bill capture above.</Empty> : <div className="space-y-3">{state.profile.bills.slice().sort((a, b) => b.date.localeCompare(a.date)).map(bill => (
           <RecordCard
             key={bill.id}
             title={`${bill.type} — ${bill.provider || 'Unnamed provider'}`}
