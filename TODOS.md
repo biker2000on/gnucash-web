@@ -1390,6 +1390,66 @@ targets.
 
 ---
 
+## P2 - Utilities & Solar: Bill Review Workflow Revamp
+
+**Status:** Not started. Raised 2026-08-06 after the first real use of bill
+capture, once drag-and-drop upload and OCR extraction started working.
+
+**Outcome:** Reviewing a batch of uploaded bills feels like a review queue —
+each decision confirmed, reversible, and possible in bulk — instead of a form
+that silently accumulates state until a separate Save.
+
+**The problem, as observed on a real 24-bill batch:**
+
+Extraction now works, which exposed that the surface around it does not. In
+`src/components/resilience/P3FeaturePages.tsx`:
+
+1. **Import gives no feedback.** `addBill()` calls `state.change()`, which only
+   mutates the local edit buffer and sets `dirty` (`useSection`, ~:73). Nothing
+   about the clicked row changes: suggestions render from `state.response`, so
+   the row stays exactly where it was, and the imported bill is appended to a
+   list sorted by date descending — it can land anywhere, including off-screen.
+   The click looks like it did nothing. There is a `SaveBar`, but the
+   relationship between "Import" and "Save" is never stated.
+2. **No bulk action.** 24 bills is 24 clicks and one Save, with no
+   select-all, no range select, and no "import everything that parsed cleanly".
+3. **Duplicate uploads produce duplicate suggestions.** The same PDF uploaded
+   twice yields two identical rows (receipts #4 and #5 in the current book);
+   nothing collapses them or flags the collision.
+4. **Imported bills render as a stack of full edit forms.** Each is a
+   `RecordCard` of five inputs. At 24 bills that is 120 inputs on one page,
+   with no table view, sort, filter, or pagination — and no way to scan the
+   series that the page's own analysis is built on.
+5. **Evidence is not reachable from the row.** A suggestion carries a
+   `receiptId`, but there is no link to the source receipt image, so a figure
+   cannot be checked against the bill it came from without leaving the page.
+6. **Import is not reversible as a unit.** Undo means finding the row and
+   removing it by hand.
+
+**Approach:** Review adversarially before designing — the list above is what
+one pass over the code surfaced, not a complete account, and the workflow
+should be walked end to end with a real batch (upload → OCR → review →
+import → save → analysis) looking for other dead ends. `/design-review` is the
+intended vehicle; DESIGN.md governs the visual result.
+
+**Checklist answers:** Improves a recurring workflow (monthly bill capture),
+reusing the existing suggestion loader, receipt/OCR pipeline, and utility
+analysis engine — it emits no new Action, event, or trace and adds no
+destination, which is the point: it is workflow repair on a surface that
+already exists. Deterministic (no new calculation; parsing is already covered
+by `p3-core.test.ts`). Preview/approve/undo is exactly what is missing and what
+this adds. Single-book, single-currency, unchanged. Measurable outcome: clicks
+and elapsed time to review a month's bills, and whether imported bills match
+their source statements.
+
+**Depends on:** `src/components/resilience/P3FeaturePages.tsx`,
+`loadUtilityBillSuggestions()` in `src/lib/resilience/service.ts`,
+`parseUtilityBillText()` in `src/lib/resilience/p3-core.ts`.
+
+**Effort:** M.
+
+---
+
 # Correctness and reliability backlog
 
 ## P1 - Book-Scope the Native Business Entities
