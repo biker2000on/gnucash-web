@@ -8,11 +8,14 @@
  */
 
 import { generateGuid } from '@/lib/gnucash';
+import { getCurrencyByMnemonic } from '@/lib/currency';
+// Imported from the provider module rather than the '@/lib/price-service' facade:
+// the facade re-exports this file, so going through it formed an import cycle.
 import {
   fetchHistoricalPrices,
-  storeFetchedPrice,
+  storeFetchedPrices,
   getExistingPriceDates,
-} from '@/lib/price-service';
+} from '@/lib/yahoo-price-service';
 
 /** A single index price data point */
 export interface IndexPriceData {
@@ -95,7 +98,9 @@ export async function ensureIndexCommodities(): Promise<Map<string, string>> {
 
 /**
  * Fetch and store historical prices for both market indices.
- * Uses the getExistingPriceDates() dedup pattern since the prices table has NO unique constraint.
+ * Uses the getExistingPriceDates() dedup pattern to skip calendar days that are
+ * already stored; the (commodity_guid, currency_guid, date) unique index is per
+ * exact timestamp, so it only guards the same-instant race.
  *
  * @param days Number of days of history to fetch (default 365)
  * @returns Number of prices stored for each index
@@ -111,6 +116,11 @@ export async function fetchIndexPrices(
   const startDate = new Date(endDate);
   startDate.setUTCDate(startDate.getUTCDate() - days);
 
+  // Hoisted once per run: getCurrencyByMnemonic is uncached, so resolving it
+  // inside storeFetchedPrices would cost one extra query per index instead of
+  // one per run. A missing USD is reported by storeFetchedPrices itself.
+  const quoteCurrencyGuid = (await getCurrencyByMnemonic('USD'))?.guid;
+
   for (const [symbol, commodityGuid] of indexGuids) {
     let stored = 0;
     try {
@@ -124,21 +134,19 @@ export async function fetchIndexPrices(
         endDate
       );
 
-      for (const row of prices) {
-        const dateStr = formatDateYMD(row.date);
-        if (!existingDates.has(dateStr)) {
-          const result = await storeFetchedPrice(
-            commodityGuid,
-            symbol,
-            row.close,
-            row.date
-          );
-          if (result) {
-            stored++;
-            existingDates.add(dateStr);
-          }
-        }
-      }
+      // One batched upsert per index instead of one insert per price.
+      // storeFetchedPrices collapses same-day duplicates within the batch.
+      const missing = prices.filter((row) => !existingDates.has(formatDateYMD(row.date)));
+      const storedGuids = await storeFetchedPrices(
+        missing.map((row) => ({
+          commodityGuid,
+          symbol,
+          price: row.close,
+          date: row.date,
+        })),
+        quoteCurrencyGuid
+      );
+      stored = storedGuids.size;
 
       console.log(`Stored ${stored} prices for ${symbol}`);
     } catch (error) {
@@ -255,6 +263,9 @@ export async function backfillIndexPrices(): Promise<{ symbol: string; stored: n
   const indexGuids = await ensureIndexCommodities();
   const results: { symbol: string; stored: number; dateRange: string }[] = [];
 
+  // Hoisted once per run — see fetchIndexPrices.
+  const quoteCurrencyGuid = (await getCurrencyByMnemonic('USD'))?.guid;
+
   for (const [symbol, commodityGuid] of indexGuids) {
     let stored = 0;
 
@@ -275,16 +286,17 @@ export async function backfillIndexPrices(): Promise<{ symbol: string; stored: n
         const prices = await fetchHistoricalPrices(symbol, earliestDate, endDate);
         const existingDates = await getExistingPriceDates(commodityGuid, earliestDate, endDate);
 
-        for (const row of prices) {
-          const dateStr = formatDateYMD(row.date);
-          if (!existingDates.has(dateStr)) {
-            const result = await storeFetchedPrice(commodityGuid, symbol, row.close, row.date);
-            if (result) {
-              stored++;
-              existingDates.add(dateStr);
-            }
-          }
-        }
+        const missing = prices.filter((row) => !existingDates.has(formatDateYMD(row.date)));
+        const storedGuids = await storeFetchedPrices(
+          missing.map((row) => ({
+            commodityGuid,
+            symbol,
+            price: row.close,
+            date: row.date,
+          })),
+          quoteCurrencyGuid
+        );
+        stored = storedGuids.size;
       } catch (error) {
         console.warn(`Failed to backfill ${symbol}:`, error);
       }

@@ -205,8 +205,8 @@ async function getCommodityAuditStartDate(commodityGuid: string): Promise<Date> 
  * Get a Set of YYYY-MM-DD date strings for all existing prices in a range.
  * The prices table's unique index (uq_prices_commodity_currency_date) is per
  * exact timestamp, not per calendar day, so we still deduplicate by checking
- * existing DATES before every insert (and storeFetchedPrice's ON CONFLICT
- * handles the same-instant race).
+ * existing DATES before every insert (and storeFetchedPrices' intra-batch dedupe
+ * plus ON CONFLICT handle same-day repeats and the same-instant race).
  *
  * @param commodityGuid GUID of the commodity
  * @param startDate Start of range (inclusive)
@@ -465,6 +465,50 @@ interface FetchedPriceInput {
   date: Date;
 }
 
+/** A FetchedPriceInput with its guid and GnuCash fraction already computed. */
+interface PreparedPriceRow extends FetchedPriceInput {
+  guid: string;
+  num: bigint;
+  denom: bigint;
+}
+
+/** Minimal shape of the Prisma client this module needs (it is imported lazily). */
+type PriceInsertClient = {
+  $queryRaw<T = unknown>(query: Prisma.Sql): Promise<T>;
+};
+
+/**
+ * Insert one statement's worth of price rows, recording the RETURNING guids in
+ * `stored`. Callers must guarantee the rows carry distinct conflict keys.
+ */
+async function insertPriceRows(
+  prisma: PriceInsertClient,
+  rows: PreparedPriceRow[],
+  quoteCurrencyGuid: string,
+  stored: Map<string, string>,
+): Promise<void> {
+  const values = Prisma.join(rows.map(row => Prisma.sql`(
+    ${row.guid}, ${row.commodityGuid}, ${quoteCurrencyGuid}, ${row.date},
+    'Finance::Quote', 'last', ${row.num}, ${row.denom}
+  )`));
+  const returned = await prisma.$queryRaw<Array<{
+    guid: string;
+    commodity_guid: string;
+    date: Date;
+  }>>(Prisma.sql`
+    INSERT INTO prices
+      (guid, commodity_guid, currency_guid, date, source, type, value_num, value_denom)
+    VALUES ${values}
+    ON CONFLICT (commodity_guid, currency_guid, date)
+    DO UPDATE SET value_num = EXCLUDED.value_num, value_denom = EXCLUDED.value_denom
+    WHERE prices.source = 'Finance::Quote'
+    RETURNING guid, commodity_guid, date
+  `);
+  for (const row of returned) {
+    stored.set(`${row.commodity_guid}:${formatDateYMD(row.date)}`, row.guid);
+  }
+}
+
 /** Store fetched quotes in chunks while preserving the user-price conflict guard. */
 export async function storeFetchedPrices(
   inputs: FetchedPriceInput[],
@@ -483,9 +527,32 @@ export async function storeFetchedPrices(
     return new Map();
   }
 
+  // Deduplicate BEFORE chunking. Postgres aborts an entire multi-row
+  // `ON CONFLICT DO UPDATE` statement with "command cannot affect row a second
+  // time" when one statement touches the same conflict key twice, so a provider
+  // returning two entries for one day would otherwise cost the whole 500-row
+  // chunk instead of a single price.
+  //
+  // The key is commodity + formatDateYMD(date) — the same day-level
+  // normalisation used by getExistingPriceDates and by the returned map. It is
+  // deliberately coarser than the (commodity_guid, currency_guid, date) unique
+  // index, which is per exact timestamp: collapsing per day is a superset of
+  // collapsing per timestamp, so no pair that could trip the conflict error can
+  // survive it, whatever intraday timestamp ends up in the column. Every caller
+  // here stores at most one price per calendar day anyway.
+  //
+  // LAST-WRITE-WINS: Yahoo returns quotes oldest-first, so a later duplicate is
+  // the more final close for that day. This also matches what the rows would
+  // have done inserted one at a time, where the last DO UPDATE wins.
+  const deduped = new Map<string, FetchedPriceInput>();
+  for (const input of inputs) {
+    deduped.set(`${input.commodityGuid}:${formatDateYMD(input.date)}`, input);
+  }
+  const uniqueInputs = [...deduped.values()];
+
   const stored = new Map<string, string>();
-  for (let offset = 0; offset < inputs.length; offset += 500) {
-    const chunk = inputs.slice(offset, offset + 500).map(input => {
+  for (let offset = 0; offset < uniqueInputs.length; offset += 500) {
+    const chunk = uniqueInputs.slice(offset, offset + 500).map(input => {
       const { num, denom } = fromDecimal(input.price, PRICE_DENOM);
       return {
         ...input,
@@ -495,30 +562,29 @@ export async function storeFetchedPrices(
       };
     });
     try {
-      const values = Prisma.join(chunk.map(input => Prisma.sql`(
-        ${input.guid}, ${input.commodityGuid}, ${quoteCurrencyGuid}, ${input.date},
-        'Finance::Quote', 'last', ${input.num}, ${input.denom}
-      )`));
-      const rows = await prisma.$queryRaw<Array<{
-        guid: string;
-        commodity_guid: string;
-        date: Date;
-      }>>(Prisma.sql`
-        INSERT INTO prices
-          (guid, commodity_guid, currency_guid, date, source, type, value_num, value_denom)
-        VALUES ${values}
-        ON CONFLICT (commodity_guid, currency_guid, date)
-        DO UPDATE SET value_num = EXCLUDED.value_num, value_denom = EXCLUDED.value_denom
-        WHERE prices.source = 'Finance::Quote'
-        RETURNING guid, commodity_guid, date
-      `);
-      for (const row of rows) {
-        stored.set(`${row.commodity_guid}:${formatDateYMD(row.date)}`, row.guid);
-      }
+      await insertPriceRows(prisma, chunk, quoteCurrencyGuid, stored);
     } catch (error) {
       const symbols = [...new Set(chunk.map(input => input.symbol))].join(', ');
       const message = error instanceof Error ? error.message : 'Unknown error';
       console.error(`Failed to store fetched price batch for ${symbols}:`, message);
+
+      // Retry row by row so a single poison row (e.g. a quote whose value_num
+      // overflows bigint) costs one price instead of the whole chunk. Failures
+      // are logged once in aggregate — a dead connection must not emit 500
+      // console.error lines.
+      let rowFailures = 0;
+      for (const row of chunk) {
+        try {
+          await insertPriceRows(prisma, [row], quoteCurrencyGuid, stored);
+        } catch {
+          rowFailures++;
+        }
+      }
+      if (rowFailures > 0) {
+        console.error(
+          `Dropped ${rowFailures}/${chunk.length} prices for ${symbols} after per-row retry`,
+        );
+      }
     }
   }
   return stored;
