@@ -2177,7 +2177,12 @@ Security:
 - [x] Gate OIDC auto-provisioning (registration gate / allowlist; no automatic
   all-books readonly grant). (ASI-3-003)
 - [x] AI-query guardrail: require every scoped table reference to be bound to
-  the book's account set, not just one `$1` anywhere. (ASI-3-004)
+  the book's account set, not just one `$1` anywhere. (ASI-3-004) — The
+  2026-08-05 fix was validated on 2026-08-06 and **five bypasses still worked**,
+  two reaching arbitrary tables. Re-fixed by removing the model-supplied scope
+  predicate entirely: the model now reads only `book_*` CTEs that the guardrail
+  defines with `$1` bound, over a real tokenizer. See ASI-3-004 in
+  [asi-review.md](asi-review.md).
 - [x] Dependency updates: `npm audit fix` batch; plan Next 16.3 + sharp 0.35
   upgrades; replace unfixable `node-tesseract-ocr` (call tesseract via
   `execFile` or use `tesseract.js`). (ASI-3-005)
@@ -2237,7 +2242,44 @@ Tests:
   tracking (commit f4facea).
 - [ ] Gzip bomb cap in XML import (ASI-4-006); log rotation + `data/` in
   `.dockerignore` (ASI-4-007).
-- [ ] Email-ingest retry-not-poison + failure notifications (ASI-5-007);
+## Follow-up wave — 2026-08-06 validation of the fixes above
+
+Validating the 2026-08-05 fix commit found one fix that failed (ASI-3-004,
+above), one that introduced a new bug, and several residuals of the same bug
+class the original fix missed. All are now closed:
+
+- [x] Email ingest claimed the dedup key before processing but never released
+  it, so a crash or ordinary worker redeploy mid-ingest skipped that message
+  forever while it stayed unread. Stale `processing` claims are now reclaimable
+  after 15 minutes, with a bounded retry budget (also closes ASI-5-007).
+- [x] The ASI-1-005 weekend-adjust fix covered the monthly family but not
+  `periodType: 'year'`, so a yearly schedule whose date adjusts across a year
+  boundary still skipped a year.
+- [x] SimpleFin no longer advancing its cursor past a failure (ASI-5-005) meant
+  a *permanently* failing row pinned the window forever, growing it without
+  bound and re-notifying every 2 hours. Window clamped to 30 days; failure
+  notifications keyed on a stable error fingerprint. The same timestamped
+  notification key in `notifications.ts` is fixed to match.
+- [x] Price batching (ASI-6-003) aborted a whole 500-row chunk if it contained
+  two rows for one commodity-day. Rows are de-duplicated before chunking, with a
+  per-row fallback; `market-index-service.ts` moved onto the batched path.
+- [x] Dev compose probed the app healthcheck over a hostname that can resolve to
+  IPv6 — the bug `aa314af` fixed in prod but never mirrored to dev.
+- [x] `worker.ts` now validates its own startup env instead of relying on the
+  entrypoint; the web-process BullMQ `Queue` got the `error` listener the worker
+  side already had.
+- [x] Carried-basis coverage (ASI-1-002) tested only the closed-lot case; the
+  open-lot path that feeds tax-loss harvesting is now covered.
+- [x] Rollback runbook documents that a pinned `IMAGE_TAG` makes later pushes
+  redeploy the old SHA.
+
+Left deliberately: db-init still runs three bounded, app-owned-table mutations
+per boot (orphan sweep, 90-day idempotency prune, a no-op backfill UPDATE), so
+it does not strictly meet "zero data-mutating statements on a second boot".
+None touches GnuCash financial data, and changing db-init carries more
+deployment risk than the nit is worth.
+
+- [ ] Email-ingest failure notifications (remainder of ASI-5-007);
   webhook idempotency claim expiry (ASI-5-008); SimpleFin get-or-create
   advisory locks + book-scoped Imbalance lookup (ASI-5-009); OCR temp-file
   entropy (ASI-5-010); validate `refresh_time` + per-book schedules
