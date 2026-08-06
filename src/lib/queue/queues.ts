@@ -9,6 +9,13 @@ export function getJobQueue(): Queue | null {
   if (!jobQueue) {
     try {
       jobQueue = new Queue('gnucash-jobs', { connection });
+      // BullMQ re-emits ioredis connection errors on the Queue; an unhandled
+      // 'error' event is a hard Node crash, which would take down the whole web
+      // process over a transient Redis blip. Log and keep serving — enqueueJob
+      // already degrades to the inline fallback path.
+      jobQueue.on('error', (err) => {
+        console.error(`[${new Date().toISOString()}] BullMQ queue error:`, err);
+      });
     } catch (err) {
       console.warn('Failed to create job queue:', err);
       return null;

@@ -9,6 +9,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   add: vi.fn(),
   getJob: vi.fn(),
+  // The real Queue is an EventEmitter; the mock must be one too, or the
+  // 'error' listener registration below would silently fail.
+  on: vi.fn(),
   getBullMQConnection: vi.fn(),
   QueueCtor: vi.fn(),
 }));
@@ -17,6 +20,7 @@ vi.mock('bullmq', () => ({
   Queue: class {
     add = mocks.add;
     getJob = mocks.getJob;
+    on = mocks.on;
     constructor(...args: unknown[]) {
       mocks.QueueCtor(...args);
     }
@@ -115,6 +119,39 @@ describe('enqueueJob', () => {
     await vi.advanceTimersByTimeAsync(10_000);
 
     await expect(pending).resolves.toBeUndefined();
+  });
+
+  it('attaches an error listener on every queue construction', async () => {
+    // BullMQ re-emits ioredis connection errors on the Queue, and an unhandled
+    // 'error' event is a hard Node crash of the whole web process.
+    mocks.add.mockReturnValue(new Promise(() => {}));
+    mocks.getJob.mockResolvedValue(null);
+
+    const { enqueueJob } = await loadQueues();
+    expect(mocks.on).not.toHaveBeenCalled();
+
+    // First construction.
+    const first = enqueueJob('extract-statement', { batchId: 9 }, {
+      jobId: 'extract-statement:9',
+    });
+    await vi.advanceTimersByTimeAsync(6_000);
+    await first;
+    expect(mocks.QueueCtor).toHaveBeenCalledTimes(1);
+    expect(mocks.on).toHaveBeenCalledWith('error', expect.any(Function));
+
+    // The timeout path above reset the cached queue; the rebuilt one must get
+    // its own listener rather than inheriting the first one.
+    mocks.add.mockResolvedValue({ id: 'job-9' });
+    await expect(enqueueJob('refresh-prices')).resolves.toBe('job-9');
+    expect(mocks.QueueCtor).toHaveBeenCalledTimes(2);
+    expect(mocks.on).toHaveBeenCalledTimes(2);
+
+    // The listener logs and returns; it must not rethrow or exit.
+    const listener = mocks.on.mock.calls[0][1] as (err: Error) => void;
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(() => listener(new Error('ECONNREFUSED'))).not.toThrow();
+    expect(spy).toHaveBeenCalled();
+    spy.mockRestore();
   });
 
   it('returns undefined without touching the queue when Redis is not configured', async () => {

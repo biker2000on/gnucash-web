@@ -11,6 +11,7 @@ import http from 'http';
 import { PrismaClient } from '@prisma/client';
 import { Pool } from 'pg';
 import { PrismaPg } from '@prisma/adapter-pg';
+import { validateStartupEnvironment } from './src/lib/startup-env';
 
 // Last-resort observability: scheduled callbacks and third-party clients must
 // not fail silently. Individual operations still own their normal retry/error
@@ -371,6 +372,12 @@ async function recoverSchedules() {
 
 // --- Main ---
 async function main() {
+  // Validate before touching Redis or Postgres. docker-entrypoint.sh runs the
+  // same check, but an overridden entrypoint or a k8s manifest skips it, and the
+  // worker needs SESSION_SECRET/NEXTAUTH_SECRET to decrypt stored connector
+  // credentials. Throwing surfaces the named error via main().catch below.
+  validateStartupEnvironment();
+
   const redisUrl = process.env.REDIS_URL;
   if (!redisUrl) {
     console.error('REDIS_URL environment variable is required');

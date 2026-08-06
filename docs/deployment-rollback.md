@@ -33,5 +33,11 @@ or normalized by the audited migrations are retained in
 `gnucash_web_migration_backups`. Restore PostgreSQL only when a forward fix is
 unsafe, using the pre-deployment backup and an approved maintenance window.
 
+While `IMAGE_TAG` is pinned, every subsequent push to `main` still fires the
+Dockhand webhook, and that redeploy reapplies the pinned old SHA. New commits
+will look like they built and shipped while production keeps running the
+rollback image. `IMAGE_TAG` must be cleared or moved forward before any new
+deployment takes effect.
+
 After the cause is corrected, deploy a new immutable SHA and repeat the health
 checks. Move `IMAGE_TAG` away from the rollback SHA only after that verification.

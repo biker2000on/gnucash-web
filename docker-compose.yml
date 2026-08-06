@@ -49,7 +49,9 @@ services:
     volumes:
       - receipts-data:/app/data/receipts
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/health"]
+      # 127.0.0.1, not localhost: Next standalone binds HOSTNAME=0.0.0.0 (IPv4
+      # only), so a localhost that resolves to ::1 fails an otherwise healthy app.
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:3000/api/health"]
       interval: 30s
       timeout: 5s
       retries: 3
