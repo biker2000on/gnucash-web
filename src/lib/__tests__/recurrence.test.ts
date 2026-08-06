@@ -367,6 +367,169 @@ describe('ASI recurrence regressions', () => {
     expect(results[1]).toEqual(new Date(2026, 6, 30));
   });
 
+  it('does not skip a year after a Dec 31 occurrence adjusts forward to Jan 1', () => {
+    // Dec 31, 2028 is a Sunday → 'forward' → executed and stored as Mon Jan 1, 2029.
+    const pattern = mkPattern({
+      periodType: 'year',
+      periodStart: new Date(2028, 11, 31),
+      weekendAdjust: 'forward',
+    });
+
+    const results = computeNextOccurrences(
+      pattern,
+      new Date(2029, 0, 1), // adjusted execution of Sun Dec 31, 2028
+      null,
+      null,
+      2,
+      new Date(2029, 0, 1),
+    );
+
+    expect(results[0]).toEqual(new Date(2029, 11, 31)); // Dec 31, 2029 — NOT skipped
+    expect(results[1]).toEqual(new Date(2030, 11, 31));
+  });
+
+  it('yearly weekend adjustment does not change the unadjusted stream', () => {
+    // Control for the case above: same anchor, no weekend adjustment.
+    const pattern = mkPattern({
+      periodType: 'year',
+      periodStart: new Date(2028, 11, 31),
+    });
+
+    const results = computeNextOccurrences(
+      pattern,
+      new Date(2028, 11, 31),
+      null,
+      null,
+      2,
+      new Date(2028, 11, 31),
+    );
+
+    expect(results).toEqual([new Date(2029, 11, 31), new Date(2030, 11, 31)]);
+  });
+
+  it('does not re-fire a yearly Jan 1 occurrence adjusted back into the previous year', () => {
+    // Jan 1, 2028 is a Saturday → 'back' → executed and stored as Fri Dec 31, 2027.
+    const pattern = mkPattern({
+      periodType: 'year',
+      periodStart: new Date(2028, 0, 1),
+      weekendAdjust: 'back',
+    });
+
+    // afterDate sits before lastOccur, as the forecast/iCal callers pass it.
+    const results = computeNextOccurrences(
+      pattern,
+      new Date(2027, 11, 31),
+      null,
+      null,
+      3,
+      new Date(2027, 11, 1),
+    );
+
+    // Dec 31, 2027 already fired; the next is Jan 1, 2029 (a Monday).
+    expect(results).toEqual([
+      new Date(2029, 0, 1), new Date(2030, 0, 1), new Date(2031, 0, 1),
+    ]);
+
+    // The same recovery keeps a multi-year cadence on its real anchor years.
+    const everyTwoYears = computeNextOccurrences(
+      { ...pattern, mult: 2 },
+      new Date(2027, 11, 31),
+      null,
+      null,
+      2,
+      new Date(2027, 11, 31),
+    );
+    expect(everyTwoYears[0]).toEqual(new Date(2030, 0, 1)); // 2028 + 2, not 2027 + 2
+    expect(everyTwoYears[1]).toEqual(new Date(2032, 0, 1));
+  });
+
+  it('clamps a Feb 29 yearly anchor before adjusting, and keeps the 29th', () => {
+    // Feb 29 clamps to Sat Feb 28, 2026 → 'forward' → stored as Mon Mar 2, 2026.
+    const pattern = mkPattern({
+      periodType: 'year',
+      periodStart: new Date(2024, 1, 29),
+      weekendAdjust: 'forward',
+    });
+
+    const results = computeNextOccurrences(
+      pattern,
+      new Date(2026, 2, 2),
+      null,
+      null,
+      3,
+      new Date(2026, 2, 2),
+    );
+
+    expect(results[0]).toEqual(new Date(2027, 2, 1));  // Sun Feb 28, 2027 → Mon Mar 1
+    expect(results[1]).toEqual(new Date(2028, 1, 29)); // leap year → back on the 29th
+    expect(results[2]).toEqual(new Date(2029, 1, 28));
+  });
+
+  it('does not re-fire a monthly 1st occurrence adjusted back into the previous month', () => {
+    // Mar 1, 2026 is a Sunday → 'back' → executed and stored as Fri Feb 27, 2026.
+    const pattern = mkPattern({
+      periodType: 'month',
+      periodStart: new Date(2026, 0, 1),
+      weekendAdjust: 'back',
+    });
+
+    const results = computeNextOccurrences(
+      pattern,
+      new Date(2026, 1, 27),
+      null,
+      null,
+      3,
+      new Date(2026, 1, 1), // afterDate before lastOccur — a re-fire would show up
+    );
+
+    expect(results).toEqual([
+      new Date(2026, 3, 1), new Date(2026, 4, 1), new Date(2026, 5, 1),
+    ]);
+  });
+
+  it('advances end-of-month from the raw month end after a forward adjustment', () => {
+    // Sun May 31, 2026 → 'forward' → executed and stored as Mon Jun 1, 2026.
+    const pattern = mkPattern({
+      periodType: 'end of month',
+      periodStart: new Date(2026, 0, 31),
+      weekendAdjust: 'forward',
+    });
+
+    const results = computeNextOccurrences(
+      pattern,
+      new Date(2026, 5, 1),
+      null,
+      null,
+      2,
+      new Date(2026, 5, 1),
+    );
+
+    expect(results[0]).toEqual(new Date(2026, 5, 30)); // Jun 30, NOT Jul 31
+    expect(results[1]).toEqual(new Date(2026, 6, 31));
+  });
+
+  it('recovers a monthly anchor that was clamped and then weekend-adjusted', () => {
+    // The 31st clamps to Sat Feb 28, 2026 → 'forward' → stored as Mon Mar 2, 2026.
+    const pattern = mkPattern({
+      periodType: 'month',
+      periodStart: new Date(2026, 0, 31),
+      weekendAdjust: 'forward',
+    });
+
+    const results = computeNextOccurrences(
+      pattern,
+      new Date(2026, 2, 2),
+      null,
+      null,
+      3,
+      new Date(2026, 2, 2),
+    );
+
+    expect(results[0]).toEqual(new Date(2026, 2, 31)); // Mar 31 — March not skipped
+    expect(results[1]).toEqual(new Date(2026, 3, 30)); // Apr 30 (clamped)
+    expect(results[2]).toEqual(new Date(2026, 5, 1));  // Sun May 31 → Mon Jun 1
+  });
+
   it('anchors semi-monthly schedules on periodStart and respects mult', () => {
     const pattern = mkPattern({
       periodType: 'semi_monthly',

@@ -342,7 +342,20 @@ function sameCalendarDay(a: Date, b: Date): boolean {
     && a.getDate() === b.getDate();
 }
 
-function matchesMonthlyAnchor(pattern: RecurrencePattern, candidate: Date): boolean {
+/**
+ * Period types whose next occurrence is derived from a calendar anchor
+ * (day-of-month, weekday ordinal, or month+day) rather than a fixed day count.
+ * These must advance from the RAW anchor date, never from a weekend-adjusted
+ * one, or an entire month/year gets skipped.
+ */
+const ANCHORED_PERIOD_TYPES = [
+  'month', 'end of month', 'nth weekday', 'last weekday', 'semi_monthly', 'year',
+];
+
+/** Period types that the composite (multi-row) monthly union logic applies to. */
+const MONTHLY_PERIOD_TYPES = ANCHORED_PERIOD_TYPES.filter(t => t !== 'year');
+
+function matchesRawAnchor(pattern: RecurrencePattern, candidate: Date): boolean {
   const { periodType, periodStart } = pattern;
   const year = candidate.getFullYear();
   const month = candidate.getMonth();
@@ -356,6 +369,12 @@ function matchesMonthlyAnchor(pattern: RecurrencePattern, candidate: Date): bool
       return sameCalendarDay(candidate, weekdayOccurrence(periodType, periodStart, year, month));
     case 'semi_monthly':
       return semiMonthlyAnchorDays(periodStart, year, month).includes(candidate.getDate());
+    case 'year':
+      // Month AND day come from periodStart, clamped the same way the monthly
+      // path clamps a month-end anchor — so a Feb 29 schedule matches Feb 28 in
+      // a common year without ever losing the 29th.
+      return month === periodStart.getMonth()
+        && candidate.getDate() === clampDay(year, month, periodStart.getDate());
     default:
       return false;
   }
@@ -365,22 +384,22 @@ function occurrenceBelongsToMonthlyPattern(
   pattern: RecurrencePattern,
   occurrence: Date,
 ): boolean {
-  if (!['month', 'end of month', 'nth weekday', 'last weekday', 'semi_monthly']
-    .includes(pattern.periodType)) return true;
-  const raw = rawMonthlyOccurrence(pattern, occurrence);
-  if (!matchesMonthlyAnchor(pattern, raw)) return false;
+  if (!MONTHLY_PERIOD_TYPES.includes(pattern.periodType)) return true;
+  const raw = rawAnchoredOccurrence(pattern, occurrence);
+  if (!matchesRawAnchor(pattern, raw)) return false;
   const monthDelta = (raw.getFullYear() - pattern.periodStart.getFullYear()) * 12
     + raw.getMonth() - pattern.periodStart.getMonth();
   return monthDelta >= 0 && monthDelta % pattern.mult === 0;
 }
 
 /**
- * Recover a raw monthly occurrence from a stored weekend-adjusted date. A
+ * Recover a raw anchored occurrence from a stored weekend-adjusted date. A
  * forward-adjusted May 30 can be stored as June 1; advancing from June would
- * skip June's occurrence. The adjustment is at most two days, so the search is
- * small and deterministic.
+ * skip June's occurrence. The same holds across a year boundary — a yearly Dec
+ * 31 stored as Jan 1 would skip a whole year. The adjustment is at most two
+ * days, so the search is small and deterministic.
  */
-function rawMonthlyOccurrence(pattern: RecurrencePattern, lastOccur: Date): Date {
+function rawAnchoredOccurrence(pattern: RecurrencePattern, lastOccur: Date): Date {
   if (pattern.weekendAdjust === 'none') return lastOccur;
   const candidates: Date[] = [];
   for (let delta = -2; delta <= 2; delta++) {
@@ -390,7 +409,7 @@ function rawMonthlyOccurrence(pattern: RecurrencePattern, lastOccur: Date): Date
       lastOccur.getDate() + delta,
     );
     if (
-      matchesMonthlyAnchor(pattern, candidate)
+      matchesRawAnchor(pattern, candidate)
       && sameCalendarDay(applyWeekendAdjust(candidate, pattern.weekendAdjust), lastOccur)
     ) {
       candidates.push(candidate);
@@ -413,9 +432,8 @@ function rawMonthlyOccurrence(pattern: RecurrencePattern, lastOccur: Date): Date
  */
 function computeFirstAfterLast(pattern: RecurrencePattern, lastOccur: Date): Date {
   const { periodType, mult, periodStart } = pattern;
-  const rawLast = ['month', 'end of month', 'nth weekday', 'last weekday', 'semi_monthly']
-    .includes(periodType)
-    ? rawMonthlyOccurrence(pattern, lastOccur)
+  const rawLast = ANCHORED_PERIOD_TYPES.includes(periodType)
+    ? rawAnchoredOccurrence(pattern, lastOccur)
     : lastOccur;
 
   switch (periodType) {
@@ -452,7 +470,7 @@ function computeFirstAfterLast(pattern: RecurrencePattern, lastOccur: Date): Dat
     }
 
     case 'year': {
-      const targetYear = lastOccur.getFullYear() + mult;
+      const targetYear = rawLast.getFullYear() + mult;
       const month = periodStart.getMonth();
       const day = clampDay(targetYear, month, periodStart.getDate());
       return new Date(targetYear, month, day);
