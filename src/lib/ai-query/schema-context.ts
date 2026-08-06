@@ -3,13 +3,15 @@
 /**
  * Curated schema description injected into the SQL-generation prompt.
  *
- * Deliberately covers ONLY the tables the "Ask your books" feature is allowed
- * to touch. Keep this in sync with the guardrails in ./guardrails.ts (which
- * require the $1 account-scope parameter whenever these tables are referenced).
+ * Deliberately covers ONLY the relations the "Ask your books" feature is
+ * allowed to touch. Keep the names in sync with BOOK_RELATIONS in
+ * ./guardrails.ts, which defines them as CTEs already filtered to the active
+ * book. The model never names a base table, so it never has to get scoping
+ * right — and cannot get it wrong.
  */
 export const SCHEMA_CONTEXT = `You can query a GnuCash PostgreSQL database. Available tables/views:
 
-accounts
+book_accounts
   guid          char(32)  primary key
   name          varchar   account name (single segment, e.g. 'Restaurants')
   account_type  varchar   one of: ASSET, BANK, CASH, CREDIT, LIABILITY, INCOME,
@@ -18,22 +20,22 @@ accounts
   hidden        integer   1 = hidden account
   placeholder   integer   1 = placeholder (no transactions posted directly)
 
-account_hierarchy (view over accounts)
-  guid, name, account_type, parent_guid, hidden, placeholder  same as accounts
+book_account_hierarchy (view over accounts)
+  guid, name, account_type, parent_guid, hidden, placeholder  same as book_accounts
   fullname      varchar   colon-separated full path, e.g. 'Expenses:Dining:Restaurants'
                           (does NOT include the invisible root account)
 
-transactions
+book_transactions
   guid           char(32)  primary key
   post_date      timestamp date the transaction was posted (compare with date literals,
                            e.g. post_date >= '2026-01-01' AND post_date < '2026-04-01')
   description    varchar   payee / description text
   currency_guid  char(32)  transaction currency commodity
 
-splits (one row per leg of a transaction; a transaction has 2+ splits that sum to zero)
+book_splits (one row per leg of a transaction; a transaction has 2+ splits that sum to zero)
   guid            char(32)  primary key
-  tx_guid         char(32)  references transactions.guid
-  account_guid    char(32)  references accounts.guid
+  tx_guid         char(32)  references book_transactions.guid
+  account_guid    char(32)  references book_accounts.guid
   value_num       bigint    amount numerator, in transaction currency
   value_denom     bigint    amount denominator
   quantity_num    bigint    quantity numerator, in the account's commodity (shares for STOCK/MUTUAL)
@@ -50,12 +52,13 @@ CRITICAL CONVENTIONS:
    when money is spent, and INCOME account splits are NEGATIVE when income is
    earned (negate income sums for a human-friendly figure). Asset/bank balances
    are the plain sum of their split values. Liabilities usually carry negative sums.
-3. Account scoping: the application passes the array of account guids belonging
-   to the user's active book as the ONLY query parameter, $1. ALL filtering of
-   accounts MUST go through it: every query that references accounts, splits, or
-   transactions must constrain account rows with guid = ANY($1) and/or split rows
-   with account_guid = ANY($1). Never invent guid literals.
-4. To find accounts by name/category, match account_hierarchy.fullname with ILIKE,
+3. Account scoping is already done for you. Every relation above is restricted
+   to the user's active book before your query runs, so write plain queries and
+   do NOT add any book/account-scope filter. Use ONLY the book_ names above:
+   the underlying tables (accounts, splits, transactions, account_hierarchy) are
+   not queryable and a statement naming one is rejected. Do not write query
+   parameters ($1 and friends) and never invent guid literals.
+4. To find accounts by name/category, match book_account_hierarchy.fullname with ILIKE,
    e.g. ah.fullname ILIKE '%restaurant%'. Include child accounts when the user asks
    about a category (fullname ILIKE 'Expenses:Dining%' style patterns, or match the
    segment anywhere in the path).

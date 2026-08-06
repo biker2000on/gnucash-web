@@ -32,9 +32,11 @@ STRICT OUTPUT RULES:
   (read-only CTEs only). No INSERT/UPDATE/DELETE/DDL of any kind, no
   data-modifying CTEs, no semicolons, no comments.
 - ALWAYS aggregate money as value_num::numeric / value_denom (fractions).
-- ALWAYS restrict account-joined data with the book-scope parameter:
-  splits with s.account_guid = ANY($1), accounts/account_hierarchy with
-  guid = ANY($1). $1 is the only parameter available.
+- Read ONLY the book_ relations listed above. They are already restricted to the
+  user's active book, so add no scope filter of your own and use no query
+  parameters. Naming a base table (accounts, splits, transactions,
+  account_hierarchy) is rejected.
+- Use explicit JOIN ... ON syntax; comma joins and quoted identifiers are rejected.
 - ALWAYS end the outer query with LIMIT ${MAX_LIMIT} or less.
 - Round money to 2 decimals with ROUND(..., 2) and use clear column aliases.
 
