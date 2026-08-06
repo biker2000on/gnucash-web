@@ -11,7 +11,8 @@ import { decryptAccessUrl, fetchAccountsChunked, SimpleFinTransaction, SimpleFin
 import { toNumDenom } from '@/lib/validation';
 import { buildSymbolSet, parseSymbol } from './simplefin-symbol-parser';
 import { applyRules } from './categorization.service';
-import { createNotification } from '@/lib/notifications';
+import { createNotification, ensureNotificationsTable } from '@/lib/notifications';
+import { simpleFinErrorFingerprint } from '@/lib/simplefin-error-fingerprint';
 import { cacheInvalidateFrom } from '@/lib/cache';
 import { publishDataChange } from '@/lib/data-events';
 import { scanForAnomalies } from '@/lib/anomaly-detection';
@@ -102,6 +103,30 @@ export function isNonFatalSimpleFinWarning(message: string): boolean {
 const SYNC_OVERLAP_DAYS = 7;
 /** Bootstrap window for accounts that have never synced. */
 const SYNC_BOOTSTRAP_DAYS = 90;
+/**
+ * Hard floor on how far back a FAILED transaction may hold an account's sync
+ * cursor.
+ *
+ * Holding the cursor at the oldest failure (so a failed row is re-fetched
+ * rather than silently lost) is only safe if it is bounded. A permanently
+ * failing row — malformed payload, a constraint the data can never satisfy —
+ * would otherwise pin its account's cursor forever, and because
+ * `computeSyncStart` takes the MIN across accounts, that one row widens the
+ * fetch window for EVERY account on the connection, growing without limit at
+ * the worker's 2-hourly cadence.
+ *
+ * 30 days, because:
+ *  - 30 + SYNC_OVERLAP_DAYS = 37 days, still inside SimpleFin's 45-day
+ *    recommended range, so a stuck account can never push the connection-wide
+ *    request past what the bridge recommends (that warning is deliberately
+ *    downgraded, so nothing else would surface the growth).
+ *  - It is far longer than any transient cause of an import failure (deploy,
+ *    DB restart, lock contention, rate limit). Anything still failing after a
+ *    solid month is permanent and needs a human, not another 360 retries.
+ * Rows that age out are named in the failure notification (see
+ * `describeFailedImports`) rather than disappearing silently.
+ */
+export const MAX_RETRY_LOOKBACK_DAYS = 30;
 
 /**
  * Start of the SimpleFin fetch window. Pure — exported for tests.
@@ -128,11 +153,74 @@ export function computeSyncStart(
   return new Date(earliest.getTime() - SYNC_OVERLAP_DAYS * 24 * 60 * 60 * 1000);
 }
 
-/** Keep a mapping cursor at the oldest failed posting date, if any. */
+/**
+ * Keep a mapping cursor at the oldest failed posting date, if any — clamped so
+ * it can never sit further back than MAX_RETRY_LOOKBACK_DAYS.
+ *
+ * A failure inside the lookback still pins the cursor exactly as before, so the
+ * next run necessarily re-fetches it (that is the data-loss fix). Beyond the
+ * lookback the cursor floors at `now - MAX_RETRY_LOOKBACK_DAYS`, which bounds
+ * the fetch window at 37 days instead of letting one permanently broken row
+ * grow it forever.
+ */
 export function computeSafeSyncCursor(now: Date, failedPostDates: Date[]): Date {
   if (failedPostDates.length === 0) return now;
-  return failedPostDates.reduce((earliest, date) => date < earliest ? date : earliest);
+  const oldestFailure = failedPostDates.reduce((earliest, date) => date < earliest ? date : earliest);
+  const floor = new Date(now.getTime() - MAX_RETRY_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
+  return oldestFailure > floor ? oldestFailure : floor;
 }
+
+/** One account's un-imported feed rows, summarized for the failure notification. */
+export interface FailedImportRange {
+  account: string;
+  earliest: Date;
+  latest: Date;
+  count: number;
+}
+
+function isoDate(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+/**
+ * Human-readable tail appended to a failure notification.
+ *
+ * There is no dead-letter table for un-importable feed rows, and no natural
+ * home for one: `gnucash_web_transaction_meta` is keyed on transaction_guid, so
+ * a row that never imported has no transaction to hang meta off. Rather than
+ * invent a table, the notification IS the durable record — it names the
+ * affected account and the posting-date range that stops being retried once it
+ * ages past MAX_RETRY_LOOKBACK_DAYS.
+ */
+export function describeFailedImports(ranges: FailedImportRange[]): string {
+  if (ranges.length === 0) return '';
+  const parts = ranges.map(range => {
+    const from = isoDate(range.earliest);
+    const to = isoDate(range.latest);
+    const span = from === to ? from : `${from} to ${to}`;
+    return `${range.count} transaction${range.count === 1 ? '' : 's'} for ${range.account} dated ${span}`;
+  });
+  return `Not imported: ${parts.join('; ')}. These are retried for up to ${MAX_RETRY_LOOKBACK_DAYS} days after their posting date, then skipped — enter them manually if they never import.`;
+}
+
+function recordFailedImport(
+  ranges: Map<string, FailedImportRange>,
+  account: string,
+  postDate: Date,
+) {
+  const existing = ranges.get(account);
+  if (!existing) {
+    ranges.set(account, { account, earliest: postDate, latest: postDate, count: 1 });
+    return;
+  }
+  existing.count++;
+  if (postDate < existing.earliest) existing.earliest = postDate;
+  if (postDate > existing.latest) existing.latest = postDate;
+}
+
+// Shared with @/lib/notifications, which raises the same connection-level
+// failure from the notifications poll and must land on the identical key.
+export { simpleFinErrorFingerprint };
 
 export async function updateSimpleFinConnectionSyncStatus(
   connectionId: number,
@@ -320,14 +408,14 @@ async function runSimpleFinSync(
       result.revoked = true;
       result.errors.push({ account: 'all', error: message });
       await updateSimpleFinConnectionSyncStatus(connectionId, 'revoked', message);
-      await createSimpleFinNotification(connection.user_id, bookGuid, result, options);
+      await createSimpleFinNotification(connection.user_id, bookGuid, connectionId, result, options);
     } else {
       const message = `Failed to fetch from SimpleFin: ${error}`;
       result.status = 'failed';
       result.fatal = true;
       result.errors.push({ account: 'all', error: message });
       await updateSimpleFinConnectionSyncStatus(connectionId, 'failed', message);
-      await createSimpleFinNotification(connection.user_id, bookGuid, result, options);
+      await createSimpleFinNotification(connection.user_id, bookGuid, connectionId, result, options);
     }
     return result;
   }
@@ -346,6 +434,10 @@ async function runSimpleFinSync(
   // Track the earliest post date of any imported transaction so cached
   // dashboard metrics can be invalidated from that date forward.
   let earliestImportedPostDate: Date | null = null;
+  // Per-account summary of rows that could not be imported. Feeds the failure
+  // notification so an un-importable row is named (account + posting-date
+  // range) instead of quietly ageing out of the retry lookback.
+  const failedImports = new Map<string, FailedImportRange>();
   // Auto-created child/cash accounts must reach other processes' caches even
   // when the sync imports zero transactions (fully deduped window).
   const accountsCreated = { count: 0 };
@@ -543,14 +635,16 @@ async function runSimpleFinSync(
             existingIds.add(sfTxn.id);
             continue;
           }
+          const accountLabel = mappedAccount.simplefin_account_name || mappedAccount.simplefin_account_id;
           result.errors.push({
-            account: mappedAccount.simplefin_account_name || mappedAccount.simplefin_account_id,
+            account: accountLabel,
             error: `Failed to import transaction ${sfTxn.id}: ${err}`,
           });
           const failedPostDate = normalizePostDate(sfTxn.posted);
           if (!earliestFailedPostDate || failedPostDate < earliestFailedPostDate) {
             earliestFailedPostDate = failedPostDate;
           }
+          recordFailedImport(failedImports, accountLabel, failedPostDate);
         }
       }
 
@@ -659,22 +753,50 @@ async function runSimpleFinSync(
       'failed',
       result.errors.map(err => `${err.account}: ${err.error}`).join('\n'),
     );
-    await createSimpleFinNotification(connection.user_id, bookGuid, result, options);
+    await createSimpleFinNotification(
+      connection.user_id,
+      bookGuid,
+      connectionId,
+      result,
+      options,
+      [...failedImports.values()],
+    );
   } else {
     await updateSimpleFinConnectionSyncStatus(connectionId, 'success');
     if (options.notifyOnSuccess) {
-      await createSimpleFinNotification(connection.user_id, bookGuid, result, options);
+      await createSimpleFinNotification(connection.user_id, bookGuid, connectionId, result, options);
     }
   }
 
   return result;
 }
 
+/**
+ * Has this exact notification already been raised? Mirrors the dedup
+ * convention used by `syncSimpleFinStatusNotification`, compliance reminders
+ * and recurring invoices: a stable (source, source_id) plus an existence check
+ * — the notifications table has no unique index to upsert against.
+ */
+async function simpleFinNotificationExists(userId: number, sourceId: string): Promise<boolean> {
+  await ensureNotificationsTable();
+  const rows = await prisma.$queryRaw<Array<{ id: number }>>`
+    SELECT id
+    FROM gnucash_web_notifications
+    WHERE user_id = ${userId}
+      AND source = 'simplefin'
+      AND source_id = ${sourceId}
+    LIMIT 1
+  `;
+  return rows.length > 0;
+}
+
 async function createSimpleFinNotification(
   userId: number,
   bookGuid: string,
+  connectionId: number,
   result: SyncResult,
   options: SyncSimpleFinOptions,
+  failedImports: FailedImportRange[] = [],
 ) {
   try {
     const source = options.source || 'unknown';
@@ -691,22 +813,34 @@ async function createSimpleFinNotification(
         message: summary,
         href: '/settings/connections',
         source: 'simplefin',
+        // Success notifications are opt-in (manual sync / notifyOnSuccess), and
+        // each successful run is a distinct event the user asked to see — so
+        // this one stays unique on purpose.
         sourceId: `simplefin:${source}:success:${Date.now()}`,
       });
       return;
     }
 
     const errorText = result.errors.map(err => `${err.account}: ${err.error}`).join('\n') || 'SimpleFin sync failed.';
+    const failedDetail = describeFailedImports(failedImports);
+
+    // Stable key: connection + status + a fingerprint of the errors. A run that
+    // keeps failing the same way every 2 hours now dedupes into ONE
+    // notification. `source` (manual/scheduled) is deliberately NOT in the key:
+    // a manual retry of an already-reported failure is the same failure.
+    const sourceId = `simplefin:${connectionId}:${result.status}:${simpleFinErrorFingerprint(result.errors)}`;
+    if (await simpleFinNotificationExists(userId, sourceId)) return;
+
     await createNotification({
       userId,
       bookGuid,
       type: 'simplefin_sync',
       severity: result.status === 'revoked' ? 'error' : 'warning',
       title: result.status === 'revoked' ? 'SimpleFin connection revoked' : 'SimpleFin sync needs attention',
-      message: errorText,
+      message: failedDetail ? `${errorText}\n\n${failedDetail}` : errorText,
       href: '/settings/connections',
       source: 'simplefin',
-      sourceId: `simplefin:${source}:${result.status}:${Date.now()}`,
+      sourceId,
     });
   } catch (error) {
     console.warn('Failed to create SimpleFin notification:', error);

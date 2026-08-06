@@ -1,4 +1,5 @@
 import prisma from '@/lib/prisma';
+import { simpleFinErrorFingerprint } from '@/lib/simplefin-error-fingerprint';
 import { getRedis } from '@/lib/redis';
 import { enqueueJob } from '@/lib/queue/queues';
 import { deliverWebhooks } from '@/lib/webhooks';
@@ -313,7 +314,15 @@ export async function syncSimpleFinStatusNotification(userId: number, bookGuid: 
   `;
 
   for (const row of rows) {
-    const sourceId = `simplefin:${row.id}:${row.last_sync_status}:${row.last_sync_error_at?.getTime()}`;
+    // Keyed on the error itself, NOT last_sync_error_at: that column is
+    // rewritten to now() on every failing run, so a timestamped key never
+    // matched the existence check below and a persistently broken connection
+    // raised a fresh notification on every notifications poll. The fingerprint
+    // is shared with the sync service so both paths dedupe onto one row.
+    const fingerprint = simpleFinErrorFingerprint([
+      { account: 'connection', error: row.last_sync_error ?? '' },
+    ]);
+    const sourceId = `simplefin:${row.id}:${row.last_sync_status}:${fingerprint}`;
     const exists = await prisma.$queryRaw<Array<{ id: number }>>`
       SELECT id
       FROM gnucash_web_notifications
