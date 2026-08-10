@@ -92,4 +92,42 @@ describe('InvestmentTransactionForm account pickers', () => {
         expect(screen.queryByTestId('account-selector-Select cash/bank account...')).not.toBeInTheDocument();
         expect(screen.queryByTestId('account-selector-Select income account...')).not.toBeInTheDocument();
     });
+
+    it('supports the standard date field keyboard shortcuts', () => {
+        render(<InvestmentTransactionForm {...formProps} />);
+
+        const dateInput = screen.getByPlaceholderText('MM/DD/YYYY');
+        const initialDate = dateInput.getAttribute('value')!;
+        const [month, day, year] = initialDate.split('/').map(Number);
+        const shiftedDate = new Date(year, month - 1, day, 12);
+        shiftedDate.setDate(shiftedDate.getDate() + 1);
+        const nextDate = [
+            String(shiftedDate.getMonth() + 1).padStart(2, '0'),
+            String(shiftedDate.getDate()).padStart(2, '0'),
+            shiftedDate.getFullYear(),
+        ].join('/');
+
+        fireEvent.keyDown(dateInput, { key: '+' });
+        expect(dateInput).toHaveValue(nextDate);
+
+        shiftedDate.setDate(shiftedDate.getDate() + 1);
+        const followingDate = [
+            String(shiftedDate.getMonth() + 1).padStart(2, '0'),
+            String(shiftedDate.getDate()).padStart(2, '0'),
+            shiftedDate.getFullYear(),
+        ].join('/');
+        fireEvent.keyDown(dateInput, { key: '=' });
+        expect(dateInput).toHaveValue(followingDate);
+
+        fireEvent.keyDown(dateInput, { key: '-' });
+        expect(dateInput).toHaveValue(nextDate);
+
+        fireEvent.keyDown(dateInput, { key: 't' });
+        const today = new Date();
+        expect(dateInput).toHaveValue([
+            String(today.getMonth() + 1).padStart(2, '0'),
+            String(today.getDate()).padStart(2, '0'),
+            today.getFullYear(),
+        ].join('/'));
+    });
 });

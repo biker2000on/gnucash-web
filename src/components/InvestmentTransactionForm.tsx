@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { CreateTransactionRequest } from '@/lib/types';
 import { toNumDenom } from '@/lib/validation';
 import { useAccounts } from '@/lib/hooks/useAccounts';
+import { useDateShortcuts } from '@/lib/hooks/useDateShortcuts';
 import { formatDateForDisplay, parseDateInput } from '@/lib/date-format';
 import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 import { toLocalDateString } from '@/lib/datePresets';
@@ -400,6 +401,11 @@ export function InvestmentTransactionForm({
         }
     };
 
+    const { handleDateKeyDown } = useDateShortcuts(form.date, (newDate) => {
+        handleChange('date', newDate);
+        setDateDisplay(formatDateForDisplay(newDate, dateFormat));
+    });
+
     const handleNumericFieldChange = (
         field: 'shares' | 'pricePerShare' | 'total',
         value: string
@@ -652,6 +658,7 @@ export function InvestmentTransactionForm({
                     value={dateDisplay}
                     onChange={(e) => setDateDisplay(e.target.value)}
                     onFocus={(e) => e.target.select()}
+                    onKeyDown={handleDateKeyDown}
                     onBlur={() => {
                         const parsed = parseDateInput(dateDisplay);
                         if (parsed) {
