@@ -52,6 +52,22 @@ interface TrackerResponse {
     list: Array<{ date: string; amount: number; description: string | null; quarter: number | null }>;
   };
   quarters: QuarterStatus[];
+  annualizedMethod?: {
+    active: boolean;
+    anyBenefit: boolean;
+    columns: Array<{
+      quarter: 1 | 2 | 3 | 4;
+      periodEnd: string;
+      annualizationFactor: number;
+      applicablePercent: number;
+      annualizedTax: number | null;
+      regularWithRecapture: number;
+      chosenInstallment: number;
+      chosenCumulative: number;
+      methodUsed: 'annualized' | 'regular';
+    }>;
+    assumptions: string[];
+  };
   trace: { traceId: string; href: string };
 }
 
@@ -69,7 +85,7 @@ function formatDue(iso: string): string {
   });
 }
 
-function QuarterCard({ q, today }: { q: QuarterStatus; today: string }) {
+function QuarterCard({ q, today, annualized }: { q: QuarterStatus; today: string; annualized?: boolean }) {
   const past = q.dueDate < today;
   const behind = q.shortfall > 0.005;
   const tone = behind
@@ -87,7 +103,14 @@ function QuarterCard({ q, today }: { q: QuarterStatus; today: string }) {
       </div>
       <dl className="space-y-1 text-xs">
         <div className="flex justify-between">
-          <dt className="text-foreground-secondary">Required (cumulative)</dt>
+          <dt className="text-foreground-secondary">
+            Required (cumulative)
+            {annualized && (
+              <span className="ml-1.5 rounded-sm bg-primary/15 px-1 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-primary">
+                annualized
+              </span>
+            )}
+          </dt>
           <dd className="font-mono text-foreground" style={MONO}>{formatCurrency(q.requiredCumulative)}</dd>
         </div>
         <div className="flex justify-between">
@@ -359,9 +382,84 @@ export default function EstimatedTaxPage() {
           {/* Quarter cards */}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
             {data.quarters.map(q => (
-              <QuarterCard key={q.period} q={q} today={data.asOfDate} />
+              <QuarterCard
+                key={q.period}
+                q={q}
+                today={data.asOfDate}
+                annualized={
+                  data.annualizedMethod?.active &&
+                  data.annualizedMethod.columns[q.quarter - 1]?.methodUsed === 'annualized'
+                }
+              />
             ))}
           </div>
+
+          {/* Form 2210 Schedule AI comparison */}
+          {data.annualizedMethod && (
+            <section className="rounded-lg border border-border bg-surface/30 p-5 space-y-2">
+              <h2 className="text-sm font-semibold uppercase tracking-wide text-foreground-secondary">
+                Annualized income method (Form 2210 Schedule AI)
+              </h2>
+              {data.annualizedMethod.anyBenefit ? (
+                <>
+                  <p className="text-xs text-foreground-secondary max-w-[760px]">
+                    Your income arrived unevenly this year, so installments computed from income
+                    actually received through each period are lower than the even schedule for the
+                    highlighted quarters. The quarter cards above already use the lesser amount.
+                  </p>
+                  <div className="overflow-x-auto">
+                    <table className="mt-1 w-full text-sm">
+                      <thead>
+                        <tr className="text-left text-xs text-foreground-muted">
+                          <th className="py-1.5 pr-3 font-medium">Income through</th>
+                          <th className="py-1.5 pr-3 text-right font-medium">Annualized tax</th>
+                          <th className="py-1.5 pr-3 text-right font-medium">Even schedule</th>
+                          <th className="py-1.5 pr-3 text-right font-medium">Required installment</th>
+                          <th className="py-1.5 font-medium">Method</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {data.annualizedMethod.columns.map(col => (
+                          <tr key={col.quarter} className="border-t border-border/60">
+                            <td className="py-1.5 pr-3 font-mono text-xs text-foreground-secondary" style={MONO}>
+                              {data.year}-{col.periodEnd} × {col.annualizationFactor}
+                            </td>
+                            <td className="py-1.5 pr-3 text-right font-mono text-foreground-secondary" style={MONO}>
+                              {col.annualizedTax !== null ? formatCurrency(col.annualizedTax) : '— period open'}
+                            </td>
+                            <td className="py-1.5 pr-3 text-right font-mono text-foreground-secondary" style={MONO}>
+                              {formatCurrency(col.regularWithRecapture)}
+                            </td>
+                            <td className="py-1.5 pr-3 text-right font-mono text-foreground" style={MONO}>
+                              {formatCurrency(col.chosenInstallment)}
+                            </td>
+                            <td className="py-1.5 text-xs text-foreground-secondary">
+                              {col.methodUsed === 'annualized'
+                                ? <span className="text-primary">annualized</span>
+                                : 'even schedule'}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              ) : (
+                <p className="text-xs text-foreground-secondary max-w-[760px]">
+                  Income received through each elapsed period, annualized, does not lower any
+                  installment below the even 25/50/75/100% schedule this year — the standard
+                  amounts apply. If a large gain lands late in the year, this method will relieve
+                  the earlier quarters automatically.
+                </p>
+              )}
+              <details className="text-[11px] text-foreground-muted">
+                <summary className="cursor-pointer">Assumptions</summary>
+                <ul className="mt-1 list-disc pl-4 space-y-0.5">
+                  {data.annualizedMethod.assumptions.map(a => <li key={a}>{a}</li>)}
+                </ul>
+              </details>
+            </section>
+          )}
 
           {data.linkedBusinesses.filter(b => b.treatment !== 'none').length > 0 && (
             <div className="rounded-lg border border-border bg-surface/30 p-4 text-xs text-foreground-secondary">

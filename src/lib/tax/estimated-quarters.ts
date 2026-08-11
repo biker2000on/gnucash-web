@@ -19,9 +19,10 @@
  * business day per IRC §7503 (same helper as the compliance calendar), and
  * each window extends through its rolled due date.
  *
- * SIMPLIFICATION: the Form 2210 Schedule AI annualized-installment method is
- * NOT implemented — required cumulative amounts follow the even 25/50/75/100%
- * schedule.
+ * Required cumulative amounts follow the even 25/50/75/100% schedule unless
+ * the caller passes `requiredCumulativeByQuarter` — the Form 2210 Schedule AI
+ * annualized-installment amounts computed by
+ * src/lib/tax/annualized-installments.ts.
  */
 
 import { adjustDueDate } from '@/lib/compliance';
@@ -44,7 +45,10 @@ export interface QuarterWindow {
 }
 
 export interface QuarterStatus extends QuarterWindow {
-  /** Cumulative required by this due date: annualTarget × quarter/4. */
+  /**
+   * Cumulative required by this due date: annualTarget × quarter/4, or the
+   * Schedule AI amount when the annualized method is in effect.
+   */
   requiredCumulative: number;
   /** Estimated payments landing in this quarter's window. */
   estimatedPaid: number;
@@ -122,11 +126,19 @@ export interface ComputeQuarterStatusesInput {
   /** Expected full-year withholding, credited evenly across quarters. */
   annualWithholding: number;
   payments: EstimatedPayment[];
+  /**
+   * Optional Form 2210 Schedule AI override: cumulative required amounts per
+   * quarter from the annualized-installment method (already the lesser of the
+   * regular and annualized schedules per column). When present it replaces
+   * the even annualTarget x 25/50/75/100% amounts.
+   */
+  requiredCumulativeByQuarter?: [number, number, number, number];
 }
 
 /**
  * Per-quarter cumulative progress against the annual safe-harbor target
- * using the standard 25/50/75/100% installment schedule.
+ * using the standard 25/50/75/100% installment schedule, or the Schedule AI
+ * amounts when `requiredCumulativeByQuarter` is supplied.
  */
 export function computeQuarterStatuses(input: ComputeQuarterStatusesInput): QuarterStatus[] {
   const { year, payments } = input;
@@ -138,7 +150,9 @@ export function computeQuarterStatuses(input: ComputeQuarterStatusesInput): Quar
   return quarterWindows(year).map((w, i) => {
     paidCumulative = round2(paidCumulative + buckets[i]);
     const fraction = (i + 1) / 4;
-    const requiredCumulative = round2(annualTarget * fraction);
+    const requiredCumulative = input.requiredCumulativeByQuarter
+      ? round2(Math.max(0, input.requiredCumulativeByQuarter[i]))
+      : round2(annualTarget * fraction);
     const withholdingCreditCumulative = round2(annualWithholding * fraction);
     const totalCreditedCumulative = round2(paidCumulative + withholdingCreditCumulative);
     return {

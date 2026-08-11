@@ -142,6 +142,22 @@ describe('computeQuarterStatuses', () => {
     }
   });
 
+  it('uses the Schedule AI cumulative amounts when supplied', () => {
+    const quarters = computeQuarterStatuses({
+      year: 2026,
+      annualTarget: 8000,
+      annualWithholding: 0,
+      payments: [{ date: '2026-04-01', amount: 900 }],
+      // Q4-concentrated income: the annualized method relieves Q1-Q3.
+      requiredCumulativeByQuarter: [900, 1800, 2700, 8000],
+    });
+    expect(quarters.map(q => q.requiredCumulative)).toEqual([900, 1800, 2700, 8000]);
+    // The single 900 payment fully covers Q1 under the annualized schedule
+    // (it would be 1100 short under the even 2000 requirement).
+    expect(quarters[0].shortfall).toBe(0);
+    expect(quarters[1].shortfall).toBe(900);
+  });
+
   it('clamps negative inputs and rounds cumulative math to cents', () => {
     const quarters = computeQuarterStatuses({
       year: 2026,

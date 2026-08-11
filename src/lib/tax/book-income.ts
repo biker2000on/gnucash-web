@@ -62,9 +62,23 @@ export async function aggregateBookTaxData(
   bookAccountGuids: string[],
   taxYear: number,
   birthday: string | null,
+  /**
+   * Optional inclusive ISO date bound (YYYY-MM-DD) for the Form 2210
+   * Schedule AI annualization periods: splits and realized sales after this
+   * date are excluded. Must fall inside the tax year. Retirement
+   * contributions stay full-tax-year figures (they are limit-bound annual
+   * amounts; the annualized-installment engine treats them as evenly
+   * accrued — the same Form 2210 default already applied to withholding).
+   */
+  throughDate?: string,
 ): Promise<BookTaxData> {
   const startDate = new Date(Date.UTC(taxYear, 0, 1));
-  const endDate = new Date(Date.UTC(taxYear, 11, 31, 23, 59, 59));
+  let endDate = new Date(Date.UTC(taxYear, 11, 31, 23, 59, 59));
+  if (throughDate) {
+    const [ty, tm, td] = throughDate.slice(0, 10).split('-').map(Number);
+    const bound = new Date(Date.UTC(ty, tm - 1, td, 23, 59, 59));
+    if (bound >= startDate && bound < endDate) endDate = bound;
+  }
   const now = new Date();
   const asOf = now < endDate ? now : endDate;
   const yearStart = Date.UTC(taxYear, 0, 1);
@@ -231,7 +245,13 @@ export async function aggregateBookTaxData(
   let longTerm = 0;
   const gainAccounts: BookTaxData['realizedGains']['accounts'] = [];
 
-  const sales = await loadRealizedSales(bookAccountGuids, taxYear);
+  const allSales = await loadRealizedSales(bookAccountGuids, taxYear);
+  // Period bound: Schedule AI columns only count sales settled by the
+  // period end (same inclusive day bound as the splits query above).
+  const throughDay = throughDate?.slice(0, 10);
+  const sales = throughDay
+    ? allSales.filter(sale => sale.dateSold.slice(0, 10) <= throughDay)
+    : allSales;
   const gainsByAccount = new Map<string, { st: number; lt: number }>();
   for (const sale of sales) {
     const gain = sale.proceeds - sale.costBasis;

@@ -13,6 +13,11 @@ import { summarizeTaxPayments } from '@/lib/tax/payments';
 import { applyHouseholdTaxDetails, buildFederalInputsFromBookData } from '@/lib/tax/estimator-inputs';
 import { getContributionLimit } from '@/lib/reports/irs-limits';
 import { computeQuarterStatuses, quarterForPaymentDate, type EstimatedPayment } from '@/lib/tax/estimated-quarters';
+import {
+  ANNUALIZATION_FACTORS,
+  ANNUALIZATION_PERIOD_ENDS,
+  computeAnnualizedInstallments,
+} from '@/lib/tax/annualized-installments';
 import { createCalculationTrace, persistCalculationTrace } from '@/lib/provenance';
 import {
   FILING_STATUSES,
@@ -221,6 +226,67 @@ export async function GET(request: NextRequest) {
       withholding: annualized.withholding,
     });
 
+    /* --- Form 2210 Schedule AI annualized installments ------------------ */
+    // Each elapsed period (through Mar 31 / May 31 / Aug 31 / Dec 31) gets
+    // its own book aggregation, annualized by the statutory factor, run
+    // through the SAME input assembly and engine as the full-year projection.
+    // Periods that haven't ended yet fall back to the regular schedule
+    // inside computeAnnualizedInstallments.
+    const annualizedTaxByColumn: [number | null, number | null, number | null, number | null] =
+      [null, null, null, null];
+    for (let i = 0; i < 4; i++) {
+      const periodEnd = `${year}-${ANNUALIZATION_PERIOD_ENDS[i]}`;
+      if (periodEnd > bookData.asOfDate) continue;
+      try {
+        const periodData = i === 3
+          ? bookData // Dec 31 column IS the full-year aggregation
+          : await aggregateBookTaxData(bookAccountGuids, year, birthday, periodEnd);
+        // Linked-business profit is an annual figure with no period ledger;
+        // treat it as accruing evenly (months elapsed / 12), matching the
+        // even-accrual treatment of withholding and contributions.
+        if (i !== 3 && linkedBusinesses.length > 0) {
+          const monthsElapsed = [3, 5, 8][i];
+          applyLinkedBusinessIncome(
+            periodData,
+            linkedBusinesses.map(b => ({ ...b, share: b.share * (monthsElapsed / 12) })),
+          );
+        }
+        const aiFactor = ANNUALIZATION_FACTORS[i];
+        const rawPeriodInputs = buildFederalInputsFromBookData(
+          periodData, year, filingStatus, filersAge65Plus, aiFactor,
+        );
+        // Schedule AI annualizes ALL income including capital gains (the
+        // shared builder deliberately never annualizes realized gains for
+        // the full-year projection, so scale them here).
+        const periodInputs = {
+          ...rawPeriodInputs,
+          shortTermCapitalGains: periodData.realizedGains.shortTerm * aiFactor,
+          longTermCapitalGains: periodData.realizedGains.longTerm * aiFactor,
+        };
+        const { inputs: aiInputs } = applyHouseholdTaxDetails(periodInputs, {
+          qualifyingChildrenUnder17: dependentsUnder17,
+          coveredByEmployerPlan: !entity.synthesized && selfMember
+            ? selfMember.coveredByEmployerPlan
+            : (typeof coveredPref === 'boolean' ? coveredPref : true),
+          spouseCoveredByEmployerPlan: !entity.synthesized && spouseMember
+            ? spouseMember.coveredByEmployerPlan
+            : (typeof spouseCoveredPref === 'boolean' ? spouseCoveredPref : false),
+          selfIraLimit: limitIra?.total ?? null,
+          spouseIraLimit: limitSpouseIra?.total ?? null,
+          contributionsByTypeAndOwner: periodData.contributionsByTypeAndOwner,
+        });
+        annualizedTaxByColumn[i] = computeFederalTax(aiInputs).totalTax;
+      } catch (err) {
+        // A failed column falls back to the regular schedule for that
+        // quarter rather than failing the whole tracker.
+        console.error(`Estimated tax: Schedule AI column ${i + 1} aggregation failed:`, err);
+      }
+    }
+    const annualizedMethod = computeAnnualizedInstallments({
+      requiredAnnualPayment: safeHarbor.requiredAnnualPayment,
+      annualizedTaxByColumn,
+    });
+
     /* --- Quarterly progress --------------------------------------------- */
     const payments = await loadEstimatedPayments(bookAccountGuids, year);
     const quarters = computeQuarterStatuses({
@@ -228,6 +294,9 @@ export async function GET(request: NextRequest) {
       annualTarget: safeHarbor.requiredAnnualPayment,
       annualWithholding: annualized.withholding,
       payments,
+      ...(annualizedMethod.applicable && annualizedMethod.anyBenefit
+        ? { requiredCumulativeByQuarter: annualizedMethod.requiredCumulativeByQuarter }
+        : {}),
     });
 
     const responseData = {
@@ -265,6 +334,17 @@ export async function GET(request: NextRequest) {
         })),
       },
       quarters,
+      /** Form 2210 Schedule AI comparison; `active` = quarters use it. */
+      annualizedMethod: {
+        active: annualizedMethod.applicable && annualizedMethod.anyBenefit,
+        anyBenefit: annualizedMethod.anyBenefit,
+        columns: annualizedMethod.columns,
+        assumptions: [
+          'Book income through each period end (Mar 31, May 31, Aug 31, Dec 31), annualized by 4 / 2.4 / 1.5 / 1; installments at 22.5% / 45% / 67.5% / 90%.',
+          'Withholding, retirement contributions, and linked-business profit are treated as accruing evenly through the year.',
+          'Self-employment tax uses the full-year Social Security wage base rather than the Schedule AI Part II prorated base (identical below the cap).',
+        ],
+      },
     };
     const trace = createCalculationTrace({
       namespace: 'estimated-tax',
@@ -295,6 +375,19 @@ export async function GET(request: NextRequest) {
             priorYearAgi,
           },
           result: safeHarbor.requiredAnnualPayment,
+        },
+        {
+          key: 'annualized-installments',
+          label: 'Compare the Form 2210 Schedule AI annualized installments',
+          inputs: {
+            annualizedTaxByColumn: annualizedTaxByColumn
+              .map(t => (t === null ? 'period not ended' : String(Math.round(t))))
+              .join(' / '),
+            requiredAnnualPayment: safeHarbor.requiredAnnualPayment,
+          },
+          result: annualizedMethod.anyBenefit
+            ? annualizedMethod.requiredCumulativeByQuarter[3]
+            : safeHarbor.requiredAnnualPayment,
         },
         {
           key: 'payments',
@@ -330,6 +423,9 @@ export async function GET(request: NextRequest) {
         priorYearTax === null
           ? 'No prior-year tax was supplied; safe-harbor comparisons may be incomplete.'
           : 'Prior-year tax is supplied or pinned by the user.',
+        ...(annualizedMethod.anyBenefit
+          ? ['Quarterly requirements use the Form 2210 Schedule AI annualized-installment amounts where lower than the even schedule.']
+          : []),
       ],
       warnings: priorYearTax === null
         ? ['Pin prior-year tax and AGI to evaluate both statutory safe-harbor paths.']

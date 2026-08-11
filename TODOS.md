@@ -1912,8 +1912,20 @@ MFS excluded per the joint-filing requirement), §163(h)(4) car-loan
 interest (ceiling-rounded phase-out), the 2026 §170(q) 0.5% AGI charitable
 floor, §170(p) non-itemizer charitable deduction, and the §68 2/37
 itemized limitation (correct measure: taxable income before §68 plus
-itemized deductions over the 37% bracket start). **Remaining:** Form 2210
-Sch. AI annualized installments only. Original audit scope:
+itemized deductions over the 37% bracket start). **Remaining: none — Form
+2210 Sch. AI annualized installments implemented 2026-08-11:**
+`src/lib/tax/annualized-installments.ts` (pure Schedule AI lines 21-27
+column flow: 22.5/45/67.5/90% percentages, 4/2.4/1.5/1 annualization
+factors, recapture, qualifying-farmer exclusion, open-period fallback to
+the even schedule), period-bounded book aggregation (`throughDate` on
+`aggregateBookTaxData`; realized gains bounded by sale date and annualized
+by the statutory factor per the form), a `requiredCumulativeByQuarter`
+override on the quarter tracker, a Schedule AI comparison section and
+per-quarter "annualized" badge on /taxes/estimated, and trace/assumption
+coverage. Documented simplifications: SE tax uses the full-year Social
+Security wage base (Sch AI Part II proration not modeled — identical below
+the cap); withholding, retirement contributions, and linked-business profit
+are treated as accruing evenly through the year. Original audit scope:
 `src/lib/tax/federal.ts`,
 `src/lib/withholding.ts`, `src/lib/tax/{book-income,payments,estimated-quarters,
 paycheck,phaseouts,scenario,suggest,tax-schedule}.ts`, `src/lib/tax/state/`,
