@@ -6,8 +6,12 @@ import {
   calculateTripPlan,
   calculateUtilityAnalysis,
   calculateVehicleTco,
+  dedupeUtilityBillSuggestions,
+  findDuplicateUtilityBill,
   parseUtilityBillText,
+  utilityBillMatchKey,
 } from '../p3-core';
+import type { UtilityBill } from '../types';
 
 describe('P3 integrated feature calculations', () => {
   it('projects a 529 goal, contribution requirement, deduction room, and glide path', () => {
@@ -149,6 +153,47 @@ describe('P3 integrated feature calculations', () => {
     expect(bill.usage).toBe(4300);
     expect(bill.totalCost).toBe(61.2);
     expect(bill.charges).toEqual([]);
+  });
+
+  const bill = (overrides: Partial<UtilityBill>): UtilityBill => ({
+    id: 'b1',
+    date: '2026-06-01',
+    type: 'electric',
+    provider: 'Power',
+    usage: 1_000,
+    unit: 'kWh',
+    totalCost: 150,
+    ...overrides,
+  });
+
+  it('keys bill identity on service period, type, usage, and total', () => {
+    // Same paper bill parsed from two different receipts.
+    const first = bill({ id: 'receipt-4-electric', periodEnd: '2026-05-06', receiptId: 4 });
+    const second = bill({ id: 'receipt-5-electric', periodEnd: '2026-05-06', receiptId: 5 });
+    expect(utilityBillMatchKey(first)).toBe(utilityBillMatchKey(second));
+    // A different month's bill with the same figures is NOT the same bill.
+    expect(utilityBillMatchKey(bill({ periodEnd: '2026-06-06' })))
+      .not.toBe(utilityBillMatchKey(first));
+    // Without a period, the bill date anchors identity.
+    expect(utilityBillMatchKey(bill({ date: '2026-06-01' })))
+      .toBe(utilityBillMatchKey(bill({ id: 'x', date: '2026-06-01' })));
+  });
+
+  it('collapses duplicate suggestions from the same PDF uploaded twice', () => {
+    const first = bill({ id: 'receipt-4-electric', receiptId: 4 });
+    const second = bill({ id: 'receipt-5-electric', receiptId: 5 });
+    const other = bill({ id: 'receipt-6-gas', type: 'gas', unit: 'therms', usage: 40, totalCost: 62.5, receiptId: 6 });
+    // First occurrence in list order wins; the later receipt is shadowed.
+    expect(dedupeUtilityBillSuggestions([first, second, other])).toEqual([first, other]);
+  });
+
+  it('flags a suggestion that matches an already-imported bill from another receipt', () => {
+    const imported = bill({ id: 'receipt-4-electric', periodEnd: '2026-05-06', receiptId: 4 });
+    const reupload = bill({ id: 'receipt-9-electric', periodEnd: '2026-05-06', receiptId: 9 });
+    expect(findDuplicateUtilityBill(reupload, [imported])).toBe(imported);
+    // A bill never matches itself (same id), so editing in place cannot self-flag.
+    expect(findDuplicateUtilityBill(imported, [imported])).toBeNull();
+    expect(findDuplicateUtilityBill(bill({ id: 'x', totalCost: 151 }), [imported])).toBeNull();
   });
 
   it('calculates solar payback from actual electric rates', () => {

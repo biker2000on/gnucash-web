@@ -316,6 +316,44 @@ export function parseUtilityBillText(input: {
   };
 }
 
+/**
+ * Identity of a bill for duplicate detection: the same service period (or bill
+ * date), utility type, metered usage, and total. Two receipts that parse to the
+ * same key are the same paper bill — uploaded twice, or re-uploaded after an
+ * earlier import.
+ */
+export function utilityBillMatchKey(bill: Pick<UtilityBill, 'type' | 'date' | 'periodEnd' | 'usage' | 'totalCost'>): string {
+  return [bill.type, bill.periodEnd ?? bill.date, round2(bill.usage), round2(bill.totalCost)].join('|');
+}
+
+/**
+ * Collapse suggestions that parsed to the same bill. The first occurrence in
+ * list order wins (the caller orders by transaction/upload date descending);
+ * the shadowed receipts simply stay unlinked evidence.
+ */
+export function dedupeUtilityBillSuggestions<T extends UtilityBill>(suggestions: T[]): T[] {
+  const seen = new Set<string>();
+  return suggestions.filter(suggestion => {
+    const key = utilityBillMatchKey(suggestion);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+/**
+ * A bill already in the profile that matches the candidate — a re-upload of
+ * something previously imported (possibly from a different receipt, so the
+ * receipt-id filter cannot catch it).
+ */
+export function findDuplicateUtilityBill(
+  candidate: Pick<UtilityBill, 'id' | 'type' | 'date' | 'periodEnd' | 'usage' | 'totalCost'>,
+  bills: UtilityBill[],
+): UtilityBill | null {
+  const key = utilityBillMatchKey(candidate);
+  return bills.find(bill => bill.id !== candidate.id && utilityBillMatchKey(bill) === key) ?? null;
+}
+
 export function calculateSolarPayback(profile: UtilitiesProfile) {
   const analysis = calculateUtilityAnalysis(profile.bills);
   const electric = analysis.byType.find(row => row.type === 'electric');

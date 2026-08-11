@@ -60,6 +60,7 @@ import {
   calculateTripPlan,
   calculateUtilityAnalysis,
   calculateVehicleTco,
+  dedupeUtilityBillSuggestions,
   parseUtilityBillText,
 } from './p3-core';
 import type {
@@ -1248,17 +1249,20 @@ async function loadUtilityBillSuggestions(bookGuid: string, profile: UtilitiesPr
       LIMIT 500`,
     [bookGuid],
   );
-  return (result.rows as Array<{ id: number; bill_date: string; provider: string; ocr_text: string }>)
+  const parsed = (result.rows as Array<{ id: number; bill_date: string; provider: string; ocr_text: string }>)
     .filter(row => !existingReceiptIds.has(row.id))
     .flatMap(row => {
-      const parsed = parseUtilityBillText({
+      const bill = parseUtilityBillText({
         receiptId: row.id,
         date: row.bill_date,
         provider: row.provider,
         text: row.ocr_text,
       });
-      return parsed ? [parsed] : [];
+      return bill ? [bill] : [];
     });
+  // The same PDF uploaded twice parses into two identical suggestions; collapse
+  // them so the queue shows each paper bill once.
+  return dedupeUtilityBillSuggestions(parsed);
 }
 
 async function loadTripSuggestions(bookGuid: string, profile: TripsProfile) {

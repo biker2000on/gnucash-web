@@ -1392,8 +1392,30 @@ targets.
 
 ## P2 - Utilities & Solar: Bill Review Workflow Revamp
 
-**Status:** Not started. Raised 2026-08-06 after the first real use of bill
-capture, once drag-and-drop upload and OCR extraction started working.
+**Status:** Implemented 2026-08-11. Raised 2026-08-06 after the first real use
+of bill capture, once drag-and-drop upload and OCR extraction started working.
+
+**Delivered:** The utilities surface moved to its own
+`src/components/resilience/UtilitiesPage.tsx` and became a staged review
+queue. Import now filters the suggestion against the *edit buffer* (not just
+saved bills), so the row leaves the queue the instant it is imported, lands
+highlighted + "staged" in the bills table, and raises a toast that states the
+Import→Save relationship; the SaveBar counts staged bills and gained
+Discard. Bulk review: per-row checkboxes, "select all without warnings", and
+"Import selected (n)". Duplicate handling in two layers: identical parses
+from the same PDF uploaded twice are collapsed server-side
+(`dedupeUtilityBillSuggestions`, keyed on type + service period/date + usage
++ total), and a suggestion matching an already-imported bill from a
+*different* receipt is flagged "Possible duplicate" and excluded from bulk
+select (still importable deliberately). The card stack became a sortable,
+type-filterable table (date/provider/usage/$-per-unit/total, mono
+right-aligned per DESIGN.md) with per-row expand-to-edit, and every
+receipt-backed row and suggestion links to its source receipt
+(`/api/receipts/{id}`). Undo staged imports returns them to the queue as a
+unit. Also fixed in passing: the Action Center's `?tab=solar` deep link was
+ignored (tab state now honors the query). Covered by
+`src/components/resilience/__tests__/UtilitiesPage.test.tsx` and new
+duplicate-key tests in `p3-core.test.ts`.
 
 **Outcome:** Reviewing a batch of uploaded bills feels like a review queue —
 each decision confirmed, reversible, and possible in bulk — instead of a form

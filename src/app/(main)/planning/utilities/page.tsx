@@ -1,3 +1,3 @@
-import { UtilitiesPlannerPage } from '@/components/resilience/P3FeaturePages';
+import { UtilitiesPlannerPage } from '@/components/resilience/UtilitiesPage';
 
 export default UtilitiesPlannerPage;
