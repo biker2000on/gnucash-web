@@ -6,6 +6,11 @@
  */
 
 import prisma from '@/lib/prisma';
+import {
+  dbRowsToSlots,
+  indexDbSlotRows,
+  type LoadedSlotRow,
+} from './slots';
 import type {
   GnuCashXmlData,
   GnuCashCommodity,
@@ -14,6 +19,8 @@ import type {
   GnuCashTransaction,
   GnuCashBudget,
   GnuCashBudgetAmount,
+  GnuCashLot,
+  GnuCashSlot,
 } from './types';
 
 /**
@@ -29,6 +36,38 @@ function toFractionString(num: bigint, denom: bigint): string {
 function formatGnuCashDate(date: Date | null): string {
   if (!date) return '';
   return date.toISOString().replace('T', ' ').replace(/\.\d{3}Z$/, ' +0000');
+}
+
+/**
+ * Load all slots rows for the given object guids, chasing frame/list
+ * children (their rows live under the guid stored in guid_val, the way
+ * upstream gnc-slots-sql.cpp lays them out) until the tree is complete.
+ */
+async function loadSlotRowsRecursive(objGuids: string[]): Promise<LoadedSlotRow[]> {
+  const CHUNK = 5000;
+  const all: LoadedSlotRow[] = [];
+  const seen = new Set(objGuids);
+  let frontier = objGuids;
+  while (frontier.length > 0) {
+    const batch: LoadedSlotRow[] = [];
+    for (let i = 0; i < frontier.length; i += CHUNK) {
+      const rows = await prisma.slots.findMany({
+        where: { obj_guid: { in: frontier.slice(i, i + CHUNK) } },
+      });
+      batch.push(...(rows as LoadedSlotRow[]));
+    }
+    all.push(...batch);
+    const next: string[] = [];
+    for (const row of batch) {
+      // 8 = list, 9 = frame — children live under guid_val
+      if ((row.slot_type === 8 || row.slot_type === 9) && row.guid_val && !seen.has(row.guid_val)) {
+        seen.add(row.guid_val);
+        next.push(row.guid_val);
+      }
+    }
+    frontier = next;
+  }
+  return all;
 }
 
 /**
@@ -134,6 +173,40 @@ export async function exportBookData(rootAccountGuid: string): Promise<GnuCashXm
       amounts: b.amounts.filter((a) => guidSet.has(a.account_guid)),
     }));
 
+  // Fetch lots owned by this book's accounts (title/notes live in slots).
+  const lots = await prisma.lots.findMany({
+    where: { account_guid: { in: guids } },
+  });
+
+  // Load every KVP slot tree in one recursive pass: book, accounts,
+  // transactions, splits, lots, commodities, budgets.
+  const slotOwnerGuids = [
+    book.guid,
+    ...guids,
+    ...transactions.map((t) => t.guid),
+    ...transactions.flatMap((t) => t.splits.map((s) => s.guid)),
+    ...lots.map((l) => l.guid),
+    ...commodities.map((c) => c.guid),
+    ...budgets.map((b) => b.guid),
+  ];
+  const slotIndex = indexDbSlotRows(await loadSlotRowsRecursive(slotOwnerGuids));
+  const slotsFor = (objGuid: string): GnuCashSlot[] | undefined => {
+    const tree = dbRowsToSlots(slotIndex, objGuid);
+    return tree.length > 0 ? tree : undefined;
+  };
+
+  // Group lots by account for act:lots emission.
+  const lotsByAccount = new Map<string, GnuCashLot[]>();
+  for (const lot of lots) {
+    if (!lot.account_guid) continue;
+    const entry: GnuCashLot = { id: lot.guid };
+    const lotSlots = slotsFor(lot.guid);
+    if (lotSlots) entry.slots = lotSlots;
+    const list = lotsByAccount.get(lot.account_guid);
+    if (list) list.push(entry);
+    else lotsByAccount.set(lot.account_guid, [entry]);
+  }
+
   // Build the commodity namespace:mnemonic -> guid lookup
   const commodityLookup = new Map<string, { namespace: string; mnemonic: string }>();
   for (const c of commodities) {
@@ -150,12 +223,15 @@ export async function exportBookData(rootAccountGuid: string): Promise<GnuCashXm
     quoteFlag: c.quote_flag || undefined,
     quoteSource: c.quote_source || undefined,
     quoteTz: c.quote_tz || undefined,
+    slots: slotsFor(c.guid),
   }));
 
   // Topologically sort accounts: ROOT first, then parents before children
   const sortedAccounts = topologicalSortAccounts(accounts, rootAccountGuid);
 
-  // Map accounts to export format
+  // Map accounts to export format. hidden/placeholder come from their
+  // columns (builder synthesizes the mirror slots only when the KVP
+  // passthrough doesn't already carry them); notes travel inside slots.
   const exportAccounts: GnuCashAccount[] = sortedAccounts.map((acc) => {
     const commodity = acc.commodity_guid ? commodityLookup.get(acc.commodity_guid) : undefined;
     return {
@@ -168,6 +244,11 @@ export async function exportBookData(rootAccountGuid: string): Promise<GnuCashXm
       commodityScu: acc.commodity_scu,
       description: acc.description || undefined,
       parentId: acc.parent_guid || undefined,
+      hidden: acc.hidden === 1 ? true : undefined,
+      placeholder: acc.placeholder === 1 ? true : undefined,
+      nonStdScu: acc.non_std_scu === 1 ? true : undefined,
+      slots: slotsFor(acc.guid),
+      lots: lotsByAccount.get(acc.guid),
     };
   });
 
@@ -183,6 +264,7 @@ export async function exportBookData(rootAccountGuid: string): Promise<GnuCashXm
       datePosted: formatGnuCashDate(tx.post_date),
       dateEntered: formatGnuCashDate(tx.enter_date),
       description: tx.description || '',
+      slots: slotsFor(tx.guid),
       splits: tx.splits.map((split) => ({
         id: split.guid,
         reconciledState: split.reconcile_state,
@@ -194,7 +276,8 @@ export async function exportBookData(rootAccountGuid: string): Promise<GnuCashXm
         accountId: split.account_guid,
         memo: split.memo || undefined,
         action: split.action || undefined,
-        lot_guid: split.lot_guid || undefined,
+        lotId: split.lot_guid || undefined,
+        slots: slotsFor(split.guid),
       })),
     };
   });
@@ -234,8 +317,14 @@ export async function exportBookData(rootAccountGuid: string): Promise<GnuCashXm
         mult: recurrence.recurrence_mult,
         periodType: recurrence.recurrence_period_type,
         periodStart: recurrence.recurrence_period_start.toISOString().slice(0, 10),
+        ...(recurrence.recurrence_weekend_adjust && recurrence.recurrence_weekend_adjust !== 'none'
+          ? { weekendAdjust: recurrence.recurrence_weekend_adjust }
+          : {}),
       } : undefined,
       amounts,
+      // Native budget amounts live in budget_amounts, so every slots-table
+      // row on a budget guid is non-amount passthrough KVP.
+      slots: slotsFor(b.guid),
     };
   });
 
@@ -243,6 +332,7 @@ export async function exportBookData(rootAccountGuid: string): Promise<GnuCashXm
     book: {
       id: book.guid,
       idType: 'guid',
+      slots: slotsFor(book.guid),
     },
     commodities: exportCommodities,
     pricedb: exportPrices,
@@ -254,6 +344,7 @@ export async function exportBookData(rootAccountGuid: string): Promise<GnuCashXm
       transaction: exportTransactions.length,
       commodity: exportCommodities.length,
       budget: exportBudgets.length,
+      price: exportPrices.length,
     },
   };
 }

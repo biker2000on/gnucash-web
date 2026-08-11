@@ -79,6 +79,8 @@ const tx = {
     findMany: vi.fn(async () => []),
   },
   slots: {
+    createMany: recordMany('slots.createMany'),
+    findMany: vi.fn(async () => []),
     deleteMany: vi.fn(async (args: { where: unknown }) => {
       calls.push({ op: 'slots.deleteMany', data: args });
       return { count: 0 };
@@ -222,6 +224,137 @@ describe('importGnuCashData — lot FK handling', () => {
     await importGnuCashData(data, 'Test Book');
 
     expect(tx.lots.createMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('importGnuCashData — KVP slots and lots', () => {
+  beforeEach(() => {
+    calls.length = 0;
+    vi.clearAllMocks();
+    tx.commodities.findMany.mockResolvedValue([]);
+    existingBookRef.current = null;
+    collidingBudgetsRef.current = [];
+    budgetOwnershipRef.current = [];
+  });
+
+  it('writes account, transaction, and split slots to the slots table', async () => {
+    const data = minimalData();
+    data.accounts[0].slots = [
+      { key: 'notes', value: { type: 'string', value: 'brokerage sweep' } },
+      { key: 'color', value: { type: 'string', value: 'Not Set' } },
+    ];
+    data.transactions[0].slots = [
+      { key: 'date-posted', value: { type: 'gdate', value: '2024-01-15' } },
+      { key: 'notes', value: { type: 'string', value: 'txn note' } },
+    ];
+    data.transactions[0].splits[0].slots = [
+      { key: 'gains-split', value: { type: 'guid', value: 'gains-split-guid-0000000000000000' } },
+    ];
+
+    const result = await importGnuCashData(data, 'Test Book');
+
+    const slotBatches = calls.filter((c) => c.op === 'slots.createMany');
+    expect(slotBatches).toHaveLength(1);
+    const rows = slotBatches[0].data as Array<Record<string, unknown>>;
+
+    expect(rows).toContainEqual(
+      expect.objectContaining({
+        obj_guid: 'acct-investments-00000000000000000',
+        name: 'notes',
+        slot_type: 4,
+        string_val: 'brokerage sweep',
+      }),
+    );
+    expect(rows).toContainEqual(
+      expect.objectContaining({
+        obj_guid: 'txn-buy-00000000000000000000000000',
+        name: 'date-posted',
+        slot_type: 10,
+        gdate_val: new Date('2024-01-15T00:00:00.000Z'),
+      }),
+    );
+    expect(rows).toContainEqual(
+      expect.objectContaining({
+        obj_guid: 'split-buy-aapl-0000000000000000',
+        name: 'gains-split',
+        slot_type: 5,
+        guid_val: 'gains-split-guid-0000000000000000',
+      }),
+    );
+    expect(result.slots).toBe(rows.length);
+  });
+
+  it('imports declared act:lots with their slots and derives is_closed', async () => {
+    const data = minimalData();
+    // Declare the lot on the AAPL account with a title, and add a closing
+    // sale so the lot quantities sum to zero.
+    data.accounts[1].lots = [
+      {
+        id: 'lot-aapl-0000000000000000000000',
+        slots: [{ key: 'title', value: { type: 'string', value: 'Lot 0' } }],
+      },
+    ];
+    data.transactions.push({
+      id: 'txn-sell-0000000000000000000000000',
+      currency: { space: 'CURRENCY', id: 'USD' },
+      datePosted: '2024-02-15 10:30:00 +0000',
+      dateEntered: '2024-02-15 10:30:00 +0000',
+      description: 'Sell AAPL',
+      splits: [
+        {
+          id: 'split-sell-aapl-000000000000000',
+          reconciledState: 'n',
+          value: '-11000/100',
+          quantity: '-10000/10000',
+          accountId: 'acct-aapl-000000000000000000000000',
+          lotId: 'lot-aapl-0000000000000000000000',
+        },
+        {
+          id: 'split-sell-cash-000000000000000',
+          reconciledState: 'n',
+          value: '11000/100',
+          quantity: '11000/100',
+          accountId: 'acct-investments-00000000000000000',
+        },
+      ],
+    });
+
+    const result = await importGnuCashData(data, 'Test Book');
+
+    const lotBatch = calls.find((c) => c.op === 'lots.createMany')!.data as Array<{
+      guid: string;
+      account_guid: string;
+      is_closed: number;
+    }>;
+    expect(lotBatch).toEqual([
+      {
+        guid: 'lot-aapl-0000000000000000000000',
+        account_guid: 'acct-aapl-000000000000000000000000',
+        is_closed: 1,
+      },
+    ]);
+    expect(result.lots).toBe(1);
+
+    const slotRows = calls.find((c) => c.op === 'slots.createMany')!.data as Array<
+      Record<string, unknown>
+    >;
+    expect(slotRows).toContainEqual(
+      expect.objectContaining({
+        obj_guid: 'lot-aapl-0000000000000000000000',
+        name: 'title',
+        slot_type: 4,
+        string_val: 'Lot 0',
+      }),
+    );
+  });
+
+  it('surfaces parser skip notes (e.g. binary slots) in the summary', async () => {
+    const data = minimalData();
+    data.skipped = ['Binary slot value skipped (account x/legacy)'];
+
+    const result = await importGnuCashData(data, 'Test Book');
+
+    expect(result.skipped).toContain('Binary slot value skipped (account x/legacy)');
   });
 });
 

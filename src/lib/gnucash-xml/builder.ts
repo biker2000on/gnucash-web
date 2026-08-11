@@ -7,7 +7,8 @@
 
 import { XMLBuilder } from 'fast-xml-parser';
 import { gzipSync } from 'fflate';
-import type { GnuCashXmlData } from './types';
+import { buildSlotsContainer } from './slots';
+import type { GnuCashXmlData, GnuCashSlot } from './types';
 
 /**
  * Build a GnuCash XML string from structured data.
@@ -70,19 +71,30 @@ function buildBook(data: GnuCashXmlData): Record<string, unknown> {
     'book:id': { '@_type': data.book.idType || 'guid', '#text': data.book.id },
   };
 
-  // Count data for the book
+  // book:slots — only when the book KVP frame is non-empty
+  const bookSlots = buildSlotsContainer(data.book.slots);
+  if (bookSlots) {
+    book['book:slots'] = bookSlots;
+  }
+
+  // Count data for the book: one entry per element family actually emitted,
+  // omitted when zero, in the upstream write_counts order
+  // (commodity, account, transaction, budget, price).
   const counts: Record<string, unknown>[] = [];
+  if (data.commodities.length > 0) {
+    counts.push({ '@_cd:type': 'commodity', '#text': String(data.commodities.length) });
+  }
   if (data.accounts.length > 0) {
     counts.push({ '@_cd:type': 'account', '#text': String(data.accounts.length) });
   }
   if (data.transactions.length > 0) {
     counts.push({ '@_cd:type': 'transaction', '#text': String(data.transactions.length) });
   }
-  if (data.commodities.length > 0) {
-    counts.push({ '@_cd:type': 'commodity', '#text': String(data.commodities.length) });
-  }
   if (data.budgets.length > 0) {
     counts.push({ '@_cd:type': 'budget', '#text': String(data.budgets.length) });
+  }
+  if (data.pricedb.length > 0) {
+    counts.push({ '@_cd:type': 'price', '#text': String(data.pricedb.length) });
   }
   if (counts.length > 0) {
     book['gnc:count-data'] = counts;
@@ -133,6 +145,8 @@ function buildCommodity(commodity: GnuCashXmlData['commodities'][0]): Record<str
     if (commodity.quoteSource) result['cmdty:quote_source'] = commodity.quoteSource;
     if (commodity.quoteTz) result['cmdty:quote_tz'] = commodity.quoteTz;
   }
+  const slots = buildSlotsContainer(commodity.slots);
+  if (slots) result['cmdty:slots'] = slots;
   return result;
 }
 
@@ -172,28 +186,51 @@ function buildAccount(account: GnuCashXmlData['accounts'][0]): Record<string, un
   if (account.commodityScu !== undefined) {
     result['act:commodity-scu'] = String(account.commodityScu);
   }
+  if (account.nonStdScu) {
+    result['act:non-standard-scu'] = '';
+  }
   if (account.code) {
     result['act:code'] = account.code;
   }
   if (account.description) {
     result['act:description'] = account.description;
   }
-  // hidden, placeholder, and notes go into act:slots
-  const slots: Array<Record<string, unknown>> = [];
-  if (account.hidden) {
-    slots.push({ 'slot:key': 'hidden', 'slot:value': { '@_type': 'string', '#text': 'true' } });
+  // Full slot passthrough, plus the hidden/placeholder/notes column
+  // mirrors: mirror slots are only synthesized when the passthrough frame
+  // doesn't already carry that key (no duplicates on round-trip).
+  const slots: GnuCashSlot[] = account.slots ? [...account.slots] : [];
+  const hasKey = (key: string) => slots.some((slot) => slot.key === key);
+  if (account.hidden && !hasKey('hidden')) {
+    slots.push({ key: 'hidden', value: { type: 'string', value: 'true' } });
   }
-  if (account.placeholder) {
-    slots.push({ 'slot:key': 'placeholder', 'slot:value': { '@_type': 'string', '#text': 'true' } });
+  if (account.placeholder && !hasKey('placeholder')) {
+    slots.push({ key: 'placeholder', value: { type: 'string', value: 'true' } });
   }
-  if (account.notes) {
-    slots.push({ 'slot:key': 'notes', 'slot:value': { '@_type': 'string', '#text': account.notes } });
+  if (account.notes && !hasKey('notes')) {
+    slots.push({ key: 'notes', value: { type: 'string', value: account.notes } });
   }
-  if (slots.length > 0) {
-    result['act:slots'] = { slot: slots };
+  const slotsContainer = buildSlotsContainer(slots);
+  if (slotsContainer) {
+    result['act:slots'] = slotsContainer;
   }
   if (account.parentId) {
     result['act:parent'] = { '@_type': 'guid', '#text': account.parentId };
+  }
+  // act:lots — sorted by guid, matching the upstream writer
+  if (account.lots && account.lots.length > 0) {
+    result['act:lots'] = {
+      'gnc:lot': [...account.lots]
+        .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+        .map((lot) => {
+          const lotResult: Record<string, unknown> = {
+            '@_version': '2.0.0',
+            'lot:id': { '@_type': 'guid', '#text': lot.id },
+          };
+          const lotSlots = buildSlotsContainer(lot.slots);
+          if (lotSlots) lotResult['lot:slots'] = lotSlots;
+          return lotResult;
+        }),
+    };
   }
   return result;
 }
@@ -213,6 +250,11 @@ function buildTransaction(tx: GnuCashXmlData['transactions'][0]): Record<string,
   result['trn:date-posted'] = { 'ts:date': tx.datePosted };
   result['trn:date-entered'] = { 'ts:date': tx.dateEntered };
   result['trn:description'] = tx.description;
+
+  const slots = buildSlotsContainer(tx.slots);
+  if (slots) {
+    result['trn:slots'] = slots;
+  }
 
   if (tx.splits.length > 0) {
     result['trn:splits'] = {
@@ -243,6 +285,10 @@ function buildSplit(split: GnuCashXmlData['transactions'][0]['splits'][0]): Reco
   if (split.lotId) {
     result['split:lot'] = { '@_type': 'guid', '#text': split.lotId };
   }
+  const slots = buildSlotsContainer(split.slots);
+  if (slots) {
+    result['split:slots'] = slots;
+  }
   return result;
 }
 
@@ -257,18 +303,25 @@ function buildBudget(budget: GnuCashXmlData['budgets'][0]): Record<string, unkno
   }
   result['bgt:num-periods'] = String(budget.numPeriods);
 
-  // Budget recurrence (required by GnuCash desktop)
+  // Budget recurrence (required by GnuCash desktop);
+  // weekend_adj is only emitted when not "none" (2.2 compat).
   if (budget.recurrence) {
     result['bgt:recurrence'] = {
+      '@_version': '1.0.0',
       'recurrence:mult': String(budget.recurrence.mult),
       'recurrence:period_type': budget.recurrence.periodType,
       'recurrence:start': {
         'gdate': budget.recurrence.periodStart,
       },
+      ...(budget.recurrence.weekendAdjust && budget.recurrence.weekendAdjust !== 'none'
+        ? { 'recurrence:weekend_adj': budget.recurrence.weekendAdjust }
+        : {}),
     };
   }
 
-  // Build budget amounts as slots grouped by account
+  // Build budget amounts as slots grouped by account, then append any
+  // non-amount passthrough slots (per-period notes frames, etc.).
+  const slots: Record<string, unknown>[] = [];
   if (budget.amounts.length > 0) {
     const byAccount = new Map<string, { periodNum: number; amount: string }[]>();
     for (const amt of budget.amounts) {
@@ -277,7 +330,6 @@ function buildBudget(budget: GnuCashXmlData['budgets'][0]): Record<string, unkno
       byAccount.set(amt.accountId, existing);
     }
 
-    const slots: Record<string, unknown>[] = [];
     for (const [accountId, periods] of byAccount) {
       slots.push({
         'slot:key': accountId,
@@ -290,7 +342,12 @@ function buildBudget(budget: GnuCashXmlData['budgets'][0]): Record<string, unkno
         },
       });
     }
-
+  }
+  const passthrough = buildSlotsContainer(budget.slots);
+  if (passthrough) {
+    slots.push(...(passthrough.slot as Record<string, unknown>[]));
+  }
+  if (slots.length > 0) {
     result['bgt:slots'] = { slot: slots };
   }
 

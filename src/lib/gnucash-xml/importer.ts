@@ -10,6 +10,7 @@ import prisma from '@/lib/prisma';
 import { generateGuid } from '@/lib/gnucash';
 import { acquireBookLock, acquireNamedXactLock, commodityLockKey } from '@/lib/book-lock';
 import { createBudgetOwnership } from '@/lib/budget-ownership';
+import { slotsToDbRows, type DbSlotRow } from './slots';
 import type { GnuCashXmlData, ImportSummary } from './types';
 
 /**
@@ -80,6 +81,44 @@ function topologicalSortAccounts(
 }
 
 /**
+ * Delete slots rows for the given object guids, following frame/list
+ * children the way upstream gnc_sql_slots_delete does: frame and list
+ * rows carry a child guid in guid_val, and the children's rows live
+ * under that guid — a flat obj_guid delete would orphan them.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function deleteSlotsRecursive(tx: any, objGuids: string[]) {
+  if (objGuids.length === 0) return;
+  const CHUNK = 5000;
+  const seen = new Set(objGuids);
+  let frontier = objGuids;
+  const allGuids = [...objGuids];
+  while (frontier.length > 0) {
+    const next: string[] = [];
+    for (let i = 0; i < frontier.length; i += CHUNK) {
+      const rows = await tx.slots.findMany({
+        where: {
+          obj_guid: { in: frontier.slice(i, i + CHUNK) },
+          slot_type: { in: [8, 9] }, // list, frame
+        },
+        select: { guid_val: true },
+      });
+      for (const row of rows as Array<{ guid_val: string | null }>) {
+        if (row.guid_val && !seen.has(row.guid_val)) {
+          seen.add(row.guid_val);
+          next.push(row.guid_val);
+        }
+      }
+    }
+    allGuids.push(...next);
+    frontier = next;
+  }
+  for (let i = 0; i < allGuids.length; i += CHUNK) {
+    await tx.slots.deleteMany({ where: { obj_guid: { in: allGuids.slice(i, i + CHUNK) } } });
+  }
+}
+
+/**
  * Delete every row that the incoming XML would collide with, in the
  * order the FK graph requires. Used when re-importing a book with
  * overwrite: true. Runs inside the caller's interactive transaction.
@@ -129,6 +168,10 @@ async function clearCollisionRows(tx: any, data: GnuCashXmlData, bookGuid: strin
   for (const t of data.transactions) {
     for (const s of t.splits) if (s.lotId) lotGuids.add(s.lotId);
   }
+  // Lots declared under act:lots also collide on re-import.
+  for (const a of data.accounts) {
+    for (const lot of a.lots ?? []) if (lot.id) lotGuids.add(lot.id);
+  }
 
   // Prices — collide on guid when the same book is re-imported.
   if (priceGuids.length) {
@@ -137,8 +180,10 @@ async function clearCollisionRows(tx: any, data: GnuCashXmlData, bookGuid: strin
 
   // Budgets — budget_amounts cascade via FK onDelete: Cascade. Recurrences
   // must go FIRST: their obj_guid FK to budgets is ON DELETE RESTRICT, so
-  // deleting a budget that still has its recurrence row would fail.
+  // deleting a budget that still has its recurrence row would fail. Budget
+  // slots have no FK, so clear them explicitly before the row goes away.
   if (budgetGuids.length) {
+    await deleteSlotsRecursive(tx, budgetGuids);
     await tx.recurrences.deleteMany({ where: { obj_guid: { in: budgetGuids } } });
     await tx.budgets.deleteMany({ where: { guid: { in: budgetGuids } } });
   }
@@ -159,20 +204,27 @@ async function clearCollisionRows(tx: any, data: GnuCashXmlData, bookGuid: strin
       ...splitRows.map((row: { guid: string }) => row.guid),
       ...transactionGuids,
     ];
-    await tx.slots.deleteMany({ where: { obj_guid: { in: slotObjGuids } } });
+    await deleteSlotsRecursive(tx, slotObjGuids);
     await tx.transactions.deleteMany({ where: { guid: { in: transactionGuids } } });
   }
 
   // Lots referenced by the splits we just deleted — slots first (no FK).
   if (lotGuids.size) {
     const lotGuidList = Array.from(lotGuids);
-    await tx.slots.deleteMany({ where: { obj_guid: { in: lotGuidList } } });
+    await deleteSlotsRecursive(tx, lotGuidList);
     await tx.lots.deleteMany({ where: { guid: { in: lotGuidList } } });
   }
 
   // Accounts and the book row are NOT deleted — the import path upserts
   // them instead, so SimpleFin transactions, account mappings, and
-  // permission grants all stay intact.
+  // permission grants all stay intact. Their slot frames ARE replaced:
+  // the incoming XML carries the authoritative KVP for these objects and
+  // re-inserting without clearing would duplicate every slot row.
+  const accountGuids = data.accounts
+    .filter((a) => a.type !== 'ROOT')
+    .map((a) => a.id)
+    .filter(Boolean);
+  await deleteSlotsRecursive(tx, [...accountGuids, bookGuid]);
 }
 
 /**
@@ -222,9 +274,17 @@ export async function importGnuCashData(
     prices: 0,
     budgets: 0,
     budgetAmounts: 0,
+    slots: 0,
+    lots: 0,
     skipped: [],
     warnings: [],
   };
+
+  // Parse-time skips (binary slot values etc.) surface here so nothing
+  // that was recognized-but-unmodeled disappears silently.
+  if (data.skipped?.length) {
+    summary.skipped.push(...data.skipped);
+  }
 
   let createdBookGuid = '';
 
@@ -262,6 +322,10 @@ export async function importGnuCashData(
       }
     }
 
+    // KVP slot rows accumulated across all stages, inserted in one batched
+    // pass at the end (the slots table has no FKs, so order is free).
+    const slotRowsBuffer: DbSlotRow[] = [];
+
     // 1. Create/find commodities
     emit({ phase: 'Commodities', progress: 5, detail: `${data.commodities.length} commodities` });
     // Build a map of (space:id) -> database GUID
@@ -282,6 +346,9 @@ export async function importGnuCashData(
       const key = `${commodity.space}:${commodity.id}`;
       if (commodityMap.has(key)) {
         summary.skipped.push(`Commodity ${key} already exists`);
+        if (commodity.slots?.length) {
+          summary.skipped.push(`cmdty:slots for ${key} skipped (commodity already exists)`);
+        }
         continue;
       }
 
@@ -293,6 +360,9 @@ export async function importGnuCashData(
         if (existingNow) {
           commodityMap.set(key, existingNow.guid);
           summary.skipped.push(`Commodity ${key} already exists`);
+          if (commodity.slots?.length) {
+            summary.skipped.push(`cmdty:slots for ${key} skipped (commodity already exists)`);
+          }
           continue;
         }
       }
@@ -312,6 +382,9 @@ export async function importGnuCashData(
         },
       });
       commodityMap.set(key, guid);
+      if (commodity.slots?.length) {
+        slotRowsBuffer.push(...slotsToDbRows(guid, commodity.slots));
+      }
       summary.commodities++;
     }
 
@@ -399,6 +472,12 @@ export async function importGnuCashData(
       });
     }
 
+    // book:slots (options, counters, features) — obj_guid is the book guid.
+    // On overwrite the old book slots were cleared in clearCollisionRows.
+    if (data.book?.slots?.length) {
+      slotRowsBuffer.push(...slotsToDbRows(bookGuid, data.book.slots));
+    }
+
     // 3. Create accounts in topological order (parents before children)
     emit({ phase: 'Accounts', progress: 15, detail: `${data.accounts.length} accounts` });
     const sortedAccounts = topologicalSortAccounts(data.accounts);
@@ -415,6 +494,11 @@ export async function importGnuCashData(
       if (account.type === 'ROOT') {
         accountGuidMap.set(account.id, rootAccountGuid);
         summary.skipped.push(`Root account "${account.name}" mapped to new root`);
+        if (account.slots?.length) {
+          summary.skipped.push(
+            `act:slots for root account "${account.name}" skipped (root is remapped)`,
+          );
+        }
         continue;
       }
 
@@ -454,7 +538,7 @@ export async function importGnuCashData(
         account_type: account.type,
         commodity_guid: commodityGuid,
         commodity_scu: account.commodityScu || 100,
-        non_std_scu: 0,
+        non_std_scu: account.nonStdScu ? 1 : 0,
         parent_guid: parentGuid,
         code: account.code || null,
         description: account.description || null,
@@ -473,35 +557,83 @@ export async function importGnuCashData(
           data: { guid: accountGuid, ...accountData },
         });
       }
+      // Full act:slots passthrough (hidden/placeholder/notes stay mirrored
+      // in their columns above, matching the native GnuCash SQL backend
+      // which stores both the columns and the KVP rows).
+      if (account.slots?.length) {
+        slotRowsBuffer.push(...slotsToDbRows(accountGuid, account.slots));
+      }
       summary.accounts++;
     }
 
-    // 4. Create lots referenced by splits.
+    // 4. Create lots: declared act:lots first (they carry title/notes in
+    // lot:slots), then any lot referenced only via split:lot. The schema
+    // enforces a FK from splits.lot_guid to lots, so all lot rows must
+    // exist before splits are inserted.
     emit({ phase: 'Lots', progress: 30 });
-    // GnuCash splits can carry a lot_guid; the schema enforces a FK to lots,
-    // so lot rows must exist before their splits are inserted. Collect the
-    // distinct (lotId, accountGuid) pairs from all splits and insert them
-    // up front. A lot belongs to the account of the split that references it.
-    const lotAccountMap = new Map<string, string>();
+
+    // A lot is closed when its splits' quantities sum to zero (there is no
+    // is_closed element in XML — closure is derived, see the lot section of
+    // the schema inventory). Sum the raw fractions exactly with bigints.
+    const lotBalances = new Map<string, { num: bigint; denom: bigint }>();
     for (const transaction of data.transactions) {
       for (const split of transaction.splits) {
         if (!split.lotId) continue;
-        if (lotAccountMap.has(split.lotId)) continue;
-        const accountGuid = accountGuidMap.get(split.accountId);
-        if (!accountGuid) continue;
-        lotAccountMap.set(split.lotId, accountGuid);
+        const quantity = parseFraction(split.quantity);
+        const balance = lotBalances.get(split.lotId);
+        if (!balance) {
+          lotBalances.set(split.lotId, { num: quantity.num, denom: quantity.denom });
+        } else {
+          // a/b + c/d = (ad + cb) / bd — exact, no reduction needed for a
+          // zero test.
+          balance.num = balance.num * quantity.denom + quantity.num * balance.denom;
+          balance.denom = balance.denom * quantity.denom;
+        }
       }
     }
-    if (lotAccountMap.size > 0) {
+    const lotIsClosed = (lotGuid: string): number => {
+      const balance = lotBalances.get(lotGuid);
+      return balance && balance.num === 0n ? 1 : 0;
+    };
+
+    const lotRowMap = new Map<string, { account_guid: string; is_closed: number }>();
+    // Declared lots (act:lots > gnc:lot) — the owning account is explicit.
+    for (const account of data.accounts) {
+      for (const lot of account.lots ?? []) {
+        const accountGuid = accountGuidMap.get(account.id);
+        if (!accountGuid) {
+          summary.skipped.push(
+            `Lot ${lot.id} skipped: owning account ${account.id} was not imported`,
+          );
+          continue;
+        }
+        lotRowMap.set(lot.id, { account_guid: accountGuid, is_closed: lotIsClosed(lot.id) });
+        if (lot.slots?.length) {
+          slotRowsBuffer.push(...slotsToDbRows(lot.id, lot.slots));
+        }
+      }
+    }
+    // Undeclared lots referenced by split:lot — a lot belongs to the
+    // account of the split that references it.
+    for (const transaction of data.transactions) {
+      for (const split of transaction.splits) {
+        if (!split.lotId) continue;
+        if (lotRowMap.has(split.lotId)) continue;
+        const accountGuid = accountGuidMap.get(split.accountId);
+        if (!accountGuid) continue;
+        lotRowMap.set(split.lotId, {
+          account_guid: accountGuid,
+          is_closed: lotIsClosed(split.lotId),
+        });
+      }
+    }
+    if (lotRowMap.size > 0) {
       await tx.lots.createMany({
-        data: Array.from(lotAccountMap, ([guid, account_guid]) => ({
-          guid,
-          account_guid,
-          is_closed: 0,
-        })),
+        data: Array.from(lotRowMap, ([guid, row]) => ({ guid, ...row })),
         skipDuplicates: true,
       });
     }
+    summary.lots = lotRowMap.size;
 
     // 5. Build transaction + split rows in memory, then createMany them.
     emit({ phase: 'Transactions', progress: 35, detail: `${data.transactions.length} transactions` });
@@ -546,6 +678,12 @@ export async function importGnuCashData(
         enter_date: parseGnuCashDate(transaction.dateEntered),
         description: transaction.description,
       });
+      // trn:slots passthrough — includes the date-posted gdate slot, which
+      // is preserved as a slot; post_date above keeps coming from the
+      // trn:date-posted timespec, unchanged.
+      if (transaction.slots?.length) {
+        slotRowsBuffer.push(...slotsToDbRows(transaction.id, transaction.slots));
+      }
       summary.transactions++;
 
       for (const split of transaction.splits) {
@@ -559,6 +697,10 @@ export async function importGnuCashData(
 
         const value = parseFraction(split.value);
         const quantity = parseFraction(split.quantity);
+
+        if (split.slots?.length) {
+          slotRowsBuffer.push(...slotsToDbRows(split.id, split.slots));
+        }
 
         splitRows.push({
           guid: split.id,
@@ -670,9 +812,13 @@ export async function importGnuCashData(
             recurrence_mult: budget.recurrence.mult,
             recurrence_period_type: budget.recurrence.periodType,
             recurrence_period_start: new Date(`${budget.recurrence.periodStart}T00:00:00.000Z`),
-            recurrence_weekend_adjust: 'none',
+            recurrence_weekend_adjust: budget.recurrence.weekendAdjust || 'none',
           },
         });
+      }
+      // Non-amount bgt:slots passthrough (amounts go to budget_amounts).
+      if (budget.slots?.length) {
+        slotRowsBuffer.push(...slotsToDbRows(budget.id, budget.slots));
       }
       summary.budgets++;
 
@@ -712,6 +858,17 @@ export async function importGnuCashData(
     for (let i = 0; i < budgetAmountRows.length; i += CHUNK) {
       await tx.budget_amounts.createMany({ data: budgetAmountRows.slice(i, i + CHUNK) });
     }
+
+    // 8. Write accumulated KVP slot rows (book, commodity, account, lot,
+    // transaction, split, budget). No FKs on the slots table, so a single
+    // batched pass at the end is safe.
+    if (slotRowsBuffer.length > 0) {
+      emit({ phase: 'Slots', progress: 96, detail: `${slotRowsBuffer.length} slot rows` });
+      for (let i = 0; i < slotRowsBuffer.length; i += CHUNK) {
+        await tx.slots.createMany({ data: slotRowsBuffer.slice(i, i + CHUNK) });
+      }
+    }
+    summary.slots = slotRowsBuffer.length;
   }, {
     // Large books routinely ship 10k+ splits; default 5s interactive
     // timeout isn't enough. 5 minutes should cover any realistic book.

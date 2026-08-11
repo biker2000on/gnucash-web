@@ -7,6 +7,7 @@
 
 import { XMLParser } from 'fast-xml-parser';
 import { gunzipSync } from 'fflate';
+import { parseSlotsContainer } from './slots';
 import type {
   GnuCashXmlData,
   GnuCashBook,
@@ -17,6 +18,8 @@ import type {
   GnuCashSplit,
   GnuCashBudget,
   GnuCashBudgetAmount,
+  GnuCashLot,
+  GnuCashSlot,
 } from './types';
 
 /**
@@ -117,26 +120,29 @@ export function parseGnuCashXml(data: Buffer | Uint8Array): GnuCashXmlData {
     throw new Error('Invalid GnuCash XML: missing gnc:book element');
   }
 
+  // Parse-time skip notes (binary slots etc.) — surfaced via ImportSummary.
+  const skipped: string[] = [];
+
   // Parse book ID
-  const book = parseBook(bookElement);
+  const book = parseBook(bookElement, skipped);
 
   // Parse count data
   const countData = parseCountData(bookElement);
 
   // Parse commodities
-  const commodities = parseCommodities(bookElement);
+  const commodities = parseCommodities(bookElement, skipped);
 
   // Parse price database
   const pricedb = parsePriceDb(bookElement);
 
   // Parse accounts
-  const accounts = parseAccounts(bookElement);
+  const accounts = parseAccounts(bookElement, skipped);
 
   // Parse transactions
-  const transactions = parseTransactions(bookElement);
+  const transactions = parseTransactions(bookElement, skipped);
 
   // Parse budgets
-  const budgets = parseBudgets(bookElement);
+  const budgets = parseBudgets(bookElement, skipped);
 
   return {
     book,
@@ -146,10 +152,11 @@ export function parseGnuCashXml(data: Buffer | Uint8Array): GnuCashXmlData {
     transactions,
     budgets,
     countData,
+    skipped,
   };
 }
 
-function parseBook(bookElement: Record<string, unknown>): GnuCashBook {
+function parseBook(bookElement: Record<string, unknown>, skipped: string[]): GnuCashBook {
   const bookId = bookElement['book:id'];
   let id = '';
   let idType = 'guid';
@@ -162,7 +169,10 @@ function parseBook(bookElement: Record<string, unknown>): GnuCashBook {
     idType = String(obj['@_type'] || 'guid');
   }
 
-  return { id, idType };
+  // book:slots — options, counters, features frames
+  const slots = parseSlotsContainer(bookElement['book:slots'], skipped, 'book');
+
+  return { id, idType, ...(slots.length > 0 ? { slots } : {}) };
 }
 
 function parseCountData(bookElement: Record<string, unknown>): Record<string, number> {
@@ -183,21 +193,29 @@ function parseCountData(bookElement: Record<string, unknown>): Record<string, nu
   return counts;
 }
 
-function parseCommodities(bookElement: Record<string, unknown>): GnuCashCommodity[] {
+function parseCommodities(
+  bookElement: Record<string, unknown>,
+  skipped: string[],
+): GnuCashCommodity[] {
   const rawCommodities = ensureArray(bookElement['gnc:commodity'] as unknown);
   return rawCommodities.map((raw) => {
     const obj = raw as Record<string, unknown>;
+    const space = String(obj['cmdty:space'] || '');
+    const id = String(obj['cmdty:id'] || '');
+    // cmdty:get_quotes is an EMPTY element — its presence is the flag.
+    // (parseInt('') is NaN, so the old text-parse never produced 1.)
+    const quoteFlag = obj['cmdty:get_quotes'] !== undefined ? 1 : undefined;
+    const slots = parseSlotsContainer(obj['cmdty:slots'], skipped, `commodity ${space}:${id}`);
     return {
-      space: String(obj['cmdty:space'] || ''),
-      id: String(obj['cmdty:id'] || ''),
+      space,
+      id,
       name: obj['cmdty:name'] ? String(obj['cmdty:name']) : undefined,
       xcode: obj['cmdty:xcode'] ? String(obj['cmdty:xcode']) : undefined,
       fraction: parseInt(String(obj['cmdty:fraction'] || '1'), 10),
-      quoteFlag: obj['cmdty:get_quotes'] !== undefined
-        ? parseInt(String(obj['cmdty:get_quotes']), 10)
-        : undefined,
+      quoteFlag,
       quoteSource: obj['cmdty:quote_source'] ? String(obj['cmdty:quote_source']) : undefined,
       quoteTz: obj['cmdty:quote_tz'] ? String(obj['cmdty:quote_tz']) : undefined,
+      ...(slots.length > 0 ? { slots } : {}),
     };
   });
 }
@@ -235,7 +253,10 @@ function parsePriceDb(bookElement: Record<string, unknown>): GnuCashPrice[] {
   });
 }
 
-function parseAccounts(bookElement: Record<string, unknown>): GnuCashAccount[] {
+function parseAccounts(
+  bookElement: Record<string, unknown>,
+  skipped: string[],
+): GnuCashAccount[] {
   const rawAccounts = ensureArray(bookElement['gnc:account'] as unknown);
   return rawAccounts.map((raw) => {
     const obj = raw as Record<string, unknown>;
@@ -266,21 +287,38 @@ function parseAccounts(bookElement: Record<string, unknown>): GnuCashAccount[] {
     // Parse account code
     const code = obj['act:code'] ? String(obj['act:code']) : undefined;
 
-    // Parse act:slots for hidden, placeholder, notes
+    // act:non-standard-scu is an empty element; presence is the flag.
+    const nonStdScu = obj['act:non-standard-scu'] !== undefined;
+
+    // Full act:slots via the generic codec; hidden/placeholder/notes keep
+    // their column-mirror extraction on top of the passthrough.
+    const slots = parseSlotsContainer(obj['act:slots'], skipped, `account ${accountId}`);
     let hidden: boolean | undefined;
     let placeholder: boolean | undefined;
     let notes: string | undefined;
-    const slotsContainer = obj['act:slots'] as Record<string, unknown> | undefined;
-    if (slotsContainer) {
-      const slotList = ensureArray(slotsContainer['slot'] as unknown);
-      for (const slot of slotList) {
-        const slotObj = slot as Record<string, unknown>;
-        const key = extractText(slotObj['slot:key']);
-        const val = extractText(slotObj['slot:value']);
-        if (key === 'hidden') hidden = val === 'true';
-        else if (key === 'placeholder') placeholder = val === 'true';
-        else if (key === 'notes') notes = val || undefined;
-      }
+    for (const slot of slots) {
+      if (slot.value.type !== 'string') continue;
+      if (slot.key === 'hidden') hidden = slot.value.value === 'true';
+      else if (slot.key === 'placeholder') placeholder = slot.value.value === 'true';
+      else if (slot.key === 'notes') notes = slot.value.value || undefined;
+    }
+
+    // act:lots — gnc:lot children with lot:slots (title, notes, …)
+    let lots: GnuCashLot[] | undefined;
+    const lotsContainer = obj['act:lots'] as Record<string, unknown> | undefined;
+    if (lotsContainer) {
+      lots = ensureArray(lotsContainer['gnc:lot'] as unknown)
+        .map((rawLot) => {
+          const lotObj = rawLot as Record<string, unknown>;
+          const lotId = extractText(lotObj['lot:id']);
+          const lotSlots = parseSlotsContainer(lotObj['lot:slots'], skipped, `lot ${lotId}`);
+          return {
+            id: lotId,
+            ...(lotSlots.length > 0 ? { slots: lotSlots } : {}),
+          };
+        })
+        .filter((lot) => lot.id);
+      if (lots.length === 0) lots = undefined;
     }
 
     return {
@@ -295,11 +333,17 @@ function parseAccounts(bookElement: Record<string, unknown>): GnuCashAccount[] {
       placeholder,
       notes,
       code,
+      ...(nonStdScu ? { nonStdScu } : {}),
+      ...(slots.length > 0 ? { slots } : {}),
+      ...(lots ? { lots } : {}),
     };
   });
 }
 
-function parseTransactions(bookElement: Record<string, unknown>): GnuCashTransaction[] {
+function parseTransactions(
+  bookElement: Record<string, unknown>,
+  skipped: string[],
+): GnuCashTransaction[] {
   const rawTransactions = ensureArray(bookElement['gnc:transaction'] as unknown);
   return rawTransactions.map((raw) => {
     const obj = raw as Record<string, unknown>;
@@ -350,6 +394,13 @@ function parseTransactions(bookElement: Record<string, unknown>): GnuCashTransac
         lotId = String((lotElement as Record<string, unknown>)['#text'] || '');
       }
 
+      // split:slots — gains links, sched-xaction frame, online_id, …
+      const splitSlots = parseSlotsContainer(
+        splitObj['split:slots'],
+        skipped,
+        `split ${splitId}`,
+      );
+
       return {
         id: splitId,
         reconciledState: String(splitObj['split:reconciled-state'] || 'n'),
@@ -362,8 +413,15 @@ function parseTransactions(bookElement: Record<string, unknown>): GnuCashTransac
         memo: splitObj['split:memo'] ? String(splitObj['split:memo']) : undefined,
         action: splitObj['split:action'] ? String(splitObj['split:action']) : undefined,
         lotId,
+        ...(splitSlots.length > 0 ? { slots: splitSlots } : {}),
       };
     });
+
+    // trn:slots — preserved as-is, including the date-posted gdate slot.
+    // The transactions table keeps using trn:date-posted (timespec) for
+    // post_date; the gdate slot is passthrough data that must survive a
+    // round-trip.
+    const trnSlots = parseSlotsContainer(obj['trn:slots'], skipped, `transaction ${txId}`);
 
     return {
       id: txId,
@@ -372,12 +430,29 @@ function parseTransactions(bookElement: Record<string, unknown>): GnuCashTransac
       datePosted: parseTimestamp(obj['trn:date-posted']),
       dateEntered: parseTimestamp(obj['trn:date-entered']),
       description: String(obj['trn:description'] || ''),
+      ...(trnSlots.length > 0 ? { slots: trnSlots } : {}),
       splits,
     };
   });
 }
 
-function parseBudgets(bookElement: Record<string, unknown>): GnuCashBudget[] {
+/**
+ * A top-level bgt:slots entry is a budget AMOUNT frame when it is a frame
+ * whose children are period-number keys with numeric values — those map to
+ * budget_amounts rows. Everything else (per-period notes frames, arbitrary
+ * KVP) is passthrough slot data.
+ */
+function isBudgetAmountFrame(slot: GnuCashSlot): boolean {
+  if (slot.value.type !== 'frame' || slot.value.slots.length === 0) return false;
+  return slot.value.slots.some(
+    (inner) => /^\d+$/.test(inner.key) && inner.value.type === 'numeric',
+  );
+}
+
+function parseBudgets(
+  bookElement: Record<string, unknown>,
+  skipped: string[],
+): GnuCashBudget[] {
   const rawBudgets = ensureArray(bookElement['gnc:budget'] as unknown);
   return rawBudgets.map((raw) => {
     const obj = raw as Record<string, unknown>;
@@ -406,44 +481,42 @@ function parseBudgets(bookElement: Record<string, unknown>): GnuCashBudget[] {
       const periodStart = startEl ? extractText(startEl['gdate']) : '';
       const periodType = extractText(recElement['recurrence:period_type']);
       if (/^\d{4}-\d{2}-\d{2}$/.test(periodStart) && periodType) {
+        // recurrence:weekend_adj is only written when not "none".
+        const weekendAdjust = extractText(recElement['recurrence:weekend_adj']);
         recurrence = {
           mult: parseInt(extractText(recElement['recurrence:mult']) || '1', 10) || 1,
           periodType,
           periodStart,
+          ...(weekendAdjust && weekendAdjust !== 'none' ? { weekendAdjust } : {}),
         };
       }
     }
 
-    // Parse budget amounts from slots.
-    // Budget slots nest as: <slot><slot:key>ACCOUNT_GUID</slot:key>
-    //   <slot:value type="frame"><slot><slot:key>PERIOD</slot:key>
-    //     <slot:value type="numeric">N/D</slot:value></slot>...
-    // Some GnuCash exports tag the account slot:key with type="guid",
-    // which makes fast-xml-parser return it as an object — extractText
-    // handles both shapes.
+    // Parse bgt:slots via the generic codec, then partition amount frames
+    // (keyed by account guid, children keyed by period number with numeric
+    // values) from passthrough slots. Some GnuCash exports tag the account
+    // slot:key with type="guid"; the codec's extractText handles both.
     const amounts: GnuCashBudgetAmount[] = [];
-    const slotsContainer = obj['bgt:slots'] as Record<string, unknown> | undefined;
-    if (slotsContainer) {
-      const slotList = ensureArray(slotsContainer['slot'] as unknown);
-      for (const slot of slotList) {
-        const slotObj = slot as Record<string, unknown>;
-        const slotKey = extractText(slotObj['slot:key']);
-
-        if (slotObj['slot:value']) {
-          const slotValue = slotObj['slot:value'] as Record<string, unknown>;
-          const innerSlots = ensureArray(slotValue['slot'] as unknown);
-          for (const innerSlot of innerSlots) {
-            const innerObj = innerSlot as Record<string, unknown>;
-            const periodNum = parseInt(extractText(innerObj['slot:key']), 10);
-            if (isNaN(periodNum)) continue;
-            const amountStr = extractText(innerObj['slot:value']) || '0/1';
-            amounts.push({
-              accountId: slotKey,
-              periodNum,
-              amount: amountStr,
-            });
-          }
+    const passthroughSlots: GnuCashSlot[] = [];
+    const allSlots = parseSlotsContainer(obj['bgt:slots'], skipped, `budget ${budgetId}`);
+    for (const slot of allSlots) {
+      if (!isBudgetAmountFrame(slot) || slot.value.type !== 'frame') {
+        passthroughSlots.push(slot);
+        continue;
+      }
+      for (const inner of slot.value.slots) {
+        const periodNum = parseInt(inner.key, 10);
+        if (isNaN(periodNum) || inner.value.type !== 'numeric') {
+          skipped.push(
+            `Budget ${budgetId}: non-amount entry "${slot.key}/${inner.key}" in amount frame skipped`,
+          );
+          continue;
         }
+        amounts.push({
+          accountId: slot.key,
+          periodNum,
+          amount: inner.value.value || '0/1',
+        });
       }
     }
 
@@ -454,6 +527,7 @@ function parseBudgets(bookElement: Record<string, unknown>): GnuCashBudget[] {
       numPeriods,
       recurrence,
       amounts,
+      ...(passthroughSlots.length > 0 ? { slots: passthroughSlots } : {}),
     };
   });
 }
