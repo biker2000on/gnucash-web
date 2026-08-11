@@ -1181,6 +1181,67 @@ conflict policy.
 
 ---
 
+## P3 - Home Assistant Energy Integration: Bill vs. Metered Usage
+
+**Status:** Open. Requested 2026-08-11.
+
+**Outcome:** Every imported electric bill is cross-checked against what the
+house actually metered: the utility's billed kWh beside Home Assistant's
+measured consumption for the same service period, with the difference
+surfaced — a meter-vs-monitor discrepancy, an estimated-read month, or a
+billing error becomes visible instead of invisible.
+
+**Environment facts (verified 2026-08-11 against the live HA instance on
+truenas, container `homeassistant`, config `/mnt/docker/volumes/hass`):**
+
+- Whole-home monitoring is an Emporia Vue 2: the energy dashboard's grid
+  source is `sensor.vue2_total_daily_energy`, plus ~15 per-circuit device
+  sensors (AC, dryer, furnace, garage, kitchen…) in `.storage/energy`.
+  Configured flat price: $0.119/kWh.
+- Long-term statistics live in the recorder's **TimescaleDB** (Postgres at
+  192.168.5.21:5432/homeassistant), `statistics` + `statistics_meta`
+  tables: the grid sensor has hourly rows from **2023-03-13 through today**
+  (~26k rows). Unit is **Wh**, not kWh — conversion required. Period usage =
+  `max(sum) − min(sum)` over the window (the `sum` column is cumulative and
+  survives counter resets).
+- The HA container sits on `iot_macvlan` (own IP); the API is reachable
+  with a long-lived access token.
+
+**What:**
+
+1. **Connector** following the Fuel Tracker pattern: per-book encrypted
+   connection settings (HA base URL + long-lived token, chosen grid/gas
+   statistic ids), a BullMQ sync job, incremental fetch keyed on period
+   start. Preferred contract: the WebSocket API's
+   `recorder/statistics_during_period` command (hourly/daily sums — built
+   for exactly this; REST `/api/history/period` is unsuited to multi-year
+   ranges). Direct TimescaleDB read is the documented fallback, not the
+   contract.
+2. **Bill cross-check:** for each utility bill with a parsed service
+   period, compute metered kWh over that period and show billed vs.
+   metered with the delta and percent. Deviations beyond a tolerance
+   (estimated reads, meter/CT drift, missing days) become Action Center
+   items with the calculation trace; matched bills carry the metered figure
+   as evidence.
+3. **Period breakdown:** per-circuit consumption for the bill period from
+   the device sensors — "the AC was 41% of this bill" — feeding the
+   existing charge-breakdown UI rather than a new page.
+4. **Solar scenario upgrade:** actual hourly consumption profile replaces
+   the flat annual-production assumption when sizing solar.
+
+**Checklist answers:** Improves the recurring monthly bill-review workflow
+(measure: bills with a metered cross-check, and discrepancy dollars
+surfaced). Emits Action Center items + evidence on existing bills — no new
+surface. Reuses the utilities profile, Fuel Tracker connector pattern,
+Action Center, and provenance contracts. Deterministic (sum-difference over
+a period; no AI). Preview/undo inherited from the bill review queue.
+Single-book. Depends on: `src/lib/resilience/` utilities section, receipt
+evidence links, connections settings, BullMQ worker.
+
+**Effort:** M.
+
+---
+
 ## P2 - GnuCash XML Format: Full-Fidelity Round-Trip
 
 **Status:** Implemented 2026-08-11 (three waves). Requested 2026-08-04.
@@ -1519,6 +1580,54 @@ their source statements.
 ---
 
 # Correctness and reliability backlog
+
+## P1 - Deploy Pipeline: Dockhand Webhook Skips Image-Only Pushes
+
+**Status:** Open. Diagnosed 2026-08-11 when the Schedule AI deploy silently
+did not reach prod.
+
+Dockhand's git-stack webhook handler (verified by reading the deployed build
+on truenas) passes **no force flag** — it redeploys only when the git sync
+detects changed *files*. A push that changes only application code (compose
+file untouched) rebuilds the image, the webhook fires, Dockhand syncs, logs
+"No changes detected and force=false, skipping redeploy", and prod silently
+keeps the old image. It also races Dockhand's own git-sync cron: if the cron
+pulls the commit before the webhook arrives, the webhook sees nothing new
+even when the compose file DID change. Separately, the sync+deploy can
+exceed Cloudflare's 100s edge limit (observed 524 on the first webhook
+attempt, masked by the workflow's `--retry`).
+
+**Manual workaround** (byte-identical to what Dockhand runs; used for the
+2026-08-11 deploy): ssh to the truenas host and run
+`docker compose -p gnucash-web-prod -f /mnt/docker/volumes/dockhand/stacks/Truenas/gnucash-web-prod/docker-compose.prod.yml --env-file .env.dockhand up -d --remove-orphans --force-recreate`.
+
+**Fix options** (pick one, then prove it with a real push): upgrade Dockhand
+if a newer release supports forced webhook deploys; replace the webhook step
+with an SSH deploy step running the exact command above; or enable
+Dockhand's image-digest auto-update and demote the webhook to best-effort.
+Whichever lands, `deploy.yml` must **fail loudly when prod does not end up
+on the pushed revision** — compare the running container's
+`org.opencontainers.image.revision` label to `GITHUB_SHA` after deploy.
+
+**Effort:** S-M.
+
+---
+
+## P4 - Book Deletion Misses Bill-Attached Entries
+
+**Status:** Open. Found 2026-08-11 during the XML business-object work.
+
+`deleteOwnedBusinessEntitiesForBook()` deletes entries reached through
+invoices but not entries attached via `entries.bill` (vendor-bill line
+items), so deleting a book with vendor bills orphans those rows. The XML
+importer's overwrite-clearing path got the child-first ordering right
+(entries by invoice/bill/order attachment → invoices → orders → jobs →
+contacts → taxtables → billterms) and can serve as the reference. Add a
+regression test that book deletion leaves zero orphaned `entries` rows.
+
+**Effort:** S.
+
+---
 
 ## P1 - Book-Scope the Native Business Entities
 
