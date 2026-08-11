@@ -47,9 +47,10 @@ const FIXTURE = `<?xml version="1.0" encoding="utf-8" ?>
     </slot:value>
   </slot>
 </book:slots>
-<gnc:count-data cd:type="commodity">2</gnc:count-data>
+<gnc:count-data cd:type="commodity">3</gnc:count-data>
 <gnc:count-data cd:type="account">3</gnc:count-data>
 <gnc:count-data cd:type="transaction">1</gnc:count-data>
+<gnc:count-data cd:type="schedxaction">3</gnc:count-data>
 <gnc:count-data cd:type="budget">1</gnc:count-data>
 <gnc:commodity version="2.0.0">
   <cmdty:space>CURRENCY</cmdty:space>
@@ -72,6 +73,13 @@ const FIXTURE = `<?xml version="1.0" encoding="utf-8" ?>
       <slot:value type="string">AAPL.O</slot:value>
     </slot>
   </cmdty:slots>
+</gnc:commodity>
+<gnc:commodity version="2.0.0">
+  <cmdty:space>template</cmdty:space>
+  <cmdty:id>template</cmdty:id>
+  <cmdty:name>template</cmdty:name>
+  <cmdty:xcode>template</cmdty:xcode>
+  <cmdty:fraction>1</cmdty:fraction>
 </gnc:commodity>
 <gnc:account version="2.0.0">
   <act:name>Root Account</act:name>
@@ -201,6 +209,294 @@ const FIXTURE = `<?xml version="1.0" encoding="utf-8" ?>
     </trn:split>
   </trn:splits>
 </gnc:transaction>
+<gnc:template-transactions>
+  <gnc:account version="2.0.0">
+    <act:name>Template Root</act:name>
+    <act:id type="guid">tmplroot000000000000000000000001</act:id>
+    <act:type>ROOT</act:type>
+  </gnc:account>
+  <gnc:account version="2.0.0">
+    <act:name>sx1rent0000000000000000000000001</act:name>
+    <act:id type="guid">tmplacct100000000000000000000001</act:id>
+    <act:type>BANK</act:type>
+    <act:commodity>
+      <cmdty:space>template</cmdty:space>
+      <cmdty:id>template</cmdty:id>
+    </act:commodity>
+    <act:commodity-scu>1</act:commodity-scu>
+    <act:parent type="guid">tmplroot000000000000000000000001</act:parent>
+  </gnc:account>
+  <gnc:account version="2.0.0">
+    <act:name>sx2paycheck000000000000000000001</act:name>
+    <act:id type="guid">tmplacct200000000000000000000001</act:id>
+    <act:type>BANK</act:type>
+    <act:commodity>
+      <cmdty:space>template</cmdty:space>
+      <cmdty:id>template</cmdty:id>
+    </act:commodity>
+    <act:commodity-scu>1</act:commodity-scu>
+    <act:parent type="guid">tmplroot000000000000000000000001</act:parent>
+  </gnc:account>
+  <gnc:account version="2.0.0">
+    <act:name>sx3limited0000000000000000000001</act:name>
+    <act:id type="guid">tmplacct300000000000000000000001</act:id>
+    <act:type>BANK</act:type>
+    <act:commodity>
+      <cmdty:space>template</cmdty:space>
+      <cmdty:id>template</cmdty:id>
+    </act:commodity>
+    <act:commodity-scu>1</act:commodity-scu>
+    <act:parent type="guid">tmplroot000000000000000000000001</act:parent>
+  </gnc:account>
+  <gnc:transaction version="2.0.0">
+    <trn:id type="guid">tmpltxn1000000000000000000000001</trn:id>
+    <trn:currency>
+      <cmdty:space>CURRENCY</cmdty:space>
+      <cmdty:id>USD</cmdty:id>
+    </trn:currency>
+    <trn:date-posted>
+      <ts:date>2023-12-31 23:00:00 +0000</ts:date>
+    </trn:date-posted>
+    <trn:date-entered>
+      <ts:date>2023-12-31 23:00:00 +0000</ts:date>
+    </trn:date-entered>
+    <trn:description>Rent</trn:description>
+    <trn:splits>
+      <trn:split>
+        <split:id type="guid">tmplsp1a000000000000000000000001</split:id>
+        <split:reconciled-state>n</split:reconciled-state>
+        <split:value>0/100</split:value>
+        <split:quantity>0/1</split:quantity>
+        <split:account type="guid">tmplacct100000000000000000000001</split:account>
+        <split:slots>
+          <slot>
+            <slot:key>sched-xaction</slot:key>
+            <slot:value type="frame">
+              <slot>
+                <slot:key>account</slot:key>
+                <slot:value type="guid">acc00000000000000000000000000001</slot:value>
+              </slot>
+              <slot>
+                <slot:key>credit-formula</slot:key>
+                <slot:value type="string"></slot:value>
+              </slot>
+              <slot>
+                <slot:key>credit-numeric</slot:key>
+                <slot:value type="numeric">0/1</slot:value>
+              </slot>
+              <slot>
+                <slot:key>debit-formula</slot:key>
+                <slot:value type="string">1200</slot:value>
+              </slot>
+              <slot>
+                <slot:key>debit-numeric</slot:key>
+                <slot:value type="numeric">1200/1</slot:value>
+              </slot>
+            </slot:value>
+          </slot>
+        </split:slots>
+      </trn:split>
+      <trn:split>
+        <split:id type="guid">tmplsp1b000000000000000000000001</split:id>
+        <split:reconciled-state>n</split:reconciled-state>
+        <split:value>0/100</split:value>
+        <split:quantity>0/1</split:quantity>
+        <split:account type="guid">tmplacct100000000000000000000001</split:account>
+        <split:slots>
+          <slot>
+            <slot:key>sched-xaction</slot:key>
+            <slot:value type="frame">
+              <slot>
+                <slot:key>account</slot:key>
+                <slot:value type="guid">acc00000000000000000000000000002</slot:value>
+              </slot>
+              <slot>
+                <slot:key>credit-formula</slot:key>
+                <slot:value type="string">1200</slot:value>
+              </slot>
+              <slot>
+                <slot:key>credit-numeric</slot:key>
+                <slot:value type="numeric">1200/1</slot:value>
+              </slot>
+              <slot>
+                <slot:key>debit-numeric</slot:key>
+                <slot:value type="numeric">0/1</slot:value>
+              </slot>
+            </slot:value>
+          </slot>
+        </split:slots>
+      </trn:split>
+    </trn:splits>
+  </gnc:transaction>
+  <gnc:transaction version="2.0.0">
+    <trn:id type="guid">tmpltxn2000000000000000000000001</trn:id>
+    <trn:currency>
+      <cmdty:space>CURRENCY</cmdty:space>
+      <cmdty:id>USD</cmdty:id>
+    </trn:currency>
+    <trn:date-posted>
+      <ts:date>2023-12-31 23:00:00 +0000</ts:date>
+    </trn:date-posted>
+    <trn:date-entered>
+      <ts:date>2023-12-31 23:00:00 +0000</ts:date>
+    </trn:date-entered>
+    <trn:description>Paycheck</trn:description>
+    <trn:splits>
+      <trn:split>
+        <split:id type="guid">tmplsp2a000000000000000000000001</split:id>
+        <split:reconciled-state>n</split:reconciled-state>
+        <split:value>0/100</split:value>
+        <split:quantity>0/1</split:quantity>
+        <split:account type="guid">tmplacct200000000000000000000001</split:account>
+        <split:slots>
+          <slot>
+            <slot:key>sched-xaction</slot:key>
+            <slot:value type="frame">
+              <slot>
+                <slot:key>account</slot:key>
+                <slot:value type="guid">acc00000000000000000000000000001</slot:value>
+              </slot>
+              <slot>
+                <slot:key>credit-numeric</slot:key>
+                <slot:value type="numeric">0/1</slot:value>
+              </slot>
+              <slot>
+                <slot:key>debit-formula</slot:key>
+                <slot:value type="string">26.65</slot:value>
+              </slot>
+              <slot>
+                <slot:key>debit-numeric</slot:key>
+                <slot:value type="numeric">533/20</slot:value>
+              </slot>
+            </slot:value>
+          </slot>
+        </split:slots>
+      </trn:split>
+      <trn:split>
+        <split:id type="guid">tmplsp2b000000000000000000000001</split:id>
+        <split:reconciled-state>n</split:reconciled-state>
+        <split:value>0/100</split:value>
+        <split:quantity>0/1</split:quantity>
+        <split:account type="guid">tmplacct200000000000000000000001</split:account>
+        <split:slots>
+          <slot>
+            <slot:key>sched-xaction</slot:key>
+            <slot:value type="frame">
+              <slot>
+                <slot:key>account</slot:key>
+                <slot:value type="guid">acc00000000000000000000000000002</slot:value>
+              </slot>
+              <slot>
+                <slot:key>credit-formula</slot:key>
+                <slot:value type="string">26.65</slot:value>
+              </slot>
+              <slot>
+                <slot:key>credit-numeric</slot:key>
+                <slot:value type="numeric">533/20</slot:value>
+              </slot>
+              <slot>
+                <slot:key>debit-numeric</slot:key>
+                <slot:value type="numeric">0/1</slot:value>
+              </slot>
+            </slot:value>
+          </slot>
+        </split:slots>
+      </trn:split>
+    </trn:splits>
+  </gnc:transaction>
+</gnc:template-transactions>
+<gnc:schedxaction version="2.0.0">
+  <sx:id type="guid">sx1rent0000000000000000000000001</sx:id>
+  <sx:name>Rent</sx:name>
+  <sx:enabled>y</sx:enabled>
+  <sx:autoCreate>y</sx:autoCreate>
+  <sx:autoCreateNotify>n</sx:autoCreateNotify>
+  <sx:advanceCreateDays>3</sx:advanceCreateDays>
+  <sx:advanceRemindDays>5</sx:advanceRemindDays>
+  <sx:instanceCount>12</sx:instanceCount>
+  <sx:start>
+    <gdate>2024-01-01</gdate>
+  </sx:start>
+  <sx:last>
+    <gdate>2024-06-01</gdate>
+  </sx:last>
+  <sx:end>
+    <gdate>2025-12-31</gdate>
+  </sx:end>
+  <sx:templ-acct type="guid">tmplacct100000000000000000000001</sx:templ-acct>
+  <sx:schedule>
+    <gnc:recurrence version="1.0.0">
+      <recurrence:mult>1</recurrence:mult>
+      <recurrence:period_type>month</recurrence:period_type>
+      <recurrence:start>
+        <gdate>2024-01-01</gdate>
+      </recurrence:start>
+      <recurrence:weekend_adj>back</recurrence:weekend_adj>
+    </gnc:recurrence>
+  </sx:schedule>
+</gnc:schedxaction>
+<gnc:schedxaction version="2.0.0">
+  <sx:id type="guid">sx2paycheck000000000000000000001</sx:id>
+  <sx:name>Paycheck</sx:name>
+  <sx:enabled>y</sx:enabled>
+  <sx:autoCreate>n</sx:autoCreate>
+  <sx:autoCreateNotify>n</sx:autoCreateNotify>
+  <sx:advanceCreateDays>0</sx:advanceCreateDays>
+  <sx:advanceRemindDays>0</sx:advanceRemindDays>
+  <sx:instanceCount>29</sx:instanceCount>
+  <sx:start>
+    <gdate>2024-01-01</gdate>
+  </sx:start>
+  <sx:templ-acct type="guid">tmplacct200000000000000000000001</sx:templ-acct>
+  <sx:schedule>
+    <gnc:recurrence version="1.0.0">
+      <recurrence:mult>1</recurrence:mult>
+      <recurrence:period_type>month</recurrence:period_type>
+      <recurrence:start>
+        <gdate>2024-01-01</gdate>
+      </recurrence:start>
+    </gnc:recurrence>
+    <gnc:recurrence version="1.0.0">
+      <recurrence:mult>1</recurrence:mult>
+      <recurrence:period_type>month</recurrence:period_type>
+      <recurrence:start>
+        <gdate>2024-01-15</gdate>
+      </recurrence:start>
+    </gnc:recurrence>
+  </sx:schedule>
+  <sx:deferredInstance>
+    <sx:last>
+      <gdate>2024-05-15</gdate>
+    </sx:last>
+    <sx:rem-occur>0</sx:rem-occur>
+    <sx:instanceCount>10</sx:instanceCount>
+  </sx:deferredInstance>
+</gnc:schedxaction>
+<gnc:schedxaction version="2.0.0">
+  <sx:id type="guid">sx3limited0000000000000000000001</sx:id>
+  <sx:name>Limited</sx:name>
+  <sx:enabled>n</sx:enabled>
+  <sx:autoCreate>n</sx:autoCreate>
+  <sx:autoCreateNotify>n</sx:autoCreateNotify>
+  <sx:advanceCreateDays>0</sx:advanceCreateDays>
+  <sx:advanceRemindDays>0</sx:advanceRemindDays>
+  <sx:instanceCount>4</sx:instanceCount>
+  <sx:start>
+    <gdate>2024-02-01</gdate>
+  </sx:start>
+  <sx:num-occur>24</sx:num-occur>
+  <sx:rem-occur>20</sx:rem-occur>
+  <sx:templ-acct type="guid">tmplacct300000000000000000000001</sx:templ-acct>
+  <sx:schedule>
+    <gnc:recurrence version="1.0.0">
+      <recurrence:mult>2</recurrence:mult>
+      <recurrence:period_type>week</recurrence:period_type>
+      <recurrence:start>
+        <gdate>2024-02-01</gdate>
+      </recurrence:start>
+    </gnc:recurrence>
+  </sx:schedule>
+</gnc:schedxaction>
 <gnc:budget version="2.0.0">
   <bgt:id type="guid">6d9e7000000000000000000000000001</bgt:id>
   <bgt:name>Yearly</bgt:name>
@@ -321,6 +617,129 @@ describe('round-trip — parse', () => {
     ]);
   });
 
+  it('parses gnc:schedxaction with all sx:* fields and the end-condition trio', () => {
+    const data = parseFixture();
+    expect(data.schedxactions).toHaveLength(3);
+
+    const rent = data.schedxactions!.find((s) => s.name === 'Rent')!;
+    expect(rent).toEqual({
+      id: 'sx1rent0000000000000000000000001',
+      name: 'Rent',
+      enabled: true,
+      autoCreate: true,
+      autoCreateNotify: false,
+      advanceCreateDays: 3,
+      advanceRemindDays: 5,
+      instanceCount: 12,
+      start: '2024-01-01',
+      last: '2024-06-01',
+      end: '2025-12-31',
+      templateAccountId: 'tmplacct100000000000000000000001',
+      schedule: [
+        { mult: 1, periodType: 'month', periodStart: '2024-01-01', weekendAdjust: 'back' },
+      ],
+    });
+
+    // Composite (semi-monthly) SX: two recurrence rows, plus a deferred
+    // instance and no end condition at all.
+    const paycheck = data.schedxactions!.find((s) => s.name === 'Paycheck')!;
+    expect(paycheck.schedule).toEqual([
+      { mult: 1, periodType: 'month', periodStart: '2024-01-01' },
+      { mult: 1, periodType: 'month', periodStart: '2024-01-15' },
+    ]);
+    expect(paycheck.end).toBeUndefined();
+    expect(paycheck.numOccur).toBeUndefined();
+    expect(paycheck.deferredInstances).toEqual([
+      { last: '2024-05-15', remOccur: 0, instanceCount: 10 },
+    ]);
+
+    // Occurrence-count SX: num-occur/rem-occur, no end date, disabled.
+    const limited = data.schedxactions!.find((s) => s.name === 'Limited')!;
+    expect(limited.enabled).toBe(false);
+    expect(limited.numOccur).toBe(24);
+    expect(limited.remOccur).toBe(20);
+    expect(limited.end).toBeUndefined();
+    expect(limited.schedule).toEqual([
+      { mult: 2, periodType: 'week', periodStart: '2024-02-01' },
+    ]);
+  });
+
+  it('parses gnc:template-transactions with sched-xaction split frames', () => {
+    const data = parseFixture();
+    expect(data.templateAccounts).toHaveLength(4);
+
+    const root = data.templateAccounts!.find((a) => a.type === 'ROOT')!;
+    expect(root.id).toBe('tmplroot000000000000000000000001');
+    expect(root.name).toBe('Template Root');
+
+    const acct1 = data.templateAccounts!.find(
+      (a) => a.id === 'tmplacct100000000000000000000001',
+    )!;
+    expect(acct1.commodity).toEqual({ space: 'template', id: 'template' });
+    expect(acct1.commodityScu).toBe(1);
+    expect(acct1.parentId).toBe('tmplroot000000000000000000000001');
+
+    expect(data.templateTransactions).toHaveLength(2);
+    const rentTxn = data.templateTransactions!.find((t) => t.description === 'Rent')!;
+    expect(rentTxn.splits).toHaveLength(2);
+    const debitSplit = rentTxn.splits[0];
+    expect(debitSplit.value).toBe('0/100');
+    expect(debitSplit.slots).toEqual([
+      {
+        key: 'sched-xaction',
+        value: {
+          type: 'frame',
+          slots: [
+            { key: 'account', value: { type: 'guid', value: 'acc00000000000000000000000000001' } },
+            { key: 'credit-formula', value: { type: 'string', value: '' } },
+            { key: 'credit-numeric', value: { type: 'numeric', value: '0/1' } },
+            { key: 'debit-formula', value: { type: 'string', value: '1200' } },
+            { key: 'debit-numeric', value: { type: 'numeric', value: '1200/1' } },
+          ],
+        },
+      },
+    ]);
+
+    // The template namespace commodity is parsed like any other; the
+    // importer special-cases it (never created or priced).
+    expect(
+      data.commodities.find((c) => c.space === 'template' && c.id === 'template'),
+    ).toBeDefined();
+  });
+
+  it('records legacy sx:freqspec schedules as skipped instead of importing them', () => {
+    const legacy = `<?xml version="1.0" encoding="utf-8" ?>
+<gnc-v2>
+<gnc:book version="2.0.0">
+<book:id type="guid">b00k0000000000000000000000000002</book:id>
+<gnc:schedxaction version="1.0.0">
+  <sx:id type="guid">sxlegacy000000000000000000000001</sx:id>
+  <sx:name>Old Mortgage</sx:name>
+  <sx:autoCreate>n</sx:autoCreate>
+  <sx:autoCreateNotify>n</sx:autoCreateNotify>
+  <sx:advanceCreateDays>0</sx:advanceCreateDays>
+  <sx:advanceRemindDays>0</sx:advanceRemindDays>
+  <sx:instanceCount>1</sx:instanceCount>
+  <sx:start>
+    <gdate>2004-01-01</gdate>
+  </sx:start>
+  <sx:templ-acct type="guid">tmplacctold000000000000000000001</sx:templ-acct>
+  <sx:freqspec version="1.0.0">
+    <fs:monthly>
+      <fs:id type="guid">f5000000000000000000000000000001</fs:id>
+      <fs:ui_type>monthly</fs:ui_type>
+    </fs:monthly>
+  </sx:freqspec>
+</gnc:schedxaction>
+</gnc:book>
+</gnc-v2>`;
+    const data = parseGnuCashXml(Buffer.from(legacy, 'utf-8'));
+    expect(data.schedxactions).toEqual([]);
+    expect(data.skipped).toHaveLength(1);
+    expect(data.skipped![0]).toContain('Old Mortgage');
+    expect(data.skipped![0]).toContain('sx:freqspec');
+  });
+
   it('parses book:slots and partitions budget amount frames from passthrough slots', () => {
     const data = parseFixture();
     expect(data.book.slots).toHaveLength(2);
@@ -388,9 +807,54 @@ describe('round-trip — build and reparse', () => {
     expect(second.budgets[0].slots).toEqual(first.budgets[0].slots);
     expect(second.budgets[0].recurrence).toEqual(first.budgets[0].recurrence);
 
+    // Scheduled transactions: guids, flags, end trio, composite schedules,
+    // deferred instances, template account references.
+    expect(second.schedxactions).toEqual(first.schedxactions);
+
+    // Template transactions: accounts (guids, template commodity, parents)
+    // and transactions with their sched-xaction formula frames.
+    expect(second.templateAccounts).toEqual(first.templateAccounts);
+    expect(second.templateTransactions).toEqual(first.templateTransactions);
+
     // Nothing was recorded as skipped in either pass.
     expect(first.skipped).toEqual([]);
     expect(second.skipped).toEqual([]);
+  });
+
+  it('encodes sx booleans as y/n and honors the end-trio exclusivity on build', () => {
+    const data = parseFixture();
+    const xml = buildGnuCashXml(data);
+
+    expect(xml).toContain('<sx:enabled>y</sx:enabled>');
+    expect(xml).toContain('<sx:enabled>n</sx:enabled>');
+    expect(xml).toContain('<sx:autoCreate>y</sx:autoCreate>');
+
+    // Rent has an end date, Limited has num-occur/rem-occur — never both
+    // on the same element.
+    expect(xml).toContain('<sx:num-occur>24</sx:num-occur>');
+    expect(xml).toContain('<sx:rem-occur>20</sx:rem-occur>');
+    expect(xml).toContain('<sx:end>');
+
+    // An SX with BOTH an occurrence definition and an end date must emit
+    // only the occurrence pair (upstream writer semantics).
+    const limited = data.schedxactions!.find((s) => s.name === 'Limited')!;
+    limited.end = '2030-01-01';
+    const xml2 = buildGnuCashXml(data);
+    expect(xml2).not.toContain('2030-01-01');
+
+    // Deferred instances re-emit under sx:deferredInstance.
+    expect(xml).toContain('<sx:deferredInstance>');
+  });
+
+  it('omits gnc:template-transactions when the template root has no descendants', () => {
+    const data = parseFixture();
+    data.schedxactions = [];
+    data.templateTransactions = [];
+    data.templateAccounts = data.templateAccounts!.filter((a) => a.type === 'ROOT');
+    const xml = buildGnuCashXml(data);
+    expect(xml).not.toContain('gnc:template-transactions');
+    expect(xml).not.toContain('gnc:schedxaction');
+    expect(xml).not.toContain('cd:type="schedxaction"');
   });
 
   it('emits count-data for every emitted family, omitting zero counts', () => {
@@ -399,9 +863,10 @@ describe('round-trip — build and reparse', () => {
     const reparsed = parseGnuCashXml(Buffer.from(xml, 'utf-8'));
 
     expect(reparsed.countData).toEqual({
-      commodity: 2,
+      commodity: 3,
       account: 3,
       transaction: 1,
+      schedxaction: 3,
       budget: 1,
     });
     // No pricedb in the fixture → no price count element at all.
@@ -416,6 +881,9 @@ describe('round-trip — build and reparse', () => {
     expect(xml).toContain('<recurrence:weekend_adj>back</recurrence:weekend_adj>');
 
     delete data.budgets[0].recurrence!.weekendAdjust;
+    for (const sx of data.schedxactions!) {
+      for (const recurrence of sx.schedule) delete recurrence.weekendAdjust;
+    }
     xml = buildGnuCashXml(data);
     expect(xml).not.toContain('weekend_adj');
   });

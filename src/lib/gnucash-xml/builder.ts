@@ -8,7 +8,7 @@
 import { XMLBuilder } from 'fast-xml-parser';
 import { gzipSync } from 'fflate';
 import { buildSlotsContainer } from './slots';
-import type { GnuCashXmlData, GnuCashSlot } from './types';
+import type { GnuCashXmlData, GnuCashSlot, GnuCashRecurrence, GnuCashSchedXAction } from './types';
 
 /**
  * Build a GnuCash XML string from structured data.
@@ -79,7 +79,10 @@ function buildBook(data: GnuCashXmlData): Record<string, unknown> {
 
   // Count data for the book: one entry per element family actually emitted,
   // omitted when zero, in the upstream write_counts order
-  // (commodity, account, transaction, budget, price).
+  // (commodity, account, transaction, schedxaction, budget, price).
+  // Template accounts/transactions are NOT counted (upstream counts only
+  // the real book contents).
+  const schedxactions = data.schedxactions ?? [];
   const counts: Record<string, unknown>[] = [];
   if (data.commodities.length > 0) {
     counts.push({ '@_cd:type': 'commodity', '#text': String(data.commodities.length) });
@@ -89,6 +92,9 @@ function buildBook(data: GnuCashXmlData): Record<string, unknown> {
   }
   if (data.transactions.length > 0) {
     counts.push({ '@_cd:type': 'transaction', '#text': String(data.transactions.length) });
+  }
+  if (schedxactions.length > 0) {
+    counts.push({ '@_cd:type': 'schedxaction', '#text': String(schedxactions.length) });
   }
   if (data.budgets.length > 0) {
     counts.push({ '@_cd:type': 'budget', '#text': String(data.budgets.length) });
@@ -123,12 +129,98 @@ function buildBook(data: GnuCashXmlData): Record<string, unknown> {
     book['gnc:transaction'] = data.transactions.map(buildTransaction);
   }
 
+  // Template transactions — only when the template root has descendants
+  // (upstream write_template_transaction_data). The template root is
+  // included in the account list; the SX templates and their transactions
+  // follow in ordinary account/transaction serialization.
+  const templateAccounts = data.templateAccounts ?? [];
+  const templateTransactions = data.templateTransactions ?? [];
+  const hasTemplateDescendants = templateAccounts.some((a) => a.type !== 'ROOT');
+  if (hasTemplateDescendants) {
+    book['gnc:template-transactions'] = {
+      'gnc:account': templateAccounts.map(buildAccount),
+      ...(templateTransactions.length > 0
+        ? { 'gnc:transaction': templateTransactions.map(buildTransaction) }
+        : {}),
+    };
+  }
+
+  // Scheduled transactions
+  if (schedxactions.length > 0) {
+    book['gnc:schedxaction'] = schedxactions.map(buildSchedXAction);
+  }
+
   // Budgets
   if (data.budgets.length > 0) {
     book['gnc:budget'] = data.budgets.map(buildBudget);
   }
 
   return book;
+}
+
+/** y/n single-char boolean encoding used by all sx:* flags. */
+function yn(value: boolean): string {
+  return value ? 'y' : 'n';
+}
+
+/**
+ * Build a gnc:recurrence-shaped element (version 1.0.0). weekend_adj is
+ * only emitted when not "none" (2.2 compat), matching the upstream writer.
+ */
+function buildRecurrence(recurrence: GnuCashRecurrence): Record<string, unknown> {
+  return {
+    '@_version': '1.0.0',
+    'recurrence:mult': String(recurrence.mult),
+    'recurrence:period_type': recurrence.periodType,
+    'recurrence:start': {
+      'gdate': recurrence.periodStart,
+    },
+    ...(recurrence.weekendAdjust && recurrence.weekendAdjust !== 'none'
+      ? { 'recurrence:weekend_adj': recurrence.weekendAdjust }
+      : {}),
+  };
+}
+
+function buildSchedXAction(sx: GnuCashSchedXAction): Record<string, unknown> {
+  const result: Record<string, unknown> = {
+    '@_version': '2.0.0',
+    'sx:id': { '@_type': 'guid', '#text': sx.id },
+    'sx:name': sx.name,
+    'sx:enabled': yn(sx.enabled),
+    'sx:autoCreate': yn(sx.autoCreate),
+    'sx:autoCreateNotify': yn(sx.autoCreateNotify),
+    'sx:advanceCreateDays': String(sx.advanceCreateDays),
+    'sx:advanceRemindDays': String(sx.advanceRemindDays),
+    'sx:instanceCount': String(sx.instanceCount),
+    'sx:start': { gdate: sx.start },
+  };
+  if (sx.last) {
+    result['sx:last'] = { gdate: sx.last };
+  }
+  // End trio exclusivity: (num-occur + rem-occur) beats end; neither means
+  // no end condition at all (upstream gnc_schedXaction_dom_tree_create).
+  if (sx.numOccur !== undefined) {
+    result['sx:num-occur'] = String(sx.numOccur);
+    result['sx:rem-occur'] = String(sx.remOccur ?? sx.numOccur);
+  } else if (sx.end) {
+    result['sx:end'] = { gdate: sx.end };
+  }
+  result['sx:templ-acct'] = { '@_type': 'guid', '#text': sx.templateAccountId };
+  result['sx:schedule'] = {
+    'gnc:recurrence': sx.schedule.map(buildRecurrence),
+  };
+  if (sx.deferredInstances && sx.deferredInstances.length > 0) {
+    result['sx:deferredInstance'] = sx.deferredInstances.map((instance) => ({
+      ...(instance.last ? { 'sx:last': { gdate: instance.last } } : {}),
+      'sx:rem-occur': String(instance.remOccur ?? 0),
+      'sx:instanceCount': String(instance.instanceCount ?? 0),
+    }));
+  }
+  const slots = buildSlotsContainer(sx.slots);
+  if (slots) {
+    result['sx:slots'] = slots;
+  }
+  return result;
 }
 
 function buildCommodity(commodity: GnuCashXmlData['commodities'][0]): Record<string, unknown> {
@@ -306,17 +398,7 @@ function buildBudget(budget: GnuCashXmlData['budgets'][0]): Record<string, unkno
   // Budget recurrence (required by GnuCash desktop);
   // weekend_adj is only emitted when not "none" (2.2 compat).
   if (budget.recurrence) {
-    result['bgt:recurrence'] = {
-      '@_version': '1.0.0',
-      'recurrence:mult': String(budget.recurrence.mult),
-      'recurrence:period_type': budget.recurrence.periodType,
-      'recurrence:start': {
-        'gdate': budget.recurrence.periodStart,
-      },
-      ...(budget.recurrence.weekendAdjust && budget.recurrence.weekendAdjust !== 'none'
-        ? { 'recurrence:weekend_adj': budget.recurrence.weekendAdjust }
-        : {}),
-    };
+    result['bgt:recurrence'] = buildRecurrence(budget.recurrence);
   }
 
   // Build budget amounts as slots grouped by account, then append any

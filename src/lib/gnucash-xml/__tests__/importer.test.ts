@@ -107,8 +107,16 @@ const tx = {
     findMany: vi.fn(async () => budgetOwnershipRef.current),
   },
   recurrences: {
+    create: record('recurrences.create'),
     deleteMany: vi.fn(async (args: { where: unknown }) => {
       calls.push({ op: 'recurrences.deleteMany', data: args });
+      return { count: 0 };
+    }),
+  },
+  schedxactions: {
+    create: record('schedxactions.create'),
+    deleteMany: vi.fn(async (args: { where: unknown }) => {
+      calls.push({ op: 'schedxactions.deleteMany', data: args });
       return { count: 0 };
     }),
   },
@@ -403,6 +411,297 @@ describe('importGnuCashData — orphan budget slots', () => {
         book_guid: 'book-guid-0000000000000000000000',
       },
     });
+  });
+});
+
+/** minimalData plus a scheduled transaction with its template structure. */
+function sxData(): GnuCashXmlData {
+  const data = minimalData();
+  data.commodities.push({ space: 'template', id: 'template', fraction: 1 });
+  data.templateAccounts = [
+    { id: 'tmpl-root-0000000000000000000000', name: 'Template Root', type: 'ROOT' },
+    {
+      id: 'tmpl-acct-0000000000000000000001',
+      name: 'sx-rent-00000000000000000000000000',
+      type: 'BANK',
+      commodity: { space: 'template', id: 'template' },
+      commodityScu: 1,
+      parentId: 'tmpl-root-0000000000000000000000',
+    },
+  ];
+  data.templateTransactions = [
+    {
+      id: 'tmpl-txn-0000000000000000000001',
+      currency: { space: 'CURRENCY', id: 'USD' },
+      datePosted: '2023-12-31 23:00:00 +0000',
+      dateEntered: '2023-12-31 23:00:00 +0000',
+      description: 'Rent',
+      splits: [
+        {
+          id: 'tmpl-sp-a-000000000000000000001',
+          reconciledState: 'n',
+          value: '0/100',
+          quantity: '0/1',
+          accountId: 'tmpl-acct-0000000000000000000001',
+          slots: [
+            {
+              key: 'sched-xaction',
+              value: {
+                type: 'frame',
+                slots: [
+                  { key: 'account', value: { type: 'guid', value: 'acct-investments-00000000000000000' } },
+                  { key: 'credit-numeric', value: { type: 'numeric', value: '0/1' } },
+                  { key: 'debit-formula', value: { type: 'string', value: '1200' } },
+                  { key: 'debit-numeric', value: { type: 'numeric', value: '1200/1' } },
+                ],
+              },
+            },
+          ],
+        },
+        {
+          id: 'tmpl-sp-b-000000000000000000001',
+          reconciledState: 'n',
+          value: '0/100',
+          quantity: '0/1',
+          accountId: 'tmpl-acct-0000000000000000000001',
+          slots: [
+            {
+              key: 'sched-xaction',
+              value: {
+                type: 'frame',
+                slots: [
+                  { key: 'account', value: { type: 'guid', value: 'acct-aapl-000000000000000000000000' } },
+                  { key: 'credit-formula', value: { type: 'string', value: '1200' } },
+                  { key: 'credit-numeric', value: { type: 'numeric', value: '1200/1' } },
+                  { key: 'debit-numeric', value: { type: 'numeric', value: '0/1' } },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    },
+  ];
+  data.schedxactions = [
+    {
+      id: 'sx-rent-00000000000000000000000000',
+      name: 'Rent',
+      enabled: true,
+      autoCreate: true,
+      autoCreateNotify: false,
+      advanceCreateDays: 3,
+      advanceRemindDays: 5,
+      instanceCount: 12,
+      start: '2024-01-01',
+      last: '2024-06-01',
+      end: '2025-12-31',
+      templateAccountId: 'tmpl-acct-0000000000000000000001',
+      schedule: [
+        { mult: 1, periodType: 'month', periodStart: '2024-01-01', weekendAdjust: 'back' },
+        { mult: 1, periodType: 'month', periodStart: '2024-01-15' },
+      ],
+      deferredInstances: [{ last: '2024-05-01', remOccur: 0, instanceCount: 8 }],
+    },
+  ];
+  return data;
+}
+
+describe('importGnuCashData — scheduled transactions and templates', () => {
+  beforeEach(() => {
+    calls.length = 0;
+    vi.clearAllMocks();
+    tx.commodities.findMany.mockResolvedValue([]);
+    existingBookRef.current = null;
+    collidingBudgetsRef.current = [];
+    budgetOwnershipRef.current = [];
+  });
+
+  it('creates a DISTINCT template root and points books.root_template_guid at it', async () => {
+    await importGnuCashData(sxData(), 'Test Book');
+
+    const bookCreate = calls.find((c) => c.op === 'books.create')!.data as {
+      root_account_guid: string;
+      root_template_guid: string;
+    };
+    expect(bookCreate.root_template_guid).toBe('tmpl-root-0000000000000000000000');
+    expect(bookCreate.root_template_guid).not.toBe(bookCreate.root_account_guid);
+
+    const accountCreates = calls
+      .filter((c) => c.op === 'accounts.create')
+      .map((c) => c.data as Record<string, unknown>);
+    const templateRoot = accountCreates.find(
+      (a) => a.guid === 'tmpl-root-0000000000000000000000',
+    );
+    expect(templateRoot).toMatchObject({
+      account_type: 'ROOT',
+      name: 'Template Root',
+      parent_guid: null,
+    });
+  });
+
+  it('creates a template root even when the XML has no template-transactions', async () => {
+    await importGnuCashData(minimalData(), 'Test Book');
+
+    const bookCreate = calls.find((c) => c.op === 'books.create')!.data as {
+      root_account_guid: string;
+      root_template_guid: string;
+    };
+    expect(bookCreate.root_template_guid).not.toBe(bookCreate.root_account_guid);
+    const accountCreates = calls
+      .filter((c) => c.op === 'accounts.create')
+      .map((c) => c.data as Record<string, unknown>);
+    expect(
+      accountCreates.find((a) => a.guid === bookCreate.root_template_guid),
+    ).toMatchObject({ account_type: 'ROOT', name: 'Template Root' });
+  });
+
+  it('imports template accounts/transactions with preserved guids and slot frames', async () => {
+    const result = await importGnuCashData(sxData(), 'Test Book');
+
+    // Template child account preserved, parented under the template root,
+    // never on the template commodity (no template commodity is created).
+    const accountCreates = calls
+      .filter((c) => c.op === 'accounts.create')
+      .map((c) => c.data as Record<string, unknown>);
+    const templateChild = accountCreates.find(
+      (a) => a.guid === 'tmpl-acct-0000000000000000000001',
+    )!;
+    expect(templateChild.parent_guid).toBe('tmpl-root-0000000000000000000000');
+    expect(templateChild.commodity_scu).toBe(1);
+
+    const commodityCreates = calls
+      .filter((c) => c.op === 'commodities.create')
+      .map((c) => c.data as { namespace: string });
+    expect(commodityCreates.some((c) => c.namespace === 'template')).toBe(false);
+
+    // Template transaction and splits ride the ordinary batched inserts.
+    const txnRows = calls
+      .filter((c) => c.op === 'transactions.createMany')
+      .flatMap((c) => c.data as Array<{ guid: string }>);
+    expect(txnRows.some((t) => t.guid === 'tmpl-txn-0000000000000000000001')).toBe(true);
+    const splitRows = calls
+      .filter((c) => c.op === 'splits.createMany')
+      .flatMap((c) => c.data as Array<{ guid: string; account_guid: string }>);
+    expect(
+      splitRows.find((s) => s.guid === 'tmpl-sp-a-000000000000000000001')?.account_guid,
+    ).toBe('tmpl-acct-0000000000000000000001');
+
+    // …but are not counted as book contents.
+    expect(result.transactions).toBe(1);
+    expect(result.accounts).toBe(2);
+
+    // The sched-xaction frame lands in native slots-table layout: a frame
+    // row on the split plus path-named children under the frame guid.
+    const slotRows = calls
+      .filter((c) => c.op === 'slots.createMany')
+      .flatMap((c) => c.data as Array<Record<string, unknown>>);
+    const frameRow = slotRows.find(
+      (r) => r.obj_guid === 'tmpl-sp-a-000000000000000000001' && r.name === 'sched-xaction',
+    )!;
+    expect(frameRow.slot_type).toBe(9);
+    const frameChildren = slotRows.filter((r) => r.obj_guid === frameRow.guid_val);
+    expect(frameChildren).toContainEqual(
+      expect.objectContaining({
+        name: 'sched-xaction/account',
+        slot_type: 5,
+        guid_val: 'acct-investments-00000000000000000',
+      }),
+    );
+    expect(frameChildren).toContainEqual(
+      expect.objectContaining({
+        name: 'sched-xaction/debit-numeric',
+        slot_type: 3,
+        numeric_val_num: 1200n,
+        numeric_val_denom: 1n,
+      }),
+    );
+  });
+
+  it('inserts schedxactions with one recurrences row per gnc:recurrence', async () => {
+    const result = await importGnuCashData(sxData(), 'Test Book');
+
+    const sxCreate = calls.find((c) => c.op === 'schedxactions.create')!
+      .data as Record<string, unknown>;
+    expect(sxCreate).toMatchObject({
+      guid: 'sx-rent-00000000000000000000000000',
+      name: 'Rent',
+      enabled: 1,
+      auto_create: 1,
+      auto_notify: 0,
+      adv_creation: 3,
+      adv_notify: 5,
+      instance_count: 12,
+      num_occur: 0,
+      rem_occur: 0,
+      template_act_guid: 'tmpl-acct-0000000000000000000001',
+    });
+    expect(sxCreate.start_date).toEqual(new Date('2024-01-01T00:00:00.000Z'));
+    expect(sxCreate.end_date).toEqual(new Date('2025-12-31T00:00:00.000Z'));
+    expect(sxCreate.last_occur).toEqual(new Date('2024-06-01T00:00:00.000Z'));
+
+    // Composite schedule: BOTH recurrence rows inserted with obj_guid = sx.
+    const recurrenceCreates = calls
+      .filter((c) => c.op === 'recurrences.create')
+      .map((c) => c.data as Record<string, unknown>);
+    expect(recurrenceCreates).toHaveLength(2);
+    expect(recurrenceCreates[0]).toMatchObject({
+      obj_guid: 'sx-rent-00000000000000000000000000',
+      recurrence_mult: 1,
+      recurrence_period_type: 'month',
+      recurrence_weekend_adjust: 'back',
+    });
+    expect(recurrenceCreates[1]).toMatchObject({
+      obj_guid: 'sx-rent-00000000000000000000000000',
+      recurrence_weekend_adjust: 'none',
+    });
+
+    expect(result.schedxactions).toBe(1);
+    // Deferred instances have no SQL representation — recorded as skipped.
+    expect(result.skipped.some((s) => s.includes('deferred instance'))).toBe(true);
+  });
+
+  it('uses num_occur/rem_occur when the SX has an occurrence definition', async () => {
+    const data = sxData();
+    delete data.schedxactions![0].end;
+    data.schedxactions![0].numOccur = 24;
+    data.schedxactions![0].remOccur = 20;
+
+    await importGnuCashData(data, 'Test Book');
+
+    const sxCreate = calls.find((c) => c.op === 'schedxactions.create')!
+      .data as Record<string, unknown>;
+    expect(sxCreate).toMatchObject({ num_occur: 24, rem_occur: 20, end_date: null });
+  });
+
+  it('skips an SX whose template account is missing, with a warning', async () => {
+    const data = sxData();
+    data.schedxactions![0].templateAccountId = 'nonexistent-template-account-0000';
+
+    const result = await importGnuCashData(data, 'Test Book');
+
+    expect(calls.some((c) => c.op === 'schedxactions.create')).toBe(false);
+    expect(result.schedxactions).toBe(0);
+    expect(result.warnings.some((w) => w.includes('template account'))).toBe(true);
+  });
+
+  it('clears schedxactions, recurrences, and template rows on overwrite', async () => {
+    existingBookRef.current = {
+      root_account_guid: 'old-root-guid-000000000000000000',
+    };
+
+    await importGnuCashData(sxData(), 'Test Book', { overwrite: true });
+
+    const sxDeletes = calls.filter((c) => c.op === 'schedxactions.deleteMany');
+    expect(sxDeletes).toHaveLength(1);
+    const recurrenceDeletes = calls
+      .filter((c) => c.op === 'recurrences.deleteMany')
+      .map((c) => (c.data as { where: { obj_guid: { in: string[] } } }).where.obj_guid.in);
+    expect(recurrenceDeletes).toContainEqual(['sx-rent-00000000000000000000000000']);
+
+    // Template transactions collide like ordinary ones.
+    const txnDelete = calls.find((c) => c.op === 'transactions.deleteMany')!
+      .data as { where: { guid: { in: string[] } } };
+    expect(txnDelete.where.guid.in).toContain('tmpl-txn-0000000000000000000001');
   });
 });
 

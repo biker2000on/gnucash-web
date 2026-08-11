@@ -20,6 +20,9 @@ import type {
   GnuCashBudgetAmount,
   GnuCashLot,
   GnuCashSlot,
+  GnuCashRecurrence,
+  GnuCashSchedXAction,
+  GnuCashSxDeferredInstance,
 } from './types';
 
 /**
@@ -144,6 +147,21 @@ export function parseGnuCashXml(data: Buffer | Uint8Array): GnuCashXmlData {
   // Parse budgets
   const budgets = parseBudgets(bookElement, skipped);
 
+  // Parse template transactions (accounts + transactions under
+  // gnc:template-transactions) — plain account/transaction serialization.
+  const templateContainer = bookElement['gnc:template-transactions'] as
+    | Record<string, unknown>
+    | undefined;
+  const templateAccounts = templateContainer
+    ? parseAccounts(templateContainer, skipped)
+    : [];
+  const templateTransactions = templateContainer
+    ? parseTransactions(templateContainer, skipped)
+    : [];
+
+  // Parse scheduled transactions
+  const schedxactions = parseSchedXActions(bookElement, skipped);
+
   return {
     book,
     commodities,
@@ -151,6 +169,9 @@ export function parseGnuCashXml(data: Buffer | Uint8Array): GnuCashXmlData {
     accounts,
     transactions,
     budgets,
+    schedxactions,
+    templateAccounts,
+    templateTransactions,
     countData,
     skipped,
   };
@@ -474,23 +495,7 @@ function parseBudgets(
     //   <recurrence:start><gdate>2014-01-01</gdate></recurrence:start>
     // Without it, budgets import with no period calendar (start dates,
     // current-budget detection, and seasonal estimates all degrade).
-    let recurrence: GnuCashBudget['recurrence'];
-    const recElement = obj['bgt:recurrence'] as Record<string, unknown> | undefined;
-    if (recElement && typeof recElement === 'object') {
-      const startEl = recElement['recurrence:start'] as Record<string, unknown> | undefined;
-      const periodStart = startEl ? extractText(startEl['gdate']) : '';
-      const periodType = extractText(recElement['recurrence:period_type']);
-      if (/^\d{4}-\d{2}-\d{2}$/.test(periodStart) && periodType) {
-        // recurrence:weekend_adj is only written when not "none".
-        const weekendAdjust = extractText(recElement['recurrence:weekend_adj']);
-        recurrence = {
-          mult: parseInt(extractText(recElement['recurrence:mult']) || '1', 10) || 1,
-          periodType,
-          periodStart,
-          ...(weekendAdjust && weekendAdjust !== 'none' ? { weekendAdjust } : {}),
-        };
-      }
-    }
+    const recurrence = parseRecurrenceElement(obj['bgt:recurrence']);
 
     // Parse bgt:slots via the generic codec, then partition amount frames
     // (keyed by account guid, children keyed by period number with numeric
@@ -530,4 +535,134 @@ function parseBudgets(
       ...(passthroughSlots.length > 0 ? { slots: passthroughSlots } : {}),
     };
   });
+}
+
+/**
+ * Parse a gnc:recurrence-shaped element (used by bgt:recurrence and the
+ * gnc:recurrence children of sx:schedule). Returns undefined when the
+ * element is missing or lacks a valid start/period_type.
+ */
+function parseRecurrenceElement(raw: unknown): GnuCashRecurrence | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const recElement = raw as Record<string, unknown>;
+  const startEl = recElement['recurrence:start'] as Record<string, unknown> | undefined;
+  const periodStart = startEl ? extractText(startEl['gdate']) : '';
+  const periodType = extractText(recElement['recurrence:period_type']);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(periodStart) || !periodType) return undefined;
+  // recurrence:weekend_adj is only written when not "none".
+  const weekendAdjust = extractText(recElement['recurrence:weekend_adj']);
+  return {
+    mult: parseInt(extractText(recElement['recurrence:mult']) || '1', 10) || 1,
+    periodType,
+    periodStart,
+    ...(weekendAdjust && weekendAdjust !== 'none' ? { weekendAdjust } : {}),
+  };
+}
+
+/** Extract a gdate child ("<gdate>YYYY-MM-DD</gdate>") as its date string. */
+function parseGdateElement(raw: unknown): string {
+  if (!raw || typeof raw !== 'object') return '';
+  return extractText((raw as Record<string, unknown>)['gdate']);
+}
+
+/** Parse a y/n single-char boolean element ("y" → true). */
+function parseYn(raw: unknown, defaultValue: boolean): boolean {
+  const text = extractText(raw);
+  if (text !== 'y' && text !== 'n') return defaultValue;
+  return text === 'y';
+}
+
+/** Parse an integer element, returning the default when absent/invalid. */
+function parseIntElement(raw: unknown, defaultValue: number): number {
+  const parsed = parseInt(extractText(raw), 10);
+  return Number.isNaN(parsed) ? defaultValue : parsed;
+}
+
+function parseSchedXActions(
+  bookElement: Record<string, unknown>,
+  skipped: string[],
+): GnuCashSchedXAction[] {
+  const rawSxList = ensureArray(bookElement['gnc:schedxaction'] as unknown);
+  const result: GnuCashSchedXAction[] = [];
+
+  for (const raw of rawSxList) {
+    if (!raw || typeof raw !== 'object') continue;
+    const obj = raw as Record<string, unknown>;
+    const id = extractText(obj['sx:id']);
+    const name = String(obj['sx:name'] ?? '');
+
+    // Legacy v1 schedxactions (GnuCash <2.2) express their schedule as
+    // sx:freqspec. Upstream converts freqspecs to recurrences on load; we
+    // record-as-skipped instead of attempting a conversion.
+    if (obj['sx:freqspec'] !== undefined) {
+      skipped.push(
+        `Scheduled transaction "${name || id}" uses the legacy sx:freqspec ` +
+          'schedule (GnuCash 1.x/2.0 file) and was not imported — re-save the ' +
+          'book with a current GnuCash version to convert it to recurrences',
+      );
+      continue;
+    }
+
+    // sx:schedule — container of one-or-more gnc:recurrence.
+    const scheduleContainer = obj['sx:schedule'] as Record<string, unknown> | undefined;
+    const schedule: GnuCashRecurrence[] = [];
+    if (scheduleContainer && typeof scheduleContainer === 'object') {
+      for (const recRaw of ensureArray(scheduleContainer['gnc:recurrence'] as unknown)) {
+        const rec = parseRecurrenceElement(recRaw);
+        if (rec) schedule.push(rec);
+      }
+    }
+
+    // sx:deferredInstance — repeatable compound (sx:last?, sx:rem-occur,
+    // sx:instanceCount).
+    const deferredInstances: GnuCashSxDeferredInstance[] = [];
+    for (const defRaw of ensureArray(obj['sx:deferredInstance'] as unknown)) {
+      if (!defRaw || typeof defRaw !== 'object') continue;
+      const defObj = defRaw as Record<string, unknown>;
+      const last = parseGdateElement(defObj['sx:last']);
+      deferredInstances.push({
+        ...(last ? { last } : {}),
+        ...(defObj['sx:rem-occur'] !== undefined
+          ? { remOccur: parseIntElement(defObj['sx:rem-occur'], 0) }
+          : {}),
+        ...(defObj['sx:instanceCount'] !== undefined
+          ? { instanceCount: parseIntElement(defObj['sx:instanceCount'], 0) }
+          : {}),
+      });
+    }
+
+    const last = parseGdateElement(obj['sx:last']);
+    const end = parseGdateElement(obj['sx:end']);
+    const hasNumOccur = obj['sx:num-occur'] !== undefined;
+    const slots = parseSlotsContainer(obj['sx:slots'], skipped, `schedxaction ${id}`);
+
+    result.push({
+      id,
+      name,
+      // sx:enabled is optional in the parser; upstream defaults to enabled.
+      enabled: parseYn(obj['sx:enabled'], true),
+      autoCreate: parseYn(obj['sx:autoCreate'], false),
+      autoCreateNotify: parseYn(obj['sx:autoCreateNotify'], false),
+      advanceCreateDays: parseIntElement(obj['sx:advanceCreateDays'], 0),
+      advanceRemindDays: parseIntElement(obj['sx:advanceRemindDays'], 0),
+      instanceCount: parseIntElement(obj['sx:instanceCount'], 0),
+      start: parseGdateElement(obj['sx:start']),
+      ...(last ? { last } : {}),
+      // End trio: (num-occur + rem-occur) XOR end XOR neither.
+      ...(hasNumOccur
+        ? {
+            numOccur: parseIntElement(obj['sx:num-occur'], 0),
+            remOccur: parseIntElement(obj['sx:rem-occur'], 0),
+          }
+        : end
+          ? { end }
+          : {}),
+      templateAccountId: extractText(obj['sx:templ-acct']),
+      schedule,
+      ...(deferredInstances.length > 0 ? { deferredInstances } : {}),
+      ...(slots.length > 0 ? { slots } : {}),
+    });
+  }
+
+  return result;
 }

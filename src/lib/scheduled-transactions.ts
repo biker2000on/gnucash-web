@@ -70,6 +70,18 @@ export async function resolveTemplateSplits(
  * of 4 queries PER scheduled transaction. Returns a map keyed by the input
  * template root guid; every requested guid is present (empty array when the
  * template has no resolvable splits).
+ *
+ * Two storage layouts are supported:
+ * - App layout (scheduled-tx-create): one child account per split under the
+ *   SX's template account, each carrying an account-owned `account` slot
+ *   (slot_type 4, guid_val = real account) with the signed amount in the
+ *   split value. Tried first; unchanged behavior.
+ * - Native GnuCash layout (SQL backend / XML importer): the SX's template
+ *   account holds the splits DIRECTLY (no children), and each split carries
+ *   a split-owned `sched-xaction` KVP frame — `sched-xaction/account`
+ *   (guid), `credit-numeric`/`debit-numeric` (numeric), and the formula
+ *   strings. Used as a fallback for any template account the app layout
+ *   resolved nothing for.
  */
 export async function resolveTemplateSplitsBatch(
   templateActGuids: string[],
@@ -86,62 +98,170 @@ export async function resolveTemplateSplitsBatch(
     select: { guid: true, name: true, parent_guid: true },
   });
 
-  if (templateAccounts.length === 0) return result;
+  if (templateAccounts.length > 0) {
+    const templateGuids = templateAccounts.map(a => a.guid);
+    const rootByTemplate = new Map<string, string>();
+    for (const a of templateAccounts) {
+      if (a.parent_guid) rootByTemplate.set(a.guid, a.parent_guid);
+    }
 
-  const templateGuids = templateAccounts.map(a => a.guid);
-  const rootByTemplate = new Map<string, string>();
-  for (const a of templateAccounts) {
-    if (a.parent_guid) rootByTemplate.set(a.guid, a.parent_guid);
-  }
-
-  // Step 2: Find splits for transactions referencing template accounts
-  const splits = await client.splits.findMany({
-    where: { account_guid: { in: templateGuids } },
-    select: { account_guid: true, value_num: true, value_denom: true },
-  });
-
-  // Step 3: Resolve real account GUIDs from slots
-  const slots = await client.slots.findMany({
-    where: {
-      obj_guid: { in: templateGuids },
-      slot_type: 4,
-      name: 'account',
-    },
-    select: { obj_guid: true, guid_val: true },
-  });
-
-  const templateToReal = new Map<string, string>();
-  for (const slot of slots) {
-    if (slot.guid_val) templateToReal.set(slot.obj_guid, slot.guid_val);
-  }
-
-  // Step 4: Look up real account names
-  const realGuids = [...new Set(
-    slots.map(s => s.guid_val).filter((g): g is string => g !== null),
-  )];
-  const accountNames = new Map<string, string>();
-
-  if (realGuids.length > 0) {
-    const accounts = await client.accounts.findMany({
-      where: { guid: { in: realGuids } },
-      select: { guid: true, name: true },
+    // Step 2: Find splits for transactions referencing template accounts
+    const splits = await client.splits.findMany({
+      where: { account_guid: { in: templateGuids } },
+      select: { account_guid: true, value_num: true, value_denom: true },
     });
-    for (const acc of accounts) {
-      accountNames.set(acc.guid, acc.name);
+
+    // Step 3: Resolve real account GUIDs from slots
+    const slots = await client.slots.findMany({
+      where: {
+        obj_guid: { in: templateGuids },
+        slot_type: 4,
+        name: 'account',
+      },
+      select: { obj_guid: true, guid_val: true },
+    });
+
+    const templateToReal = new Map<string, string>();
+    for (const slot of slots) {
+      if (slot.guid_val) templateToReal.set(slot.obj_guid, slot.guid_val);
+    }
+
+    // Step 4: Look up real account names
+    const realGuids = [...new Set(
+      slots.map(s => s.guid_val).filter((g): g is string => g !== null),
+    )];
+    const accountNames = new Map<string, string>();
+
+    if (realGuids.length > 0) {
+      const accounts = await client.accounts.findMany({
+        where: { guid: { in: realGuids } },
+        select: { guid: true, name: true },
+      });
+      for (const acc of accounts) {
+        accountNames.set(acc.guid, acc.name);
+      }
+    }
+
+    // Step 5: Combine results, grouped by template root
+    for (const split of splits) {
+      const realGuid = templateToReal.get(split.account_guid);
+      if (!realGuid) continue;
+      const rootGuid = rootByTemplate.get(split.account_guid);
+      if (!rootGuid) continue;
+
+      const amount = parseFloat(toDecimal(split.value_num, split.value_denom));
+      result.get(rootGuid)!.push({
+        accountGuid: realGuid,
+        accountName: accountNames.get(realGuid) || 'Unknown',
+        amount,
+        templateAccountGuid: split.account_guid,
+      });
     }
   }
 
-  // Step 5: Combine results, grouped by template root
-  for (const split of splits) {
-    const realGuid = templateToReal.get(split.account_guid);
-    if (!realGuid) continue;
-    const rootGuid = rootByTemplate.get(split.account_guid);
-    if (!rootGuid) continue;
+  // Native-layout fallback for template accounts the app layout resolved
+  // nothing for (GnuCash desktop/SQL books and XML-imported books store the
+  // splits directly on the template account with split-owned KVP frames).
+  const flatRoots = uniqueRoots.filter(g => result.get(g)!.length === 0);
+  if (flatRoots.length === 0) return result;
 
-    const amount = parseFloat(toDecimal(split.value_num, split.value_denom));
-    result.get(rootGuid)!.push({
+  const directSplits = await client.splits.findMany({
+    where: { account_guid: { in: flatRoots } },
+    select: { guid: true, account_guid: true, value_num: true, value_denom: true },
+  });
+  if (directSplits.length === 0) return result;
+
+  // The frame row on each split carries the KVP instance guid in guid_val;
+  // the frame's children live under that guid with path-prefixed names.
+  const frameRows = await client.slots.findMany({
+    where: {
+      obj_guid: { in: directSplits.map(s => s.guid) },
+      name: 'sched-xaction',
+      slot_type: 9,
+    },
+    select: { obj_guid: true, guid_val: true },
+  });
+  const frameGuidBySplit = new Map<string, string>();
+  for (const row of frameRows) {
+    if (row.guid_val) frameGuidBySplit.set(row.obj_guid, row.guid_val);
+  }
+
+  const frameChildren = frameGuidBySplit.size > 0
+    ? await client.slots.findMany({
+        where: { obj_guid: { in: [...frameGuidBySplit.values()] } },
+        select: {
+          obj_guid: true,
+          name: true,
+          slot_type: true,
+          guid_val: true,
+          string_val: true,
+          numeric_val_num: true,
+          numeric_val_denom: true,
+        },
+      })
+    : [];
+  type FrameChild = (typeof frameChildren)[number];
+  const childrenByFrame = new Map<string, FrameChild[]>();
+  for (const row of frameChildren) {
+    const rows = childrenByFrame.get(row.obj_guid) ?? [];
+    rows.push(row);
+    childrenByFrame.set(row.obj_guid, rows);
+  }
+
+  const nativeRealGuids = [...new Set(
+    frameChildren
+      .filter(row => row.name === 'sched-xaction/account')
+      .map(row => row.guid_val)
+      .filter((g): g is string => g !== null),
+  )];
+  const nativeAccountNames = new Map<string, string>();
+  if (nativeRealGuids.length > 0) {
+    const accounts = await client.accounts.findMany({
+      where: { guid: { in: nativeRealGuids } },
+      select: { guid: true, name: true },
+    });
+    for (const acc of accounts) {
+      nativeAccountNames.set(acc.guid, acc.name);
+    }
+  }
+
+  const numericOf = (row: FrameChild | undefined): number =>
+    row ? parseFloat(toDecimal(row.numeric_val_num ?? 0n, row.numeric_val_denom ?? 1n)) : 0;
+  // Formulas are only consulted when the numerics are absent (pre-2.6
+  // files), and only when they are plain numbers — formulas with variables
+  // are legitimately unresolvable to a fixed amount and yield 0.
+  const plainFormulaOf = (row: FrameChild | undefined): number => {
+    const formula = row?.string_val?.trim();
+    if (!formula || !/^-?\d+([.,]\d+)?$/.test(formula)) return 0;
+    return parseFloat(formula.replace(',', '.'));
+  };
+
+  for (const split of directSplits) {
+    const frameGuid = frameGuidBySplit.get(split.guid);
+    if (!frameGuid) continue;
+    const children = childrenByFrame.get(frameGuid) ?? [];
+    const child = (suffix: string) =>
+      children.find(row => row.name === `sched-xaction/${suffix}`);
+    const realGuid = child('account')?.guid_val;
+    if (!realGuid) continue;
+
+    // Native template splits carry zero value; the amount lives in the
+    // numerics (debit positive, credit negative — verified against
+    // GnuCash-created schedules).
+    let amount = parseFloat(toDecimal(split.value_num, split.value_denom));
+    if (amount === 0) {
+      const debitNumeric = child('debit-numeric');
+      const creditNumeric = child('credit-numeric');
+      if (debitNumeric || creditNumeric) {
+        amount = numericOf(debitNumeric) - numericOf(creditNumeric);
+      } else {
+        amount = plainFormulaOf(child('debit-formula')) - plainFormulaOf(child('credit-formula'));
+      }
+    }
+
+    result.get(split.account_guid)!.push({
       accountGuid: realGuid,
-      accountName: accountNames.get(realGuid) || 'Unknown',
+      accountName: nativeAccountNames.get(realGuid) || 'Unknown',
       amount,
       templateAccountGuid: split.account_guid,
     });

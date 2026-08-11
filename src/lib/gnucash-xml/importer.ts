@@ -130,9 +130,15 @@ async function deleteSlotsRecursive(tx: any, objGuids: string[]) {
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function clearCollisionRows(tx: any, data: GnuCashXmlData, bookGuid: string) {
-  const transactionGuids = data.transactions.map((t) => t.id).filter(Boolean);
+  // Template transactions collide exactly like ordinary transactions (they
+  // share the transactions/splits tables), so clear them in the same pass.
+  const transactionGuids = [
+    ...data.transactions.map((t) => t.id),
+    ...(data.templateTransactions ?? []).map((t) => t.id),
+  ].filter(Boolean);
   const budgetGuids = data.budgets.map((b) => b.id).filter(Boolean);
   const priceGuids = data.pricedb.map((p) => p.id).filter((g): g is string => Boolean(g));
+  const sxGuids = (data.schedxactions ?? []).map((s) => s.id).filter(Boolean);
 
   // Validate every native budget collision before deleting ANY rows. An
   // overwrite may replace a budget only when its immutable owner is the same
@@ -188,6 +194,14 @@ async function clearCollisionRows(tx: any, data: GnuCashXmlData, bookGuid: strin
     await tx.budgets.deleteMany({ where: { guid: { in: budgetGuids } } });
   }
 
+  // Scheduled transactions — recurrences (obj_guid = sx guid) and sx:slots
+  // rows first, then the schedxactions rows themselves.
+  if (sxGuids.length) {
+    await deleteSlotsRecursive(tx, sxGuids);
+    await tx.recurrences.deleteMany({ where: { obj_guid: { in: sxGuids } } });
+    await tx.schedxactions.deleteMany({ where: { guid: { in: sxGuids } } });
+  }
+
   // Transactions from the XML — splits cascade via FK onDelete: Cascade.
   // Non-XML transactions (e.g. SimpleFin imports) are NOT touched; their
   // splits still reference accounts that will be upserted (not deleted),
@@ -220,7 +234,11 @@ async function clearCollisionRows(tx: any, data: GnuCashXmlData, bookGuid: strin
   // permission grants all stay intact. Their slot frames ARE replaced:
   // the incoming XML carries the authoritative KVP for these objects and
   // re-inserting without clearing would duplicate every slot row.
-  const accountGuids = data.accounts
+  // Template accounts follow the same upsert-and-replace-slots rule.
+  const accountGuids = [
+    ...data.accounts,
+    ...(data.templateAccounts ?? []),
+  ]
     .filter((a) => a.type !== 'ROOT')
     .map((a) => a.id)
     .filter(Boolean);
@@ -276,9 +294,14 @@ export async function importGnuCashData(
     budgetAmounts: 0,
     slots: 0,
     lots: 0,
+    schedxactions: 0,
     skipped: [],
     warnings: [],
   };
+
+  const templateAccounts = data.templateAccounts ?? [];
+  const templateTransactions = data.templateTransactions ?? [];
+  const schedxactions = data.schedxactions ?? [];
 
   // Parse-time skips (binary slot values etc.) surface here so nothing
   // that was recognized-but-unmodeled disappears silently.
@@ -343,6 +366,12 @@ export async function importGnuCashData(
     // re-check after acquiring it — a concurrent import creating the same
     // commodity serializes here instead of inserting a duplicate.
     for (const commodity of data.commodities) {
+      // The `template` namespace commodity is GnuCash's internal marker for
+      // SX template accounts — never a real commodity to create or price.
+      // Template accounts resolve their commodity separately below.
+      if (commodity.space === 'template') {
+        continue;
+      }
       const key = `${commodity.space}:${commodity.id}`;
       if (commodityMap.has(key)) {
         summary.skipped.push(`Commodity ${key} already exists`);
@@ -432,20 +461,60 @@ export async function importGnuCashData(
     const bookGuid = data.book?.id || generateGuid();
     createdBookGuid = bookGuid;
 
+    // Native GnuCash SQL databases carry a template:template commodity row;
+    // when one exists, template accounts point at it. We never CREATE one —
+    // on databases without it, template accounts fall back to the book
+    // currency (the same convention scheduled-tx-create uses).
+    const templateCommodityGuid = commodityMap.get('template:template');
+    const templateAccountCommodityGuid = () => templateCommodityGuid ?? rootCommodityGuid!;
+
+    // The XML template root (under gnc:template-transactions) keeps its guid
+    // on fresh imports so sx:templ-acct references and re-exports stay
+    // stable. It is always DISTINCT from the real root account.
+    const xmlTemplateRoot = templateAccounts.find((a) => a.type === 'ROOT');
+
     // On overwrite, reuse the existing root account; on fresh import, create one.
     let rootAccountGuid: string;
+    let templateRootGuid: string;
     if (isOverwrite) {
       const existingBook = await tx.books.findUnique({ where: { guid: bookGuid } });
       rootAccountGuid = existingBook!.root_account_guid;
+      templateRootGuid = existingBook!.root_template_guid;
       // Update the root account's commodity in case it changed
       await tx.accounts.update({
         where: { guid: rootAccountGuid },
         data: { commodity_guid: rootCommodityGuid },
       });
-      // Update the book name
+      // Repair books written by the pre-wave-2 importer, which pointed
+      // root_template_guid at the real root account: give the book a
+      // distinct template root so SX templates have a home of their own.
+      const needsTemplateRootRepair =
+        !templateRootGuid || templateRootGuid === rootAccountGuid;
+      if (needsTemplateRootRepair) {
+        templateRootGuid = xmlTemplateRoot?.id || generateGuid();
+      }
+      await tx.accounts.upsert({
+        where: { guid: templateRootGuid },
+        create: {
+          guid: templateRootGuid,
+          name: xmlTemplateRoot?.name || 'Template Root',
+          account_type: 'ROOT',
+          commodity_guid: templateAccountCommodityGuid(),
+          commodity_scu: xmlTemplateRoot?.commodityScu || 100,
+          non_std_scu: 0,
+          parent_guid: null,
+          hidden: 0,
+          placeholder: 0,
+        },
+        update: {},
+      });
+      // Update the book name (and the repaired template root, if any)
       await tx.books.update({
         where: { guid: bookGuid },
-        data: { name: bookName || 'Imported Book' },
+        data: {
+          name: bookName || 'Imported Book',
+          ...(needsTemplateRootRepair ? { root_template_guid: templateRootGuid } : {}),
+        },
       });
     } else {
       rootAccountGuid = generateGuid();
@@ -462,11 +531,25 @@ export async function importGnuCashData(
           placeholder: 0,
         },
       });
+      templateRootGuid = xmlTemplateRoot?.id || generateGuid();
+      await tx.accounts.create({
+        data: {
+          guid: templateRootGuid,
+          name: xmlTemplateRoot?.name || 'Template Root',
+          account_type: 'ROOT',
+          commodity_guid: templateAccountCommodityGuid(),
+          commodity_scu: xmlTemplateRoot?.commodityScu || 100,
+          non_std_scu: 0,
+          parent_guid: null,
+          hidden: 0,
+          placeholder: 0,
+        },
+      });
       await tx.books.create({
         data: {
           guid: bookGuid,
           root_account_guid: rootAccountGuid,
-          root_template_guid: rootAccountGuid,
+          root_template_guid: templateRootGuid,
           name: bookName || 'Imported Book',
         },
       });
@@ -566,6 +649,76 @@ export async function importGnuCashData(
       summary.accounts++;
     }
 
+    // 3b. Template accounts (gnc:template-transactions) — preserved guids so
+    // sx:templ-acct references resolve; parented under the book's DISTINCT
+    // template root. Their `template` namespace commodity maps to the native
+    // template commodity row when the database has one, else the book
+    // currency. Not counted in summary.accounts (they are not book accounts,
+    // matching gnc:count-data which never counts template contents).
+    if (templateAccounts.length > 0) {
+      emit({
+        phase: 'Template accounts',
+        progress: 28,
+        detail: `${templateAccounts.length} template accounts`,
+      });
+    }
+    for (const account of topologicalSortAccounts(templateAccounts)) {
+      if (account.type === 'ROOT') {
+        // The XML template root maps to the book's template root (same guid
+        // on fresh imports; the pre-existing one on overwrite).
+        accountGuidMap.set(account.id, templateRootGuid);
+        if (account.id !== templateRootGuid && account.slots?.length) {
+          summary.skipped.push(
+            `act:slots for template root "${account.name}" skipped (template root is remapped)`,
+          );
+        } else if (account.slots?.length) {
+          slotRowsBuffer.push(...slotsToDbRows(templateRootGuid, account.slots));
+        }
+        continue;
+      }
+
+      const parentGuid = account.parentId
+        ? accountGuidMap.get(account.parentId) ?? templateRootGuid
+        : templateRootGuid;
+
+      let commodityGuid: string;
+      if (!account.commodity || account.commodity.space === 'template') {
+        commodityGuid = templateAccountCommodityGuid();
+      } else {
+        const key = `${account.commodity.space}:${account.commodity.id}`;
+        commodityGuid = commodityMap.get(key) ?? templateAccountCommodityGuid();
+      }
+
+      const accountGuid = account.id;
+      accountGuidMap.set(account.id, accountGuid);
+
+      const accountData = {
+        name: account.name,
+        account_type: account.type,
+        commodity_guid: commodityGuid,
+        commodity_scu: account.commodityScu || 100,
+        non_std_scu: account.nonStdScu ? 1 : 0,
+        parent_guid: parentGuid,
+        code: account.code || null,
+        description: account.description || null,
+        hidden: account.hidden ? 1 : 0,
+        placeholder: account.placeholder ? 1 : 0,
+      };
+
+      if (isOverwrite) {
+        await tx.accounts.upsert({
+          where: { guid: accountGuid },
+          create: { guid: accountGuid, ...accountData },
+          update: accountData,
+        });
+      } else {
+        await tx.accounts.create({ data: { guid: accountGuid, ...accountData } });
+      }
+      if (account.slots?.length) {
+        slotRowsBuffer.push(...slotsToDbRows(accountGuid, account.slots));
+      }
+    }
+
     // 4. Create lots: declared act:lots first (they carry title/notes in
     // lot:slots), then any lot referenced only via split:lot. The schema
     // enforces a FK from splits.lot_guid to lots, so all lot rows must
@@ -662,12 +815,20 @@ export async function importGnuCashData(
       lot_guid: string | null;
     }> = [];
 
-    for (const transaction of data.transactions) {
+    // Template transactions ride the same batched insert: they live in the
+    // same tables, only their splits reference template accounts and carry
+    // the sched-xaction KVP frame in split:slots (written through the
+    // generic codec below, matching the native SQL layout). They are not
+    // counted in summary.transactions/splits.
+    const addTransactionRows = (
+      transaction: GnuCashXmlData['transactions'][0],
+      isTemplate: boolean,
+    ) => {
       const currencyKey = `${transaction.currency.space}:${transaction.currency.id}`;
       let currencyGuid = commodityMap.get(currencyKey);
       if (!currencyGuid) {
         summary.warnings.push(`Currency ${currencyKey} not found for transaction "${transaction.description}"`);
-        currencyGuid = rootCommodityGuid;
+        currencyGuid = rootCommodityGuid!;
       }
 
       transactionRows.push({
@@ -684,7 +845,7 @@ export async function importGnuCashData(
       if (transaction.slots?.length) {
         slotRowsBuffer.push(...slotsToDbRows(transaction.id, transaction.slots));
       }
-      summary.transactions++;
+      if (!isTemplate) summary.transactions++;
 
       for (const split of transaction.splits) {
         const accountGuid = accountGuidMap.get(split.accountId);
@@ -716,8 +877,15 @@ export async function importGnuCashData(
           quantity_denom: quantity.denom,
           lot_guid: split.lotId || null,
         });
-        summary.splits++;
+        if (!isTemplate) summary.splits++;
       }
+    };
+
+    for (const transaction of data.transactions) {
+      addTransactionRows(transaction, false);
+    }
+    for (const transaction of templateTransactions) {
+      addTransactionRows(transaction, true);
     }
 
     // Chunk very large inserts. Postgres caps parameter count at ~65k,
@@ -734,7 +902,80 @@ export async function importGnuCashData(
       emit({ phase: 'Writing splits', progress: 60 + Math.round((i / Math.max(splitRows.length, 1)) * 15), detail: `${Math.min(i + CHUNK, splitRows.length)}/${splitRows.length}` });
     }
 
-    // 6. Create prices
+    // 6. Scheduled transactions — after template accounts/transactions so
+    // template_act_guid targets exist; one recurrences row per
+    // gnc:recurrence (obj_guid = sx guid; composite/semi-monthly SXs have
+    // several — the app evaluates all of them, ASI-1-006).
+    if (schedxactions.length > 0) {
+      emit({
+        phase: 'Scheduled transactions',
+        progress: 76,
+        detail: `${schedxactions.length} scheduled transactions`,
+      });
+    }
+    const gdateToDbDate = (gdate: string): Date | null =>
+      /^\d{4}-\d{2}-\d{2}$/.test(gdate) ? new Date(`${gdate}T00:00:00.000Z`) : null;
+    for (const sx of schedxactions) {
+      const templateActGuid = accountGuidMap.get(sx.templateAccountId);
+      if (!templateActGuid) {
+        summary.warnings.push(
+          `Scheduled transaction "${sx.name}" skipped: template account ` +
+            `${sx.templateAccountId} was not found under gnc:template-transactions`,
+        );
+        continue;
+      }
+      await tx.schedxactions.create({
+        data: {
+          guid: sx.id,
+          name: sx.name,
+          enabled: sx.enabled ? 1 : 0,
+          start_date: gdateToDbDate(sx.start),
+          end_date: sx.end ? gdateToDbDate(sx.end) : null,
+          last_occur: sx.last ? gdateToDbDate(sx.last) : null,
+          // num_occur 0 = no occurrence-count definition, matching the
+          // native SQL backend (the XML omits num-occur/rem-occur then).
+          num_occur: sx.numOccur ?? 0,
+          rem_occur: sx.remOccur ?? 0,
+          auto_create: sx.autoCreate ? 1 : 0,
+          auto_notify: sx.autoCreateNotify ? 1 : 0,
+          adv_creation: sx.advanceCreateDays,
+          adv_notify: sx.advanceRemindDays,
+          instance_count: sx.instanceCount,
+          template_act_guid: templateActGuid,
+        },
+      });
+      for (const recurrence of sx.schedule) {
+        await tx.recurrences.create({
+          data: {
+            obj_guid: sx.id,
+            recurrence_mult: recurrence.mult,
+            recurrence_period_type: recurrence.periodType,
+            recurrence_period_start: new Date(`${recurrence.periodStart}T00:00:00.000Z`),
+            recurrence_weekend_adjust: recurrence.weekendAdjust || 'none',
+          },
+        });
+      }
+      if (sx.schedule.length === 0) {
+        summary.warnings.push(
+          `Scheduled transaction "${sx.name}" has no recurrence schedule — imported without one`,
+        );
+      }
+      // sx:deferredInstance has NO representation in the native SQL schema
+      // (gnc-schedxaction-sql.cpp persists none of it) — record as skipped.
+      if (sx.deferredInstances?.length) {
+        summary.skipped.push(
+          `Scheduled transaction "${sx.name}": ${sx.deferredInstances.length} deferred ` +
+            'instance(s) skipped (sx:deferredInstance has no representation in the ' +
+            'GnuCash SQL schema)',
+        );
+      }
+      if (sx.slots?.length) {
+        slotRowsBuffer.push(...slotsToDbRows(sx.id, sx.slots));
+      }
+      summary.schedxactions++;
+    }
+
+    // 7. Create prices
     emit({ phase: 'Prices', progress: 78, detail: `${data.pricedb.length} prices` });
     const priceRows: Array<{
       guid: string;
@@ -782,7 +1023,7 @@ export async function importGnuCashData(
       await tx.prices.createMany({ data: priceRows.slice(i, i + CHUNK) });
     }
 
-    // 7. Create budgets and budget amounts
+    // 8. Create budgets and budget amounts
     emit({ phase: 'Budgets', progress: 90, detail: `${data.budgets.length} budgets` });
     const budgetAmountRows: Array<{
       budget_guid: string;
@@ -859,9 +1100,9 @@ export async function importGnuCashData(
       await tx.budget_amounts.createMany({ data: budgetAmountRows.slice(i, i + CHUNK) });
     }
 
-    // 8. Write accumulated KVP slot rows (book, commodity, account, lot,
-    // transaction, split, budget). No FKs on the slots table, so a single
-    // batched pass at the end is safe.
+    // 9. Write accumulated KVP slot rows (book, commodity, account, lot,
+    // transaction, split, schedxaction, budget). No FKs on the slots table,
+    // so a single batched pass at the end is safe.
     if (slotRowsBuffer.length > 0) {
       emit({ phase: 'Slots', progress: 96, detail: `${slotRowsBuffer.length} slot rows` });
       for (let i = 0; i < slotRowsBuffer.length; i += CHUNK) {

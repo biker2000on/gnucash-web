@@ -22,6 +22,7 @@ interface ImportResult {
   prices: number;
   budgets: number;
   budgetAmounts: number;
+  schedxactions?: number;
   skipped: string[];
   warnings: string[];
 }
@@ -402,6 +403,10 @@ export default function ImportExportPage() {
                 <div>
                   <span className="text-foreground-muted">Budget Amounts: </span>
                   <span className="text-foreground">{importResult.budgetAmounts}</span>
+                </div>
+                <div>
+                  <span className="text-foreground-muted">Scheduled: </span>
+                  <span className="text-foreground">{importResult.schedxactions ?? 0}</span>
                 </div>
               </div>
             </div>

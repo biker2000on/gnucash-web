@@ -9,6 +9,16 @@ export interface GnuCashXmlData {
   accounts: GnuCashAccount[];
   transactions: GnuCashTransaction[];
   budgets: GnuCashBudget[];
+  /** gnc:schedxaction elements (version 2.0.0). */
+  schedxactions?: GnuCashSchedXAction[];
+  /**
+   * gnc:template-transactions — the template account tree (template ROOT
+   * first) and the template transactions living on those accounts. The
+   * accounts use the `template` namespace commodity; the splits carry the
+   * sched-xaction KVP frame in split:slots.
+   */
+  templateAccounts?: GnuCashAccount[];
+  templateTransactions?: GnuCashTransaction[];
   countData: Record<string, number>;
   /**
    * Parse-time notes about content that was recognized but not modeled
@@ -120,18 +130,66 @@ export interface GnuCashSplit {
   slots?: GnuCashSlot[];
 }
 
+/**
+ * gnc:recurrence version 1.0.0 (shared by bgt:recurrence and sx:schedule).
+ */
+export interface GnuCashRecurrence {
+  mult: number;
+  periodType: string;
+  periodStart: string; // YYYY-MM-DD
+  /** recurrence:weekend_adj — only set when not "none" (2.2 compat). */
+  weekendAdjust?: string;
+}
+
+/**
+ * sx:deferredInstance — a postponed SX occurrence. The native SQL schema
+ * has no representation for these (gnc-schedxaction-sql.cpp persists no
+ * deferred-instance data), so on import they are recorded as skipped.
+ */
+export interface GnuCashSxDeferredInstance {
+  /** sx:last gdate — optional (only when the last-occur date is valid). */
+  last?: string;
+  remOccur?: number;
+  instanceCount?: number;
+}
+
+/** gnc:schedxaction version 2.0.0 (see schema inventory §2.6). */
+export interface GnuCashSchedXAction {
+  id: string;
+  name: string;
+  /** sx:enabled y/n — optional in the parser, defaults to enabled. */
+  enabled: boolean;
+  autoCreate: boolean;
+  autoCreateNotify: boolean;
+  advanceCreateDays: number;
+  advanceRemindDays: number;
+  instanceCount: number;
+  /** sx:start gdate YYYY-MM-DD. */
+  start: string;
+  /** sx:last gdate — only when a last-occur date is valid. */
+  last?: string;
+  /**
+   * End condition trio (mutually exclusive): either numOccur + remOccur,
+   * or end, or neither (no end).
+   */
+  numOccur?: number;
+  remOccur?: number;
+  end?: string;
+  /** sx:templ-acct — guid of the template account under template-transactions. */
+  templateAccountId: string;
+  /** sx:schedule — one or more gnc:recurrence (composite schedules have 2+). */
+  schedule: GnuCashRecurrence[];
+  deferredInstances?: GnuCashSxDeferredInstance[];
+  /** sx:slots — KVP passthrough. */
+  slots?: GnuCashSlot[];
+}
+
 export interface GnuCashBudget {
   id: string;
   name: string;
   description?: string;
   numPeriods: number;
-  recurrence?: {
-    mult: number;
-    periodType: string;
-    periodStart: string; // YYYY-MM-DD
-    /** recurrence:weekend_adj — only set when not "none" (2.2 compat). */
-    weekendAdjust?: string;
-  };
+  recurrence?: GnuCashRecurrence;
   amounts: GnuCashBudgetAmount[];
   /** Non-amount bgt:slots (per-period notes frames, etc.). */
   slots?: GnuCashSlot[];
@@ -155,6 +213,8 @@ export interface ImportSummary {
   slots: number;
   /** Lot rows written (declared act:lots plus split:lot inferences). */
   lots: number;
+  /** Scheduled transactions imported (schedxactions rows). */
+  schedxactions: number;
   skipped: string[];
   warnings: string[];
   bookGuid?: string;
