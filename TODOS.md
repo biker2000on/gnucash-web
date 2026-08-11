@@ -1183,7 +1183,53 @@ conflict policy.
 
 ## P2 - GnuCash XML Format: Full-Fidelity Round-Trip
 
-**Status:** Open. Requested 2026-08-04.
+**Status:** Implemented 2026-08-11 (three waves). Requested 2026-08-04.
+
+**Delivered:** `docs/gnucash-xml-schema-inventory.md` — the complete gnc-v2
+schema derived from the upstream libgnucash XML backend source (every element
+family, attribute, encoding, omit-when-default rule, and a coverage table) —
+then three implementation waves over `src/lib/gnucash-xml/`:
+
+1. **Slots + lots.** A generic KVP slot codec (`slots.ts`: XML slot trees ↔
+   typed values ↔ native `slots` rows, all value types; binary/unknown →
+   `ImportSummary.skipped`) wired into act/trn/split/book/cmdty/lot/bgt
+   slots while preserving the hidden/placeholder/notes column mirrors and
+   budget amount frames. Real `act:lots`/`gnc:lot` parse + emit with titles
+   and notes; `is_closed` derived from exact member-split sums. Fixed a live
+   export bug (`split:lot` refs silently dropped — exporter/builder field
+   mismatch), `cmdty:get_quotes` NaN parse, `act:non-standard-scu`,
+   `recurrence:weekend_adj` both directions, and count-data completeness.
+2. **Scheduled + template transactions.** Full `gnc:schedxaction` v2 and
+   `gnc:template-transactions` both directions, composite/multi-recurrence
+   schedules included. The importer now creates a distinct template root
+   (fixing `root_template_guid` aliasing the real root; legacy books repaired
+   on overwrite). Surfaced and fixed a pre-existing bug:
+   `resolveTemplateSplits` couldn't read the native flat template layout, so
+   desktop-created SXs resolved to zero splits in the app — it now reads
+   both layouts, app layout precedent, regression-tested. Exported
+   app-created templates get `sched-xaction` frames synthesized so desktop
+   can execute them. `sx:deferredInstance` has no native SQL home (upstream
+   drops it too) and is recorded as skipped; v1 `sx:freqspec` files are
+   skipped with a clear note.
+3. **Business objects.** All nine families (billterm days/proximo, taxtable +
+   entries, customer, vendor, employee, job, invoice incl. posted
+   txn/lot/account refs, entry with all i-*/b-* fields, order) with upstream
+   encodings (owner/address sub-elements, 0/1 booleans, maybe_add omission,
+   literal `cd:type` class names, business namespaces). Imports insert in
+   dependency order, resolve refs only within the incoming file, record
+   `gnucash_web_business_entity_ownership` in the same transaction, warn on
+   dangling refs, and clear child-first on overwrite; exports scope by the
+   ownership table. Bonus fix: vendor `tax_inc` was compared
+   case-sensitively so desktop books showed tax-included wrong.
+
+Round-trip fixtures (parse → build → reparse asserting zero loss) cover all
+of the above; the module suite grew 13 → 78 tests. Known residual gaps, all
+recorded in `ImportSummary.skipped` rather than silently dropped:
+`billterm:child`/`taxtable:child` (no native column; upstream SQL drops them
+too), `addr:slots` (same), `sx:deferredInstance`, v1 freqspec files, binary
+KVP slots. Pre-existing and out of scope here:
+`deleteOwnedBusinessEntitiesForBook` misses bill-attached entries on book
+delete (flagged separately).
 
 **Outcome:** The XML export/import path preserves as much of a GnuCash book as
 the format itself can carry, so the XML file is a trustworthy interchange and
