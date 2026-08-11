@@ -8,6 +8,18 @@
 import { XMLBuilder } from 'fast-xml-parser';
 import { gzipSync } from 'fflate';
 import { buildSlotsContainer } from './slots';
+import {
+  buildBillTerm,
+  buildTaxTable,
+  buildCustomer,
+  buildVendor,
+  buildEmployee,
+  buildJob,
+  buildInvoice,
+  buildEntry,
+  buildOrder,
+  sortByGuid,
+} from './business';
 import type { GnuCashXmlData, GnuCashSlot, GnuCashRecurrence, GnuCashSchedXAction } from './types';
 
 /**
@@ -42,6 +54,23 @@ export function buildGnuCashXml(data: GnuCashXmlData): string {
       '@_xmlns:bgt': 'http://www.gnucash.org/XML/bgt',
       '@_xmlns:recurrence': 'http://www.gnucash.org/XML/recurrence',
       '@_xmlns:lot': 'http://www.gnucash.org/XML/lot',
+      // Business namespaces (upstream registration order). Always declared —
+      // harmless when no business objects are emitted, and the upstream
+      // writer declares every registered plugin namespace unconditionally.
+      '@_xmlns:billterm': 'http://www.gnucash.org/XML/billterm',
+      '@_xmlns:bt-days': 'http://www.gnucash.org/XML/bt-days',
+      '@_xmlns:bt-prox': 'http://www.gnucash.org/XML/bt-prox',
+      '@_xmlns:cust': 'http://www.gnucash.org/XML/cust',
+      '@_xmlns:employee': 'http://www.gnucash.org/XML/employee',
+      '@_xmlns:entry': 'http://www.gnucash.org/XML/entry',
+      '@_xmlns:invoice': 'http://www.gnucash.org/XML/invoice',
+      '@_xmlns:job': 'http://www.gnucash.org/XML/job',
+      '@_xmlns:order': 'http://www.gnucash.org/XML/order',
+      '@_xmlns:owner': 'http://www.gnucash.org/XML/owner',
+      '@_xmlns:taxtable': 'http://www.gnucash.org/XML/taxtable',
+      '@_xmlns:tte': 'http://www.gnucash.org/XML/tte',
+      '@_xmlns:vendor': 'http://www.gnucash.org/XML/vendor',
+      '@_xmlns:addr': 'http://www.gnucash.org/XML/addr',
       'gnc:count-data': buildTopLevelCountData(data),
       'gnc:book': buildBook(data),
     },
@@ -102,6 +131,26 @@ function buildBook(data: GnuCashXmlData): Record<string, unknown> {
   if (data.pricedb.length > 0) {
     counts.push({ '@_cd:type': 'price', '#text': String(data.pricedb.length) });
   }
+  // Business counts — cd:type is the literal class name (io-gncxml-v2.cpp
+  // uses the registry type_name, e.g. "gnc:GncCustomer"), skip-if-zero, in
+  // backend registration order: billterm, customer, employee, entry,
+  // invoice, job, order, taxtable, vendor.
+  const businessCounts: Array<[string, number]> = [
+    ['gnc:GncBillTerm', data.billterms?.length ?? 0],
+    ['gnc:GncCustomer', data.customers?.length ?? 0],
+    ['gnc:GncEmployee', data.employees?.length ?? 0],
+    ['gnc:GncEntry', data.entries?.length ?? 0],
+    ['gnc:GncInvoice', data.invoices?.length ?? 0],
+    ['gnc:GncJob', data.jobs?.length ?? 0],
+    ['gnc:GncOrder', data.orders?.length ?? 0],
+    ['gnc:GncTaxTable', data.taxtables?.length ?? 0],
+    ['gnc:GncVendor', data.vendors?.length ?? 0],
+  ];
+  for (const [cdType, count] of businessCounts) {
+    if (count > 0) {
+      counts.push({ '@_cd:type': cdType, '#text': String(count) });
+    }
+  }
   if (counts.length > 0) {
     book['gnc:count-data'] = counts;
   }
@@ -153,6 +202,37 @@ function buildBook(data: GnuCashXmlData): Record<string, unknown> {
   // Budgets
   if (data.budgets.length > 0) {
     book['gnc:budget'] = data.budgets.map(buildBudget);
+  }
+
+  // Business objects — emitted last, matching write_book (each registered
+  // business writer runs after budgets), each family sorted by guid
+  // (qof_object_foreach_sorted) in backend registration order.
+  if (data.billterms?.length) {
+    book['gnc:GncBillTerm'] = sortByGuid(data.billterms).map(buildBillTerm);
+  }
+  if (data.customers?.length) {
+    book['gnc:GncCustomer'] = sortByGuid(data.customers).map(buildCustomer);
+  }
+  if (data.employees?.length) {
+    book['gnc:GncEmployee'] = sortByGuid(data.employees).map(buildEmployee);
+  }
+  if (data.entries?.length) {
+    book['gnc:GncEntry'] = sortByGuid(data.entries).map(buildEntry);
+  }
+  if (data.invoices?.length) {
+    book['gnc:GncInvoice'] = sortByGuid(data.invoices).map(buildInvoice);
+  }
+  if (data.jobs?.length) {
+    book['gnc:GncJob'] = sortByGuid(data.jobs).map(buildJob);
+  }
+  if (data.orders?.length) {
+    book['gnc:GncOrder'] = sortByGuid(data.orders).map(buildOrder);
+  }
+  if (data.taxtables?.length) {
+    book['gnc:GncTaxTable'] = sortByGuid(data.taxtables).map(buildTaxTable);
+  }
+  if (data.vendors?.length) {
+    book['gnc:GncVendor'] = sortByGuid(data.vendors).map(buildVendor);
   }
 
   return book;

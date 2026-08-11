@@ -19,6 +19,24 @@ export interface GnuCashXmlData {
    */
   templateAccounts?: GnuCashAccount[];
   templateTransactions?: GnuCashTransaction[];
+  /** gnc:GncBillTerm elements (§2.20). */
+  billterms?: GnuCashBillTerm[];
+  /** gnc:GncTaxTable elements with nested entries (§2.21). */
+  taxtables?: GnuCashTaxTable[];
+  /** gnc:GncCustomer elements (§2.13). */
+  customers?: GnuCashCustomer[];
+  /** gnc:GncVendor elements (§2.14). */
+  vendors?: GnuCashVendor[];
+  /** gnc:GncEmployee elements (§2.15). */
+  employees?: GnuCashEmployee[];
+  /** gnc:GncJob elements (§2.16). */
+  jobs?: GnuCashJob[];
+  /** gnc:GncInvoice elements (§2.17) — invoices, bills, credit notes, vouchers. */
+  invoices?: GnuCashInvoice[];
+  /** gnc:GncEntry elements (§2.18) — invoice/bill/order line items. */
+  entries?: GnuCashEntry[];
+  /** gnc:GncOrder elements (§2.19). */
+  orders?: GnuCashOrder[];
   countData: Record<string, number>;
   /**
    * Parse-time notes about content that was recognized but not modeled
@@ -201,6 +219,251 @@ export interface GnuCashBudgetAmount {
   amount: string; // fraction string
 }
 
+/* ============================================================
+ * Business object families (schema inventory §2.11–§2.21)
+ * ============================================================ */
+
+/**
+ * Address sub-element (§2.11) — cust:addr / cust:shipaddr / vendor:addr /
+ * employee:addr. Version 2.0.0; every field emitted only when non-empty.
+ * The native DB flattens these into addr_* / shipaddr_* columns; addr:slots
+ * has no column (the native SQL backend drops it too) and is recorded as
+ * skipped on import.
+ */
+export interface GnuCashAddress {
+  name?: string;
+  addr1?: string;
+  addr2?: string;
+  addr3?: string;
+  addr4?: string;
+  phone?: string;
+  fax?: string;
+  email?: string;
+  slots?: GnuCashSlot[];
+}
+
+/**
+ * Owner sub-element (§2.12) — owner:type (QOF id string: gncCustomer,
+ * gncJob, gncVendor, gncEmployee) + owner:id guid. Maps to the native
+ * owner_type int (2/3/4/5) + owner_guid column pairs.
+ */
+export interface GnuCashOwner {
+  type: string;
+  id: string;
+}
+
+/** billterm:days variant — all fields maybe_add (zeros omitted). */
+export interface GnuCashBillTermDays {
+  dueDays?: number;
+  discountDays?: number;
+  /** bt-days:discount numeric. */
+  discount?: string;
+}
+
+/** billterm:proximo variant — all fields maybe_add (zeros omitted). */
+export interface GnuCashBillTermProximo {
+  dueDay?: number;
+  discountDay?: number;
+  /** bt-prox:discount numeric. */
+  discount?: string;
+  cutoffDay?: number;
+}
+
+/**
+ * gnc:GncBillTerm (§2.20). Exactly one of days/proximo is present; the
+ * variant doubles as the native billterms.type discriminator
+ * (GNC_TERM_TYPE_DAYS / GNC_TERM_TYPE_PROXIMO).
+ */
+export interface GnuCashBillTerm {
+  guid: string;
+  name: string;
+  description: string;
+  refcount: number;
+  /** billterm:invisible 0/1 int. */
+  invisible: boolean;
+  /** billterm:child — NOT persisted natively (no column, matching SQL backend). */
+  childId?: string;
+  parentId?: string;
+  days?: GnuCashBillTermDays;
+  proximo?: GnuCashBillTermProximo;
+  slots?: GnuCashSlot[];
+}
+
+/** gnc:GncTaxTableEntry — no version attribute. */
+export interface GnuCashTaxTableEntry {
+  accountId?: string;
+  /** tte:amount numeric. */
+  amount: string;
+  /** tte:type — VALUE | PERCENT (native taxtable_entries.type 1/2). */
+  type: string;
+}
+
+/** gnc:GncTaxTable (§2.21). */
+export interface GnuCashTaxTable {
+  guid: string;
+  name: string;
+  refcount: number;
+  invisible: boolean;
+  /** taxtable:child — NOT persisted natively (no column, matching SQL backend). */
+  childId?: string;
+  parentId?: string;
+  entries: GnuCashTaxTableEntry[];
+  slots?: GnuCashSlot[];
+}
+
+/** gnc:GncCustomer (§2.13). */
+export interface GnuCashCustomer {
+  guid: string;
+  name: string;
+  /** cust:id — the human-facing number, e.g. "000001". */
+  id: string;
+  addr: GnuCashAddress;
+  shipaddr: GnuCashAddress;
+  notes?: string;
+  /** cust:terms — billterm guid. */
+  termsId?: string;
+  /** cust:taxincluded — YES | NO | USEGLOBAL (native tax_included int 1/2/3). */
+  taxIncluded: string;
+  /** cust:active 0/1 int. */
+  active: boolean;
+  /** cust:discount numeric (always emitted, even zero). */
+  discount: string;
+  /** cust:credit numeric (always emitted, even zero). */
+  credit: string;
+  currency: { space: string; id: string };
+  /** cust:use-tt 0/1 int (native tax_override). */
+  useTaxTable: boolean;
+  taxTableId?: string;
+  slots?: GnuCashSlot[];
+}
+
+/** gnc:GncVendor (§2.14) — customer minus shipaddr/discount/credit. */
+export interface GnuCashVendor {
+  guid: string;
+  name: string;
+  id: string;
+  addr: GnuCashAddress;
+  notes?: string;
+  termsId?: string;
+  /** vendor:taxincluded — YES | NO | USEGLOBAL (native tax_inc string). */
+  taxIncluded: string;
+  active: boolean;
+  currency: { space: string; id: string };
+  useTaxTable: boolean;
+  taxTableId?: string;
+  slots?: GnuCashSlot[];
+}
+
+/** gnc:GncEmployee (§2.15). */
+export interface GnuCashEmployee {
+  guid: string;
+  username: string;
+  id: string;
+  addr: GnuCashAddress;
+  language?: string;
+  acl?: string;
+  active: boolean;
+  /** employee:workday numeric (always emitted). */
+  workday: string;
+  /** employee:rate numeric (always emitted). */
+  rate: string;
+  currency: { space: string; id: string };
+  /** employee:ccard — credit-card account guid. */
+  ccardId?: string;
+  slots?: GnuCashSlot[];
+}
+
+/** gnc:GncJob (§2.16) — owned by a customer or vendor. */
+export interface GnuCashJob {
+  guid: string;
+  id: string;
+  name: string;
+  reference?: string;
+  /** job:owner — required in the writer; optional here for robust reads. */
+  owner?: GnuCashOwner;
+  active: boolean;
+  slots?: GnuCashSlot[];
+}
+
+/** gnc:GncInvoice (§2.17). */
+export interface GnuCashInvoice {
+  guid: string;
+  id: string;
+  owner?: GnuCashOwner;
+  /** invoice:opened timespec. */
+  opened: string;
+  /** invoice:posted timespec — only when posted. */
+  posted?: string;
+  termsId?: string;
+  billingId?: string;
+  notes?: string;
+  active: boolean;
+  /** invoice:posttxn — the posting gnc:transaction guid (posted only). */
+  postTxnId?: string;
+  /** invoice:postlot — the AR/AP lot guid (posted only). */
+  postLotId?: string;
+  /** invoice:postacc — the AR/AP account guid (posted only). */
+  postAccId?: string;
+  currency: { space: string; id: string };
+  billTo?: GnuCashOwner;
+  /** invoice:charge-amt numeric — only when non-zero. */
+  chargeAmt?: string;
+  slots?: GnuCashSlot[];
+}
+
+/** gnc:GncEntry (§2.18) — line items with per-side i- and b- fields. */
+export interface GnuCashEntry {
+  guid: string;
+  /** entry:date timespec. */
+  date: string;
+  /** entry:entered timespec. */
+  entered?: string;
+  description?: string;
+  action?: string;
+  notes?: string;
+  /** entry:qty numeric — non-zero only. */
+  quantity?: string;
+  /* Customer-invoice side. */
+  iAcctId?: string;
+  iPrice?: string;
+  iDiscount?: string;
+  invoiceId?: string;
+  /** entry:i-disc-type — VALUE | PERCENT (inside invoice block). */
+  iDiscType?: string;
+  /** entry:i-disc-how — PRETAX | SAMETIME | POSTTAX (inside invoice block). */
+  iDiscHow?: string;
+  iTaxable?: boolean;
+  iTaxIncluded?: boolean;
+  iTaxTableId?: string;
+  /* Vendor-bill side. */
+  bAcctId?: string;
+  bPrice?: string;
+  billId?: string;
+  billable?: boolean;
+  billTo?: GnuCashOwner;
+  bTaxable?: boolean;
+  bTaxIncluded?: boolean;
+  /** entry:b-pay — CASH | CARD (native b_paytype 1/2, employee vouchers). */
+  bPayment?: string;
+  bTaxTableId?: string;
+  orderId?: string;
+  slots?: GnuCashSlot[];
+}
+
+/** gnc:GncOrder (§2.19). */
+export interface GnuCashOrder {
+  guid: string;
+  id: string;
+  owner?: GnuCashOwner;
+  opened: string;
+  /** order:closed timespec — only when set. */
+  closed?: string;
+  notes?: string;
+  reference?: string;
+  active: boolean;
+  slots?: GnuCashSlot[];
+}
+
 export interface ImportSummary {
   commodities: number;
   accounts: number;
@@ -215,6 +478,18 @@ export interface ImportSummary {
   lots: number;
   /** Scheduled transactions imported (schedxactions rows). */
   schedxactions: number;
+  /** Business objects imported (native billterms rows). */
+  billterms: number;
+  /** Tax tables imported (taxtables rows; entries ride along). */
+  taxtables: number;
+  customers: number;
+  vendors: number;
+  employees: number;
+  jobs: number;
+  invoices: number;
+  /** Invoice/bill/order line items imported (entries rows). */
+  entries: number;
+  orders: number;
   skipped: string[];
   warnings: string[];
   bookGuid?: string;

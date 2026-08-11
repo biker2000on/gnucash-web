@@ -120,6 +120,30 @@ const tx = {
       return { count: 0 };
     }),
   },
+  ...Object.fromEntries(
+    [
+      'billterms',
+      'taxtables',
+      'taxtable_entries',
+      'customers',
+      'vendors',
+      'employees',
+      'jobs',
+      'invoices',
+      'entries',
+      'orders',
+      'gnucash_web_business_entity_ownership',
+    ].map((table) => [
+      table,
+      {
+        createMany: recordMany(`${table}.createMany`),
+        deleteMany: vi.fn(async (args: { where: unknown }) => {
+          calls.push({ op: `${table}.deleteMany`, data: args });
+          return { count: 0 };
+        }),
+      },
+    ]),
+  ),
 };
 
 vi.mock('@/lib/prisma', () => ({
@@ -702,6 +726,351 @@ describe('importGnuCashData — scheduled transactions and templates', () => {
     const txnDelete = calls.find((c) => c.op === 'transactions.deleteMany')!
       .data as { where: { guid: { in: string[] } } };
     expect(txnDelete.where.guid.in).toContain('tmpl-txn-0000000000000000000001');
+  });
+});
+
+/** minimalData plus the nine business families (wave 3). */
+function businessData(): GnuCashXmlData {
+  const data = minimalData();
+  data.billterms = [
+    {
+      guid: 'bt-net30-00000000000000000000000',
+      name: 'Net 30',
+      description: 'Payable within 30 days',
+      refcount: 1,
+      invisible: false,
+      days: { dueDays: 30, discountDays: 10, discount: '200/100' },
+    },
+  ];
+  data.taxtables = [
+    {
+      guid: 'tt-sales-00000000000000000000000',
+      name: 'Sales Tax',
+      refcount: 1,
+      invisible: false,
+      entries: [
+        {
+          accountId: 'acct-investments-00000000000000000',
+          amount: '47500/10000',
+          type: 'PERCENT',
+        },
+      ],
+    },
+  ];
+  data.customers = [
+    {
+      guid: 'cust-acme-0000000000000000000000',
+      name: 'Acme Anvils',
+      id: '000001',
+      addr: { name: 'Wile E. Coyote', addr1: '1 Desert Rd' },
+      shipaddr: { name: 'Acme Receiving' },
+      notes: 'note',
+      termsId: 'bt-net30-00000000000000000000000',
+      taxIncluded: 'YES',
+      active: true,
+      discount: '500/10000',
+      credit: '100000/100',
+      currency: { space: 'CURRENCY', id: 'USD' },
+      useTaxTable: true,
+      taxTableId: 'tt-sales-00000000000000000000000',
+    },
+  ];
+  data.vendors = [
+    {
+      guid: 'vend-iron-0000000000000000000000',
+      name: 'Iron Works',
+      id: '000001',
+      addr: {},
+      taxIncluded: 'USEGLOBAL',
+      active: true,
+      currency: { space: 'CURRENCY', id: 'USD' },
+      useTaxTable: false,
+    },
+  ];
+  data.employees = [
+    {
+      guid: 'empl-rr-000000000000000000000000',
+      username: 'rrunner',
+      id: '000001',
+      addr: {},
+      active: true,
+      workday: '8/1',
+      rate: '2500/100',
+      currency: { space: 'CURRENCY', id: 'USD' },
+      ccardId: 'acct-investments-00000000000000000',
+    },
+  ];
+  data.jobs = [
+    {
+      guid: 'job-trap-00000000000000000000000',
+      id: '000001',
+      name: 'Roadrunner Trap',
+      owner: { type: 'gncCustomer', id: 'cust-acme-0000000000000000000000' },
+      active: true,
+    },
+  ];
+  data.invoices = [
+    {
+      guid: 'inv-00001-0000000000000000000000',
+      id: '000001',
+      owner: { type: 'gncJob', id: 'job-trap-00000000000000000000000' },
+      opened: '2024-02-20 09:00:00 +0000',
+      posted: '2024-03-01 10:59:00 +0000',
+      termsId: 'bt-net30-00000000000000000000000',
+      active: true,
+      postTxnId: 'txn-buy-00000000000000000000000000',
+      postLotId: 'lot-aapl-0000000000000000000000',
+      postAccId: 'acct-investments-00000000000000000',
+      currency: { space: 'CURRENCY', id: 'USD' },
+      chargeAmt: '5000/100',
+    },
+  ];
+  data.entries = [
+    {
+      guid: 'entr-1-0000000000000000000000000',
+      date: '2024-03-01 10:59:00 +0000',
+      quantity: '5/1',
+      iAcctId: 'acct-aapl-000000000000000000000000',
+      iPrice: '10000/100',
+      iDiscount: '500/100',
+      invoiceId: 'inv-00001-0000000000000000000000',
+      iDiscType: 'VALUE',
+      iDiscHow: 'PRETAX',
+      iTaxable: true,
+      iTaxIncluded: false,
+      iTaxTableId: 'tt-sales-00000000000000000000000',
+    },
+  ];
+  data.orders = [
+    {
+      guid: 'ordr-1-0000000000000000000000000',
+      id: '000001',
+      owner: { type: 'gncCustomer', id: 'cust-acme-0000000000000000000000' },
+      opened: '2024-02-19 09:00:00 +0000',
+      active: true,
+    },
+  ];
+  return data;
+}
+
+describe('importGnuCashData — business objects', () => {
+  beforeEach(() => {
+    calls.length = 0;
+    vi.clearAllMocks();
+    tx.commodities.findMany.mockResolvedValue([]);
+    existingBookRef.current = null;
+    collidingBudgetsRef.current = [];
+    budgetOwnershipRef.current = [];
+  });
+
+  it('imports all families with native column mapping and counts them', async () => {
+    const result = await importGnuCashData(businessData(), 'Test Book');
+
+    const rowsOf = (op: string) =>
+      calls.filter((c) => c.op === op).flatMap((c) => c.data as Array<Record<string, unknown>>);
+
+    expect(rowsOf('billterms.createMany')[0]).toMatchObject({
+      guid: 'bt-net30-00000000000000000000000',
+      type: 'GNC_TERM_TYPE_DAYS',
+      refcount: 1,
+      invisible: 0,
+      duedays: 30,
+      discountdays: 10,
+      discount_num: 200n,
+      discount_denom: 100n,
+      cutoff: null,
+    });
+    expect(rowsOf('taxtables.createMany')[0]).toMatchObject({
+      guid: 'tt-sales-00000000000000000000000',
+      refcount: 1n,
+      invisible: 0,
+    });
+    expect(rowsOf('taxtable_entries.createMany')[0]).toMatchObject({
+      taxtable: 'tt-sales-00000000000000000000000',
+      account: 'acct-investments-00000000000000000',
+      amount_num: 47500n,
+      amount_denom: 10000n,
+      type: 2, // PERCENT
+    });
+    expect(rowsOf('customers.createMany')[0]).toMatchObject({
+      guid: 'cust-acme-0000000000000000000000',
+      addr_name: 'Wile E. Coyote',
+      shipaddr_name: 'Acme Receiving',
+      terms: 'bt-net30-00000000000000000000000',
+      taxtable: 'tt-sales-00000000000000000000000',
+      tax_included: 1, // YES
+      tax_override: 1,
+      discount_num: 500n,
+      credit_num: 100000n,
+    });
+    // Vendor tax_inc keeps the upstream string form.
+    expect(rowsOf('vendors.createMany')[0]).toMatchObject({ tax_inc: 'USEGLOBAL' });
+    expect(rowsOf('employees.createMany')[0]).toMatchObject({
+      ccard_guid: 'acct-investments-00000000000000000',
+      workday_num: 8n,
+      rate_num: 2500n,
+      rate_denom: 100n,
+    });
+    expect(rowsOf('jobs.createMany')[0]).toMatchObject({
+      owner_type: 2, // customer
+      owner_guid: 'cust-acme-0000000000000000000000',
+    });
+    expect(rowsOf('invoices.createMany')[0]).toMatchObject({
+      owner_type: 3, // job
+      owner_guid: 'job-trap-00000000000000000000000',
+      post_txn: 'txn-buy-00000000000000000000000000',
+      post_lot: 'lot-aapl-0000000000000000000000',
+      post_acc: 'acct-investments-00000000000000000',
+      charge_amt_num: 5000n,
+      charge_amt_denom: 100n,
+    });
+    expect(rowsOf('entries.createMany')[0]).toMatchObject({
+      invoice: 'inv-00001-0000000000000000000000',
+      i_acct: 'acct-aapl-000000000000000000000000',
+      i_price_num: 10000n,
+      i_discount_num: 500n,
+      i_disc_type: 'VALUE',
+      i_disc_how: 'PRETAX',
+      i_taxable: 1,
+      i_taxincluded: 0,
+      i_taxtable: 'tt-sales-00000000000000000000000',
+      bill: null,
+      order_guid: null,
+    });
+    expect(rowsOf('orders.createMany')[0]).toMatchObject({
+      owner_type: 2,
+      owner_guid: 'cust-acme-0000000000000000000000',
+      date_closed: new Date(0), // unset order:closed
+    });
+
+    expect(result).toMatchObject({
+      billterms: 1,
+      taxtables: 1,
+      customers: 1,
+      vendors: 1,
+      employees: 1,
+      jobs: 1,
+      invoices: 1,
+      entries: 1,
+      orders: 1,
+    });
+    expect(result.warnings).toEqual([]);
+  });
+
+  it('records an ownership row for every entity in the same transaction', async () => {
+    await importGnuCashData(businessData(), 'Test Book');
+
+    const ownershipRows = calls
+      .filter((c) => c.op === 'gnucash_web_business_entity_ownership.createMany')
+      .flatMap((c) => c.data as Array<{ entity_type: string; entity_guid: string; book_guid: string }>);
+
+    expect(ownershipRows).toHaveLength(8); // all but the entry (no ownership)
+    for (const row of ownershipRows) {
+      expect(row.book_guid).toBe('book-guid-0000000000000000000000');
+    }
+    const byType = Object.fromEntries(ownershipRows.map((r) => [r.entity_type, r.entity_guid]));
+    expect(byType).toEqual({
+      billterm: 'bt-net30-00000000000000000000000',
+      taxtable: 'tt-sales-00000000000000000000000',
+      customer: 'cust-acme-0000000000000000000000',
+      vendor: 'vend-iron-0000000000000000000000',
+      employee: 'empl-rr-000000000000000000000000',
+      job: 'job-trap-00000000000000000000000',
+      invoice: 'inv-00001-0000000000000000000000',
+      order: 'ordr-1-0000000000000000000000000',
+    });
+  });
+
+  it('inserts families in dependency order (terms/taxtables before customers before jobs before invoices before entries)', async () => {
+    await importGnuCashData(businessData(), 'Test Book');
+
+    const idx = (op: string) => calls.findIndex((c) => c.op === op);
+    expect(idx('billterms.createMany')).toBeLessThan(idx('customers.createMany'));
+    expect(idx('taxtables.createMany')).toBeLessThan(idx('customers.createMany'));
+    expect(idx('customers.createMany')).toBeLessThan(idx('jobs.createMany'));
+    expect(idx('jobs.createMany')).toBeLessThan(idx('invoices.createMany'));
+    expect(idx('invoices.createMany')).toBeLessThan(idx('entries.createMany'));
+    expect(idx('entries.createMany')).toBeLessThan(idx('orders.createMany'));
+  });
+
+  it('warns on a dangling postlot and nulls the ref instead of crashing', async () => {
+    const data = businessData();
+    data.invoices![0].postLotId = 'nonexistent-lot-00000000000000000';
+
+    const result = await importGnuCashData(data, 'Test Book');
+
+    const invoiceRow = calls
+      .filter((c) => c.op === 'invoices.createMany')
+      .flatMap((c) => c.data as Array<Record<string, unknown>>)[0];
+    expect(invoiceRow.post_lot).toBeNull();
+    expect(invoiceRow.post_txn).toBe('txn-buy-00000000000000000000000000');
+    expect(
+      result.warnings.some((w) => w.includes('invoice:postlot') && w.includes('nonexistent-lot')),
+    ).toBe(true);
+  });
+
+  it('skips an entry whose invoice/bill/order attachments all dangle', async () => {
+    const data = businessData();
+    data.entries![0].invoiceId = 'missing-invoice-00000000000000000';
+
+    const result = await importGnuCashData(data, 'Test Book');
+
+    expect(calls.some((c) => c.op === 'entries.createMany')).toBe(false);
+    expect(result.entries).toBe(0);
+    expect(
+      result.warnings.some((w) => w.includes('no resolvable invoice/bill/order attachment')),
+    ).toBe(true);
+  });
+
+  it('resolves forward references regardless of family order in the file', async () => {
+    const data = businessData();
+    // Simulate upstream forward refs: the customer's terms/taxtable point at
+    // objects that appear "later"; array order is irrelevant to resolution.
+    data.billterms = data.billterms!.slice();
+    data.taxtables = data.taxtables!.slice();
+
+    await importGnuCashData(data, 'Test Book');
+
+    const customerRow = calls
+      .filter((c) => c.op === 'customers.createMany')
+      .flatMap((c) => c.data as Array<Record<string, unknown>>)[0];
+    expect(customerRow.terms).toBe('bt-net30-00000000000000000000000');
+    expect(customerRow.taxtable).toBe('tt-sales-00000000000000000000000');
+  });
+
+  it('clears business entities child-first (plus ownership rows) on overwrite', async () => {
+    existingBookRef.current = {
+      root_account_guid: 'old-root-guid-000000000000000000',
+    };
+
+    await importGnuCashData(businessData(), 'Test Book', { overwrite: true });
+
+    const idx = (op: string) => calls.findIndex((c) => c.op === op);
+    // Children before parents: entries -> invoices -> orders -> jobs ->
+    // customers/vendors/employees -> taxtables -> billterms.
+    expect(idx('entries.deleteMany')).toBeGreaterThanOrEqual(0);
+    expect(idx('entries.deleteMany')).toBeLessThan(idx('invoices.deleteMany'));
+    expect(idx('invoices.deleteMany')).toBeLessThan(idx('orders.deleteMany'));
+    expect(idx('orders.deleteMany')).toBeLessThan(idx('jobs.deleteMany'));
+    expect(idx('jobs.deleteMany')).toBeLessThan(idx('customers.deleteMany'));
+    expect(idx('customers.deleteMany')).toBeLessThan(idx('taxtables.deleteMany'));
+    expect(idx('taxtable_entries.deleteMany')).toBeLessThan(idx('taxtables.deleteMany'));
+    expect(idx('taxtables.deleteMany')).toBeLessThan(idx('billterms.deleteMany'));
+    // Ownership rows for the incoming entities are cleared and re-recorded.
+    expect(idx('gnucash_web_business_entity_ownership.deleteMany')).toBeGreaterThanOrEqual(0);
+    expect(idx('gnucash_web_business_entity_ownership.deleteMany')).toBeLessThan(
+      idx('gnucash_web_business_entity_ownership.createMany'),
+    );
+    // Entries attached to incoming invoices are cleared even under other guids.
+    const entryDelete = calls.find((c) => c.op === 'entries.deleteMany')!.data as {
+      where: { OR: Array<Record<string, unknown>> };
+    };
+    expect(entryDelete.where.OR).toContainEqual({
+      invoice: { in: ['inv-00001-0000000000000000000000'] },
+    });
+    expect(entryDelete.where.OR).toContainEqual({
+      bill: { in: ['inv-00001-0000000000000000000000'] },
+    });
   });
 });
 

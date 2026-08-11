@@ -8,6 +8,7 @@
 import { XMLParser } from 'fast-xml-parser';
 import { gunzipSync } from 'fflate';
 import { parseSlotsContainer } from './slots';
+import { parseBusinessObjects } from './business';
 import type {
   GnuCashXmlData,
   GnuCashBook,
@@ -162,6 +163,10 @@ export function parseGnuCashXml(data: Buffer | Uint8Array): GnuCashXmlData {
   // Parse scheduled transactions
   const schedxactions = parseSchedXActions(bookElement, skipped);
 
+  // Parse the nine business object families (billterms, taxtables,
+  // customers, vendors, employees, jobs, invoices, entries, orders).
+  const business = parseBusinessObjects(bookElement, skipped);
+
   return {
     book,
     commodities,
@@ -172,6 +177,7 @@ export function parseGnuCashXml(data: Buffer | Uint8Array): GnuCashXmlData {
     schedxactions,
     templateAccounts,
     templateTransactions,
+    ...business,
     countData,
     skipped,
   };

@@ -14,6 +14,17 @@ vi.mock('@/lib/prisma', () => ({
     schedxactions: { findMany: vi.fn() },
     recurrences: { findMany: vi.fn() },
     gnucash_web_budget_ownership: { findMany: vi.fn() },
+    gnucash_web_business_entity_ownership: { findMany: vi.fn() },
+    billterms: { findMany: vi.fn() },
+    taxtables: { findMany: vi.fn() },
+    taxtable_entries: { findMany: vi.fn() },
+    customers: { findMany: vi.fn() },
+    vendors: { findMany: vi.fn() },
+    employees: { findMany: vi.fn() },
+    jobs: { findMany: vi.fn() },
+    invoices: { findMany: vi.fn() },
+    orders: { findMany: vi.fn() },
+    entries: { findMany: vi.fn() },
   },
 }));
 
@@ -39,6 +50,17 @@ beforeEach(() => {
   mockPrisma.recurrences.findMany.mockResolvedValue([]);
   mockPrisma.gnucash_web_budget_ownership.findMany.mockResolvedValue([]);
   mockPrisma.budgets.findMany.mockResolvedValue([]);
+  mockPrisma.gnucash_web_business_entity_ownership.findMany.mockResolvedValue([]);
+  mockPrisma.billterms.findMany.mockResolvedValue([]);
+  mockPrisma.taxtables.findMany.mockResolvedValue([]);
+  mockPrisma.taxtable_entries.findMany.mockResolvedValue([]);
+  mockPrisma.customers.findMany.mockResolvedValue([]);
+  mockPrisma.vendors.findMany.mockResolvedValue([]);
+  mockPrisma.employees.findMany.mockResolvedValue([]);
+  mockPrisma.jobs.findMany.mockResolvedValue([]);
+  mockPrisma.invoices.findMany.mockResolvedValue([]);
+  mockPrisma.orders.findMany.mockResolvedValue([]);
+  mockPrisma.entries.findMany.mockResolvedValue([]);
 });
 
 describe('exportBookData lot references', () => {
@@ -373,6 +395,150 @@ describe('exportBookData scheduled transactions and templates', () => {
     expect(result.schedxactions).toEqual([]);
     expect(result.countData.schedxaction).toBe(0);
     expect(result.commodities.find((c) => c.space === 'template')).toBeUndefined();
+  });
+});
+
+describe('exportBookData business entities', () => {
+  it('exports only ownership-scoped business entities with native mapping', async () => {
+    mockPrisma.gnucash_web_business_entity_ownership.findMany.mockResolvedValue([
+      { entity_type: 'billterm', entity_guid: 'bt-1' },
+      { entity_type: 'taxtable', entity_guid: 'tt-1' },
+      { entity_type: 'customer', entity_guid: 'cust-1' },
+      { entity_type: 'vendor', entity_guid: 'vend-1' },
+      { entity_type: 'job', entity_guid: 'job-1' },
+      { entity_type: 'invoice', entity_guid: 'inv-1' },
+    ] as never);
+    mockPrisma.billterms.findMany.mockResolvedValue([
+      { guid: 'bt-1', name: 'Net 30', description: 'd', refcount: 2, invisible: 0, parent: null, type: 'GNC_TERM_TYPE_DAYS', duedays: 30, discountdays: 10, discount_num: 200n, discount_denom: 100n, cutoff: null },
+    ] as never);
+    mockPrisma.taxtables.findMany.mockResolvedValue([
+      { guid: 'tt-1', name: 'Sales Tax', refcount: 2n, invisible: 0, parent: null },
+    ] as never);
+    mockPrisma.taxtable_entries.findMany.mockResolvedValue([
+      { id: 1, taxtable: 'tt-1', account: 'local-account', amount_num: 47500n, amount_denom: 10000n, type: 2 },
+    ] as never);
+    mockPrisma.customers.findMany.mockResolvedValue([
+      {
+        guid: 'cust-1', name: 'Acme', id: '000001', notes: '', active: 1,
+        discount_num: 0n, discount_denom: 1n, credit_num: 100000n, credit_denom: 100n,
+        currency: 'usd-guid', tax_override: 1, tax_included: 1,
+        addr_name: 'Wile', addr_addr1: null, addr_addr2: null, addr_addr3: null, addr_addr4: null,
+        addr_phone: null, addr_fax: null, addr_email: null,
+        shipaddr_name: null, shipaddr_addr1: null, shipaddr_addr2: null, shipaddr_addr3: null,
+        shipaddr_addr4: null, shipaddr_phone: null, shipaddr_fax: null, shipaddr_email: null,
+        terms: 'bt-1', taxtable: 'tt-1',
+      },
+    ] as never);
+    // App-created vendors store lowercase tax_inc — export normalizes.
+    mockPrisma.vendors.findMany.mockResolvedValue([
+      {
+        guid: 'vend-1', name: 'Iron Works', id: '000001', notes: '', currency: 'usd-guid',
+        active: 1, tax_override: 0, tax_inc: 'yes', terms: null, tax_table: null,
+        addr_name: null, addr_addr1: null, addr_addr2: null, addr_addr3: null, addr_addr4: null,
+        addr_phone: null, addr_fax: null, addr_email: null,
+      },
+    ] as never);
+    mockPrisma.jobs.findMany.mockResolvedValue([
+      { guid: 'job-1', id: '000001', name: 'Trap', reference: '', active: 1, owner_type: 2, owner_guid: 'cust-1' },
+    ] as never);
+    mockPrisma.invoices.findMany.mockResolvedValue([
+      {
+        guid: 'inv-1', id: '000001', date_opened: new Date('2024-02-20T09:00:00Z'),
+        date_posted: new Date('2024-03-01T10:59:00Z'), notes: '', active: 1,
+        currency: 'usd-guid', owner_type: 3, owner_guid: 'job-1', terms: 'bt-1',
+        billing_id: 'PO-778', post_txn: 'tx-1', post_lot: 'lot-1', post_acc: 'local-account',
+        billto_type: 2, billto_guid: 'cust-1', charge_amt_num: 5000n, charge_amt_denom: 100n,
+      },
+    ] as never);
+    mockPrisma.entries.findMany.mockResolvedValue([
+      {
+        guid: 'ent-1', date: new Date('2024-03-01T10:59:00Z'), date_entered: null,
+        description: 'Consulting', action: 'Hours', notes: null,
+        quantity_num: 5n, quantity_denom: 1n,
+        i_acct: 'local-account', i_price_num: 10000n, i_price_denom: 100n,
+        i_discount_num: 500n, i_discount_denom: 100n, invoice: 'inv-1',
+        i_disc_type: 'VALUE', i_disc_how: 'PRETAX', i_taxable: 1, i_taxincluded: 0,
+        i_taxtable: 'tt-1', b_acct: null, b_price_num: null, b_price_denom: null,
+        bill: null, b_taxable: null, b_taxincluded: null, b_taxtable: null,
+        b_paytype: null, billable: null, billto_type: null, billto_guid: null,
+        order_guid: null,
+      },
+    ] as never);
+    mockPrisma.commodities.findMany.mockResolvedValue([
+      { guid: 'usd-guid', namespace: 'CURRENCY', mnemonic: 'USD', fullname: null, cusip: null, fraction: 100, quote_flag: 0, quote_source: null, quote_tz: null },
+    ] as never);
+
+    const result = await exportBookData('root');
+
+    // Ownership is THE scope: the query is keyed by the book guid.
+    expect(mockPrisma.gnucash_web_business_entity_ownership.findMany).toHaveBeenCalledWith({
+      where: { book_guid: 'book-a' },
+      select: { entity_type: true, entity_guid: true },
+    });
+    // Entries are reached through their owning documents.
+    expect(mockPrisma.entries.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          OR: [
+            { invoice: { in: ['inv-1'] } },
+            { bill: { in: ['inv-1'] } },
+          ],
+        },
+      }),
+    );
+
+    expect(result.billterms).toEqual([
+      expect.objectContaining({
+        guid: 'bt-1',
+        refcount: 2,
+        invisible: false,
+        days: { dueDays: 30, discountDays: 10, discount: '200/100' },
+      }),
+    ]);
+    expect(result.taxtables![0].entries).toEqual([
+      { accountId: 'local-account', amount: '47500/10000', type: 'PERCENT' },
+    ]);
+    expect(result.customers![0]).toMatchObject({
+      guid: 'cust-1',
+      addr: { name: 'Wile' },
+      shipaddr: {},
+      taxIncluded: 'YES',
+      useTaxTable: true,
+      credit: '100000/100',
+      currency: { space: 'CURRENCY', id: 'USD' },
+      termsId: 'bt-1',
+      taxTableId: 'tt-1',
+    });
+    expect(result.vendors![0].taxIncluded).toBe('YES'); // normalized from 'yes'
+    expect(result.jobs![0].owner).toEqual({ type: 'gncCustomer', id: 'cust-1' });
+    expect(result.invoices![0]).toMatchObject({
+      owner: { type: 'gncJob', id: 'job-1' },
+      billTo: { type: 'gncCustomer', id: 'cust-1' },
+      posted: '2024-03-01 10:59:00 +0000',
+      postTxnId: 'tx-1',
+      postLotId: 'lot-1',
+      postAccId: 'local-account',
+      chargeAmt: '5000/100',
+    });
+    expect(result.entries![0]).toMatchObject({
+      invoiceId: 'inv-1',
+      iPrice: '10000/100',
+      iDiscount: '500/100',
+      iTaxable: true,
+      iTaxIncluded: false,
+    });
+    expect(result.countData['gnc:GncCustomer']).toBe(1);
+    expect(result.countData['gnc:GncEntry']).toBe(1);
+    expect(result.countData['gnc:GncOrder']).toBe(0);
+  });
+
+  it('exports no business entities when the book owns none', async () => {
+    const result = await exportBookData('root');
+
+    expect(result.customers).toEqual([]);
+    expect(result.invoices).toEqual([]);
+    expect(mockPrisma.customers.findMany).not.toHaveBeenCalled();
+    expect(mockPrisma.entries.findMany).not.toHaveBeenCalled();
   });
 });
 

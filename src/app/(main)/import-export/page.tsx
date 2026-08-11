@@ -23,8 +23,32 @@ interface ImportResult {
   budgets: number;
   budgetAmounts: number;
   schedxactions?: number;
+  billterms?: number;
+  taxtables?: number;
+  customers?: number;
+  vendors?: number;
+  employees?: number;
+  jobs?: number;
+  invoices?: number;
+  entries?: number;
+  orders?: number;
   skipped: string[];
   warnings: string[];
+}
+
+/** Total business objects imported (customers, invoices, terms, ...). */
+function businessObjectTotal(result: ImportResult): number {
+  return (
+    (result.billterms ?? 0) +
+    (result.taxtables ?? 0) +
+    (result.customers ?? 0) +
+    (result.vendors ?? 0) +
+    (result.employees ?? 0) +
+    (result.jobs ?? 0) +
+    (result.invoices ?? 0) +
+    (result.entries ?? 0) +
+    (result.orders ?? 0)
+  );
 }
 
 export default function ImportExportPage() {
@@ -408,6 +432,17 @@ export default function ImportExportPage() {
                   <span className="text-foreground-muted">Scheduled: </span>
                   <span className="text-foreground">{importResult.schedxactions ?? 0}</span>
                 </div>
+                {businessObjectTotal(importResult) > 0 && (
+                  <div>
+                    <span className="text-foreground-muted">Business: </span>
+                    <span
+                      className="text-foreground"
+                      title="Customers, vendors, employees, jobs, invoices, entries, orders, bill terms, and tax tables"
+                    >
+                      {businessObjectTotal(importResult)}
+                    </span>
+                  </div>
+                )}
               </div>
             </div>
 

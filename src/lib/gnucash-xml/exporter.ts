@@ -12,6 +12,13 @@ import {
   indexDbSlotRows,
   type LoadedSlotRow,
 } from './slots';
+import {
+  OWNER_TYPE_STRING_BY_INT,
+  TAXINCLUDED_STRING_BY_INT,
+  AMT_TYPE_STRING_BY_INT,
+  PAYMENT_STRING_BY_INT,
+  TERM_TYPE_PROXIMO,
+} from './business';
 import type {
   GnuCashXmlData,
   GnuCashCommodity,
@@ -24,6 +31,17 @@ import type {
   GnuCashSlot,
   GnuCashSchedXAction,
   GnuCashRecurrence,
+  GnuCashAddress,
+  GnuCashOwner,
+  GnuCashBillTerm,
+  GnuCashTaxTable,
+  GnuCashCustomer,
+  GnuCashVendor,
+  GnuCashEmployee,
+  GnuCashJob,
+  GnuCashInvoice,
+  GnuCashEntry,
+  GnuCashOrder,
 } from './types';
 
 /**
@@ -250,6 +268,116 @@ export async function exportBookData(rootAccountGuid: string): Promise<GnuCashXm
     else recurrencesBySx.set(row.obj_guid, [row]);
   }
 
+  // Business entities — scoped STRICTLY by the ownership side table (the
+  // native business tables have no book column; missing ownership means
+  // foreign, so unattributed rows are never exported). Entries carry no
+  // ownership of their own: they are reached through their owning
+  // invoice/bill/order documents.
+  const businessOwnershipRows = await prisma.gnucash_web_business_entity_ownership.findMany({
+    where: { book_guid: book.guid },
+    select: { entity_type: true, entity_guid: true },
+  });
+  const ownedGuidsByType = new Map<string, string[]>();
+  for (const row of businessOwnershipRows) {
+    const list = ownedGuidsByType.get(row.entity_type);
+    if (list) list.push(row.entity_guid);
+    else ownedGuidsByType.set(row.entity_type, [row.entity_guid]);
+  }
+  const ownedGuids = (entityType: string): string[] =>
+    ownedGuidsByType.get(entityType) ?? [];
+
+  const billtermRows = ownedGuids('billterm').length
+    ? await prisma.billterms.findMany({
+        where: { guid: { in: ownedGuids('billterm') } },
+        orderBy: { guid: 'asc' },
+      })
+    : [];
+  const taxtableRows = ownedGuids('taxtable').length
+    ? await prisma.taxtables.findMany({
+        where: { guid: { in: ownedGuids('taxtable') } },
+        orderBy: { guid: 'asc' },
+      })
+    : [];
+  const taxtableEntryRows = taxtableRows.length
+    ? await prisma.taxtable_entries.findMany({
+        where: { taxtable: { in: taxtableRows.map((t) => t.guid) } },
+        orderBy: { id: 'asc' },
+      })
+    : [];
+  const customerRows = ownedGuids('customer').length
+    ? await prisma.customers.findMany({
+        where: { guid: { in: ownedGuids('customer') } },
+        orderBy: { guid: 'asc' },
+      })
+    : [];
+  const vendorRows = ownedGuids('vendor').length
+    ? await prisma.vendors.findMany({
+        where: { guid: { in: ownedGuids('vendor') } },
+        orderBy: { guid: 'asc' },
+      })
+    : [];
+  const employeeRows = ownedGuids('employee').length
+    ? await prisma.employees.findMany({
+        where: { guid: { in: ownedGuids('employee') } },
+        orderBy: { guid: 'asc' },
+      })
+    : [];
+  const jobRows = ownedGuids('job').length
+    ? await prisma.jobs.findMany({
+        where: { guid: { in: ownedGuids('job') } },
+        orderBy: { guid: 'asc' },
+      })
+    : [];
+  const invoiceRows = ownedGuids('invoice').length
+    ? await prisma.invoices.findMany({
+        where: { guid: { in: ownedGuids('invoice') } },
+        orderBy: { guid: 'asc' },
+      })
+    : [];
+  const orderRows = ownedGuids('order').length
+    ? await prisma.orders.findMany({
+        where: { guid: { in: ownedGuids('order') } },
+        orderBy: { guid: 'asc' },
+      })
+    : [];
+  const entryAttachmentOr: Array<Record<string, unknown>> = [];
+  if (invoiceRows.length) {
+    entryAttachmentOr.push({ invoice: { in: invoiceRows.map((i) => i.guid) } });
+    entryAttachmentOr.push({ bill: { in: invoiceRows.map((i) => i.guid) } });
+  }
+  if (orderRows.length) {
+    entryAttachmentOr.push({ order_guid: { in: orderRows.map((o) => o.guid) } });
+  }
+  const entryRows = entryAttachmentOr.length
+    ? await prisma.entries.findMany({
+        where: { OR: entryAttachmentOr },
+        orderBy: { guid: 'asc' },
+      })
+    : [];
+
+  // Business currencies (customers/vendors/employees/invoices store a
+  // commodity guid) may not be referenced by any account or transaction;
+  // pull the missing ones so the commodity refs resolve.
+  {
+    const known = new Set(commodities.map((c) => c.guid));
+    const businessCurrencyGuids = [
+      ...new Set(
+        [
+          ...customerRows.map((c) => c.currency),
+          ...vendorRows.map((v) => v.currency),
+          ...employeeRows.map((e) => e.currency),
+          ...invoiceRows.map((i) => i.currency),
+        ].filter((g): g is string => Boolean(g) && !known.has(g)),
+      ),
+    ];
+    if (businessCurrencyGuids.length > 0) {
+      const extra = await prisma.commodities.findMany({
+        where: { guid: { in: businessCurrencyGuids } },
+      });
+      commodities.push(...extra);
+    }
+  }
+
   // Load every KVP slot tree in one recursive pass: book, accounts,
   // transactions, splits, lots, commodities, budgets, template accounts,
   // template transactions/splits, scheduled transactions.
@@ -265,6 +393,15 @@ export async function exportBookData(rootAccountGuid: string): Promise<GnuCashXm
     ...templateTransactionRows.map((t) => t.guid),
     ...templateTransactionRows.flatMap((t) => t.splits.map((s) => s.guid)),
     ...sxRows.map((s) => s.guid),
+    ...billtermRows.map((r) => r.guid),
+    ...taxtableRows.map((r) => r.guid),
+    ...customerRows.map((r) => r.guid),
+    ...vendorRows.map((r) => r.guid),
+    ...employeeRows.map((r) => r.guid),
+    ...jobRows.map((r) => r.guid),
+    ...invoiceRows.map((r) => r.guid),
+    ...entryRows.map((r) => r.guid),
+    ...orderRows.map((r) => r.guid),
   ];
   const loadedSlotRows = await loadSlotRowsRecursive(slotOwnerGuids);
 
@@ -552,6 +689,267 @@ export async function exportBookData(rootAccountGuid: string): Promise<GnuCashXm
     };
   });
 
+  // ---- Business entities (native rows -> wire types) ----
+
+  const fractionOrUndefined = (
+    num: bigint | null,
+    denom: bigint | null,
+  ): string | undefined =>
+    num !== null && denom !== null ? toFractionString(num, denom) : undefined;
+
+  /** Commodity guid column -> { space, id } ref (default book currency USD). */
+  const currencyRefOf = (guid: string | null): { space: string; id: string } => {
+    const commodity = guid ? commodityLookup.get(guid) : undefined;
+    return commodity
+      ? { space: commodity.namespace, id: commodity.mnemonic }
+      : { space: 'CURRENCY', id: 'USD' };
+  };
+
+  /** owner_type/owner_guid int columns -> owner sub-element, when valid. */
+  const ownerOf = (
+    ownerType: number | null,
+    ownerGuid: string | null,
+  ): GnuCashOwner | undefined => {
+    if (ownerType === null || !ownerGuid) return undefined;
+    const type = OWNER_TYPE_STRING_BY_INT[ownerType];
+    return type ? { type, id: ownerGuid } : undefined;
+  };
+
+  /** addr_* column bundle -> address sub-element (empty fields dropped). */
+  const addressOf = (row: {
+    name: string | null;
+    addr1: string | null;
+    addr2: string | null;
+    addr3: string | null;
+    addr4: string | null;
+    phone: string | null;
+    fax: string | null;
+    email: string | null;
+  }): GnuCashAddress => ({
+    ...(row.name ? { name: row.name } : {}),
+    ...(row.addr1 ? { addr1: row.addr1 } : {}),
+    ...(row.addr2 ? { addr2: row.addr2 } : {}),
+    ...(row.addr3 ? { addr3: row.addr3 } : {}),
+    ...(row.addr4 ? { addr4: row.addr4 } : {}),
+    ...(row.phone ? { phone: row.phone } : {}),
+    ...(row.fax ? { fax: row.fax } : {}),
+    ...(row.email ? { email: row.email } : {}),
+  });
+
+  const exportBillterms: GnuCashBillTerm[] = billtermRows.map((row) => {
+    const variant = {
+      ...(row.duedays ? (row.type === TERM_TYPE_PROXIMO ? { dueDay: row.duedays } : { dueDays: row.duedays }) : {}),
+      ...(row.discountdays
+        ? (row.type === TERM_TYPE_PROXIMO
+            ? { discountDay: row.discountdays }
+            : { discountDays: row.discountdays })
+        : {}),
+      ...(row.discount_num ? { discount: toFractionString(row.discount_num, row.discount_denom ?? 1n) } : {}),
+    };
+    return {
+      guid: row.guid,
+      name: row.name,
+      description: row.description,
+      refcount: row.refcount,
+      invisible: row.invisible === 1,
+      ...(row.parent ? { parentId: row.parent } : {}),
+      // billterm:child is not reconstructable (no native column); GnuCash
+      // re-derives child pointers from the children's parent refs on load.
+      ...(row.type === TERM_TYPE_PROXIMO
+        ? { proximo: { ...variant, ...(row.cutoff ? { cutoffDay: row.cutoff } : {}) } }
+        : { days: variant }),
+      ...(slotsFor(row.guid) ? { slots: slotsFor(row.guid) } : {}),
+    };
+  });
+
+  const entriesByTaxtable = new Map<string, typeof taxtableEntryRows>();
+  for (const row of taxtableEntryRows) {
+    const list = entriesByTaxtable.get(row.taxtable);
+    if (list) list.push(row);
+    else entriesByTaxtable.set(row.taxtable, [row]);
+  }
+  const exportTaxtables: GnuCashTaxTable[] = taxtableRows.map((row) => ({
+    guid: row.guid,
+    name: row.name,
+    refcount: Number(row.refcount),
+    invisible: row.invisible === 1,
+    ...(row.parent ? { parentId: row.parent } : {}),
+    entries: (entriesByTaxtable.get(row.guid) ?? []).map((entry) => ({
+      accountId: entry.account,
+      amount: toFractionString(entry.amount_num, entry.amount_denom),
+      type: AMT_TYPE_STRING_BY_INT[entry.type] ?? 'VALUE',
+    })),
+    ...(slotsFor(row.guid) ? { slots: slotsFor(row.guid) } : {}),
+  }));
+
+  const exportCustomers: GnuCashCustomer[] = customerRows.map((row) => ({
+    guid: row.guid,
+    name: row.name,
+    id: row.id,
+    addr: addressOf({
+      name: row.addr_name, addr1: row.addr_addr1, addr2: row.addr_addr2,
+      addr3: row.addr_addr3, addr4: row.addr_addr4, phone: row.addr_phone,
+      fax: row.addr_fax, email: row.addr_email,
+    }),
+    shipaddr: addressOf({
+      name: row.shipaddr_name, addr1: row.shipaddr_addr1, addr2: row.shipaddr_addr2,
+      addr3: row.shipaddr_addr3, addr4: row.shipaddr_addr4, phone: row.shipaddr_phone,
+      fax: row.shipaddr_fax, email: row.shipaddr_email,
+    }),
+    ...(row.notes ? { notes: row.notes } : {}),
+    ...(row.terms ? { termsId: row.terms } : {}),
+    // App-created customers store 0 for "not included" — map to NO.
+    taxIncluded: TAXINCLUDED_STRING_BY_INT[row.tax_included ?? 0] ?? 'NO',
+    active: row.active === 1,
+    discount: toFractionString(row.discount_num, row.discount_denom),
+    credit: toFractionString(row.credit_num, row.credit_denom),
+    currency: currencyRefOf(row.currency),
+    useTaxTable: row.tax_override === 1,
+    ...(row.taxtable ? { taxTableId: row.taxtable } : {}),
+    ...(slotsFor(row.guid) ? { slots: slotsFor(row.guid) } : {}),
+  }));
+
+  // Vendor tax_inc is a string column; native GnuCash writes the upstream
+  // enum strings (YES/NO/USEGLOBAL) while this app's own create path wrote
+  // lowercase yes/no — normalize case and fall back to USEGLOBAL.
+  const vendorTaxIncluded = (taxInc: string | null): string => {
+    const upper = (taxInc ?? '').toUpperCase();
+    return upper === 'YES' || upper === 'NO' || upper === 'USEGLOBAL' ? upper : 'USEGLOBAL';
+  };
+  const exportVendors: GnuCashVendor[] = vendorRows.map((row) => ({
+    guid: row.guid,
+    name: row.name,
+    id: row.id,
+    addr: addressOf({
+      name: row.addr_name, addr1: row.addr_addr1, addr2: row.addr_addr2,
+      addr3: row.addr_addr3, addr4: row.addr_addr4, phone: row.addr_phone,
+      fax: row.addr_fax, email: row.addr_email,
+    }),
+    ...(row.notes ? { notes: row.notes } : {}),
+    ...(row.terms ? { termsId: row.terms } : {}),
+    taxIncluded: vendorTaxIncluded(row.tax_inc),
+    active: row.active === 1,
+    currency: currencyRefOf(row.currency),
+    useTaxTable: row.tax_override === 1,
+    ...(row.tax_table ? { taxTableId: row.tax_table } : {}),
+    ...(slotsFor(row.guid) ? { slots: slotsFor(row.guid) } : {}),
+  }));
+
+  const exportEmployees: GnuCashEmployee[] = employeeRows.map((row) => ({
+    guid: row.guid,
+    username: row.username,
+    id: row.id,
+    addr: addressOf({
+      name: row.addr_name, addr1: row.addr_addr1, addr2: row.addr_addr2,
+      addr3: row.addr_addr3, addr4: row.addr_addr4, phone: row.addr_phone,
+      fax: row.addr_fax, email: row.addr_email,
+    }),
+    ...(row.language ? { language: row.language } : {}),
+    ...(row.acl ? { acl: row.acl } : {}),
+    active: row.active === 1,
+    workday: toFractionString(row.workday_num, row.workday_denom),
+    rate: toFractionString(row.rate_num, row.rate_denom),
+    currency: currencyRefOf(row.currency),
+    ...(row.ccard_guid ? { ccardId: row.ccard_guid } : {}),
+    ...(slotsFor(row.guid) ? { slots: slotsFor(row.guid) } : {}),
+  }));
+
+  const exportJobs: GnuCashJob[] = jobRows.map((row) => ({
+    guid: row.guid,
+    id: row.id,
+    name: row.name,
+    ...(row.reference ? { reference: row.reference } : {}),
+    ...(ownerOf(row.owner_type, row.owner_guid)
+      ? { owner: ownerOf(row.owner_type, row.owner_guid) }
+      : {}),
+    active: row.active === 1,
+    ...(slotsFor(row.guid) ? { slots: slotsFor(row.guid) } : {}),
+  }));
+
+  const exportInvoices: GnuCashInvoice[] = invoiceRows.map((row) => ({
+    guid: row.guid,
+    id: row.id,
+    ...(ownerOf(row.owner_type, row.owner_guid)
+      ? { owner: ownerOf(row.owner_type, row.owner_guid) }
+      : {}),
+    opened: formatGnuCashDate(row.date_opened),
+    ...(row.date_posted ? { posted: formatGnuCashDate(row.date_posted) } : {}),
+    ...(row.terms ? { termsId: row.terms } : {}),
+    ...(row.billing_id ? { billingId: row.billing_id } : {}),
+    ...(row.notes ? { notes: row.notes } : {}),
+    active: row.active === 1,
+    ...(row.post_txn ? { postTxnId: row.post_txn } : {}),
+    ...(row.post_lot ? { postLotId: row.post_lot } : {}),
+    ...(row.post_acc ? { postAccId: row.post_acc } : {}),
+    currency: currencyRefOf(row.currency),
+    ...(ownerOf(row.billto_type, row.billto_guid)
+      ? { billTo: ownerOf(row.billto_type, row.billto_guid) }
+      : {}),
+    ...(fractionOrUndefined(row.charge_amt_num, row.charge_amt_denom)
+      ? { chargeAmt: fractionOrUndefined(row.charge_amt_num, row.charge_amt_denom) }
+      : {}),
+    ...(slotsFor(row.guid) ? { slots: slotsFor(row.guid) } : {}),
+  }));
+
+  const exportEntries: GnuCashEntry[] = entryRows.map((row) => ({
+    guid: row.guid,
+    date: formatGnuCashDate(row.date),
+    ...(row.date_entered ? { entered: formatGnuCashDate(row.date_entered) } : {}),
+    ...(row.description ? { description: row.description } : {}),
+    ...(row.action ? { action: row.action } : {}),
+    ...(row.notes ? { notes: row.notes } : {}),
+    ...(fractionOrUndefined(row.quantity_num, row.quantity_denom)
+      ? { quantity: fractionOrUndefined(row.quantity_num, row.quantity_denom) }
+      : {}),
+    ...(row.i_acct ? { iAcctId: row.i_acct } : {}),
+    ...(fractionOrUndefined(row.i_price_num, row.i_price_denom)
+      ? { iPrice: fractionOrUndefined(row.i_price_num, row.i_price_denom) }
+      : {}),
+    ...(fractionOrUndefined(row.i_discount_num, row.i_discount_denom)
+      ? { iDiscount: fractionOrUndefined(row.i_discount_num, row.i_discount_denom) }
+      : {}),
+    ...(row.invoice ? { invoiceId: row.invoice } : {}),
+    ...(row.i_disc_type ? { iDiscType: row.i_disc_type } : {}),
+    ...(row.i_disc_how ? { iDiscHow: row.i_disc_how } : {}),
+    ...(row.i_taxable !== null ? { iTaxable: row.i_taxable === 1 } : {}),
+    ...(row.i_taxincluded !== null ? { iTaxIncluded: row.i_taxincluded === 1 } : {}),
+    ...(row.i_taxtable ? { iTaxTableId: row.i_taxtable } : {}),
+    ...(row.b_acct ? { bAcctId: row.b_acct } : {}),
+    ...(fractionOrUndefined(row.b_price_num, row.b_price_denom)
+      ? { bPrice: fractionOrUndefined(row.b_price_num, row.b_price_denom) }
+      : {}),
+    ...(row.bill ? { billId: row.bill } : {}),
+    ...(row.billable !== null ? { billable: row.billable === 1 } : {}),
+    ...(ownerOf(row.billto_type, row.billto_guid)
+      ? { billTo: ownerOf(row.billto_type, row.billto_guid) }
+      : {}),
+    ...(row.b_taxable !== null ? { bTaxable: row.b_taxable === 1 } : {}),
+    ...(row.b_taxincluded !== null ? { bTaxIncluded: row.b_taxincluded === 1 } : {}),
+    ...(row.b_paytype !== null && PAYMENT_STRING_BY_INT[row.b_paytype]
+      ? { bPayment: PAYMENT_STRING_BY_INT[row.b_paytype] }
+      : {}),
+    ...(row.b_taxtable ? { bTaxTableId: row.b_taxtable } : {}),
+    ...(row.order_guid ? { orderId: row.order_guid } : {}),
+    ...(slotsFor(row.guid) ? { slots: slotsFor(row.guid) } : {}),
+  }));
+
+  const exportOrders: GnuCashOrder[] = orderRows.map((row) => ({
+    guid: row.guid,
+    id: row.id,
+    ...(ownerOf(row.owner_type, row.owner_guid)
+      ? { owner: ownerOf(row.owner_type, row.owner_guid) }
+      : {}),
+    opened: formatGnuCashDate(row.date_opened),
+    // Epoch 0 is the importer's stand-in for the unset time64 — omit it.
+    ...(row.date_closed && row.date_closed.getTime() > 0
+      ? { closed: formatGnuCashDate(row.date_closed) }
+      : {}),
+    ...(row.notes ? { notes: row.notes } : {}),
+    ...(row.reference ? { reference: row.reference } : {}),
+    active: row.active === 1,
+    ...(slotsFor(row.guid) ? { slots: slotsFor(row.guid) } : {}),
+  }));
+
   return {
     book: {
       id: book.guid,
@@ -566,6 +964,15 @@ export async function exportBookData(rootAccountGuid: string): Promise<GnuCashXm
     schedxactions: exportSchedxactions,
     templateAccounts: hasTemplateDescendants ? exportTemplateAccounts : [],
     templateTransactions: hasTemplateDescendants ? exportTemplateTransactions : [],
+    billterms: exportBillterms,
+    taxtables: exportTaxtables,
+    customers: exportCustomers,
+    vendors: exportVendors,
+    employees: exportEmployees,
+    jobs: exportJobs,
+    invoices: exportInvoices,
+    entries: exportEntries,
+    orders: exportOrders,
     countData: {
       account: exportAccounts.length,
       transaction: exportTransactions.length,
@@ -573,6 +980,15 @@ export async function exportBookData(rootAccountGuid: string): Promise<GnuCashXm
       schedxaction: exportSchedxactions.length,
       budget: exportBudgets.length,
       price: exportPrices.length,
+      'gnc:GncBillTerm': exportBillterms.length,
+      'gnc:GncCustomer': exportCustomers.length,
+      'gnc:GncEmployee': exportEmployees.length,
+      'gnc:GncEntry': exportEntries.length,
+      'gnc:GncInvoice': exportInvoices.length,
+      'gnc:GncJob': exportJobs.length,
+      'gnc:GncOrder': exportOrders.length,
+      'gnc:GncTaxTable': exportTaxtables.length,
+      'gnc:GncVendor': exportVendors.length,
     },
   };
 }

@@ -601,8 +601,9 @@ function mapVendor(row: VendorRow, lookups: ContactLookups): VendorDTO {
     active: row.active === 1,
     currency: lookups.currencies.get(row.currency) ?? row.currency,
     taxOverride: row.tax_override === 1,
-    // GnuCash stores vendor tax_inc as a string ('yes'/'no'/'use global').
-    taxIncluded: row.tax_inc === 'yes',
+    // GnuCash stores vendor tax_inc as a string; desktop/XML books carry
+    // upstream's uppercase YES/NO/USEGLOBAL while app-created rows use 'yes'.
+    taxIncluded: row.tax_inc?.toLowerCase() === 'yes',
     address: mapAddress(row as unknown as Record<string, unknown>, 'addr'),
     terms: row.terms,
     termsName: row.terms ? lookups.termNames.get(row.terms) ?? null : null,

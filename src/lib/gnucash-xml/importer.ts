@@ -11,7 +11,16 @@ import { generateGuid } from '@/lib/gnucash';
 import { acquireBookLock, acquireNamedXactLock, commodityLockKey } from '@/lib/book-lock';
 import { createBudgetOwnership } from '@/lib/budget-ownership';
 import { slotsToDbRows, type DbSlotRow } from './slots';
-import type { GnuCashXmlData, ImportSummary } from './types';
+import {
+  OWNER_TYPE_INT_BY_STRING,
+  TAXINCLUDED_INT_BY_STRING,
+  AMT_TYPE_INT_BY_STRING,
+  PAYMENT_INT_BY_STRING,
+  TERM_TYPE_DAYS,
+  TERM_TYPE_PROXIMO,
+  noteAddressSlotSkips,
+} from './business';
+import type { GnuCashXmlData, GnuCashOwner, ImportSummary } from './types';
 
 /**
  * Parse a GnuCash fraction string like "1234/100" into BigInt numerator and denominator.
@@ -179,6 +188,77 @@ async function clearCollisionRows(tx: any, data: GnuCashXmlData, bookGuid: strin
     for (const lot of a.lots ?? []) if (lot.id) lotGuids.add(lot.id);
   }
 
+  // Business entities — child-first, mirroring the ordering in
+  // deleteOwnedBusinessEntitiesForBook (entity-ownership.ts): entries →
+  // invoices/orders → jobs → customers/vendors/employees → taxtables/
+  // billterms. None of these tables carry FKs, so the ordering is about
+  // never leaving a parentless child behind if the delete is interrupted.
+  // Their slots and ownership rows go with them; ownership is re-recorded
+  // by the insert phase.
+  const guidsOf = (items: Array<{ guid: string }> | undefined) =>
+    (items ?? []).map((item) => item.guid).filter(Boolean);
+  const businessGuids = {
+    entry: guidsOf(data.entries),
+    invoice: guidsOf(data.invoices),
+    order: guidsOf(data.orders),
+    job: guidsOf(data.jobs),
+    customer: guidsOf(data.customers),
+    vendor: guidsOf(data.vendors),
+    employee: guidsOf(data.employees),
+    taxtable: guidsOf(data.taxtables),
+    billterm: guidsOf(data.billterms),
+  };
+  const hasBusinessCollisions = Object.values(businessGuids).some((g) => g.length > 0);
+  if (hasBusinessCollisions) {
+    await deleteSlotsRecursive(tx, Object.values(businessGuids).flat());
+    // Entries attached to incoming invoices/bills/orders are cleared too,
+    // even when their own guids differ (a re-import replaces the document's
+    // line items wholesale — leftovers would double the invoice).
+    const entryOr: Array<Record<string, unknown>> = [];
+    if (businessGuids.entry.length) entryOr.push({ guid: { in: businessGuids.entry } });
+    if (businessGuids.invoice.length) {
+      entryOr.push({ invoice: { in: businessGuids.invoice } });
+      entryOr.push({ bill: { in: businessGuids.invoice } });
+    }
+    if (businessGuids.order.length) entryOr.push({ order_guid: { in: businessGuids.order } });
+    if (entryOr.length) await tx.entries.deleteMany({ where: { OR: entryOr } });
+    if (businessGuids.invoice.length) {
+      await tx.invoices.deleteMany({ where: { guid: { in: businessGuids.invoice } } });
+    }
+    if (businessGuids.order.length) {
+      await tx.orders.deleteMany({ where: { guid: { in: businessGuids.order } } });
+    }
+    if (businessGuids.job.length) {
+      await tx.jobs.deleteMany({ where: { guid: { in: businessGuids.job } } });
+    }
+    if (businessGuids.customer.length) {
+      await tx.customers.deleteMany({ where: { guid: { in: businessGuids.customer } } });
+    }
+    if (businessGuids.vendor.length) {
+      await tx.vendors.deleteMany({ where: { guid: { in: businessGuids.vendor } } });
+    }
+    if (businessGuids.employee.length) {
+      await tx.employees.deleteMany({ where: { guid: { in: businessGuids.employee } } });
+    }
+    if (businessGuids.taxtable.length) {
+      await tx.taxtable_entries.deleteMany({
+        where: { taxtable: { in: businessGuids.taxtable } },
+      });
+      await tx.taxtables.deleteMany({ where: { guid: { in: businessGuids.taxtable } } });
+    }
+    if (businessGuids.billterm.length) {
+      await tx.billterms.deleteMany({ where: { guid: { in: businessGuids.billterm } } });
+    }
+    const ownershipOr = Object.entries(businessGuids)
+      .filter(([type, guids]) => type !== 'entry' && guids.length > 0)
+      .map(([type, guids]) => ({ entity_type: type, entity_guid: { in: guids } }));
+    if (ownershipOr.length) {
+      await tx.gnucash_web_business_entity_ownership.deleteMany({
+        where: { OR: ownershipOr },
+      });
+    }
+  }
+
   // Prices — collide on guid when the same book is re-imported.
   if (priceGuids.length) {
     await tx.prices.deleteMany({ where: { guid: { in: priceGuids } } });
@@ -295,6 +375,15 @@ export async function importGnuCashData(
     slots: 0,
     lots: 0,
     schedxactions: 0,
+    billterms: 0,
+    taxtables: 0,
+    customers: 0,
+    vendors: 0,
+    employees: 0,
+    jobs: 0,
+    invoices: 0,
+    entries: 0,
+    orders: 0,
     skipped: [],
     warnings: [],
   };
@@ -1100,9 +1189,557 @@ export async function importGnuCashData(
       await tx.budget_amounts.createMany({ data: budgetAmountRows.slice(i, i + CHUNK) });
     }
 
-    // 9. Write accumulated KVP slot rows (book, commodity, account, lot,
-    // transaction, split, schedxaction, budget). No FKs on the slots table,
-    // so a single batched pass at the end is safe.
+    // 9. Business objects — dependency order: billterms + taxtables first
+    // (leaf dependencies), then customers/vendors/employees, then jobs,
+    // then invoices, then entries, then orders. The native business tables
+    // have no FKs, so this ordering is about referential hygiene, not
+    // constraints; forward references inside the XML (upstream writes
+    // business objects last and allows refs in any direction) are handled
+    // by resolving every ref against the full incoming sets built up
+    // front. Every entity gets a gnucash_web_business_entity_ownership row
+    // in this same transaction — missing ownership means the entity is
+    // invisible to every book (entity-ownership.ts).
+    const billterms = data.billterms ?? [];
+    const taxtables = data.taxtables ?? [];
+    const customers = data.customers ?? [];
+    const vendors = data.vendors ?? [];
+    const employees = data.employees ?? [];
+    const jobs = data.jobs ?? [];
+    const invoices = data.invoices ?? [];
+    const entries = data.entries ?? [];
+    const orders = data.orders ?? [];
+    const businessTotal =
+      billterms.length + taxtables.length + customers.length + vendors.length +
+      employees.length + jobs.length + invoices.length + entries.length + orders.length;
+
+    if (businessTotal > 0) {
+      emit({ phase: 'Business objects', progress: 93, detail: `${businessTotal} business objects` });
+
+      // Incoming-XML reference sets. References are resolved ONLY against
+      // this import, never against pre-existing rows: a guid that happens
+      // to collide with another book's data must not silently link to it.
+      const billtermGuids = new Set(billterms.map((t) => t.guid));
+      const taxtableGuids = new Set(taxtables.map((t) => t.guid));
+      const customerGuids = new Set(customers.map((c) => c.guid));
+      const vendorGuids = new Set(vendors.map((v) => v.guid));
+      const employeeGuids = new Set(employees.map((e) => e.guid));
+      const jobGuids = new Set(jobs.map((j) => j.guid));
+      const invoiceGuids = new Set(invoices.map((i) => i.guid));
+      const orderGuids = new Set(orders.map((o) => o.guid));
+      const transactionGuids = new Set(data.transactions.map((t) => t.id));
+      const importedLotGuids = new Set(lotRowMap.keys());
+      const ownerSetByType: Record<string, Set<string>> = {
+        gncCustomer: customerGuids,
+        gncJob: jobGuids,
+        gncVendor: vendorGuids,
+        gncEmployee: employeeGuids,
+      };
+
+      /** Resolve a guid ref against an incoming set; dangling → warn + null. */
+      const resolveRef = (
+        guid: string | undefined,
+        validGuids: Set<string>,
+        context: string,
+        refName: string,
+      ): string | null => {
+        if (!guid) return null;
+        if (validGuids.has(guid)) return guid;
+        summary.warnings.push(`${context}: dangling ${refName} reference ${guid} dropped`);
+        return null;
+      };
+
+      /**
+       * Resolve an account ref through accountGuidMap (XML guid → DB guid;
+       * identical except for remapped roots); dangling → warn + null.
+       */
+      const resolveAccountRef = (
+        guid: string | undefined,
+        context: string,
+        refName: string,
+      ): string | null => {
+        if (!guid) return null;
+        const mapped = accountGuidMap.get(guid);
+        if (mapped) return mapped;
+        summary.warnings.push(`${context}: dangling ${refName} reference ${guid} dropped`);
+        return null;
+      };
+
+      /** Resolve an owner (type string + guid) to native int columns. */
+      const resolveOwner = (
+        owner: GnuCashOwner | undefined,
+        context: string,
+      ): { owner_type: number; owner_guid: string } | null => {
+        if (!owner) return null;
+        const ownerTypeInt = OWNER_TYPE_INT_BY_STRING[owner.type];
+        if (ownerTypeInt === undefined) {
+          summary.warnings.push(`${context}: unknown owner type "${owner.type}" dropped`);
+          return null;
+        }
+        if (!ownerSetByType[owner.type].has(owner.id)) {
+          summary.warnings.push(
+            `${context}: dangling ${owner.type} owner reference ${owner.id} dropped`,
+          );
+          return null;
+        }
+        return { owner_type: ownerTypeInt, owner_guid: owner.id };
+      };
+
+      /** Resolve a currency commodity ref, falling back to the book currency. */
+      const resolveCurrency = (
+        currency: { space: string; id: string },
+        context: string,
+      ): string => {
+        const key = `${currency.space}:${currency.id}`;
+        const guid = commodityMap.get(key);
+        if (guid) return guid;
+        summary.warnings.push(`${context}: currency ${key} not found — using book currency`);
+        return rootCommodityGuid!;
+      };
+
+      const ownershipRows: Array<{
+        entity_type: string;
+        entity_guid: string;
+        book_guid: string;
+      }> = [];
+      const own = (entityType: string, entityGuid: string) => {
+        ownershipRows.push({
+          entity_type: entityType,
+          entity_guid: entityGuid,
+          book_guid: bookGuid,
+        });
+      };
+      const pushSlots = (guid: string, slots: GnuCashXmlData['book']['slots']) => {
+        if (slots?.length) slotRowsBuffer.push(...slotsToDbRows(guid, slots));
+      };
+
+      // 9a. Bill terms. billterm:child is not persisted (the native SQL
+      // backend has no column for it either — the child pointer is derived
+      // from the children's parent refs on load).
+      if (billterms.length > 0) {
+        await tx.billterms.createMany({
+          data: billterms.map((term) => {
+            const context = `Bill term "${term.name}"`;
+            if (term.childId) {
+              summary.skipped.push(
+                `${context}: billterm:child ref skipped (no native column; GnuCash re-derives it from parent refs)`,
+              );
+            }
+            const variant = term.proximo ?? term.days ?? {};
+            const discount = 'discount' in variant && variant.discount
+              ? parseFraction(variant.discount)
+              : null;
+            own('billterm', term.guid);
+            pushSlots(term.guid, term.slots);
+            return {
+              guid: term.guid,
+              name: term.name,
+              description: term.description,
+              refcount: term.refcount,
+              invisible: term.invisible ? 1 : 0,
+              parent: resolveRef(term.parentId, billtermGuids, context, 'billterm:parent'),
+              type: term.proximo ? TERM_TYPE_PROXIMO : TERM_TYPE_DAYS,
+              duedays: term.proximo ? term.proximo.dueDay ?? 0 : term.days?.dueDays ?? 0,
+              discountdays: term.proximo
+                ? term.proximo.discountDay ?? 0
+                : term.days?.discountDays ?? 0,
+              discount_num: discount ? discount.num : 0n,
+              discount_denom: discount ? discount.denom : 1n,
+              cutoff: term.proximo ? term.proximo.cutoffDay ?? 0 : null,
+            };
+          }),
+        });
+        summary.billterms = billterms.length;
+      }
+
+      // 9b. Tax tables + entries. taxtable:child is derived, like billterm.
+      if (taxtables.length > 0) {
+        const taxtableEntryRows: Array<{
+          taxtable: string;
+          account: string;
+          amount_num: bigint;
+          amount_denom: bigint;
+          type: number;
+        }> = [];
+        await tx.taxtables.createMany({
+          data: taxtables.map((table) => {
+            const context = `Tax table "${table.name}"`;
+            if (table.childId) {
+              summary.skipped.push(
+                `${context}: taxtable:child ref skipped (no native column; GnuCash re-derives it from parent refs)`,
+              );
+            }
+            for (const entry of table.entries) {
+              const account = entry.accountId && accountGuidMap.has(entry.accountId)
+                ? accountGuidMap.get(entry.accountId)!
+                : null;
+              if (!account) {
+                summary.warnings.push(
+                  `${context}: entry skipped — tax account ${entry.accountId ?? '(none)'} was not imported`,
+                );
+                continue;
+              }
+              const amount = parseFraction(entry.amount);
+              taxtableEntryRows.push({
+                taxtable: table.guid,
+                account,
+                amount_num: amount.num,
+                amount_denom: amount.denom,
+                type: AMT_TYPE_INT_BY_STRING[entry.type] ?? 1,
+              });
+            }
+            own('taxtable', table.guid);
+            pushSlots(table.guid, table.slots);
+            return {
+              guid: table.guid,
+              name: table.name,
+              refcount: BigInt(table.refcount),
+              invisible: table.invisible ? 1 : 0,
+              parent: resolveRef(table.parentId, taxtableGuids, context, 'taxtable:parent'),
+            };
+          }),
+        });
+        if (taxtableEntryRows.length > 0) {
+          await tx.taxtable_entries.createMany({ data: taxtableEntryRows });
+        }
+        summary.taxtables = taxtables.length;
+      }
+
+      // 9c. Customers.
+      if (customers.length > 0) {
+        await tx.customers.createMany({
+          data: customers.map((customer) => {
+            const context = `Customer "${customer.name}"`;
+            const discount = parseFraction(customer.discount);
+            const credit = parseFraction(customer.credit);
+            noteAddressSlotSkips(context, summary.skipped, customer.addr, customer.shipaddr);
+            own('customer', customer.guid);
+            pushSlots(customer.guid, customer.slots);
+            return {
+              guid: customer.guid,
+              name: customer.name,
+              id: customer.id,
+              notes: customer.notes ?? '',
+              active: customer.active ? 1 : 0,
+              discount_num: discount.num,
+              discount_denom: discount.denom,
+              credit_num: credit.num,
+              credit_denom: credit.denom,
+              currency: resolveCurrency(customer.currency, context),
+              tax_override: customer.useTaxTable ? 1 : 0,
+              addr_name: customer.addr.name ?? null,
+              addr_addr1: customer.addr.addr1 ?? null,
+              addr_addr2: customer.addr.addr2 ?? null,
+              addr_addr3: customer.addr.addr3 ?? null,
+              addr_addr4: customer.addr.addr4 ?? null,
+              addr_phone: customer.addr.phone ?? null,
+              addr_fax: customer.addr.fax ?? null,
+              addr_email: customer.addr.email ?? null,
+              shipaddr_name: customer.shipaddr.name ?? null,
+              shipaddr_addr1: customer.shipaddr.addr1 ?? null,
+              shipaddr_addr2: customer.shipaddr.addr2 ?? null,
+              shipaddr_addr3: customer.shipaddr.addr3 ?? null,
+              shipaddr_addr4: customer.shipaddr.addr4 ?? null,
+              shipaddr_phone: customer.shipaddr.phone ?? null,
+              shipaddr_fax: customer.shipaddr.fax ?? null,
+              shipaddr_email: customer.shipaddr.email ?? null,
+              terms: resolveRef(customer.termsId, billtermGuids, context, 'cust:terms'),
+              tax_included:
+                TAXINCLUDED_INT_BY_STRING[customer.taxIncluded] ??
+                TAXINCLUDED_INT_BY_STRING.USEGLOBAL,
+              taxtable: resolveRef(customer.taxTableId, taxtableGuids, context, 'cust:taxtable'),
+            };
+          }),
+        });
+        summary.customers = customers.length;
+      }
+
+      // 9d. Vendors. tax_inc is stored as the upstream string
+      // (YES/NO/USEGLOBAL — gncTaxIncludedTypeToString), matching the
+      // native SQL backend's tax-included-string column.
+      if (vendors.length > 0) {
+        await tx.vendors.createMany({
+          data: vendors.map((vendor) => {
+            const context = `Vendor "${vendor.name}"`;
+            noteAddressSlotSkips(context, summary.skipped, vendor.addr);
+            own('vendor', vendor.guid);
+            pushSlots(vendor.guid, vendor.slots);
+            return {
+              guid: vendor.guid,
+              name: vendor.name,
+              id: vendor.id,
+              notes: vendor.notes ?? '',
+              currency: resolveCurrency(vendor.currency, context),
+              active: vendor.active ? 1 : 0,
+              tax_override: vendor.useTaxTable ? 1 : 0,
+              addr_name: vendor.addr.name ?? null,
+              addr_addr1: vendor.addr.addr1 ?? null,
+              addr_addr2: vendor.addr.addr2 ?? null,
+              addr_addr3: vendor.addr.addr3 ?? null,
+              addr_addr4: vendor.addr.addr4 ?? null,
+              addr_phone: vendor.addr.phone ?? null,
+              addr_fax: vendor.addr.fax ?? null,
+              addr_email: vendor.addr.email ?? null,
+              terms: resolveRef(vendor.termsId, billtermGuids, context, 'vendor:terms'),
+              tax_inc: vendor.taxIncluded,
+              tax_table: resolveRef(vendor.taxTableId, taxtableGuids, context, 'vendor:taxtable'),
+            };
+          }),
+        });
+        summary.vendors = vendors.length;
+      }
+
+      // 9e. Employees. ccard resolves against the imported account tree.
+      if (employees.length > 0) {
+        await tx.employees.createMany({
+          data: employees.map((employee) => {
+            const context = `Employee "${employee.username}"`;
+            const workday = parseFraction(employee.workday);
+            const rate = parseFraction(employee.rate);
+            noteAddressSlotSkips(context, summary.skipped, employee.addr);
+            own('employee', employee.guid);
+            pushSlots(employee.guid, employee.slots);
+            return {
+              guid: employee.guid,
+              username: employee.username,
+              id: employee.id,
+              language: employee.language ?? '',
+              acl: employee.acl ?? '',
+              active: employee.active ? 1 : 0,
+              currency: resolveCurrency(employee.currency, context),
+              ccard_guid: resolveAccountRef(employee.ccardId, context, 'employee:ccard'),
+              workday_num: workday.num,
+              workday_denom: workday.denom,
+              rate_num: rate.num,
+              rate_denom: rate.denom,
+              addr_name: employee.addr.name ?? null,
+              addr_addr1: employee.addr.addr1 ?? null,
+              addr_addr2: employee.addr.addr2 ?? null,
+              addr_addr3: employee.addr.addr3 ?? null,
+              addr_addr4: employee.addr.addr4 ?? null,
+              addr_phone: employee.addr.phone ?? null,
+              addr_fax: employee.addr.fax ?? null,
+              addr_email: employee.addr.email ?? null,
+            };
+          }),
+        });
+        summary.employees = employees.length;
+      }
+
+      // 9f. Jobs — owner is a customer or vendor.
+      if (jobs.length > 0) {
+        await tx.jobs.createMany({
+          data: jobs.map((job) => {
+            const context = `Job "${job.name}"`;
+            const owner = resolveOwner(job.owner, context);
+            own('job', job.guid);
+            pushSlots(job.guid, job.slots);
+            return {
+              guid: job.guid,
+              id: job.id,
+              name: job.name,
+              reference: job.reference ?? '',
+              active: job.active ? 1 : 0,
+              owner_type: owner?.owner_type ?? null,
+              owner_guid: owner?.owner_guid ?? null,
+            };
+          }),
+        });
+        summary.jobs = jobs.length;
+      }
+
+      // 9g. Invoices. posttxn/postlot/postacc must resolve against the
+      // already-imported transactions/lots/accounts of THIS import; a
+      // dangling ref becomes a warning and a null column, never a crash.
+      if (invoices.length > 0) {
+        await tx.invoices.createMany({
+          data: invoices.map((invoice) => {
+            const context = `Invoice "${invoice.id || invoice.guid}"`;
+            const owner = resolveOwner(invoice.owner, context);
+            const billTo = resolveOwner(invoice.billTo, context);
+            const chargeAmt = invoice.chargeAmt ? parseFraction(invoice.chargeAmt) : null;
+            own('invoice', invoice.guid);
+            pushSlots(invoice.guid, invoice.slots);
+            return {
+              guid: invoice.guid,
+              id: invoice.id,
+              date_opened: parseGnuCashDate(invoice.opened),
+              date_posted: invoice.posted ? parseGnuCashDate(invoice.posted) : null,
+              notes: invoice.notes ?? '',
+              active: invoice.active ? 1 : 0,
+              currency: resolveCurrency(invoice.currency, context),
+              owner_type: owner?.owner_type ?? null,
+              owner_guid: owner?.owner_guid ?? null,
+              terms: resolveRef(invoice.termsId, billtermGuids, context, 'invoice:terms'),
+              billing_id: invoice.billingId ?? null,
+              post_txn: resolveRef(invoice.postTxnId, transactionGuids, context, 'invoice:posttxn'),
+              post_lot: resolveRef(invoice.postLotId, importedLotGuids, context, 'invoice:postlot'),
+              post_acc: resolveAccountRef(invoice.postAccId, context, 'invoice:postacc'),
+              billto_type: billTo?.owner_type ?? null,
+              billto_guid: billTo?.owner_guid ?? null,
+              charge_amt_num: chargeAmt ? chargeAmt.num : null,
+              charge_amt_denom: chargeAmt ? chargeAmt.denom : null,
+            };
+          }),
+        });
+        summary.invoices = invoices.length;
+      }
+
+      // 9h. Entries. An entry with no surviving attachment (invoice, bill,
+      // and order all missing or dangling) is skipped: entries carry no
+      // ownership row of their own — book scope reaches them through their
+      // document — so an unattached row would be permanently orphaned.
+      if (entries.length > 0) {
+        const entryRows: Array<{
+          guid: string;
+          date: Date;
+          date_entered: Date | null;
+          description: string | null;
+          action: string | null;
+          notes: string | null;
+          quantity_num: bigint | null;
+          quantity_denom: bigint | null;
+          i_acct: string | null;
+          i_price_num: bigint | null;
+          i_price_denom: bigint | null;
+          i_discount_num: bigint | null;
+          i_discount_denom: bigint | null;
+          invoice: string | null;
+          i_disc_type: string | null;
+          i_disc_how: string | null;
+          i_taxable: number | null;
+          i_taxincluded: number | null;
+          i_taxtable: string | null;
+          b_acct: string | null;
+          b_price_num: bigint | null;
+          b_price_denom: bigint | null;
+          bill: string | null;
+          b_taxable: number | null;
+          b_taxincluded: number | null;
+          b_taxtable: string | null;
+          b_paytype: number | null;
+          billable: number | null;
+          billto_type: number | null;
+          billto_guid: string | null;
+          order_guid: string | null;
+        }> = [];
+        for (const entry of entries) {
+          const context = `Entry ${entry.guid}`;
+          const invoiceRef = resolveRef(entry.invoiceId, invoiceGuids, context, 'entry:invoice');
+          const billRef = resolveRef(entry.billId, invoiceGuids, context, 'entry:bill');
+          const orderRef = resolveRef(entry.orderId, orderGuids, context, 'entry:order');
+          if (!invoiceRef && !billRef && !orderRef) {
+            summary.warnings.push(
+              `${context} skipped: no resolvable invoice/bill/order attachment (an unattached entry would be invisible to every book)`,
+            );
+            continue;
+          }
+          const billTo = resolveOwner(entry.billTo, context);
+          const quantity = entry.quantity ? parseFraction(entry.quantity) : null;
+          const iPrice = entry.iPrice ? parseFraction(entry.iPrice) : null;
+          const iDiscount = entry.iDiscount ? parseFraction(entry.iDiscount) : null;
+          const bPrice = entry.bPrice ? parseFraction(entry.bPrice) : null;
+          pushSlots(entry.guid, entry.slots);
+          entryRows.push({
+            guid: entry.guid,
+            date: parseGnuCashDate(entry.date) ?? new Date(0),
+            date_entered: entry.entered ? parseGnuCashDate(entry.entered) : null,
+            description: entry.description ?? null,
+            action: entry.action ?? null,
+            notes: entry.notes ?? null,
+            quantity_num: quantity ? quantity.num : null,
+            quantity_denom: quantity ? quantity.denom : null,
+            i_acct: resolveAccountRef(entry.iAcctId, context, 'entry:i-acct'),
+            i_price_num: iPrice ? iPrice.num : null,
+            i_price_denom: iPrice ? iPrice.denom : null,
+            i_discount_num: iDiscount ? iDiscount.num : null,
+            i_discount_denom: iDiscount ? iDiscount.denom : null,
+            invoice: invoiceRef,
+            i_disc_type: entry.iDiscType ?? null,
+            i_disc_how: entry.iDiscHow ?? null,
+            i_taxable: entry.iTaxable === undefined ? null : entry.iTaxable ? 1 : 0,
+            i_taxincluded: entry.iTaxIncluded === undefined ? null : entry.iTaxIncluded ? 1 : 0,
+            i_taxtable: resolveRef(entry.iTaxTableId, taxtableGuids, context, 'entry:i-taxtable'),
+            b_acct: resolveAccountRef(entry.bAcctId, context, 'entry:b-acct'),
+            b_price_num: bPrice ? bPrice.num : null,
+            b_price_denom: bPrice ? bPrice.denom : null,
+            bill: billRef,
+            b_taxable: entry.bTaxable === undefined ? null : entry.bTaxable ? 1 : 0,
+            b_taxincluded: entry.bTaxIncluded === undefined ? null : entry.bTaxIncluded ? 1 : 0,
+            b_taxtable: resolveRef(entry.bTaxTableId, taxtableGuids, context, 'entry:b-taxtable'),
+            b_paytype: entry.bPayment ? PAYMENT_INT_BY_STRING[entry.bPayment] ?? null : null,
+            billable: entry.billable === undefined ? null : entry.billable ? 1 : 0,
+            billto_type: billTo?.owner_type ?? null,
+            billto_guid: billTo?.owner_guid ?? null,
+            order_guid: orderRef,
+          });
+          summary.entries++;
+        }
+        if (entryRows.length > 0) {
+          for (let i = 0; i < entryRows.length; i += CHUNK) {
+            await tx.entries.createMany({ data: entryRows.slice(i, i + CHUNK) });
+          }
+        }
+      }
+
+      // 9i. Orders — near-dead upstream, but fully round-tripped. The
+      // native orders table requires an owner and a date_closed; an order
+      // whose owner cannot be resolved is skipped (warned), and a missing
+      // order:closed is stored as epoch 0 (the unset time64 convention).
+      if (orders.length > 0) {
+        const orderRows: Array<{
+          guid: string;
+          id: string;
+          notes: string;
+          reference: string;
+          active: number;
+          date_opened: Date;
+          date_closed: Date;
+          owner_type: number;
+          owner_guid: string;
+        }> = [];
+        for (const order of orders) {
+          const context = `Order "${order.id || order.guid}"`;
+          const owner = resolveOwner(order.owner, context);
+          if (!owner) {
+            summary.warnings.push(`${context} skipped: owner did not resolve`);
+            continue;
+          }
+          own('order', order.guid);
+          pushSlots(order.guid, order.slots);
+          orderRows.push({
+            guid: order.guid,
+            id: order.id,
+            notes: order.notes ?? '',
+            reference: order.reference ?? '',
+            active: order.active ? 1 : 0,
+            date_opened: parseGnuCashDate(order.opened) ?? new Date(0),
+            date_closed: order.closed
+              ? parseGnuCashDate(order.closed) ?? new Date(0)
+              : new Date(0),
+            owner_type: owner.owner_type,
+            owner_guid: owner.owner_guid,
+          });
+          summary.orders++;
+        }
+        if (orderRows.length > 0) {
+          await tx.orders.createMany({ data: orderRows });
+        }
+      }
+
+      // Ownership rows — same transaction as the entity inserts, so no
+      // entity can commit unowned (invisible-forever) rows.
+      if (ownershipRows.length > 0) {
+        for (let i = 0; i < ownershipRows.length; i += CHUNK) {
+          await tx.gnucash_web_business_entity_ownership.createMany({
+            data: ownershipRows.slice(i, i + CHUNK),
+          });
+        }
+      }
+    }
+
+    // 10. Write accumulated KVP slot rows (book, commodity, account, lot,
+    // transaction, split, schedxaction, budget, business entities). No FKs
+    // on the slots table, so a single batched pass at the end is safe.
     if (slotRowsBuffer.length > 0) {
       emit({ phase: 'Slots', progress: 96, detail: `${slotRowsBuffer.length} slot rows` });
       for (let i = 0; i < slotRowsBuffer.length; i += CHUNK) {
