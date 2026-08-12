@@ -99,7 +99,18 @@ jobs:
       # picks this branch up runs in the background with no request attached,
       # so it cannot be killed that way.
       - name: Advance deploy pointer
-        run: git push origin ${{ github.sha }}:refs/heads/deploy
+        # A REST ref update, not `git push`: actions/checkout is shallow, so
+        # the runner cannot prove a fast-forward locally and git rejects the
+        # push. The server still enforces fast-forward here (force defaults to
+        # false), so a stale re-run cannot walk production backwards.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api --method PATCH \
+            "repos/${{ github.repository }}/git/refs/heads/deploy" \
+            -f sha='${{ github.sha }}' \
+            || gh api --method POST "repos/${{ github.repository }}/git/refs" \
+                 -f ref=refs/heads/deploy -f sha='${{ github.sha }}'
 
       # Production is only deployed when it actually serves the new revision.
       # /api/health reports the commit baked into the running image, so this
