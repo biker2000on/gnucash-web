@@ -1,29 +1,46 @@
 /**
- * Shared parsing for user-typed money amounts.
+ * Strict parsing for user-typed money amounts (transaction entry).
  *
- * `parseAmountStrict` is the single implementation: it accepts what a user
- * realistically types or pastes into a money field (currency symbols,
- * thousands separators, surrounding whitespace) and REJECTS anything that
- * isn't a single finite decimal number — `abc`, `1.2.3`, `12abc`, ``, `NaN`,
- * `Infinity`. Callers that must not book a wrong amount check for null and
- * fail validation; `parseAmount` is the lenient wrapper for display/preview
- * math where a blank or garbage field simply means "nothing entered yet".
+ * The shape of the ORIGINAL string is validated first and normalized only
+ * afterwards. Normalizing first — stripping symbols and separators and then
+ * checking what is left — silently repairs malformed input into a different
+ * number: "1,234,56" would become 123456 and "$1$234" would become 1234.
+ * Booking those is worse than rejecting them, so anything that is not one
+ * well-formed number is rejected and the caller fails validation.
+ *
+ * NOTE: `parseAmount` in src/components/business/invoice-ui.ts deliberately
+ * keeps its own lenient, parseFloat-based parser. Invoice/bill/voucher drafts
+ * have relied on that prefix-parse behaviour (e.g. "12abc" → 12) since they
+ * shipped; tightening it is a separate, deliberate change and is out of scope
+ * here.
  */
 
-/** Parse an amount, or null when the input is not a single valid number. */
+/**
+ * One optionally-signed amount:
+ *   - one optional currency symbol, before or after the sign (never both sides)
+ *   - digits either ungrouped (1234) or in well-formed 3-digit groups (1,234)
+ *   - an optional decimal part, and a bare leading point (.5)
+ * Interior spaces, extra symbols and malformed groups fail to match.
+ */
+const AMOUNT_PATTERN =
+    /^(?:[+-]?[$£€¥]?|[$£€¥][+-]?)(?:\d{1,3}(?:,\d{3})+|\d+)?(?:\.\d*)?$/;
+
+/**
+ * Parse an amount, or null when the input is not a single valid number.
+ * Rejects `abc`, `12abc`, `1.2.3`, `1,23`, `1,234,56`, `1 2 3`, `$1$234`,
+ * empty, `NaN` and `Infinity`.
+ */
 export function parseAmountStrict(value: string | number | null | undefined): number | null {
     if (typeof value === 'number') return Number.isFinite(value) ? value : null;
     if (value === null || value === undefined) return null;
-    // Strip currency symbols, thousands separators and whitespace.
-    const cleaned = String(value).replace(/[$£€¥\s,]/g, '');
-    // A single optionally-signed decimal number, nothing else.
-    if (!/^[+-]?(\d+(\.\d*)?|\.\d+)$/.test(cleaned)) return null;
-    const n = Number(cleaned);
-    return Number.isFinite(n) ? n : null;
-}
 
-/** Lenient parse: same rules, but unparseable input becomes 0. */
-export function parseAmount(value: string | number | null | undefined): number {
-    const parsed = parseAmountStrict(value);
-    return parsed === null ? 0 : parsed;
+    // Only surrounding whitespace is forgiven; the rest is validated as typed.
+    const trimmed = String(value).trim();
+    if (!AMOUNT_PATTERN.test(trimmed)) return null;
+    // The pattern allows an empty digit part ("", "$", "-.") — require a digit.
+    if (!/\d/.test(trimmed)) return null;
+
+    // Shape is known good, so normalization cannot change the value's meaning.
+    const n = Number(trimmed.replace(/[$£€¥,]/g, ''));
+    return Number.isFinite(n) ? n : null;
 }

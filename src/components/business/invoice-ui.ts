@@ -15,7 +15,6 @@ import type {
 } from '@/lib/business/invoice-totals';
 import type { EntryView } from '@/lib/business/invoice-engine';
 import type { TaxtableDTO } from '@/lib/business-types';
-import { parseAmount } from '@/lib/parse-amount';
 
 export type { InvoiceKind, InvoiceStatus, DiscountType, DiscountHow };
 
@@ -148,9 +147,12 @@ export function entryDraftToPayload(d: EntryDraft, kind: InvoiceKind): EntryPayl
 // Entry math (mirror of invoice-totals.ts computeEntry)
 // ---------------------------------------------------------------------------
 
-// Single implementation lives in src/lib/parse-amount.ts (shared with the
-// transaction form, which needs the strict variant to reject bad input).
-export { parseAmount };
+export function parseAmount(value: string | number | null | undefined): number {
+    if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+    if (!value) return 0;
+    const n = parseFloat(String(value).replace(/,/g, ''));
+    return Number.isFinite(n) ? n : 0;
+}
 
 /** Round half-away-from-zero to cents. */
 export function roundCents(value: number): number {

@@ -17,22 +17,19 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TransactionForm } from '../TransactionForm';
 
+// Rendered as a plain input so advanced mode (several selectors sharing one
+// placeholder) can be addressed by index.
 vi.mock('@/components/ui/AccountSelector', () => ({
     AccountSelector: (props: {
         value: string;
         onChange: (guid: string, name: string) => void;
         placeholder?: string;
     }) => (
-        <button
-            type="button"
-            data-testid={`account-selector-${props.placeholder}`}
-            onClick={() => props.onChange(
-                props.placeholder?.includes('source') ? 'from0000000000000000000000000001' : 'to000000000000000000000000000001',
-                'Selected account',
-            )}
-        >
-            {props.value || props.placeholder}
-        </button>
+        <input
+            aria-label={`account:${props.placeholder}`}
+            value={props.value}
+            onChange={e => props.onChange(e.target.value, `Account ${e.target.value.slice(0, 4)}`)}
+        />
     ),
 }));
 
@@ -51,12 +48,26 @@ vi.mock('@/lib/hooks/useIsMobile', () => ({ useIsMobile: () => false }));
 vi.mock('@/lib/hooks/useKeyboardShortcut', () => ({ useKeyboardShortcut: () => {} }));
 
 const USD = 'usd0000000000000000000000000001';
+const FROM = 'from0000000000000000000000000001';
+const TO = 'to000000000000000000000000000001';
 
 function fillSimpleEntry(amount: string, description = 'Lunch') {
     fireEvent.change(screen.getByLabelText('Description'), { target: { value: description } });
     fireEvent.change(screen.getByPlaceholderText('0.00'), { target: { value: amount } });
-    fireEvent.click(screen.getByTestId('account-selector-Select source account...'));
-    fireEvent.click(screen.getByTestId('account-selector-Select destination account...'));
+    fireEvent.change(screen.getByLabelText('account:Select source account...'), { target: { value: FROM } });
+    fireEvent.change(screen.getByLabelText('account:Select destination account...'), { target: { value: TO } });
+}
+
+/** Switch to advanced mode and type one debit and one credit split. */
+function fillAdvancedEntry(debit: string, credit: string, description = 'Split entry') {
+    fireEvent.change(screen.getByLabelText('Description'), { target: { value: description } });
+    fireEvent.click(screen.getByRole('button', { name: 'Switch to Advanced (Multiple Splits)' }));
+
+    const accounts = screen.getAllByLabelText('account:Select account...');
+    fireEvent.change(accounts[0], { target: { value: FROM } });
+    fireEvent.change(accounts[1], { target: { value: TO } });
+    fireEvent.change(screen.getAllByPlaceholderText('Debit')[0], { target: { value: debit } });
+    fireEvent.change(screen.getAllByPlaceholderText('Credit')[1], { target: { value: credit } });
 }
 
 const ctrlEnter = () => new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true });
@@ -109,6 +120,58 @@ describe('simple-mode amount parsing', () => {
 
         await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
         expect(onSave.mock.calls[0][0].splits[1].value_num).toBe(2550);
+    });
+});
+
+describe('advanced-mode split amount parsing', () => {
+    it('books a debit/credit pair typed as 1,234.56 at full value, not $1.00', async () => {
+        const onSave = vi.fn().mockResolvedValue(undefined);
+        render(<TransactionForm onSave={onSave} onCancel={() => {}} defaultCurrencyGuid={USD} />);
+
+        fillAdvancedEntry('1,234.56', '1,234.56');
+        fireEvent.click(screen.getByRole('button', { name: 'Create Transaction' }));
+
+        await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+        const [data] = onSave.mock.calls[0];
+        // Both sides used to parseFloat to 1 — balanced, and $1.00 was posted.
+        expect(data.splits[0].value_num).toBe(123456);
+        expect(data.splits[1].value_num).toBe(-123456);
+    });
+
+    it('refuses to post when a split amount is malformed, even if it "balances"', async () => {
+        const onSave = vi.fn().mockResolvedValue(undefined);
+        render(<TransactionForm onSave={onSave} onCancel={() => {}} defaultCurrencyGuid={USD} />);
+
+        // Both sides used to coerce to 0, so the balance check passed and a
+        // $0.00 transaction was posted.
+        fillAdvancedEntry('abc', 'abc');
+        fireEvent.click(screen.getByRole('button', { name: 'Create Transaction' }));
+
+        await screen.findByText(/Enter a valid amount/);
+        expect(screen.queryByText(/unbalanced/i)).toBeNull();
+        expect(onSave).not.toHaveBeenCalled();
+    });
+
+    it('refuses to post when only one split amount is malformed', async () => {
+        const onSave = vi.fn().mockResolvedValue(undefined);
+        render(<TransactionForm onSave={onSave} onCancel={() => {}} defaultCurrencyGuid={USD} />);
+
+        fillAdvancedEntry('1,23', '25.00');
+        fireEvent.click(screen.getByRole('button', { name: 'Create Transaction' }));
+
+        await screen.findByText(/Enter a valid amount/);
+        expect(onSave).not.toHaveBeenCalled();
+    });
+
+    it('still accepts a math expression in a split box', async () => {
+        const onSave = vi.fn().mockResolvedValue(undefined);
+        render(<TransactionForm onSave={onSave} onCancel={() => {}} defaultCurrencyGuid={USD} />);
+
+        fillAdvancedEntry('20+5.5', '25.50');
+        fireEvent.click(screen.getByRole('button', { name: 'Create Transaction' }));
+
+        await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+        expect(onSave.mock.calls[0][0].splits[0].value_num).toBe(2550);
     });
 });
 
