@@ -78,6 +78,12 @@ export interface BudgetReportAccountInput {
     budgeted: number[];
     /** Actual amount per period (index = periodNum) */
     actual: number[];
+    /**
+     * True when another budgeted account is an ancestor of this one. Its
+     * amounts are already rolled up into that ancestor's row, so the row is
+     * still listed but left out of the group subtotal and the net row.
+     */
+    nestedUnderBudgeted?: boolean;
 }
 
 /* ------------------------------------------------------------------ */
@@ -137,6 +143,11 @@ function groupKeyFor(accountType: string): BudgetGroupKey {
  * Roll per-period budget/actual matrices up over the selected periods and
  * group into Income / Expenses / Other with subtotals plus a net row.
  * Pure. Empty groups are omitted; net = income − expenses regardless.
+ *
+ * Accounts flagged `nestedUnderBudgeted` (a budgeted ancestor's row already
+ * contains their rolled-up amounts) are still listed as rows but excluded
+ * from the subtotals and the net row, so a subtree budgeted at two levels is
+ * not counted twice.
  */
 export function buildBudgetReportGroups(
     accounts: ReadonlyArray<BudgetReportAccountInput>,
@@ -160,14 +171,19 @@ export function buildBudgetReportGroups(
     const groups: BudgetReportGroup[] = [];
     const subtotals: Record<BudgetGroupKey, BudgetReportRow> = {} as Record<BudgetGroupKey, BudgetReportRow>;
 
+    const nestedGuids = new Set(
+        accounts.filter(a => a.nestedUnderBudgeted).map(a => a.guid)
+    );
+
     for (const key of ['income', 'expense', 'other'] as const) {
         const rows = rowsByGroup[key];
         rows.sort((a, b) => a.name.localeCompare(b.name));
+        const summed = rows.filter(r => !nestedGuids.has(r.guid));
         const subtotal = makeRow(
             `subtotal-${key}`,
             `Total ${GROUP_TITLES[key]}`,
-            rows.reduce((s, r) => s + r.budgeted, 0),
-            rows.reduce((s, r) => s + r.actual, 0),
+            summed.reduce((s, r) => s + r.budgeted, 0),
+            summed.reduce((s, r) => s + r.actual, 0),
         );
         subtotals[key] = subtotal;
         if (rows.length > 0) {
@@ -224,6 +240,7 @@ export async function generateBudgetReport(
         type: account.type,
         budgeted: account.periods.map(p => p.budgeted),
         actual: account.periods.map(p => p.actual),
+        nestedUnderBudgeted: account.nestedUnderBudgeted,
     }));
 
     const { groups, net } = buildBudgetReportGroups(accounts, periodNums);

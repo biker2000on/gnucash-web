@@ -109,6 +109,29 @@ describe('buildBudgetReportGroups', () => {
     expect(row.pctUsed).toBeNull();
   });
 
+  it('excludes a nested budgeted account from the subtotal and net row', () => {
+    // Expenses:Auto budgeted 500 (rolled-up actual 300) and its child
+    // Expenses:Auto:Gas budgeted 200 (actual 200). The child's amounts are
+    // already inside the parent's row, so the subtotal is 500/300, not 700/500.
+    const { groups, net } = buildBudgetReportGroups(
+      [
+        account('salary', 'INCOME', [4000], [4000], 'Salary'),
+        account('auto', 'EXPENSE', [500], [300], 'Auto'),
+        { ...account('gas', 'EXPENSE', [200], [200], 'Auto:Gas'), nestedUnderBudgeted: true },
+      ],
+      [0],
+    );
+
+    const expense = groups.find(g => g.key === 'expense')!;
+    // Both rows are still listed…
+    expect(expense.rows.map(r => r.guid).sort()).toEqual(['auto', 'gas']);
+    // …but only the topmost one is summed.
+    expect(expense.subtotal.budgeted).toBe(500);
+    expect(expense.subtotal.actual).toBe(300);
+    expect(net.budgeted).toBe(3500);
+    expect(net.actual).toBe(3700);
+  });
+
   it('groups income vs expense with subtotals and a net row', () => {
     const { groups, net } = buildBudgetReportGroups(
       [

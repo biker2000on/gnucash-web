@@ -11,6 +11,7 @@ import { useKeyboardShortcut } from '@/lib/hooks/useKeyboardShortcut';
 import { useToast } from '@/contexts/ToastContext';
 import { useAccounts } from '@/lib/hooks/useAccounts';
 import { evaluateMathExpression, containsMathExpression } from '@/lib/math-eval';
+import { parseAmountStrict } from '@/lib/parse-amount';
 import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 import { formatDateForDisplay, parseDateInput } from '@/lib/date-format';
 import { toLocalDateString } from '@/lib/datePresets';
@@ -43,6 +44,21 @@ const createEmptySplit = (): SplitFormData => ({
     reconcile_state: 'n',
 });
 
+/** New client-generated transaction guid in GnuCash's 32-hex-char form. */
+const newClientTxGuid = (): string => crypto.randomUUID().replace(/-/g, '');
+
+/**
+ * Parse the simple-mode amount field: a math expression ("12+3") evaluates,
+ * anything else must be a single valid number ("$1,234.56", "1,234.56", "25").
+ * Returns null for input that is NOT a valid amount ("abc", "1.2.3", "") so
+ * callers reject it instead of silently booking 0 or a truncated value.
+ */
+export function parseSimpleAmount(text: string): number | null {
+    const evaluated = evaluateMathExpression(text);
+    if (evaluated !== null) return evaluated;
+    return parseAmountStrict(text);
+}
+
 /**
  * Build the two splits for a simple-mode (from -> to) entry.
  *
@@ -63,7 +79,7 @@ export function buildSimpleModeSplits(
     simple: { amount: string; fromAccountGuid: string; toAccountGuid: string; memo: string | null },
     priorSplits: SplitFormData[],
 ): SplitFormData[] {
-    const amount = parseFloat(simple.amount) || 0;
+    const amount = parseSimpleAmount(simple.amount) ?? 0;
     const claimed = new Set<string>();
     const makeSide = (accountGuid: string, side: 'from' | 'to'): SplitFormData => {
         const prior = priorSplits.find(s => s.account_guid === accountGuid && !claimed.has(s.id));
@@ -121,6 +137,15 @@ export function TransactionForm({
     // this value the user hasn't touched it, and buildSimpleModeSplits keeps
     // each split's own stored memo instead of overwriting both.
     const initialSimpleMemoRef = useRef('');
+    // In-flight guard. A ref, not `saving` state: the Ctrl+Enter listener can
+    // fire twice before React re-renders, so a state read would still be false
+    // on the second press and post the transaction twice.
+    const savingRef = useRef(false);
+    // Idempotency key for creates: generated once per form-open (and once per
+    // entry in save-and-another), so a retried submit collapses onto the same
+    // record server-side instead of creating a duplicate.
+    const clientTxGuidRef = useRef<string | null>(null);
+    if (clientTxGuidRef.current === null) clientTxGuidRef.current = newClientTxGuid();
     const formRef = useRef<HTMLDivElement>(null);
     const dateInputRef = useRef<HTMLInputElement>(null);
     const saveAndAnotherRef = useRef<(() => Promise<void>) | null>(null);
@@ -474,7 +499,14 @@ export function TransactionForm({
 
         if (isSimpleMode) {
             // Simple mode validation
-            if (!simpleData.amount || parseFloat(simpleData.amount) <= 0) {
+            const amountValue = simpleData.amount.trim() ? parseSimpleAmount(simpleData.amount) : null;
+            if (!simpleData.amount.trim()) {
+                errors.push('Amount is required');
+                fieldErrors.amount = 'Required';
+            } else if (amountValue === null) {
+                errors.push(`"${simpleData.amount.trim()}" is not a valid amount. Enter a number like 1234.56.`);
+                fieldErrors.amount = 'Not a number';
+            } else if (amountValue <= 0) {
                 errors.push('Amount must be greater than zero');
                 fieldErrors.amount = 'Must be > 0';
             }
@@ -582,8 +614,11 @@ export function TransactionForm({
             });
         }
 
-        // Convert form data to API format
+        // Convert form data to API format. New transactions carry the
+        // client-generated guid so a replayed POST is deduplicated by the
+        // server; edits are keyed by the URL guid instead.
         return {
+            ...(transaction ? {} : { guid: clientTxGuidRef.current ?? undefined }),
             currency_guid: formData.currency_guid,
             num: formData.num || undefined,
             post_date: formData.post_date,
@@ -593,6 +628,8 @@ export function TransactionForm({
     };
 
     const resetForm = () => {
+        // The saved entry owns the previous guid; the next one needs its own.
+        clientTxGuidRef.current = newClientTxGuid();
         // Keep the current date but clear everything else
         setFormData(prev => ({
             ...prev,
@@ -636,6 +673,9 @@ export function TransactionForm({
 
     const handleSubmit = async (e?: React.FormEvent) => {
         if (e) e.preventDefault();
+        // Ctrl+Enter is a window-level listener, so it bypasses the button's
+        // disabled={saving}; without this a second press duplicates the entry.
+        if (savingRef.current) return;
 
         const validation = validateForm();
         setErrors(validation.errors);
@@ -654,6 +694,7 @@ export function TransactionForm({
         const apiData = buildApiData();
         if (!apiData) return;
 
+        savingRef.current = true;
         setSaving(true);
         try {
             await onSave(apiData);
@@ -664,11 +705,15 @@ export function TransactionForm({
                 setErrors(['An error occurred while saving']);
             }
         } finally {
+            savingRef.current = false;
             setSaving(false);
         }
     };
 
     saveAndAnotherRef.current = async () => {
+        // Same guard as handleSubmit: Ctrl+Shift+Enter is window-level too.
+        if (savingRef.current) return;
+
         const validation = validateForm();
         setErrors(validation.errors);
         setFieldErrors(validation.fieldErrors);
@@ -686,6 +731,7 @@ export function TransactionForm({
         const apiData = buildApiData();
         if (!apiData || !onSaveAndAnother) return;
 
+        savingRef.current = true;
         setSaving(true);
         try {
             await onSaveAndAnother(apiData);
@@ -700,6 +746,7 @@ export function TransactionForm({
                 setErrors(['An error occurred while saving']);
             }
         } finally {
+            savingRef.current = false;
             setSaving(false);
         }
     };
