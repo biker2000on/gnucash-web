@@ -153,9 +153,19 @@ export async function deleteOwnedBusinessEntitiesForBook(
         `SELECT entity_guid FROM gnucash_web_business_entity_ownership
           WHERE entity_type = '${type}' AND book_guid = $1`;
 
-    // Children before parents.
+    // Children before parents. None of the native business tables carry real
+    // foreign keys (verified against the live schema: zero FK constraints on
+    // entries/invoices/taxtables/taxtable_entries), so nothing cascades — every
+    // child row must be named explicitly or it is orphaned when its parent goes.
+    //
+    // A vendor BILL is an `invoices` row with owner_type = vendor; its line
+    // items hang off `entries.bill` while `entries.invoice` stays NULL. Both
+    // attachment columns must be swept, exactly as the XML importer's
+    // overwrite-clearing path does (clearCollisionRows in gnucash-xml/importer.ts).
     await db.$executeRawUnsafe(
         `DELETE FROM entries WHERE invoice IN (${owned('invoice')})`, bookGuid);
+    await db.$executeRawUnsafe(
+        `DELETE FROM entries WHERE bill IN (${owned('invoice')})`, bookGuid);
     await db.$executeRawUnsafe(
         `DELETE FROM entries WHERE order_guid IN (${owned('order')})`, bookGuid);
     await db.$executeRawUnsafe(
@@ -170,6 +180,10 @@ export async function deleteOwnedBusinessEntitiesForBook(
         `DELETE FROM vendors WHERE guid IN (${owned('vendor')})`, bookGuid);
     await db.$executeRawUnsafe(
         `DELETE FROM employees WHERE guid IN (${owned('employee')})`, bookGuid);
+    // Tax-table rates are rows in taxtable_entries keyed by `taxtable`, with no
+    // FK and therefore no cascade — drop them before their taxtable.
+    await db.$executeRawUnsafe(
+        `DELETE FROM taxtable_entries WHERE taxtable IN (${owned('taxtable')})`, bookGuid);
     await db.$executeRawUnsafe(
         `DELETE FROM taxtables WHERE guid IN (${owned('taxtable')})`, bookGuid);
     await db.$executeRawUnsafe(

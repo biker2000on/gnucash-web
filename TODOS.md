@@ -1581,49 +1581,71 @@ their source statements.
 
 # Correctness and reliability backlog
 
-## P1 - Deploy Pipeline: Dockhand Webhook Skips Image-Only Pushes
+## P1 - Deploy Pipeline: Pushes Silently Never Reached Production
 
-**Status:** Open. Diagnosed 2026-08-11 when the Schedule AI deploy silently
-did not reach prod.
+**Status:** Implemented 2026-08-12. Diagnosed 2026-08-11 when the Schedule AI
+deploy silently did not reach prod.
 
-Dockhand's git-stack webhook handler (verified by reading the deployed build
-on truenas) passes **no force flag** — it redeploys only when the git sync
-detects changed *files*. A push that changes only application code (compose
-file untouched) rebuilds the image, the webhook fires, Dockhand syncs, logs
-"No changes detected and force=false, skipping redeploy", and prod silently
-keeps the old image. It also races Dockhand's own git-sync cron: if the cron
-pulls the commit before the webhook arrives, the webhook sees nothing new
-even when the compose file DID change. Separately, the sync+deploy can
-exceed Cloudflare's 100s edge limit (observed 524 on the first webhook
-attempt, masked by the workflow's `--retry`).
+**Correction to the original entry:** the first diagnosis ("the webhook passes
+no force flag, so image-only pushes are skipped") was **wrong**. Reading the
+full Dockhand deploy log showed the webhook *did* detect all 32 changed files,
+logged `Will force recreate: true`, and started
+`docker compose … up -d --force-recreate`. The log then simply stops — no
+completion, no error.
 
-**Manual workaround** (byte-identical to what Dockhand runs; used for the
-2026-08-11 deploy): ssh to the truenas host and run
-`docker compose -p gnucash-web-prod -f /mnt/docker/volumes/dockhand/stacks/Truenas/gnucash-web-prod/docker-compose.prod.yml --env-file .env.dockhand up -d --remove-orphans --force-recreate`.
+**Actual root cause:** Dockhand runs the deploy **inside the HTTP request**.
+The fresh clone plus image pull and recreate exceeds Cloudflare's 100-second
+edge limit, so the connection dropped (observed 524) and killed the deploy
+mid-flight. The workflow's `curl --retry` then fired a second request, which
+found the commit already synced and returned
+`{"success":true,"skipped":true}` — a green build over an untouched
+production. Worse, the killed deploy had already recorded the commit as
+synced, so Dockhand's own scheduled sync would never retry it: every
+`git_stack_sync` execution in the database is `skipped`, meaning the reliable
+path had *never once* run. The webhook was not merely unreliable; it was
+actively consuming the signal the scheduler needed.
 
-**Fix options** (pick one, then prove it with a real push): upgrade Dockhand
-if a newer release supports forced webhook deploys; replace the webhook step
-with an SSH deploy step running the exact command above; or enable
-Dockhand's image-digest auto-update and demote the webhook to best-effort.
-Whichever lands, `deploy.yml` must **fail loudly when prod does not end up
-on the pushed revision** — compare the running container's
-`org.opencontainers.image.revision` label to `GITHUB_SHA` after deploy.
+**Delivered:** the request-scoped trigger is gone. `deploy.yml` now advances a
+**`deploy` branch** to the built commit *after* the image is in GHCR, and
+Dockhand watches that branch on a five-minute schedule. Ordering and execution
+are both fixed: the branch cannot point at a commit whose image does not exist
+(a `main`-watching trigger would race the build, deploy the previous image, and
+mark the commit done), and the deploy runs in Dockhand's background scheduler
+with no request to drop. The image now bakes in `APP_REVISION`, `/api/health`
+reports it, and the workflow polls that public endpoint until it matches the
+pushed commit — failing the build with the manual fallback command if
+production has not caught up in 15 minutes. Dockhand config changed on the NAS:
+repo branch `main` → `deploy`, schedule `daily`/`0 3 * * *` → `custom`/
+`*/5 * * * *` (DB backed up first). Flow and rationale are documented in
+[docs/deployment-rollback.md](docs/deployment-rollback.md).
 
-**Effort:** S-M.
+**Known residual:** a deploy that fails after Dockhand records the commit will
+not be retried automatically. The verification step makes that loud, and the
+manual command in the runbook resolves it. A digest-triggered deploy would be
+self-healing but Dockhand's container auto-update is not compose-aware
+(verified), so it would detach containers from the stack.
+
+**Effort:** S-M (actual: M).
 
 ---
 
-## P4 - Book Deletion Misses Bill-Attached Entries
+## P4 - Book Deletion Orphaned Business Child Rows
 
-**Status:** Open. Found 2026-08-11 during the XML business-object work.
+**Status:** Implemented 2026-08-12. Found 2026-08-11 during the XML
+business-object work.
 
-`deleteOwnedBusinessEntitiesForBook()` deletes entries reached through
-invoices but not entries attached via `entries.bill` (vendor-bill line
-items), so deleting a book with vendor bills orphans those rows. The XML
-importer's overwrite-clearing path got the child-first ordering right
-(entries by invoice/bill/order attachment → invoices → orders → jobs →
-contacts → taxtables → billterms) and can serve as the reference. Add a
-regression test that book deletion leaves zero orphaned `entries` rows.
+`deleteOwnedBusinessEntitiesForBook()` deleted entries reached through
+invoices but not entries attached via `entries.bill` (vendor-bill line items),
+so deleting a book with vendor bills orphaned those rows. A **second gap** was
+found in the same function while fixing it: `taxtable_entries` were never
+deleted either. Both now sweep child-first, mirroring the XML importer's
+overwrite-clearing path, with tests that pin statement *order* rather than
+mere presence.
+
+Worth knowing beyond this fix: the native GnuCash business tables carry **zero
+foreign-key constraints** in this database (verified against the live schema),
+so nothing cascades — any future teardown or import path must sequence
+children manually; there is no database-level backstop.
 
 **Effort:** S.
 

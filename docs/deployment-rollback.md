@@ -1,4 +1,4 @@
-# Deployment Rollback
+# Deployment and Rollback
 
 Production images are published with the full Git commit SHA. The TrueNAS
 Dockhand stack reads `IMAGE_REPOSITORY` and `IMAGE_TAG` from its regular
@@ -6,6 +6,36 @@ environment and applies the same image to the web and worker services. New
 releases use `ghcr.io/biker2000on/gnucash-web-app`; releases predating the
 2026-08-05 package-access migration remain in the legacy
 `ghcr.io/biker2000on/gnucash-web` package.
+
+## How a deploy reaches production
+
+A push to `main` runs `.github/workflows/deploy.yml`: tests and lint gate the
+build, the image is pushed to GHCR, and only then does the workflow advance the
+**`deploy` branch** to that commit. Dockhand watches `deploy` (not `main`) and
+syncs it every five minutes; when the branch moves it pulls the new image and
+recreates the stack. The workflow's last step polls
+`https://cash.adventureintandem.com/api/health` until `revision` matches the
+pushed commit, so a deploy that never lands turns the build red instead of
+passing silently. Expect production to update within roughly 5-10 minutes.
+
+Two details are deliberate and worth preserving:
+
+- **The branch advances only after the image exists.** Dockhand triggers on a
+  commit change, so watching `main` would race the build and deploy the
+  *previous* image — then record the commit as done and never retry.
+- **The deploy runs in Dockhand's background scheduler, not in an HTTP
+  request.** The earlier design POSTed a webhook that ran the deploy inside the
+  request; the pull and recreate exceed Cloudflare's 100-second limit, so the
+  dropped connection killed the deploy mid-flight while the retry reported
+  success (the commit had already synced). Deploys silently never reached
+  production. Do not reintroduce a request-scoped deploy trigger.
+
+If a deploy fails, Dockhand has already recorded the commit and will not retry
+it. Deploy by hand on the TrueNAS host, using Dockhand's own command:
+
+```bash
+cd /mnt/docker/volumes/dockhand/stacks/Truenas/gnucash-web-prod && docker compose -p gnucash-web-prod -f docker-compose.prod.yml --env-file .env.dockhand up -d --remove-orphans --force-recreate
+```
 
 ## Before deployment
 
@@ -33,10 +63,12 @@ or normalized by the audited migrations are retained in
 `gnucash_web_migration_backups`. Restore PostgreSQL only when a forward fix is
 unsafe, using the pre-deployment backup and an approved maintenance window.
 
-While `IMAGE_TAG` is pinned, every subsequent push to `main` still fires the
-Dockhand webhook, and that redeploy reapplies the pinned old SHA. New commits
-will look like they built and shipped while production keeps running the
-rollback image. `IMAGE_TAG` must be cleared or moved forward before any new
+While `IMAGE_TAG` is pinned, every subsequent push to `main` still advances the
+`deploy` branch and triggers a redeploy, and that redeploy reapplies the pinned
+old SHA. New commits will look like they built and shipped while production
+keeps running the rollback image — though the workflow's verification step now
+catches this, because `/api/health` keeps reporting the rollback revision and
+the build goes red. `IMAGE_TAG` must be cleared or moved forward before any new
 deployment takes effect.
 
 After the cause is corrected, deploy a new immutable SHA and repeat the health

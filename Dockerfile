@@ -135,6 +135,13 @@ ENV PORT 3000
 # set hostname to localhost
 ENV HOSTNAME "0.0.0.0"
 
+# Build provenance, reported by /api/health so a deploy can be verified from
+# outside the network (see .github/workflows/deploy.yml "Verify production").
+# Declared LAST on purpose: this value changes on every commit, so an earlier
+# placement would invalidate the layer cache for everything below it.
+ARG APP_REVISION=unknown
+ENV APP_REVISION=$APP_REVISION
+
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD wget --spider -q http://127.0.0.1:3000/api/health || exit 1
 

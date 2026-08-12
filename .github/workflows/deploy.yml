@@ -45,7 +45,8 @@ jobs:
     needs: quality
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      # contents: write - the deploy pointer below is a branch push.
+      contents: write
       packages: write
 
     steps:
@@ -79,18 +80,52 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            APP_REVISION=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Trigger Dockhand redeploy
+      # Advancing this branch is what tells production to deploy. It happens
+      # only AFTER the image is in the registry, which is the whole point:
+      # Dockhand watches the branch, so a git-commit trigger would otherwise
+      # race the build and deploy the PREVIOUS image, then record the commit
+      # as done and never retry.
+      #
+      # This replaced an HTTP webhook that could not work: Dockhand runs the
+      # deploy inside the request, and the pull+recreate exceeds Cloudflare's
+      # 100s limit, so the connection dropped and killed the deploy mid-flight
+      # - while the retry reported success because the commit was already
+      # synced. Deploys silently never reached production. The scheduler that
+      # picks this branch up runs in the background with no request attached,
+      # so it cannot be killed that way.
+      - name: Advance deploy pointer
+        run: git push origin ${{ github.sha }}:refs/heads/deploy
+
+      # Production is only deployed when it actually serves the new revision.
+      # /api/health reports the commit baked into the running image, so this
+      # turns a silent non-deploy into a red build.
+      - name: Verify production is serving this revision
         env:
-          DOCKHAND_WEBHOOK_SECRET: ${{ secrets.DOCKHAND_WEBHOOK_SECRET }}
+          HEALTH_URL: https://cash.adventureintandem.com/api/health
+          EXPECTED: ${{ github.sha }}
         run: |
-          test -n "$DOCKHAND_WEBHOOK_SECRET"
-          PAYLOAD='{}'
-          SIGNATURE="sha256=$(printf '%s' "$PAYLOAD" | openssl dgst -sha256 -hmac "$DOCKHAND_WEBHOOK_SECRET" | awk '{print $NF}')"
-          curl -fsS --retry 3 --retry-all-errors -X POST \
-            https://dock.adventureintandem.com/api/git/stacks/1/webhook \
-            -H "Content-Type: application/json" \
-            -H "X-Hub-Signature-256: $SIGNATURE" \
-            -d "$PAYLOAD"
+          short="${EXPECTED:0:7}"
+          # Dockhand polls the deploy branch every 5 minutes, then pulls and
+          # recreates; 15 minutes covers a slow pull on the NAS pool.
+          deadline=$(( SECONDS + 900 ))
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            actual=$(curl -fsS --max-time 20 "$HEALTH_URL" 2>/dev/null \
+              | sed -n 's/.*"revision":"\([^"]*\)".*/\1/p') || actual=""
+            if [ "$actual" = "$short" ]; then
+              echo "Production is serving $short."
+              exit 0
+            fi
+            echo "waiting - production reports '${actual:-unreachable}', want '$short'"
+            sleep 30
+          done
+          echo "::error::Production did not reach $short within 15 minutes."
+          echo "Check the stack, then deploy by hand on the TrueNAS host:"
+          echo "  cd /mnt/docker/volumes/dockhand/stacks/Truenas/gnucash-web-prod && \\"
+          echo "  docker compose -p gnucash-web-prod -f docker-compose.prod.yml \\"
+          echo "    --env-file .env.dockhand up -d --remove-orphans --force-recreate"
+          exit 1

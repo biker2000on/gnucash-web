@@ -12,8 +12,10 @@ import {
     assertEntityOwnedByBook,
     listOwnedEntityGuids,
     deleteEntityOwnership,
+    deleteOwnedBusinessEntitiesForBook,
     BusinessEntityScopeError,
     type EntityOwnershipClient,
+    type EntityTeardownClient,
 } from '../entity-ownership';
 
 const BOOK_A = 'a'.repeat(32);
@@ -113,5 +115,101 @@ describe('business entity ownership', () => {
         await deleteEntityOwnership('job', ENTITY, client);
         expect(await isEntityOwnedByBook('job', ENTITY, BOOK_A, client)).toBe(false);
         expect(table).toHaveLength(0);
+    });
+});
+
+/**
+ * Book teardown ordering. None of the native business tables have foreign keys
+ * (verified against the live schema), so nothing cascades: a child row that is
+ * not named explicitly, or is deleted after its parent, is orphaned or left
+ * parentless if the delete is interrupted. These tests pin the ORDER of the
+ * issued statements, not merely their presence.
+ */
+function makeTeardownClient() {
+    const statements: string[] = [];
+    const params: unknown[][] = [];
+    const db: EntityTeardownClient = {
+        $executeRawUnsafe: async (sql: string, ...values: unknown[]) => {
+            statements.push(sql.replace(/\s+/g, ' ').trim());
+            params.push(values);
+            return 0;
+        },
+    };
+    return { db, statements, params };
+}
+
+/** Index of the first statement deleting FROM `table` (word-boundary exact). */
+function indexOfDelete(statements: string[], table: string, columnFilter?: string): number {
+    return statements.findIndex(sql => {
+        if (!new RegExp(`^DELETE FROM ${table}\\b`).test(sql)) return false;
+        return columnFilter ? new RegExp(`WHERE ${columnFilter}\\b`).test(sql) : true;
+    });
+}
+
+describe('deleteOwnedBusinessEntitiesForBook', () => {
+    it('deletes bill-attached entries, and does so before the invoices row', async () => {
+        // A vendor BILL is an `invoices` row (owner_type = vendor) whose line
+        // items are `entries` with bill = <invoice guid> and invoice NULL.
+        const { db, statements } = makeTeardownClient();
+        await deleteOwnedBusinessEntitiesForBook(db, BOOK_A);
+
+        const byBill = indexOfDelete(statements, 'entries', 'bill');
+        const byInvoice = indexOfDelete(statements, 'entries', 'invoice');
+        const byOrder = indexOfDelete(statements, 'entries', 'order_guid');
+        const invoices = indexOfDelete(statements, 'invoices');
+        const orders = indexOfDelete(statements, 'orders');
+
+        expect(byBill, 'entries reached via entries.bill must be deleted').toBeGreaterThanOrEqual(0);
+        expect(invoices).toBeGreaterThanOrEqual(0);
+        expect(byBill).toBeLessThan(invoices);
+        expect(byInvoice).toBeLessThan(invoices);
+        expect(byOrder).toBeLessThan(orders);
+
+        // The bill sweep resolves against the book's OWNED INVOICE guids —
+        // a vendor bill is an invoices row, so 'invoice' is the ownership type.
+        expect(statements[byBill]).toContain("entity_type = 'invoice'");
+    });
+
+    it('deletes taxtable_entries before their taxtables row', async () => {
+        // taxtable_entries has no FK to taxtables, so nothing cascades.
+        const { db, statements } = makeTeardownClient();
+        await deleteOwnedBusinessEntitiesForBook(db, BOOK_A);
+
+        const entries = indexOfDelete(statements, 'taxtable_entries');
+        const taxtables = indexOfDelete(statements, 'taxtables');
+        expect(entries, 'taxtable_entries must be deleted').toBeGreaterThanOrEqual(0);
+        expect(taxtables).toBeGreaterThanOrEqual(0);
+        expect(entries).toBeLessThan(taxtables);
+        expect(statements[entries]).toContain("entity_type = 'taxtable'");
+    });
+
+    it('keeps the full child-first ordering the XML importer uses', async () => {
+        const { db, statements } = makeTeardownClient();
+        await deleteOwnedBusinessEntitiesForBook(db, BOOK_A);
+
+        const at = (t: string) => indexOfDelete(statements, t);
+        // entries -> invoices/orders -> jobs -> contacts -> taxtables/billterms
+        expect(at('entries')).toBeLessThan(at('invoices'));
+        expect(at('invoices')).toBeLessThan(at('jobs'));
+        expect(at('orders')).toBeLessThan(at('jobs'));
+        expect(at('jobs')).toBeLessThan(at('customers'));
+        expect(at('jobs')).toBeLessThan(at('vendors'));
+        expect(at('jobs')).toBeLessThan(at('employees'));
+
+        // Ownership rows go LAST: they are the only record of which book owns
+        // the native rows, so dropping them early strands those rows forever.
+        const ownership = indexOfDelete(statements, 'gnucash_web_business_entity_ownership');
+        expect(ownership).toBe(statements.length - 1);
+    });
+
+    it('passes the book guid as a bound parameter and interpolates only literal types', async () => {
+        const { db, statements, params } = makeTeardownClient();
+        await deleteOwnedBusinessEntitiesForBook(db, BOOK_A);
+
+        for (const [i, sql] of statements.entries()) {
+            expect(sql, 'book guid must never be interpolated').not.toContain(BOOK_A);
+            expect(sql).toContain('$1');
+            expect(params[i]).toEqual([BOOK_A]);
+        }
     });
 });
