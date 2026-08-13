@@ -1462,7 +1462,10 @@ click do nothing at all on both this surface and the Action Center.
 
 ## P4 - Document Vault: Multi-File Upload with Post-Upload Detailing
 
-**Status:** Open. Requested 2026-08-13.
+**Status:** Implemented 2026-08-13 (`4474954`). Staged multi-file drop zone
+with per-file remove and batch cancel, sequential upload with per-file
+progress/failure, and a post-upload detailing pass with apply-type-to-all and
+an untyped counter.
 
 **Outcome:** A stack of documents (e.g. the escrow docs from a mortgage — a
 dozen PDFs at once) goes into the vault in one action instead of one
@@ -1503,7 +1506,11 @@ create/update endpoints.
 
 ## P3 - Tax Records Archive: By-Year Grouping and AI Form Classification
 
-**Status:** Open. Requested 2026-08-13.
+**Status:** Implemented 2026-08-13 (`4474954`). `tax_year`/`tax_form`/`issuer`
+columns, tax-form subtypes, by-year grouped view with a deterministic
+missing-vs-prior-year checklist, AI classification behind a review-before-accept
+suggestions endpoint, in-season Action Center items, and source forms bundled
+into the Year-End Tax Package ZIP.
 
 **Outcome:** Years of accumulated tax records — W-2s, 1099-INT/DIV/B/R,
 1098s, 5498s, K-1s, and the filed returns themselves, from every
@@ -1552,6 +1559,98 @@ canonical document extraction pipeline (`src/lib/documents/`), Year-End
 Tax Package, Action Center.
 
 **Effort:** M.
+
+---
+
+## P3 - Document Vault: Paperless-ngx-style Preview Cards and Grouped Table
+
+**Status:** Open. Requested 2026-08-13.
+
+**Outcome:** The vault reads like paperless-ngx: you recognize a document by
+*looking* at it, not by parsing a filename in a text row. A thumbnail grid is
+the browse surface; a real data table is the work surface; category grouping
+is the default organization in both.
+
+**What:** Rework the vault at `/business/documents` (household books reach it
+as "Household Documents" under Planning → Home) along three axes.
+
+1. **Preview cards (the new capability).** A card grid where each document
+   renders its **first page as a thumbnail**, with title, category badge,
+   date, and the existing actions. Today the only visual access is
+   `DocumentPreviewModal` — open one document at a time, full size. Nothing in
+   the repo generates thumbnails (`grep -rn thumbnail src/` → zero hits), so
+   this is the item's real cost:
+   - Render page 1 to a raster on upload, as a queue job alongside the
+     existing `src/lib/queue/jobs/extract-entity-document.ts` extraction pass,
+     so uploads stay fast and a render failure degrades to a type icon rather
+     than failing the upload.
+   - Backfill existing documents through the same job; a document with no
+     thumbnail yet must render as a placeholder card, never a broken image.
+   - Store thumbnails beside the source bytes under the same RBAC and book
+     scope, and serve them from a dedicated route — **not** by streaming the
+     full original and scaling client-side, which would send an entire 10MB
+     PDF to draw a 200px card.
+   - Respect `src/lib/document-preview.ts`. Its safelist (pdf, png, jpeg, gif,
+     webp) deliberately excludes `text/html` and `image/svg+xml` as a
+     stored-XSS vector; thumbnails must not become a back door that renders an
+     excluded type. Serve rasterized output only, with the same
+     `X-Content-Type-Options: nosniff` posture.
+   - Server-side PDF rasterization is a known parser-exposure surface: run it
+     in the worker (never in a request handler), bound page count, pixel
+     dimensions and time, and treat a malformed file as a failed render rather
+     than an exception that kills the job.
+
+2. **List view → TanStack Table, grouped by category.** The list already
+   groups by `doc_type` (`page.tsx:510-527`), but it is hand-rolled: a
+   `typeOptions.map` with a `filter` per group and a `__legacy__` bucket for
+   uncontextual types, with no sorting, no column model, and no persistence.
+   Replace it with `@tanstack/react-table` using the real grouping model —
+   already a dependency at `^8.21.3` and already the pattern in
+   `AccountLedger`, `AccountHierarchy`, `src/components/ledger/columns.tsx`,
+   commodities, and payslips, so this is consistency work, not a new library.
+   Columns: title, category, issuer, issued, expires, size, type. Sortable,
+   with expand/collapse per group and a per-group count.
+   - **Grouping key should be a control, not a constant.** Category is the
+     right *default*, but the tax archive already groups by year via
+     `groupTaxRecordsByYear`, and that view must not regress — expose grouping
+     as category | tax year | issuer | none, defaulting to category, with the
+     tax subtree defaulting to year. Land the generic grouping first and fold
+     the tax view into it only if it comes out cleaner; a worse tax archive in
+     exchange for architectural symmetry is a bad trade.
+   - Persist view mode, grouping key, sort, and expansion to localStorage, the
+     way `AccountHierarchy` already does.
+
+3. **Card/table toggle** on one shared filtered dataset, so search, category
+   filter, and grouping mean the same thing in both views and switching never
+   changes *which* documents you're looking at.
+
+**Notes:**
+- `page.tsx` is **1,187 lines** after the multi-file upload and tax archive
+  work. Extract the browse surface into components under
+  `src/components/documents/` as part of this; do not grow the page further.
+- `@tanstack/react-virtual` is a dependency with **zero imports** repo-wide —
+  the open ASI-6-006 item ("wire up or remove"). A thumbnail grid over a
+  multi-year archive is the natural place to either use it or delete it.
+  Decide there rather than leaving it dangling.
+- Thumbnails are the one genuinely expensive piece here. If it needs to ship
+  in stages, the table conversion (2) stands on its own and delivers value
+  without any of the rendering pipeline.
+
+**Checklist answers:** Improves the recurring "find the right document"
+workflow, which is currently filename-scanning. Emits no new Action, Timeline,
+or Plan input — it is a browse surface over existing records and deliberately
+does not introduce another document model. Reuses the entity documents service,
+the existing list/download endpoints, the extraction queue, and the established
+TanStack Table pattern. Deterministic (grouping/sorting are pure functions over
+the fetched rows; thumbnail rendering is a testable pure transform from bytes to
+raster). No preview/approval/undo surface — read-only presentation, no mutation.
+Single-book; no currency involvement. Success measure: time to locate a known
+document, and the share of vault documents with a usable thumbnail.
+
+**Depends on:** Entity documents service and vault page, document preview
+contract (`src/lib/document-preview.ts`), extraction queue job, object storage.
+
+**Effort:** M (table + cards), plus M for the thumbnail pipeline.
 
 ---
 
