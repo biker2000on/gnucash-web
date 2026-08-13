@@ -116,6 +116,16 @@ docker compose -f docker-compose.prod.yml up -d
 
 Includes PostgreSQL, Redis, app, worker, and Watchtower for auto-updates.
 
+`POSTGRES_PASSWORD` is required for the production Compose stack. On a new
+install, generate a unique value with `openssl rand -base64 32`. On an existing
+database volume, set it to the password used when PostgreSQL was initialized;
+changing only the environment value will not rotate the database password. To
+rotate, run `ALTER ROLE gnucash PASSWORD '<new-password>'` inside PostgreSQL,
+then update the environment value and recreate the app and worker containers.
+PostgreSQL is mapped to `127.0.0.1` for host-local tooling only. Use SSH
+port-forwarding for remote access, and remove the mapping once local tooling
+no longer needs it.
+
 ### Standalone
 
 ```bash

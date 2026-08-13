@@ -10,7 +10,7 @@
 #
 # Optional:
 #   APP_PORT=3000                 # Host port for the web app
-#   POSTGRES_PORT=5432            # Host port for PostgreSQL
+#   POSTGRES_PORT=5432            # Host-local PostgreSQL port
 #   MINIO_API_PORT=9000           # Host port for MinIO API
 #   MINIO_CONSOLE_PORT=9001       # Host port for MinIO console
 #   POSTGRES_DATA_DIR=./postgres-data  # Local folder for PostgreSQL data
@@ -27,7 +27,7 @@ services:
     ports:
       - "${APP_PORT:-3000}:3000"
     environment:
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-gnucash}:${POSTGRES_PASSWORD:-gnucash}@postgres:5432/${POSTGRES_DB:-gnucash}
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-gnucash}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-gnucash}
       - REDIS_URL=redis://redis:6379
       - SESSION_SECRET=${SESSION_SECRET:-}
       - NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
@@ -54,6 +54,11 @@ services:
       createbuckets:
         condition: service_completed_successfully
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:3000/api/health"]
       interval: 30s
@@ -75,7 +80,7 @@ services:
     pull_policy: always
     command: ["node", "worker.js"]
     environment:
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-gnucash}:${POSTGRES_PASSWORD:-gnucash}@postgres:5432/${POSTGRES_DB:-gnucash}
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-gnucash}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-gnucash}
       - REDIS_URL=redis://redis:6379
       - WORKER_HEALTH_PORT=9090
       # The worker decrypts stored connector credentials (SimpleFin, Fuel
@@ -100,6 +105,11 @@ services:
       createbuckets:
         condition: service_completed_successfully
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090"]
       interval: 30s
@@ -110,14 +120,21 @@ services:
   postgres:
     image: postgres:17-alpine
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      # Host-local only by design. Use SSH port-forwarding for remote access,
+      # never rebind this to 0.0.0.0; remove this mapping when no local tooling needs it.
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-gnucash}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gnucash}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: ${POSTGRES_DB:-gnucash}
     volumes:
       - ${POSTGRES_DATA_DIR:-./postgres-data}:/var/lib/postgresql/data
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-gnucash}"]
       interval: 10s
@@ -130,13 +147,20 @@ services:
       - redis-data:/data
     command: redis-server --appendonly yes
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   # ---- S3-compatible storage via MinIO ----
   minio:
     image: minio/minio
     ports:
-      - "${MINIO_API_PORT:-9000}:9000"
-      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+      # The app uses the Compose network. Keep S3 and its console host-local;
+      # use SSH port-forwarding for remote administration.
+      - "127.0.0.1:${MINIO_API_PORT:-9000}:9000"
+      - "127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
@@ -144,6 +168,11 @@ services:
       - ${MINIO_DATA_DIR:-./minio-data}:/data
     command: server /data --console-address ":9001"
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     healthcheck:
       test: ["CMD-SHELL", "mc alias set local http://localhost:9000 ${MINIO_ROOT_USER:-minioadmin} ${MINIO_ROOT_PASSWORD:-minioadmin} >/dev/null 2>&1 && mc ls local >/dev/null 2>&1"]
       interval: 10s
@@ -164,6 +193,11 @@ services:
       echo 'Bucket ready';
       "
     restart: "no"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 
 volumes:

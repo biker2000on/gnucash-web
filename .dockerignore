@@ -1,5 +1,8 @@
 node_modules
 .next
+data/
+postgres-data/
+minio-data/
 .git
 .env*
 !.env.example
