@@ -14,6 +14,7 @@ import { BookBusyError, bookLockKey, tryAcquireBookLock } from './book-lock';
 import { tryWithDatabaseAdvisoryLock } from './db';
 import { computeRealizedGain } from './lots';
 import {
+  PARENT_SPLIT_SLOT,
   splitSellAcrossLots,
   splitTransferAcrossSourceLots,
   generateCapitalGains,
@@ -533,28 +534,35 @@ async function lockAccountTransactions(
  *     the restored original, so the account's reconciled total is identical
  *     before and after. → EXEMPT.
  *
- * ## Telling (2) apart from (3)
+ * ## Telling (2) apart from (3) — PER SPLIT, not per transaction
  *
- * Co-tagging within a transaction does NOT distinguish them — valueZeroValueTrade
- * tags both of its legs, so each leg has a tagged sibling and a naive
- * sibling-count test wrongly reads it as compensated. The distinction is the
- * reversible PARTITION structure:
+ * Compensation is a relationship between one restored parent and the specific
+ * rows carved out of IT. Two weaker tests both fail:
  *
- *   partition (3): parent restored in place  +  NEW sub-split ROWS DELETED
- *                  in the same transaction, whose amounts sum back into it.
- *                  Sub-splits are new rows, so they carry NO original_* slots.
- *   in-place  (2): every tagged row in the transaction is itself being
- *                  restored from its own original_* slots; nothing is deleted,
- *                  so nothing compensates the rewrite.
+ *   - co-tagging with the same runId: valueZeroValueTrade tags both of its
+ *     legs, so each leg has a tagged sibling and reads as compensated;
+ *   - "this transaction contains some deleted sub-split": one runId covers
+ *     every event in an account, so a single parent transaction can hold BOTH
+ *     a partitioned sale and an in-place zero-value-trade rewrite. The sale's
+ *     deleted sub-split would then exempt the trade legs, and they would be
+ *     restored from ±FMV back to zero while reconciled.
  *
- * So a restore is compensated only when the same transaction contains at least
- * one tagged split that is being DELETED (tagged, not itself restored, and not
- * merely disappearing with a wholly-generated transaction). Everything else is
- * guarded.
+ * So compensation is established per restored split, via provenance recorded
+ * at creation time: every generated sub-split carries a PARENT_SPLIT_SLOT
+ * naming the split it was carved out of. A restore is compensated only when a
+ * row being DELETED by this revert names THAT split as its parent.
  *
- * This is fail-closed by construction: a missing or corrupt compensating tag
- * yields no deleted sibling, so the restore is treated as uncompensated and
- * blocked.
+ *   partition (3): parent restored in place + sub-split ROWS deleted whose
+ *                  PARENT_SPLIT_SLOT points back at that parent.
+ *   in-place  (2): the rewritten legs are each restored from their own
+ *                  original_* slots and nothing names them as a parent, so
+ *                  nothing compensates them — regardless of what else the run
+ *                  did in the same transaction.
+ *
+ * This is fail-closed by construction: missing or corrupt provenance (which
+ * includes every sub-split written before this marker existed) yields no
+ * matching parent reference, so the restore is treated as uncompensated and
+ * blocked rather than guessed at.
  *
  * The deliberate decision is (3): a generated row that merely INHERITED 'y'
  * or 'f' from the split it was carved out of is not an independent statement
@@ -597,14 +605,13 @@ async function assertRevertPreservesReconciled(
   });
   if (protectedRows.length === 0) return;
 
-  // Count, per transaction, the tagged splits that this revert DELETES — the
-  // sub-split rows a partition created. A tagged split that is itself being
-  // restored compensates nothing (it is the parent, not a piece of it), and
-  // one vanishing with a wholly-generated transaction belongs to case (1),
-  // not to any partition.
+  // Which tagged splits does this revert DELETE? A tagged split that is
+  // itself being restored compensates nothing (it is a parent, not a piece of
+  // one), and one vanishing with a wholly-generated transaction belongs to
+  // case (1), not to any partition.
   const restoredSet = new Set(restoredSplitGuids);
   const deletedTxSet = new Set(deletedTxGuids);
-  const deletedSubSplitsByTx = new Map<string, number>();
+  const deletedSubSplitGuids: string[] = [];
   if (taggedSplitGuids.length > 0) {
     const tagged = await tx.splits.findMany({
       where: { guid: { in: taggedSplitGuids } },
@@ -613,7 +620,20 @@ async function assertRevertPreservesReconciled(
     for (const s of tagged) {
       if (restoredSet.has(s.guid)) continue;
       if (deletedTxSet.has(s.tx_guid)) continue;
-      deletedSubSplitsByTx.set(s.tx_guid, (deletedSubSplitsByTx.get(s.tx_guid) ?? 0) + 1);
+      deletedSubSplitGuids.push(s.guid);
+    }
+  }
+
+  // Resolve those deletions to the SPECIFIC parent each was carved out of.
+  // Being in the same transaction is not enough — see the note above.
+  const compensatedParents = new Set<string>();
+  if (deletedSubSplitGuids.length > 0) {
+    const provenance = await tx.slots.findMany({
+      where: { obj_guid: { in: deletedSubSplitGuids }, name: PARENT_SPLIT_SLOT },
+      select: { string_val: true },
+    });
+    for (const p of provenance) {
+      if (p.string_val) compensatedParents.add(p.string_val);
     }
   }
 
@@ -622,11 +642,11 @@ async function assertRevertPreservesReconciled(
     if (deletedTxSet.has(row.tx_guid)) return true;
     // Not restored and not in a deleted transaction: untouched by this revert.
     if (!restoredSet.has(row.guid)) return false;
-    // (3) compensated partition when sub-split rows are deleted alongside;
-    // (2) uncompensated in-place rewrite otherwise — including the
-    // valueZeroValueTrade pair, where both legs are restored and neither is
-    // deleted, so the count here is zero for both.
-    return (deletedSubSplitsByTx.get(row.tx_guid) ?? 0) === 0;
+    // (3) exempt only when a row being deleted names THIS split as its parent;
+    // (2) guarded otherwise — including a zero-value-trade leg sitting in the
+    // same transaction as an unrelated partitioned sale, and any sub-split
+    // predating the provenance marker (fail closed).
+    return !compensatedParents.has(row.guid);
   });
 
   assertSplitsNotProtected(operation, offending);
@@ -898,6 +918,14 @@ export async function revertScrubRun(
     if (taggedGuids.length === 0) return { reverted: 0 };
 
     // ── Enumerate everything the run touched BEFORE deleting anything ──
+    //
+    // These reads run before the parent lock below. That is safe for the
+    // reconciled guard specifically because the only column it depends on
+    // here is tx_guid, which a split never changes — so the lock set derived
+    // from it cannot go stale, and every reconcile_state read happens after
+    // the lock. account_guid is NOT immutable (a bulk split move rewrites
+    // it); the values read here feed only the book-scope pre-check and the
+    // token bump, never the reconciled-split decision.
     const taggedTxs = await tx.transactions.findMany({
       where: { guid: { in: taggedGuids } },
       select: { guid: true },

@@ -31,6 +31,43 @@ import {
   lockTransactionsForSplits,
 } from './services/reconciled-split.service';
 
+/**
+ * Slot recording WHICH split a generated sub-split was carved out of.
+ *
+ * The revert paths need to know, per restored split, whether the rows being
+ * deleted alongside it actually came from IT. Co-tagging with the same runId
+ * cannot answer that: one run covers every event in an account, so a single
+ * parent transaction can hold both a partitioned sale and an unrelated
+ * in-place rewrite, and "some sub-split is being deleted in this transaction"
+ * says nothing about any particular parent.
+ *
+ * Written on every sub-split at creation time; read by
+ * assertRevertPreservesReconciled. It is a plain slot row — the slots table is
+ * generic (obj_guid, name, slot_type, string_val), so no schema change is
+ * involved, and the existing wholesale `slots.deleteMany({ obj_guid })`
+ * cleanup on the revert paths removes it with its sub-split.
+ *
+ * Sub-splits created before this marker existed simply have no row here, so
+ * their parent's restore reads as uncompensated and is BLOCKED — the required
+ * fail-closed behaviour, not a silent pass.
+ */
+export const PARENT_SPLIT_SLOT = 'gnucash_web_parent_split';
+
+/** Tag a generated sub-split with its run and the parent it was carved from. */
+async function tagGeneratedSubSplit(
+  tx: PrismaTx,
+  subGuid: string,
+  parentSplitGuid: string,
+  runId: string,
+): Promise<void> {
+  await tx.slots.create({
+    data: { obj_guid: subGuid, name: 'gnucash_web_generated', slot_type: 4, string_val: runId },
+  });
+  await tx.slots.create({
+    data: { obj_guid: subGuid, name: PARENT_SPLIT_SLOT, slot_type: 4, string_val: parentSplitGuid },
+  });
+}
+
 /** Prisma interactive transaction client type */
 export type PrismaTx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
 
@@ -394,14 +431,7 @@ export async function splitSellAcrossLots(
         lot_guid: lotGuid,
       },
     });
-    await tx.slots.create({
-      data: {
-        obj_guid: subGuid,
-        name: 'gnucash_web_generated',
-        slot_type: 4,
-        string_val: runId,
-      },
-    });
+    await tagGeneratedSubSplit(tx, subGuid, sellSplitGuid, runId);
     subSplitsCreated.push(subGuid);
     return subGuid;
   };
@@ -1019,15 +1049,8 @@ export async function splitTransferAcrossSourceLots(
       },
     });
 
-    // Tag sub-split
-    await tx.slots.create({
-      data: {
-        obj_guid: subGuid,
-        name: 'gnucash_web_generated',
-        slot_type: 4,
-        string_val: runId,
-      },
-    });
+    // Tag sub-split with its run and the transfer-in split it came from
+    await tagGeneratedSubSplit(tx, subGuid, splitGuid, runId);
 
     subSplitsCreated++;
   }
@@ -1346,9 +1369,7 @@ export async function assignAdjustmentToLots(
           lot_guid: lot.guid,
         },
       });
-      await tx.slots.create({
-        data: { obj_guid: subGuid, name: 'gnucash_web_generated', slot_type: 4, string_val: runId },
-      });
+      await tagGeneratedSubSplit(tx, subGuid, adjSplitGuid, runId);
       subSplitsCreated.push(subGuid);
     }
     lot.shares += allocDecimal;

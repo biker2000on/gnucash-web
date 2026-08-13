@@ -66,6 +66,7 @@ vi.mock('@/lib/db', () => ({ tryWithDatabaseAdvisoryLock: vi.fn() }));
 
 import { autoAssignLots, clearLotAssignments, revertScrubRun } from '../lot-assignment';
 import { ReconciledSplitError } from '../services/reconciled-split.service';
+import { PARENT_SPLIT_SLOT } from '../lot-scrub';
 
 const ACCOUNT = 'acct'.padEnd(32, '0');
 const RUN_ID = 'run-001';
@@ -78,6 +79,11 @@ const GAINS_SPLIT = 'gainsplit'.padEnd(32, '0');
 const TRADE_TX = 'tradetx'.padEnd(32, '0');
 const TRADE_LEG_A = 'tradelega'.padEnd(32, '0');
 const TRADE_LEG_B = 'tradelegb'.padEnd(32, '0');
+// One parent transaction holding BOTH a partitioned sale and the trade pair —
+// the case a per-transaction compensation count gets wrong.
+const MIXED_TX = 'mixedtx'.padEnd(32, '0');
+const MIXED_SELL = 'mixedsell'.padEnd(32, '0');
+const MIXED_SUB = 'mixedsub'.padEnd(32, '0');
 
 function slot(objGuid: string, name: string, val: string) {
   return { obj_guid: objGuid, name, string_val: val };
@@ -205,16 +211,26 @@ describe('revertScrubRun reconciled policy', () => {
     restored: string[];
     generatedTxGuids: string[];
     protectedRows: unknown[];
+    /** sub-split guid -> the split it was carved out of (PARENT_SPLIT_SLOT). */
+    parentOf?: Record<string, string>;
   }) {
     const taggedGuids = [...spec.tagged.map(t => t.guid), ...spec.generatedTxGuids];
+    const parentOf = spec.parentOf ?? {};
 
     prismaMock.slots.findMany.mockImplementation(
-      async (args: { where: { name?: string } }) => {
+      async (args: { where: { name?: string; obj_guid?: { in?: string[] } } }) => {
         if (args.where.name === 'gnucash_web_generated') {
           return taggedGuids.map(g => slot(g, 'gnucash_web_generated', RUN_ID));
         }
         if (args.where.name === 'original_quantity_num') {
           return spec.restored.map(g => slot(g, 'original_quantity_num', '-100'));
+        }
+        // Provenance: which parent each DELETED sub-split was carved out of.
+        if (args.where.name === PARENT_SPLIT_SLOT) {
+          const asked = args.where.obj_guid?.in ?? [];
+          return asked
+            .filter(g => parentOf[g])
+            .map(g => slot(g, PARENT_SPLIT_SLOT, parentOf[g]));
         }
         return [];
       },
@@ -254,6 +270,9 @@ describe('revertScrubRun reconciled policy', () => {
       restored: [ORIGINAL_SPLIT],
       generatedTxGuids: [],
       protectedRows,
+      // SUB_SPLIT was carved out of ORIGINAL_SPLIT — that specific link is
+      // what makes the restore compensated.
+      parentOf: { [SUB_SPLIT]: ORIGINAL_SPLIT },
     };
   }
 
@@ -314,6 +333,105 @@ describe('revertScrubRun reconciled policy', () => {
     expect(prismaMock.splits.update).toHaveBeenCalled();
   });
 
+  it.each([
+    ['reconciled', 'y'],
+    ['frozen', 'f'],
+  ])('BLOCKS %s trade legs even when a partitioned sale in the SAME transaction is compensated', async (_label, state) => {
+    // The discriminating case. autoAssignLots uses ONE runId for every event
+    // in an account, and one GnuCash transaction can carry several split
+    // events — so a single parent transaction can hold BOTH a partitioned
+    // sale (MIXED_SELL carved into MIXED_SUB, legitimately compensated) AND
+    // an in-place zero-value-trade rewrite (TRADE_LEG_A/B).
+    //
+    // A per-TRANSACTION compensation count sees the sale's deleted sub-split,
+    // decides "this transaction has compensation", and lets the trade legs be
+    // restored from ±FMV back to zero while reconciled. Per-SPLIT provenance
+    // is what stops it: MIXED_SUB names MIXED_SELL as its parent and nothing
+    // names the trade legs, so only MIXED_SELL is exempt.
+    wireRun({
+      tagged: [
+        { guid: MIXED_SELL, tx: MIXED_TX },
+        { guid: MIXED_SUB, tx: MIXED_TX },
+        { guid: TRADE_LEG_A, tx: MIXED_TX },
+        { guid: TRADE_LEG_B, tx: MIXED_TX },
+      ],
+      // The sale's parent and both trade legs are restored in place; only
+      // MIXED_SUB is a row being deleted.
+      restored: [MIXED_SELL, TRADE_LEG_A, TRADE_LEG_B],
+      generatedTxGuids: [],
+      protectedRows: [
+        protectedRow(TRADE_LEG_A, MIXED_TX, state),
+        protectedRow(TRADE_LEG_B, MIXED_TX, state),
+      ],
+      parentOf: { [MIXED_SUB]: MIXED_SELL },
+    });
+    prismaMock.slots.findFirst.mockResolvedValue({ string_val: '100' });
+
+    let thrown: unknown;
+    await revertScrubRun(RUN_ID).catch(err => { thrown = err; });
+
+    expect(thrown).toBeInstanceOf(ReconciledSplitError);
+    const error = thrown as ReconciledSplitError;
+    // Exactly the trade legs are named — not the compensated sale split.
+    expect(error.splits.map(sp => sp.splitGuid).sort())
+      .toEqual([TRADE_LEG_A, TRADE_LEG_B].sort());
+    expect(prismaMock.splits.update).not.toHaveBeenCalled();
+  });
+
+  it('ALLOWS the compensated sale in that same mixed transaction once the trade legs are clean', async () => {
+    // Same mixed shape, but nothing protected: the partition exemption still
+    // applies, so the classifier is not merely blocking everything mixed.
+    wireRun({
+      tagged: [
+        { guid: MIXED_SELL, tx: MIXED_TX },
+        { guid: MIXED_SUB, tx: MIXED_TX },
+        { guid: TRADE_LEG_A, tx: MIXED_TX },
+        { guid: TRADE_LEG_B, tx: MIXED_TX },
+      ],
+      restored: [MIXED_SELL, TRADE_LEG_A, TRADE_LEG_B],
+      generatedTxGuids: [],
+      protectedRows: [],
+      parentOf: { [MIXED_SUB]: MIXED_SELL },
+    });
+    prismaMock.slots.findFirst.mockResolvedValue({ string_val: '100' });
+
+    await expect(revertScrubRun(RUN_ID)).resolves.toMatchObject({ reverted: expect.any(Number) });
+    expect(prismaMock.splits.update).toHaveBeenCalled();
+  });
+
+  it('BLOCKS a partition restore whose sub-split names a DIFFERENT parent', async () => {
+    // Provenance must match this split, not merely exist somewhere.
+    wireRun({
+      tagged: [
+        { guid: ORIGINAL_SPLIT, tx: SELL_TX },
+        { guid: SUB_SPLIT, tx: SELL_TX },
+      ],
+      restored: [ORIGINAL_SPLIT],
+      generatedTxGuids: [],
+      protectedRows: [protectedRow(ORIGINAL_SPLIT, SELL_TX, 'y')],
+      parentOf: { [SUB_SPLIT]: 'someoneelse'.padEnd(32, '0') },
+    });
+
+    await expect(revertScrubRun(RUN_ID)).rejects.toBeInstanceOf(ReconciledSplitError);
+  });
+
+  it('BLOCKS a partition restore whose sub-split predates the provenance marker', async () => {
+    // Legacy rows carry gnucash_web_generated but no parent slot. Fail closed
+    // rather than guess that the deletion compensates this restore.
+    wireRun({
+      tagged: [
+        { guid: ORIGINAL_SPLIT, tx: SELL_TX },
+        { guid: SUB_SPLIT, tx: SELL_TX },
+      ],
+      restored: [ORIGINAL_SPLIT],
+      generatedTxGuids: [],
+      protectedRows: [protectedRow(ORIGINAL_SPLIT, SELL_TX, 'y')],
+      parentOf: {},
+    });
+
+    await expect(revertScrubRun(RUN_ID)).rejects.toBeInstanceOf(ReconciledSplitError);
+  });
+
   /* --- the rest of the policy -------------------------------------------- */
 
   it.each([
@@ -329,6 +447,7 @@ describe('revertScrubRun reconciled policy', () => {
       restored: [ORIGINAL_SPLIT],
       generatedTxGuids: [GAINS_TX],
       protectedRows: [protectedRow(GAINS_SPLIT, GAINS_TX, state)],
+      parentOf: { [SUB_SPLIT]: ORIGINAL_SPLIT },
     });
 
     await expect(revertScrubRun(RUN_ID)).rejects.toBeInstanceOf(ReconciledSplitError);
@@ -376,6 +495,7 @@ describe('revertScrubRun reconciled policy', () => {
       restored: [ORIGINAL_SPLIT],
       generatedTxGuids: [GAINS_TX],
       protectedRows: [],
+      parentOf: { [SUB_SPLIT]: ORIGINAL_SPLIT },
     });
     prismaMock.slots.findFirst.mockResolvedValue({ string_val: '100' });
 
@@ -397,6 +517,7 @@ describe('revertScrubRun reconciled policy', () => {
       restored: [ORIGINAL_SPLIT],
       generatedTxGuids: [GAINS_TX],
       protectedRows: [],
+      parentOf: { [SUB_SPLIT]: ORIGINAL_SPLIT },
     });
     prismaMock.slots.findFirst.mockResolvedValue({ string_val: '100' });
 
