@@ -15,7 +15,9 @@
  *  - The portfolio is simulated in nominal dollars; outputs are deflated by
  *    each path's cumulative inflation so all reported values are REAL.
  *  - Contributions are applied at end of year (after growth), matching the
- *    closed-form FV formula P*g^n + C*(g^n - 1)/r.
+ *    closed-form FV formula P*g^n + C*(g^n - 1)/r. Like expenses, they are
+ *    stated in real dollars and inflated to nominal at the price level of the
+ *    year they are made; `contributionGrowthPct` is a REAL raise on top.
  *  - Withdrawals are taken at the start of each retirement year, before growth.
  */
 
@@ -261,14 +263,23 @@ function simulatePath(r: ResolvedInputs, rand: () => number, fiNumber: number): 
     nominal *= 1 + portfolioReturn;
     if (nominal < 0) nominal = 0;
 
-    // Contribution at end of year during accumulation
-    if (!inRetirement) {
-      nominal += contribution;
-      contribution *= 1 + r.contributionGrowthPct / 100;
-    }
-
+    // Advance the price level to the END of this year before the end-of-year
+    // contribution below, so the contribution converts at the price level of
+    // the moment it is actually made. Withdrawals are taken at the START of
+    // the year and deliberately used the pre-update price level above.
     cumInflation *= 1 + inflation;
     if (cumInflation <= 0) cumInflation = 1e-9;
+
+    // Contribution at end of year during accumulation. `contribution` is a
+    // REAL (today's-dollar) amount — the same convention as annualExpenses —
+    // so it is converted to nominal with the path's cumulative inflation,
+    // exactly as withdrawals are. contributionGrowthPct then compounds the
+    // REAL amount, so a real raise and inflation stay independent instead of
+    // being applied twice.
+    if (!inRetirement) {
+      nominal += contribution * cumInflation;
+      contribution *= 1 + r.contributionGrowthPct / 100;
+    }
 
     const real = nominal / cumInflation;
     realValues[y] = real;

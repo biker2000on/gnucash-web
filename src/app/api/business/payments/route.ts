@@ -62,6 +62,12 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Optional client-supplied idempotency key: applyPayment returns the
+    // existing payment instead of posting a second one when it is replayed.
+    if (body.transactionGuid !== undefined && typeof body.transactionGuid !== 'string') {
+      return NextResponse.json({ error: 'transactionGuid must be a string' }, { status: 400 });
+    }
+
     const result = await applyPayment(roleResult.bookGuid, {
       ownerType: body.ownerType,
       ownerGuid: body.ownerGuid,
@@ -71,6 +77,7 @@ export async function POST(request: NextRequest) {
       num: body.num,
       memo: body.memo,
       allocations: body.allocations,
+      transactionGuid: body.transactionGuid,
     });
     void cacheInvalidateAllForBook(roleResult.bookGuid);
     void publishDataChange(roleResult.bookGuid, 'business', { action: 'create' });

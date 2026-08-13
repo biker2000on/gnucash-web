@@ -227,6 +227,54 @@ describe('computeBudgetProgress', () => {
         expect(income.periods[0].pctUsed).toBe(100);
     });
 
+    it('counts a subtree budgeted at two levels only once in the roll-up', () => {
+        // Expenses:Auto budgeted 500, its child Expenses:Auto:Gas budgeted 200.
+        // Per-account actuals are already rolled up: $100 spent directly on
+        // Auto + $200 on Gas → Auto row 300, Gas row 200. True spend is 300.
+        const result = computeBudgetProgress({
+            ranges,
+            accounts: [
+                account({ guid: 'auto', name: 'Auto', budgeted: [500, 0, 0], actual: [300, 0, 0] }),
+                account({
+                    guid: 'gas',
+                    name: 'Gas',
+                    budgeted: [200, 0, 0],
+                    actual: [200, 0, 0],
+                    budgetedAncestorGuids: ['auto'],
+                }),
+            ],
+            asOf: '2026-01-15',
+        });
+
+        // Headline counts only the topmost budgeted account per branch:
+        // 500/300, NOT the double-counted 700/500.
+        expect(result.periodTotals[0]).toMatchObject({ budgeted: 500, actual: 300 });
+        expect(result.totals).toMatchObject({ budgeted: 500, actual: 300 });
+        expect(result.pacing!.budgeted).toBe(500);
+        expect(result.pacing!.actual).toBe(300);
+
+        // Per-account rows keep their rolled-up values, and the nested one is
+        // flagged so the report layer can exclude it from subtotals too.
+        const auto = result.accounts.find(a => a.guid === 'auto')!;
+        const gas = result.accounts.find(a => a.guid === 'gas')!;
+        expect(auto.total).toMatchObject({ budgeted: 500, actual: 300 });
+        expect(auto.nestedUnderBudgeted).toBe(false);
+        expect(gas.total).toMatchObject({ budgeted: 200, actual: 200 });
+        expect(gas.nestedUnderBudgeted).toBe(true);
+    });
+
+    it('still sums sibling accounts that are not nested under each other', () => {
+        const result = computeBudgetProgress({
+            ranges,
+            accounts: [
+                account({ guid: 'auto', name: 'Auto', budgeted: [500, 0, 0], actual: [300, 0, 0] }),
+                account({ guid: 'food', name: 'Food', budgeted: [200, 0, 0], actual: [150, 0, 0] }),
+            ],
+            asOf: '2026-01-15',
+        });
+        expect(result.periodTotals[0]).toMatchObject({ budgeted: 700, actual: 450 });
+    });
+
     it('handles an empty budget (no accounts)', () => {
         const result = computeBudgetProgress({ ranges, accounts: [], asOf: '2026-02-14' });
         expect(result.accounts).toEqual([]);

@@ -19,8 +19,11 @@
  *
  * Roll-ups (`periodTotals`, `totals`, `pacing` on the result) cover EXPENSE
  * accounts only — the dashboard's overspend semantics don't make sense when
- * income or transfer accounts are mixed into the sum. Per-account rows are
- * emitted for every budgeted account regardless of type.
+ * income or transfer accounts are mixed into the sum. They also count only
+ * the topmost budgeted account of each branch: per-account rows roll every
+ * descendant's spend up into each budgeted ancestor, so a subtree budgeted at
+ * two levels would otherwise be counted twice in the headline. Per-account
+ * rows are emitted for every budgeted account regardless of type.
  */
 
 import { Prisma } from '@prisma/client';
@@ -101,6 +104,13 @@ export interface ProgressAccountInput {
     budgeted: number[];
     /** Sign-corrected actual amount per period (index = periodNum) */
     actual: number[];
+    /**
+     * Guids of OTHER budgeted accounts this account descends from. Non-empty
+     * means an ancestor's row already includes this account's rolled-up
+     * amounts, so it is excluded from `periodTotals`/`totals`/`pacing` to
+     * avoid double-counting. Omitted/empty = topmost budgeted account.
+     */
+    budgetedAncestorGuids?: string[];
 }
 
 export interface ComputeProgressInput {
@@ -119,6 +129,12 @@ export interface AccountProgress {
     total: TotalProgress;
     /** Current-period pacing; null when asOf falls outside the budget */
     pacing: PacingInfo | null;
+    /**
+     * True when another budgeted account is an ancestor of this one: its row
+     * is already contained in that ancestor's rolled-up row, so it is left out
+     * of the roll-up totals. The row's own values are unaffected.
+     */
+    nestedUnderBudgeted: boolean;
 }
 
 export interface BudgetProgressResult {
@@ -429,11 +445,17 @@ export function computeBudgetProgress(input: ComputeProgressInput): BudgetProgre
             periods,
             total: makeTotal(totalBudgeted, totalActual),
             pacing,
+            nestedUnderBudgeted: (acc.budgetedAncestorGuids?.length ?? 0) > 0,
         };
     });
 
-    // Roll-ups over expense accounts only (spend semantics).
-    const expense = accounts.filter(a => a.type === 'EXPENSE');
+    // Roll-ups over expense accounts only (spend semantics), counting only the
+    // topmost budgeted account per branch. Per-account rows already roll every
+    // descendant's spend up into each budgeted ancestor, so summing a nested
+    // account as well would count both its budget and its spend twice.
+    const expense = accounts.filter(
+        a => a.type === 'EXPENSE' && (a.budgetedAncestorGuids?.length ?? 0) === 0
+    );
     const periodTotals = ranges.map(r => {
         const b = expense.reduce((s, a) => s + (a.budgeted[r.periodNum] || 0), 0);
         const act = expense.reduce((s, a) => s + (a.actual[r.periodNum] || 0), 0);
@@ -675,13 +697,20 @@ export async function loadBudgetActuals(
 
     let actualMatrices = new Map<string, number[]>();
     let priorMatrices = new Map<string, number[]>();
+    // budgeted account guid -> other budgeted accounts it descends from
+    const budgetedAncestors = new Map<string, string[]>();
     if (accountGuids.length > 0) {
         // Budget-the-parent model: a budgeted account's actual rolls up every
         // split in its subtree (itself + all descendants), mirroring the
         // estimate helper. Budgeting a leaf just yields that leaf's own spend.
-        // (Budgeting both a parent and one of its own descendants double-counts
-        // that descendant — budget one level per branch.)
+        // When both a parent and one of its own descendants are budgeted, the
+        // descendant's row is contained in the parent's row; the descendant is
+        // therefore flagged here and excluded from the roll-up totals.
         const descendantToRoots = await loadSubtreeMap(accountGuids);
+        for (const guid of accountGuids) {
+            const ancestors = (descendantToRoots.get(guid) ?? []).filter(root => root !== guid);
+            if (ancestors.length > 0) budgetedAncestors.set(guid, ancestors);
+        }
         const allGuids = [...descendantToRoots.keys()];
         const [currentSplits, priorSplits] = await Promise.all([
             loadSplits(allGuids, ranges[0].start, ranges[ranges.length - 1].end),
@@ -700,6 +729,7 @@ export async function loadBudgetActuals(
             currency: meta.currency,
             budgeted: meta.budgeted,
             actual: actualMatrices.get(guid) || new Array(budget.num_periods).fill(0),
+            budgetedAncestorGuids: budgetedAncestors.get(guid),
         };
     });
 

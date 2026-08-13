@@ -1,6 +1,7 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { generateGuid } from '@/lib/guid';
 import { Modal } from '@/components/ui/Modal';
 import { AccountSelector } from '@/components/ui/AccountSelector';
 import { useToast } from '@/contexts/ToastContext';
@@ -68,6 +69,12 @@ export function PaymentModal({
     /** Once the user edits an allocation cell we stop re-running FIFO. */
     const [allocationsTouched, setAllocationsTouched] = useState(false);
     const [submitting, setSubmitting] = useState(false);
+    // Idempotency key for the payment transaction: one per modal-open, stable
+    // across retries of the same payment, replaced only after one posts. The
+    // API honors it (applyPayment returns the existing payment on a replay),
+    // so a retried $40 payment cannot post twice.
+    const transactionGuidRef = useRef<string | null>(null);
+    if (transactionGuidRef.current === null) transactionGuidRef.current = generateGuid();
 
     const totalDue = useMemo(
         () => roundCents(openInvoices.reduce((s, i) => s + i.amountDue, 0)),
@@ -86,6 +93,8 @@ export function PaymentModal({
     // Load open documents and seed defaults each time the modal opens.
     useEffect(() => {
         if (!isOpen || !ownerGuid) return;
+        // Fresh key for this payment; the modal is not remounted between opens.
+        transactionGuidRef.current = generateGuid();
         let cancelled = false;
         setLoading(true);
         const type = ownerType === 'customer' ? 'invoice' : 'bill';
@@ -185,12 +194,15 @@ export function PaymentModal({
                     num: num || undefined,
                     memo: memo || undefined,
                     allocations: allocationsToPayload(allocations),
+                    transactionGuid: transactionGuidRef.current,
                 }),
             });
             const data = await res.json().catch(() => null);
             if (!res.ok) {
                 throw new Error(data?.error || 'Failed to record payment');
             }
+            // This key is now spent; anything recorded next is a new payment.
+            transactionGuidRef.current = generateGuid();
             const result: PaymentResult = data.result;
             const paidCount = result.fullyPaidInvoiceGuids?.length ?? 0;
             success(

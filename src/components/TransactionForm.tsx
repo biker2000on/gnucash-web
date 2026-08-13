@@ -11,6 +11,7 @@ import { useKeyboardShortcut } from '@/lib/hooks/useKeyboardShortcut';
 import { useToast } from '@/contexts/ToastContext';
 import { useAccounts } from '@/lib/hooks/useAccounts';
 import { evaluateMathExpression, containsMathExpression } from '@/lib/math-eval';
+import { parseAmountStrict } from '@/lib/parse-amount';
 import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 import { formatDateForDisplay, parseDateInput } from '@/lib/date-format';
 import { toLocalDateString } from '@/lib/datePresets';
@@ -43,6 +44,31 @@ const createEmptySplit = (): SplitFormData => ({
     reconcile_state: 'n',
 });
 
+/** New client-generated transaction guid in GnuCash's 32-hex-char form. */
+const newClientTxGuid = (): string => crypto.randomUUID().replace(/-/g, '');
+
+/**
+ * Parse one user-typed amount box — the simple-mode Amount field and every
+ * advanced-mode debit/credit cell. A math expression ("12+3") evaluates;
+ * anything else must be a single valid number ("$1,234.56", "1,234.56", "25").
+ * Returns null for input that is NOT a valid amount ("abc", "1.2.3", "1,23")
+ * so callers reject it instead of silently booking 0 or a truncated value.
+ */
+export function parseAmountField(text: string): number | null {
+    const evaluated = evaluateMathExpression(text);
+    if (evaluated !== null) return evaluated;
+    return parseAmountStrict(text);
+}
+
+/**
+ * Same, for a split's debit/credit box where blank means "nothing on this
+ * side" (0) rather than an error. Null still means malformed.
+ */
+export function parseSplitAmountField(text: string): number | null {
+    if (!text.trim()) return 0;
+    return parseAmountField(text);
+}
+
 /**
  * Build the two splits for a simple-mode (from -> to) entry.
  *
@@ -63,13 +89,17 @@ export function buildSimpleModeSplits(
     simple: { amount: string; fromAccountGuid: string; toAccountGuid: string; memo: string | null },
     priorSplits: SplitFormData[],
 ): SplitFormData[] {
-    const amount = parseFloat(simple.amount) || 0;
+    const amount = parseAmountField(simple.amount) ?? 0;
     const claimed = new Set<string>();
     const makeSide = (accountGuid: string, side: 'from' | 'to'): SplitFormData => {
         const prior = priorSplits.find(s => s.account_guid === accountGuid && !claimed.has(s.id));
         if (prior) claimed.add(prior.id);
         const debit = side === 'to' ? amount.toFixed(2) : '';
         const credit = side === 'from' ? amount.toFixed(2) : '';
+        // Dirty-compare only, never a booked value: one side is our own
+        // toFixed(2) output and the other is the loaded split. A parse miss
+        // here just reports "changed" and resets reconcile state, which is the
+        // conservative direction, so plain parseFloat is deliberate.
         const amountUnchanged = Boolean(prior)
             && Math.abs((parseFloat(prior!.debit) || 0) - (parseFloat(debit) || 0)) < 0.005
             && Math.abs((parseFloat(prior!.credit) || 0) - (parseFloat(credit) || 0)) < 0.005;
@@ -121,6 +151,15 @@ export function TransactionForm({
     // this value the user hasn't touched it, and buildSimpleModeSplits keeps
     // each split's own stored memo instead of overwriting both.
     const initialSimpleMemoRef = useRef('');
+    // In-flight guard. A ref, not `saving` state: the Ctrl+Enter listener can
+    // fire twice before React re-renders, so a state read would still be false
+    // on the second press and post the transaction twice.
+    const savingRef = useRef(false);
+    // Idempotency key for creates: generated once per form-open (and once per
+    // entry in save-and-another), so a retried submit collapses onto the same
+    // record server-side instead of creating a duplicate.
+    const clientTxGuidRef = useRef<string | null>(null);
+    if (clientTxGuidRef.current === null) clientTxGuidRef.current = newClientTxGuid();
     const formRef = useRef<HTMLDivElement>(null);
     const dateInputRef = useRef<HTMLInputElement>(null);
     const saveAndAnotherRef = useRef<(() => Promise<void>) | null>(null);
@@ -203,6 +242,8 @@ export function TransactionForm({
     useEffect(() => {
         if (transaction) {
             const splits: SplitFormData[] = transaction.splits?.map(split => {
+                // Server-rendered decimal string (never user input): plain
+                // parseFloat, used only for its sign.
                 const quantityDecimal = split.quantity_decimal || '0';
                 const quantity = parseFloat(quantityDecimal);
                 const magnitude = editableDecimalMagnitude(quantityDecimal);
@@ -235,7 +276,9 @@ export function TransactionForm({
             if (splits.length > 2) {
                 setIsSimpleMode(false);
             } else if (splits.length === 2) {
-                // If editing a 2-split transaction, populate simple mode data
+                // If editing a 2-split transaction, populate simple mode data.
+                // These amounts came from editableDecimalMagnitude above, not
+                // from the keyboard, so parseFloat is safe here.
                 const debitSplit = splits.find(s => parseFloat(s.debit) > 0);
                 const creditSplit = splits.find(s => parseFloat(s.credit) > 0);
                 if (debitSplit && creditSplit) {
@@ -341,20 +384,43 @@ export function TransactionForm({
     const calculateBalance = () => {
         let totalDebit = 0;
         let totalCredit = 0;
+        // Splits whose typed amount does not parse. They are NOT counted as 0:
+        // a malformed amount must not be able to make a transaction look
+        // balanced. validateForm reports them and blocks the save.
+        const invalidAmountSplits: string[] = [];
         formData.splits.forEach(split => {
             const rate = resolveSplitExchangeRate(split);
             if (rate === null) return;
 
+            const debit = parseSplitAmountField(split.debit);
+            const credit = parseSplitAmountField(split.credit);
+            if (debit === null || credit === null) {
+                invalidAmountSplits.push(
+                    accountMap.get(split.account_guid)?.fullname
+                    || accountMap.get(split.account_guid)?.name
+                    || split.account_name
+                    || 'a split'
+                );
+                return;
+            }
+
             // Inputs are in the account's commodity, but balance is determined
             // by split values in the transaction currency.
-            totalDebit += (parseFloat(split.debit) || 0) * rate;
-            totalCredit += (parseFloat(split.credit) || 0) * rate;
+            totalDebit += debit * rate;
+            totalCredit += credit * rate;
         });
-        return { totalDebit, totalCredit, difference: totalDebit - totalCredit };
+        return {
+            totalDebit,
+            totalCredit,
+            difference: totalDebit - totalCredit,
+            invalidAmountSplits,
+        };
     };
 
     const autoBalanceLastSplit = () => {
-        const { difference } = calculateBalance();
+        const { difference, invalidAmountSplits } = calculateBalance();
+        // The difference is meaningless while any typed amount is unparseable.
+        if (invalidAmountSplits.length > 0) return;
         if (Math.abs(difference) < 0.01) return;
 
         setFormData(prev => {
@@ -364,19 +430,24 @@ export function TransactionForm({
             const rate = resolveSplitExchangeRate(lastSplit);
             if (rate === null) return prev;
             const nativeDifference = Math.abs(difference) / rate;
+            // The last split's own box is user-typed too, so it is parsed
+            // strictly rather than prefix-parsed before being added to.
+            const existingDebit = parseSplitAmountField(lastSplit.debit);
+            const existingCredit = parseSplitAmountField(lastSplit.credit);
+            if (existingDebit === null || existingCredit === null) return prev;
 
             if (difference > 0) {
                 // Need more credit
                 newSplits[lastIndex] = {
                     ...lastSplit,
-                    credit: ((parseFloat(lastSplit.credit) || 0) + nativeDifference).toFixed(2),
+                    credit: (existingCredit + nativeDifference).toFixed(2),
                     debit: '',
                 };
             } else {
                 // Need more debit
                 newSplits[lastIndex] = {
                     ...lastSplit,
-                    debit: ((parseFloat(lastSplit.debit) || 0) + nativeDifference).toFixed(2),
+                    debit: (existingDebit + nativeDifference).toFixed(2),
                     credit: '',
                 };
             }
@@ -403,8 +474,11 @@ export function TransactionForm({
     const switchToSimple = () => {
         // Try to extract simple data from splits if it's a 2-split transaction
         if (formData.splits.length === 2) {
-            const debitSplit = formData.splits.find(s => parseFloat(s.debit) > 0);
-            const creditSplit = formData.splits.find(s => parseFloat(s.credit) > 0);
+            // These boxes hold whatever the user typed in advanced mode, so
+            // the "which side is which" test parses them the same way a save
+            // would; the raw text carries over and simple mode validates it.
+            const debitSplit = formData.splits.find(s => (parseSplitAmountField(s.debit) ?? 0) > 0);
+            const creditSplit = formData.splits.find(s => (parseSplitAmountField(s.credit) ?? 0) > 0);
             if (debitSplit && creditSplit) {
                 const sharedMemo = debitSplit.memo === creditSplit.memo ? debitSplit.memo : '';
                 initialSimpleMemoRef.current = sharedMemo;
@@ -433,16 +507,10 @@ export function TransactionForm({
             return;
         }
 
-        // Evaluate any math expression first
-        let currentValue: number;
-        const evaluated = evaluateMathExpression(simpleData.amount);
-        if (evaluated !== null) {
-            currentValue = evaluated;
-        } else {
-            currentValue = parseFloat(simpleData.amount);
-        }
-
-        if (isNaN(currentValue) || currentValue === 0) return;
+        // Evaluates any math expression first, then falls back to a strict
+        // parse; a malformed amount is left untouched rather than taxed as 0.
+        const currentValue = parseAmountField(simpleData.amount);
+        if (currentValue === null || currentValue === 0) return;
 
         const withTax = Math.round(currentValue * (1 + defaultTaxRate) * 100) / 100;
         setSimpleData(prev => ({ ...prev, amount: withTax.toFixed(2) }));
@@ -474,7 +542,14 @@ export function TransactionForm({
 
         if (isSimpleMode) {
             // Simple mode validation
-            if (!simpleData.amount || parseFloat(simpleData.amount) <= 0) {
+            const amountValue = simpleData.amount.trim() ? parseAmountField(simpleData.amount) : null;
+            if (!simpleData.amount.trim()) {
+                errors.push('Amount is required');
+                fieldErrors.amount = 'Required';
+            } else if (amountValue === null) {
+                errors.push(`"${simpleData.amount.trim()}" is not a valid amount. Enter a number like 1234.56.`);
+                fieldErrors.amount = 'Not a number';
+            } else if (amountValue <= 0) {
                 errors.push('Amount must be greater than zero');
                 fieldErrors.amount = 'Must be > 0';
             }
@@ -526,8 +601,14 @@ export function TransactionForm({
                 fieldErrors.splits = 'Exchange rate required';
             }
 
-            const { difference } = calculateBalance();
-            if (missingRateAccounts.length === 0 && Math.abs(difference) > 0.01) {
+            const { difference, invalidAmountSplits } = calculateBalance();
+            if (invalidAmountSplits.length > 0) {
+                errors.push(`Enter a valid amount (e.g. 1234.56) for: ${invalidAmountSplits.join(', ')}.`);
+                fieldErrors.splits = 'Invalid amount';
+            }
+
+            // Only meaningful once every amount parses.
+            if (invalidAmountSplits.length === 0 && missingRateAccounts.length === 0 && Math.abs(difference) > 0.01) {
                 errors.push(`Transaction is unbalanced by ${difference.toFixed(2)}. Debits must equal credits.`);
                 fieldErrors.splits = 'Unbalanced';
             }
@@ -556,8 +637,11 @@ export function TransactionForm({
 
         const apiSplits: CreateTransactionRequest['splits'] = [];
         for (const split of submissionSplits.filter(candidate => candidate.account_guid)) {
-            const debit = parseFloat(split.debit) || 0;
-            const credit = parseFloat(split.credit) || 0;
+            // Strict: a malformed amount aborts the save (validateForm has
+            // already reported it) instead of quietly booking 0.
+            const debit = parseSplitAmountField(split.debit);
+            const credit = parseSplitAmountField(split.credit);
+            if (debit === null || credit === null) return null;
             const accountAmount = debit - credit;
             const exchangeRate = resolveSplitExchangeRate(split);
             if (exchangeRate === null) return null;
@@ -582,8 +666,11 @@ export function TransactionForm({
             });
         }
 
-        // Convert form data to API format
+        // Convert form data to API format. New transactions carry the
+        // client-generated guid so a replayed POST is deduplicated by the
+        // server; edits are keyed by the URL guid instead.
         return {
+            ...(transaction ? {} : { guid: clientTxGuidRef.current ?? undefined }),
             currency_guid: formData.currency_guid,
             num: formData.num || undefined,
             post_date: formData.post_date,
@@ -593,6 +680,8 @@ export function TransactionForm({
     };
 
     const resetForm = () => {
+        // The saved entry owns the previous guid; the next one needs its own.
+        clientTxGuidRef.current = newClientTxGuid();
         // Keep the current date but clear everything else
         setFormData(prev => ({
             ...prev,
@@ -636,6 +725,9 @@ export function TransactionForm({
 
     const handleSubmit = async (e?: React.FormEvent) => {
         if (e) e.preventDefault();
+        // Ctrl+Enter is a window-level listener, so it bypasses the button's
+        // disabled={saving}; without this a second press duplicates the entry.
+        if (savingRef.current) return;
 
         const validation = validateForm();
         setErrors(validation.errors);
@@ -654,6 +746,7 @@ export function TransactionForm({
         const apiData = buildApiData();
         if (!apiData) return;
 
+        savingRef.current = true;
         setSaving(true);
         try {
             await onSave(apiData);
@@ -664,11 +757,15 @@ export function TransactionForm({
                 setErrors(['An error occurred while saving']);
             }
         } finally {
+            savingRef.current = false;
             setSaving(false);
         }
     };
 
     saveAndAnotherRef.current = async () => {
+        // Same guard as handleSubmit: Ctrl+Shift+Enter is window-level too.
+        if (savingRef.current) return;
+
         const validation = validateForm();
         setErrors(validation.errors);
         setFieldErrors(validation.fieldErrors);
@@ -686,6 +783,7 @@ export function TransactionForm({
         const apiData = buildApiData();
         if (!apiData || !onSaveAndAnother) return;
 
+        savingRef.current = true;
         setSaving(true);
         try {
             await onSaveAndAnother(apiData);
@@ -700,6 +798,7 @@ export function TransactionForm({
                 setErrors(['An error occurred while saving']);
             }
         } finally {
+            savingRef.current = false;
             setSaving(false);
         }
     };
