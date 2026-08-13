@@ -29,6 +29,20 @@ Covers work landed since 0.23.2.0 (2026-07-29).
   inventory asset account now fail fulfilment with a clear error naming them**,
   where they previously succeeded silently. Returns remain opt-in, because the
   reversal uses the current average cost rather than the original shipment cost.
+- **Totals no longer include holdings we cannot value, and say so.** A security
+  with no available price was previously counted as zero and an account in a
+  currency with no exchange rate was counted as if one unit equalled one
+  dollar — so an unpriceable holding quietly disappeared from your net worth
+  and a foreign-currency balance was silently wrong. Those balances are now
+  excluded and named in an explicit notice on the dashboard. Consequences worth
+  knowing before you upgrade: your net worth figure may **drop** if you hold
+  anything unpriceable, the net worth **change** is withheld when the two dates
+  could not value the same holdings, and the balance sheet withholds its total
+  (and the budget balance sheet its check) when any balance could not be
+  valued. Withholding is deliberate — excluding an asset while its equity stays
+  valued makes the statement stop balancing, and a residual you cannot explain
+  is worse than no number. Supply the missing prices or exchange rates and
+  everything returns. If every holding in your book is priced, nothing changes.
 - **Investment lot and fixed-asset figures will change for some accounts.**
   Lots acquired by in-kind transfer now report their carried cost basis and
   their original acquisition date, so previously-inflated gains shrink and
