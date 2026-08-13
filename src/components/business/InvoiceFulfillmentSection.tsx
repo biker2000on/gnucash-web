@@ -255,7 +255,7 @@ function AllocationModal({
                         />
                         {mode === 'fulfill'
                             ? 'Post COGS to ledger (needs COGS + asset accounts on each item)'
-                            : 'Post reversing COGS to ledger (reverses at the current average cost)'}
+                            : 'Post reversing COGS at current average cost (may not exactly reverse the original shipment)'}
                     </label>
                 </div>
 

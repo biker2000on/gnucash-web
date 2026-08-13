@@ -1089,10 +1089,16 @@ async function maybePostCogs(
  * both accounts. FIFO items are affected too — the shipment consumes at its
  * layer-derived cost while the return still re-enters at the average.
  *
- * Defaulting a wrong reversal ON is worse than leaving it off, so this path
- * stays opt-in until the return cost basis is resolved (needs an allocation
- * rule for partial returns spanning several shipments — see the ship/fulfill
- * default in shouldPostCogs, which is unaffected by this).
+ * Neither default is universally less wrong. Skipping the reversal leaves COGS
+ * overstated by C and inventory understated by C; posting at the current
+ * average A leaves a residual of |C - A|. Posting is the better of the two
+ * whenever A < 2C, the worse one above that, and a wash at exactly 2C. Opt-in is
+ * therefore the CONSERVATIVE choice — a bounded, familiar error the user has
+ * always had, rather than a silently-introduced one — not a categorically
+ * smaller one. It stands until the return cost basis is resolved, which needs
+ * an allocation rule for partial returns spanning several shipments. The
+ * ship/fulfill default in shouldPostCogs is unaffected: shipments do consume at
+ * the correct effective cost.
  */
 function shouldPostReturnCogs(post: boolean | undefined): boolean {
   return post === true;
@@ -1537,12 +1543,17 @@ export interface FulfillResult {
 
 /**
  * Pre-flight check for a multi-allocation fulfillment: collect EVERY allocated
- * item that cannot post COGS and name them all in one error.
+ * item that LACKS THE REQUIRED ACCOUNT GUIDS and name them all in one error.
  *
- * maybePostCogs still throws per item as the backstop; this only turns a
- * fix-one-retry-repeat loop into a single actionable message, since all
- * allocations share one transaction and any failure rolls back the whole
- * invoice. No-op when the caller opted out of posting.
+ * Scope is deliberately narrow — a missing cogsAccountGuid/assetAccountGuid.
+ * Whether those guids resolve to a real, non-placeholder account owned by this
+ * book is still validated per item by assertPostableAccount inside
+ * maybePostCogs, which remains the necessary backstop: such an item fails only
+ * once its own allocation is reached, after earlier allocations have run. The
+ * shared transaction rolls all of them back, so no partial accounting escapes.
+ *
+ * This only turns a fix-one-retry-repeat loop into a single actionable message
+ * for the common misconfiguration. No-op when the caller opted out of posting.
  */
 function assertItemsPostable(
   allocations: FulfillmentAllocation[],
@@ -1583,9 +1594,10 @@ export async function fulfillInvoiceLines(input: FulfillInput): Promise<FulfillR
     const items = await lockItems(tx, input.bookGuid, input.allocations.map((a) => a.itemId));
     for (const a of input.allocations) await assertLocation(tx, input.bookGuid, a.locationId);
 
-    // Every allocation shares this transaction, so one unpostable item rolls the
-    // whole invoice back. Name EVERY offender up front instead of failing on the
-    // first one and making the user fix them one retry at a time.
+    // Every allocation shares this transaction, so one item missing its account
+    // guids rolls the whole invoice back. Name EVERY such offender up front
+    // instead of failing on the first and making the user fix them one retry at
+    // a time. (Bad-but-present guids are still caught later, per item.)
     assertItemsPostable(input.allocations, items, input.post);
 
     // Aggregate stock demand per (item, location) so multi-allocation requests
