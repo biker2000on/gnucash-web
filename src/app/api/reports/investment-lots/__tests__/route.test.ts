@@ -246,4 +246,95 @@ describe('investment lots report', () => {
         expect(rows.has(PURCHASE_LOT)).toBe(true);
         expect(rows.has(TRANSFER_LOT)).toBe(false);
     });
+
+    describe('when the book has no base currency', () => {
+        beforeEach(() => {
+            mocks.getBaseCurrency.mockResolvedValue(null);
+        });
+
+        it('never falls back to an unfiltered any-currency quote', async () => {
+            await fetchRows();
+
+            // getLatestPrice DROPS its currency filter when the second argument
+            // is undefined, so `baseCurrency?.guid` would silently price the
+            // holdings off a quote in any currency. The route must not ask.
+            expect(mocks.getLatestPrice).not.toHaveBeenCalledWith(COMMODITY, undefined);
+            // The lot engine does its own single-argument price lookup for its
+            // own figures, which the route ignores; assert no TWO-argument
+            // (i.e. route-issued) call was made at all.
+            expect(mocks.getLatestPrice.mock.calls.filter(call => call.length > 1)).toEqual([]);
+        });
+
+        it('reports null market value and unrealized gain rather than a wrong number', async () => {
+            const rows = await fetchRows();
+            const lot = rows.get(TRANSFER_LOT)!;
+
+            expect(lot.marketValue).toBeNull();
+            expect(lot.unrealizedGain).toBeNull();
+            expect(lot.totalGain).toBeNull();
+            // Basis and holding period come from the engine and need no price.
+            expect(lot.costBasis).toBeCloseTo(CARRIED_BASIS, 6);
+            expect(lot.holdingPeriod).toBe('long_term');
+        });
+
+        it('nulls the market-value and unrealized summary totals', async () => {
+            const response = await GET(request());
+            const body = await response.json();
+
+            expect(body.summary.totalMarketValue).toBeNull();
+            expect(body.summary.totalUnrealizedGain).toBeNull();
+            // Basis totals stay valid — they never depended on a quote.
+            expect(body.summary.totalCostBasis).toBeCloseTo(CARRIED_BASIS + 1000, 6);
+            expect(body.summary.openLotCount).toBe(2);
+        });
+    });
+
+    it('nulls the market-value total when ANY open lot is unpriced', async () => {
+        // A second account whose commodity has no base-currency quote. Summing
+        // its lot as $0 would present an incomplete total as a complete one.
+        const ACCOUNT_B = 'b'.repeat(32);
+        const COMMODITY_B = 'd'.repeat(32);
+        const LOT_B = 'e'.repeat(32);
+        const lotB = {
+            guid: LOT_B,
+            account_guid: ACCOUNT_B,
+            is_closed: 0,
+            splits: [split({
+                guid: 'split-b', quantity: 10n, valueCents: 50_000n,
+                postDate: PURCHASED, description: 'Buy unpriced', lotGuid: LOT_B,
+            })],
+        };
+        mocks.getBookAccountGuids.mockResolvedValue([ACCOUNT, ACCOUNT_B]);
+        mocks.buildAccountPathMap.mockResolvedValue(new Map([
+            [ACCOUNT, 'Assets:Investments:VTSAX'],
+            [ACCOUNT_B, 'Assets:Investments:NOQUOTE'],
+        ]));
+        mocks.accountsFindMany.mockResolvedValue([
+            {
+                guid: ACCOUNT, name: 'VTSAX', account_type: 'MUTUAL', commodity_guid: COMMODITY,
+                commodity: { guid: COMMODITY, mnemonic: 'VTSAX', namespace: 'FUND' }, lots: LOTS,
+            },
+            {
+                guid: ACCOUNT_B, name: 'NOQUOTE', account_type: 'STOCK', commodity_guid: COMMODITY_B,
+                commodity: { guid: COMMODITY_B, mnemonic: 'NOQUOTE', namespace: 'NASDAQ' }, lots: [lotB],
+            },
+        ]);
+        mocks.lotsFindMany.mockResolvedValue([...LOTS, lotB]);
+        mocks.getLatestPrice.mockImplementation(async (commodityGuid: string) => (
+            commodityGuid === COMMODITY
+                ? { guid: 'price', date: new Date('2026-08-01T00:00:00.000Z'), value: PRICE_PER_SHARE, source: 'test' }
+                : null
+        ));
+
+        const response = await GET(request());
+        const body = await response.json();
+
+        expect(body.summary.openLotCount).toBe(3);
+        expect(body.summary.totalMarketValue).toBeNull();
+        expect(body.summary.totalUnrealizedGain).toBeNull();
+        // The priced lots still report their own values row-by-row.
+        const rows = new Map<string, Row>(body.rows.map((r: Row) => [r.lotGuid, r]));
+        expect(rows.get(TRANSFER_LOT)!.marketValue).toBeCloseTo(1200, 6);
+        expect(rows.get(LOT_B)!.marketValue).toBeNull();
+    });
 });

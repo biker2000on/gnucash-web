@@ -117,11 +117,16 @@ export async function GET(request: NextRequest) {
             const commodityMnemonic = account.commodity?.mnemonic || '';
             const commodityGuid = account.commodity_guid;
 
-            // Get current price for unrealized gain calculation
+            // Get current price for unrealized gain calculation.
+            // getLatestPrice DROPS its currency filter when the argument is
+            // undefined, so an unknown base currency must skip the lookup
+            // outright rather than accept a quote denominated in anything. The
+            // lot then reports a null market value, which is honest; a number
+            // derived from an arbitrary-currency quote would not be.
             let currentPrice: number | null = null;
-            if (commodityGuid) {
+            if (commodityGuid && baseCurrency) {
                 try {
-                    const priceData = await getLatestPrice(commodityGuid, baseCurrency?.guid);
+                    const priceData = await getLatestPrice(commodityGuid, baseCurrency.guid);
                     if (priceData) currentPrice = priceData.value;
                 } catch {
                     // No price available
@@ -197,18 +202,29 @@ export async function GET(request: NextRequest) {
             return 0;
         });
 
+        // Market-value and unrealized totals cover the OPEN lots only. An
+        // unpriced open lot has no knowable market value, and summing it as 0
+        // would present an incomplete total as though it were complete — the
+        // same class of error as pricing it off an arbitrary-currency quote.
+        // If any open lot is unpriced, the whole aggregate reports null.
+        const openRows = rows.filter(r => !r.isClosed);
+        const everyOpenRowPriced = openRows.length > 0
+            && openRows.every(r => r.marketValue !== null);
+        const everyOpenGainKnown = openRows.length > 0
+            && openRows.every(r => r.unrealizedGain !== null);
+
         const summary = {
-            totalCostBasis: rows.filter(r => !r.isClosed).reduce((s, r) => s + r.costBasis, 0),
-            totalMarketValue: rows.some(r => r.marketValue !== null)
-                ? rows.filter(r => !r.isClosed).reduce((s, r) => s + (r.marketValue || 0), 0)
+            totalCostBasis: openRows.reduce((s, r) => s + r.costBasis, 0),
+            totalMarketValue: everyOpenRowPriced
+                ? openRows.reduce((s, r) => s + (r.marketValue ?? 0), 0)
                 : null,
             // Includes the realized portion of partially-sold OPEN lots, which
             // the engine reports and which a closed-only filter would drop.
             totalRealizedGain: rows.reduce((s, r) => s + r.realizedGain, 0),
-            totalUnrealizedGain: rows.some(r => r.unrealizedGain !== null)
-                ? rows.filter(r => !r.isClosed).reduce((s, r) => s + (r.unrealizedGain || 0), 0)
+            totalUnrealizedGain: everyOpenGainKnown
+                ? openRows.reduce((s, r) => s + (r.unrealizedGain ?? 0), 0)
                 : null,
-            openLotCount: rows.filter(r => !r.isClosed).length,
+            openLotCount: openRows.length,
             closedLotCount: rows.filter(r => r.isClosed).length,
             shortTermCount: rows.filter(r => r.holdingPeriod === 'short_term').length,
             longTermCount: rows.filter(r => r.holdingPeriod === 'long_term').length,
