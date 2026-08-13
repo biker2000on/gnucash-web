@@ -39,7 +39,9 @@ vi.mock('@/lib/resilience/insurance-parse', () => ({
 vi.mock('@/lib/resilience/estate-parse', () => ({ extractEstateDocument: mocks.estate }));
 
 import {
+  buildTaxRecordSuggestionPrompt,
   parseGenericDocumentSuggestions,
+  parseTaxRecordSuggestions,
   runEntityDocumentExtraction,
 } from '../entity-extraction';
 
@@ -95,6 +97,65 @@ describe('parseGenericDocumentSuggestions', () => {
     }));
     expect(parsed.effectiveDates).toEqual(['2026-01-10']);
     expect(parsed.parties).toHaveLength(20);
+  });
+});
+
+describe('parseTaxRecordSuggestions', () => {
+  it('keeps valid form/year/issuer and strips code fences', () => {
+    const parsed = parseTaxRecordSuggestions(
+      '```json\n{"tax_form":"1099_int","tax_year":2024,"issuer":"Ally Bank"}\n```'
+    );
+    expect(parsed).toEqual({ taxForm: '1099_int', taxYear: 2024, issuer: 'Ally Bank' });
+  });
+
+  it('drops values outside the vocabulary or year range instead of guessing', () => {
+    const parsed = parseTaxRecordSuggestions(JSON.stringify({
+      tax_form: 'form-8843',
+      tax_year: 1492,
+      issuer: '   ',
+    }));
+    expect(parsed).toEqual({ taxForm: null, taxYear: null, issuer: null });
+  });
+
+  it('accepts a stringified year', () => {
+    expect(parseTaxRecordSuggestions(JSON.stringify({ tax_year: '2023' })).taxYear).toBe(2023);
+  });
+
+  it('prompt carries the allowed vocabulary and the document text', () => {
+    const prompt = buildTaxRecordSuggestionPrompt('Wages, tips 42');
+    expect(prompt).toContain('1099_int (1099-INT)');
+    expect(prompt).toContain('Wages, tips 42');
+  });
+});
+
+describe('tax record extraction pass', () => {
+  it('runs the tax prompt for tax documents and stores tax_record suggestions', async () => {
+    mocks.findFirst.mockResolvedValue({
+      id: 7,
+      book_guid: BOOK,
+      title: 'Ally 1099-INT',
+      doc_type: 'tax',
+      file_key: 'vault/1099.pdf',
+      file_name: '1099.pdf',
+      mime_type: 'application/pdf',
+      size_bytes: 100n,
+      notes: null,
+    });
+    mocks.chat.mockResolvedValue(JSON.stringify({
+      tax_form: '1099_int', tax_year: 2024, issuer: 'Ally Bank',
+    }));
+
+    await runEntityDocumentExtraction(7, BOOK);
+
+    expect(mocks.chat).toHaveBeenCalledTimes(1);
+    const prompt = mocks.chat.mock.calls[0][1][0].content as string;
+    expect(prompt).toContain('tax record');
+    const completed = mocks.update.mock.calls.at(-1)![2];
+    expect(completed.status).toBe('completed');
+    expect(completed.metadata.suggestionKind).toBe('tax_record');
+    expect(completed.metadata.suggestions).toEqual({
+      taxForm: '1099_int', taxYear: 2024, issuer: 'Ally Bank',
+    });
   });
 });
 

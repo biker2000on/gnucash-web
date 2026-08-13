@@ -18,7 +18,12 @@ import {
     detectReceiptMimeType,
     sanitizeFilename,
 } from '@/lib/services/document-intake';
-import { DOCUMENT_TYPE_VALUES } from '@/lib/entity-document-context';
+import {
+    DOCUMENT_TYPE_VALUES,
+    TAX_FORM_VALUES,
+    isValidTaxForm,
+    isValidTaxYear,
+} from '@/lib/entity-document-context';
 import { createHash } from 'node:crypto';
 import { enqueueJob } from '@/lib/queue/queues';
 import {
@@ -81,6 +86,10 @@ export interface EntityDocument {
     issuedOn: string | null;
     returnCopyDueOn: string | null;
     notes: string | null;
+    /** Tax records archive (doc_type 'tax'). */
+    taxYear: number | null;
+    taxForm: string | null;
+    issuer: string | null;
     uploadedAt: string;
     /** Negative = expired, null = no expiry set. */
     daysUntilExpiry: number | null;
@@ -101,6 +110,9 @@ interface DocDbRow {
     issued_on: Date | null;
     return_copy_due_on: Date | null;
     notes: string | null;
+    tax_year: number | null;
+    tax_form: string | null;
+    issuer: string | null;
     uploaded_at: Date;
 }
 
@@ -118,6 +130,9 @@ function mapDocument(row: DocDbRow, today: Date = new Date()): EntityDocument {
             ? row.return_copy_due_on.toISOString().slice(0, 10)
             : null,
         notes: row.notes,
+        taxYear: row.tax_year,
+        taxForm: row.tax_form,
+        issuer: row.issuer,
         uploadedAt: row.uploaded_at.toISOString(),
         daysUntilExpiry: daysUntilExpiry(row.expires_on, today),
     };
@@ -147,6 +162,9 @@ async function syncEntityDocumentIndex(
             issuedOn: row.issued_on?.toISOString().slice(0, 10) ?? null,
             returnCopyDueOn: row.return_copy_due_on?.toISOString().slice(0, 10) ?? null,
             notes: row.notes,
+            taxYear: row.tax_year,
+            taxForm: row.tax_form,
+            issuer: row.issuer,
         },
         extractionError: existing?.extractionError ?? null,
         extractedAt: existing?.extractedAt ?? null,
@@ -155,6 +173,33 @@ async function syncEntityDocumentIndex(
         preserveExtractionOnConflict: true,
     });
     return canonical.id;
+}
+
+function parseTaxYear(value: number | null | undefined): number | null {
+    if (value === null || value === undefined) return null;
+    if (!isValidTaxYear(value)) {
+        throw new EntityDocumentValidationError('taxYear must be a year between 1980 and 2100');
+    }
+    return value;
+}
+
+function parseTaxForm(value: string | null | undefined): string | null {
+    if (value === null || value === undefined || value === '') return null;
+    if (!isValidTaxForm(value)) {
+        throw new EntityDocumentValidationError(
+            `Invalid tax form (expected one of: ${TAX_FORM_VALUES.join(', ')})`
+        );
+    }
+    return value;
+}
+
+function parseIssuer(value: string | null | undefined): string | null {
+    if (value === null || value === undefined) return null;
+    const issuer = value.trim();
+    if (issuer.length > 255) {
+        throw new EntityDocumentValidationError('Issuer too long (max 255)');
+    }
+    return issuer || null;
 }
 
 function parseDate(value: string | null | undefined, field: string): Date | null {
@@ -196,6 +241,9 @@ export interface CreateEntityDocumentInput {
     issuedOn?: string | null;
     returnCopyDueOn?: string | null;
     notes?: string | null;
+    taxYear?: number | null;
+    taxForm?: string | null;
+    issuer?: string | null;
     /** Authenticated uploader; used only for ownership and their AI config. */
     ownerUserId?: number | null;
     file: { buffer: Buffer; filename: string };
@@ -217,6 +265,9 @@ export async function createEntityDocument(
     const expiresOn = parseDate(input.expiresOn, 'expiresOn');
     const issuedOn = parseDate(input.issuedOn, 'issuedOn');
     const returnCopyDueOn = parseDate(input.returnCopyDueOn, 'returnCopyDueOn');
+    const taxYear = parseTaxYear(input.taxYear);
+    const taxForm = parseTaxForm(input.taxForm);
+    const issuer = parseIssuer(input.issuer);
 
     const { buffer, filename } = input.file;
     if (buffer.byteLength === 0) {
@@ -251,6 +302,9 @@ export async function createEntityDocument(
                 issued_on: issuedOn,
                 return_copy_due_on: returnCopyDueOn,
                 notes: input.notes?.trim() || null,
+                tax_year: taxYear,
+                tax_form: taxForm,
+                issuer,
             },
         });
         const canonicalDocumentId = await syncEntityDocumentIndex(
@@ -313,6 +367,9 @@ export interface UpdateEntityDocumentInput {
     issuedOn?: string | null;
     returnCopyDueOn?: string | null;
     notes?: string | null;
+    taxYear?: number | null;
+    taxForm?: string | null;
+    issuer?: string | null;
 }
 
 export async function updateEntityDocument(
@@ -329,6 +386,9 @@ export async function updateEntityDocument(
         issued_on?: Date | null;
         return_copy_due_on?: Date | null;
         notes?: string | null;
+        tax_year?: number | null;
+        tax_form?: string | null;
+        issuer?: string | null;
     } = {};
 
     if (input.title !== undefined) {
@@ -360,6 +420,15 @@ export async function updateEntityDocument(
     if (input.notes !== undefined) {
         data.notes = input.notes?.trim() || null;
     }
+    if (input.taxYear !== undefined) {
+        data.tax_year = parseTaxYear(input.taxYear);
+    }
+    if (input.taxForm !== undefined) {
+        data.tax_form = parseTaxForm(input.taxForm);
+    }
+    if (input.issuer !== undefined) {
+        data.issuer = parseIssuer(input.issuer);
+    }
 
     const row = await prisma.gnucash_web_entity_documents.update({ where: { id }, data });
     await syncEntityDocumentIndex(row);
@@ -388,6 +457,52 @@ export async function deleteEntityDocument(bookGuid: string, id: number): Promis
         } catch (err) {
             console.warn('Failed to delete document file:', err);
         }
+    }
+}
+
+export interface EntityDocumentSuggestions {
+    /** Canonical extraction status: pending | processing | completed | failed | … */
+    extractionStatus: string | null;
+    suggestionKind: string | null;
+    suggestions: unknown;
+    suggestionError: string | null;
+}
+
+/**
+ * AI suggestions produced by the extraction pipeline for a book-owned
+ * document (tax_record / insurance_policy / estate_document / generic).
+ * Suggestions are advisory — accepting them is an explicit client PUT.
+ */
+export async function getEntityDocumentSuggestions(
+    bookGuid: string,
+    id: number,
+): Promise<EntityDocumentSuggestions> {
+    await getOwnedDocument(bookGuid, id);
+    const canonical = await getDocumentBySource(bookGuid, 'entity_document', String(id));
+    const metadata = (canonical?.extractionMetadata ?? {}) as Record<string, unknown>;
+    return {
+        extractionStatus: canonical?.extractionStatus ?? null,
+        suggestionKind: typeof metadata.suggestionKind === 'string' ? metadata.suggestionKind : null,
+        suggestions: metadata.suggestions ?? null,
+        suggestionError: typeof metadata.suggestionError === 'string' ? metadata.suggestionError : null,
+    };
+}
+
+/** Re-run extraction (and AI suggestions) for an already-uploaded document. */
+export async function requeueEntityDocumentExtraction(
+    bookGuid: string,
+    id: number,
+    ownerUserId: number | null,
+): Promise<void> {
+    await getOwnedDocument(bookGuid, id);
+    const jobId = await enqueueJob('extract-entity-document', {
+        documentId: id,
+        bookGuid,
+        ownerUserId,
+    });
+    if (!jobId) {
+        const { runEntityDocumentExtraction } = await import('@/lib/documents/entity-extraction');
+        await runEntityDocumentExtraction(id, bookGuid, `[reextract-entity-doc-${id}]`);
     }
 }
 

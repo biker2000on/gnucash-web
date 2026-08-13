@@ -2,6 +2,11 @@ import prisma from '@/lib/prisma';
 import { getStorageBackend } from '@/lib/storage/storage-backend';
 import type { PdfTextSource } from '@/lib/pdf-text-extract';
 import {
+  TAX_FORM_DEFINITIONS,
+  isValidTaxForm,
+  isValidTaxYear,
+} from '@/lib/entity-document-context';
+import {
   getDocumentBySource,
   updateDocumentExtraction,
   upsertDocument,
@@ -37,6 +42,38 @@ export function parseGenericDocumentSuggestions(raw: string): GenericDocumentSug
     parties: cleanStrings(value.parties, 20, 160),
     referenceNumbers: cleanStrings(value.reference_numbers, 20, 80),
   };
+}
+
+export interface TaxRecordSuggestions {
+  /** One of TAX_FORM_DEFINITIONS values, or null when the AI could not tell. */
+  taxForm: string | null;
+  taxYear: number | null;
+  issuer: string | null;
+}
+
+/**
+ * Parse and bound AI tax-record suggestions. Values outside the allowed
+ * form vocabulary or plausible year range are dropped, never guessed.
+ */
+export function parseTaxRecordSuggestions(raw: string): TaxRecordSuggestions {
+  const match = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').match(/\{[\s\S]*\}/);
+  if (!match) throw new Error('AI response was not a JSON object');
+  const value = JSON.parse(match[0]) as Record<string, unknown>;
+  const taxYearRaw = typeof value.tax_year === 'string' ? parseInt(value.tax_year, 10) : value.tax_year;
+  return {
+    taxForm: isValidTaxForm(value.tax_form) ? value.tax_form : null,
+    taxYear: isValidTaxYear(taxYearRaw) ? taxYearRaw : null,
+    issuer: typeof value.issuer === 'string' && value.issuer.trim()
+      ? value.issuer.trim().slice(0, 255)
+      : null,
+  };
+}
+
+export function buildTaxRecordSuggestionPrompt(text: string): string {
+  const vocabulary = TAX_FORM_DEFINITIONS
+    .map(({ value, label }) => `${value} (${label})`)
+    .join(', ');
+  return `The document text below is a tax record (e.g. a W-2, 1099, 1098, 5498, K-1, filed return, or IRS/state notice). Return ONLY JSON with: tax_form (one of: ${vocabulary}; null if unclear), tax_year (the tax year the form reports on, as a number — NOT the year it was mailed; null if unclear), and issuer (the institution or employer that issued the form, e.g. "Fidelity" or "Acme Corp"; null if unclear). Do not infer values that are not present in the text.\n\n${text.slice(0, 20_000)}`;
 }
 
 export function buildGenericDocumentSuggestionPrompt(text: string): string {
@@ -141,6 +178,15 @@ export async function runEntityDocumentExtraction(
                 mimeType: row.mime_type ?? 'application/octet-stream',
                 aiConfig,
               }),
+            };
+          } else if (row.doc_type === 'tax' && text.trim()) {
+            const { chatComplete } = await import('@/lib/ai-query/client');
+            const reply = await chatComplete(aiConfig, [
+              { role: 'user', content: buildTaxRecordSuggestionPrompt(text) },
+            ], { maxTokens: 400, timeoutMs: 60_000 });
+            suggestionMetadata = {
+              suggestionKind: 'tax_record',
+              suggestions: parseTaxRecordSuggestions(reply),
             };
           } else if (text.trim()) {
             const { chatComplete } = await import('@/lib/ai-query/client');

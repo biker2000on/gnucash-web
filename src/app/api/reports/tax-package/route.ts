@@ -160,6 +160,40 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    // --- Archived source forms (tax records vault) -------------------------
+    // W-2s, 1099s, and other archived tax records for this year ride along
+    // under source-forms/ so the accountant gets the evidence, not just CSVs.
+    try {
+      const { listEntityDocuments, getEntityDocumentFile } = await import('@/lib/services/entity-documents.service');
+      const { getTaxFormLabel } = await import('@/lib/entity-document-context');
+      const taxDocs = (await listEntityDocuments(roleResult.bookGuid))
+        .filter(d => d.docType === 'tax' && d.taxYear === year && d.fileName);
+      const usedNames = new Set<string>();
+      for (const doc of taxDocs) {
+        try {
+          const file = await getEntityDocumentFile(roleResult.bookGuid, doc.id);
+          let name = `source-forms/${file.fileName}`;
+          if (usedNames.has(name)) name = `source-forms/${doc.id}-${file.fileName}`;
+          usedNames.add(name);
+          files[name] = new Uint8Array(file.buffer);
+          manifestFiles.push({
+            name,
+            description: [getTaxFormLabel(doc.taxForm) || 'Tax record', doc.issuer, doc.title]
+              .filter(Boolean).join(' — '),
+          });
+        } catch (err) {
+          console.error(`tax-package: source form ${doc.id} failed`, err);
+          notes.push(`Archived form "${doc.title}" could not be included (see server logs).`);
+        }
+      }
+      if (taxDocs.length === 0) {
+        notes.push(`No archived source forms found for tax year ${year} in the document vault.`);
+      }
+    } catch (err) {
+      console.error('tax-package: source forms failed', err);
+      notes.push('Archived source forms could not be included (see server logs).');
+    }
+
     if (manifestFiles.length === 0) {
       return NextResponse.json(
         { error: `No tax data found for ${year}.`, notes },

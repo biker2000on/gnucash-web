@@ -1188,6 +1188,12 @@ model gnucash_web_entity_documents {
   issued_on   DateTime? @db.Date
   return_copy_due_on DateTime? @db.Date
   notes       String?   @db.Text
+  /// Tax records archive (doc_type 'tax'): which tax year the form belongs to.
+  tax_year    Int?
+  /// Tax-form subtype: w2 | 1099_int | 1099_div | 1099_b | 1099_r | 1099_nec | 1099_misc | 1098 | 5498 | k1 | return | notice | other
+  tax_form    String?   @db.VarChar(40)
+  /// Issuing institution (free text; drives the year-completeness diff).
+  issuer      String?   @db.VarChar(255)
   uploaded_at DateTime  @default(now())
 
   @@index([book_guid], map: "idx_entity_documents_book")

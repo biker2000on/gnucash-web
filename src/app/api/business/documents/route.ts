@@ -50,6 +50,11 @@ export async function POST(request: Request) {
         const issuedOn = (formData.get('issued_on') as string | null) || null;
         const returnCopyDueOn = (formData.get('return_copy_due_on') as string | null) || null;
         const notes = (formData.get('notes') as string | null) || null;
+        const taxYearRaw = (formData.get('tax_year') as string | null) || null;
+        const taxYearParsed = taxYearRaw === null ? null : parseInt(taxYearRaw, 10);
+        const taxYear = taxYearParsed !== null && Number.isInteger(taxYearParsed) ? taxYearParsed : null;
+        const taxForm = (formData.get('tax_form') as string | null) || null;
+        const issuer = (formData.get('issuer') as string | null) || null;
 
         const buffer = Buffer.from(await file.arrayBuffer());
         const document = await createEntityDocument(bookGuid, {
@@ -59,6 +64,9 @@ export async function POST(request: Request) {
             issuedOn,
             returnCopyDueOn,
             notes,
+            taxYear,
+            taxForm,
+            issuer,
             ownerUserId: user.id,
             file: { buffer, filename: file.name },
         });

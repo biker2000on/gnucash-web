@@ -1308,6 +1308,13 @@ async function createExtensionTables() {
           ADD COLUMN IF NOT EXISTS issued_on DATE;
         ALTER TABLE gnucash_web_entity_documents
           ADD COLUMN IF NOT EXISTS return_copy_due_on DATE;
+        -- Tax records archive: year grouping + form subtype + issuing institution.
+        ALTER TABLE gnucash_web_entity_documents
+          ADD COLUMN IF NOT EXISTS tax_year INTEGER;
+        ALTER TABLE gnucash_web_entity_documents
+          ADD COLUMN IF NOT EXISTS tax_form VARCHAR(40);
+        ALTER TABLE gnucash_web_entity_documents
+          ADD COLUMN IF NOT EXISTS issuer VARCHAR(255);
         END $$;
     `;
 

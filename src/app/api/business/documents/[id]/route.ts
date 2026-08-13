@@ -54,6 +54,19 @@ export async function PUT(request: Request, { params }: RouteParams) {
                       ? null
                       : String(body.returnCopyDueOn),
             notes: body.notes === undefined ? undefined : body.notes === null ? null : String(body.notes),
+            taxYear:
+                body.taxYear === undefined
+                    ? undefined
+                    : body.taxYear === null
+                      ? null
+                      : Number(body.taxYear),
+            taxForm:
+                body.taxForm === undefined
+                    ? undefined
+                    : body.taxForm === null
+                      ? null
+                      : String(body.taxForm),
+            issuer: body.issuer === undefined ? undefined : body.issuer === null ? null : String(body.issuer),
         };
 
         const document = await updateEntityDocument(bookGuid, id, input);

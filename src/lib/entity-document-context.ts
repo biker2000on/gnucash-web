@@ -28,6 +28,51 @@ export const DOCUMENT_TYPE_VALUES = DOCUMENT_TYPE_DEFINITIONS.map(
   ({ value }) => value
 ) as Array<(typeof DOCUMENT_TYPE_DEFINITIONS)[number]['value']>;
 
+/**
+ * Tax-form subtypes for the tax records archive (doc_type 'tax'). Values are
+ * stored in gnucash_web_entity_documents.tax_form; labels drive the UI and
+ * the AI classifier's allowed vocabulary.
+ */
+export const TAX_FORM_DEFINITIONS = [
+  { value: 'w2', label: 'W-2' },
+  { value: '1099_int', label: '1099-INT' },
+  { value: '1099_div', label: '1099-DIV' },
+  { value: '1099_b', label: '1099-B' },
+  { value: '1099_r', label: '1099-R' },
+  { value: '1099_nec', label: '1099-NEC' },
+  { value: '1099_misc', label: '1099-MISC' },
+  { value: '1098', label: '1098' },
+  { value: '5498', label: '5498' },
+  { value: 'k1', label: 'K-1' },
+  { value: 'return', label: 'Filed return' },
+  { value: 'notice', label: 'IRS/state notice' },
+  { value: 'other', label: 'Other tax record' },
+] as const;
+
+export const TAX_FORM_VALUES = TAX_FORM_DEFINITIONS.map(
+  ({ value }) => value
+) as Array<(typeof TAX_FORM_DEFINITIONS)[number]['value']>;
+
+export type TaxFormValue = (typeof TAX_FORM_DEFINITIONS)[number]['value'];
+
+const TAX_FORM_LABELS = new Map<string, string>(
+  TAX_FORM_DEFINITIONS.map(({ value, label }) => [value, label])
+);
+
+export function getTaxFormLabel(value: string | null | undefined): string {
+  if (!value) return '';
+  return TAX_FORM_LABELS.get(value) ?? value.replace(/_/g, ' ').toUpperCase();
+}
+
+export function isValidTaxForm(value: unknown): value is TaxFormValue {
+  return typeof value === 'string' && TAX_FORM_LABELS.has(value);
+}
+
+/** Bounds for a plausible tax year on an archived record. */
+export function isValidTaxYear(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 1980 && value <= 2100;
+}
+
 export type DocumentTypeValue = (typeof DOCUMENT_TYPE_DEFINITIONS)[number]['value'];
 
 export interface DocumentTypeOption {

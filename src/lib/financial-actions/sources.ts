@@ -24,6 +24,8 @@ import { parseRebalanceConfig } from '@/lib/rebalancing-sector';
 import { createCalculationTrace } from '@/lib/provenance';
 import { getBaseCurrency } from '@/lib/currency';
 import { getFarmCertificateObligations } from '@/lib/tax/farm-certificates';
+import { listEntityDocuments } from '@/lib/services/entity-documents.service';
+import { findMissingTaxForms, isTaxFormSeasonFor } from '@/lib/tax-records';
 import { detectOpportunities, type OpportunitySignal, type OpportunitySnapshot } from './opportunity-engine';
 import { listJobsEx, generateJobReport } from '@/lib/business/jobs.service';
 import { get1099Compliance } from '@/lib/business/vendor-1099.service';
@@ -582,6 +584,52 @@ export async function complianceActions(
       });
     }));
   return [...standard, ...certificates];
+}
+
+/**
+ * Tax records archive completeness: an institution that sent a form last year
+ * but not this year, surfaced only in filing season (January–April of the
+ * following year). Purely deterministic — a set diff over the vault's tax
+ * records with a year and form subtype.
+ */
+export async function taxRecordArchiveActions(bookGuid: string): Promise<FinancialActionCandidate[]> {
+  const documents = await listEntityDocuments(bookGuid);
+  const missing = findMissingTaxForms(documents).filter(item => isTaxFormSeasonFor(item.year));
+  return missing.map(item => {
+    const dueDate = `${item.year + 1}-04-15`;
+    const issuerKey = (item.issuer ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    return sourceAction({
+      stableKey: `tax-records:missing:${item.year}:${item.taxForm}:${issuerKey}`,
+      lane: 'fix',
+      origin: 'compliance',
+      sourceId: `${item.year}:${item.taxForm}:${issuerKey}`,
+      severity: severityFromDueDate(dueDate),
+      title: `Missing ${item.label} for tax year ${item.year}`,
+      summary: `The ${item.year - 1} archive has ${item.label}, but nothing matching is filed under ${item.year} yet. Upload it or confirm it is not expected this year.`,
+      dueDate,
+      impact: null,
+      confidence: 1,
+      operations: [
+        { id: 'open', label: 'Open tax records', kind: 'link', href: '/business/documents', primary: true },
+        { id: 'resolve', label: 'Not expected this year', kind: 'state', targetState: 'dismissed' },
+      ],
+      evidence: [{
+        kind: 'rule',
+        id: `tax-records:${item.priorYear}:${item.taxForm}:${issuerKey}`,
+        label: `${item.label} archived for ${item.priorYear}`,
+        source: 'manual',
+        href: '/business/documents',
+        observedAt: isoDate(new Date()),
+        verified: true,
+        metadata: { taxForm: item.taxForm, issuer: item.issuer, priorYear: item.priorYear },
+      }],
+      assumptions: [
+        `An issuer that sent a form for ${item.priorYear} is expected to send one for ${item.year}.`,
+        'The comparison runs only during filing season (January–April).',
+      ],
+      metadata: { taxYear: item.year, taxForm: item.taxForm, issuer: item.issuer },
+    });
+  });
 }
 
 const CLOSE_ITEMS = [
@@ -1207,6 +1255,7 @@ export async function loadSourceActions(input: {
     safeActionSource('Employee reimbursements', () => reimbursementActions(bookGuid)),
     safeActionSource('Job profitability', () => jobProfitabilityActions(bookGuid, bookAccountGuids)),
     safeActionSource('Contractor 1099 compliance', () => vendor1099ComplianceActions(bookGuid, bookAccountGuids)),
+    safeActionSource('Tax records archive', () => taxRecordArchiveActions(bookGuid)),
     safeActionSource('Failed payments', () => failedPaymentActions(bookGuid)),
     safeActionSource('Household resilience', () => loadResilienceActions(bookGuid)),
     safeActionSource('Notifications and failed jobs', () => notificationActions(userId, bookGuid)),
