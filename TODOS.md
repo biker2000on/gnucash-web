@@ -1460,6 +1460,101 @@ click do nothing at all on both this surface and the Action Center.
 
 ---
 
+## P4 - Document Vault: Multi-File Upload with Post-Upload Detailing
+
+**Status:** Open. Requested 2026-08-13.
+
+**Outcome:** A stack of documents (e.g. the escrow docs from a mortgage — a
+dozen PDFs at once) goes into the vault in one action instead of one
+upload-form round-trip per file. Metadata entry happens after the bytes are
+up, not before.
+
+**What:** Extend the vault at `/business/documents` (household books reach it
+as "Household Documents" under Planning → Home):
+
+1. **Bulk upload:** the existing drag-and-drop zone and file picker accept
+   multiple files (`multiple`/`dataTransfer.files`), staged as a reviewable
+   list *before* anything is sent — each staged file has a remove button,
+   and the whole batch can be cancelled, so a stray drop never commits.
+   Upload then sends them all — sequential or small-batch parallel
+   `POST /api/business/documents` calls is fine; no new endpoint
+   required — with per-file progress and per-file failure reporting (one
+   oversized file must not abort the rest).
+2. **Post-upload detailing pass:** after the batch lands, the just-uploaded
+   files appear in an editing list where doc type, expiry, title, and notes
+   can be set per file (the existing `PUT /api/business/documents/[id]`
+   already supports this). Files default to title-from-filename and type
+   `other`, exactly like today's single upload, so abandoning the detailing
+   pass leaves valid records rather than half-created ones.
+3. Reasonable conveniences in the detailing pass: apply-to-all for doc type,
+   tab-through editing, and a clear "n of m still untyped" indicator.
+
+**Checklist answers:** UX capability on an existing surface — no new page,
+model, or endpoint; records remain plain entity documents feeding the
+existing expiry reminders, renewals, and document search. Deterministic;
+single-book; RBAC unchanged (`edit` role, same 10MB/type limits per file).
+
+**Depends on:** Entity documents service and vault page, existing
+create/update endpoints.
+
+**Effort:** S.
+
+---
+
+## P3 - Tax Records Archive: By-Year Grouping and AI Form Classification
+
+**Status:** Open. Requested 2026-08-13.
+
+**Outcome:** Years of accumulated tax records — W-2s, 1099-INT/DIV/B/R,
+1098s, 5498s, K-1s, and the filed returns themselves, from every
+institution — live in the vault grouped by tax year. Uploading a stack of
+them is a bulk drop, not a filing chore: the AI reads each document and
+proposes its form type, tax year, and issuing institution for one-click
+confirmation.
+
+**What:** Builds on the multi-file upload item above; same vault, no new
+document silo:
+
+1. **Tax-year metadata:** add an optional `tax_year` to entity documents
+   and tax-form subtypes under the existing `tax` doc type (W-2, 1099-INT,
+   1099-DIV, 1099-B, 1099-R, 1099-NEC, 1098, 5498, K-1, filed return,
+   notice, other). Issuer reuses the existing parties/notes fields rather
+   than a new institution model.
+2. **By-year view:** the vault gains a tax-records grouping — year
+   sections (2019, 2020, …) with form-type and issuer visible per row, so
+   "everything for 2022" is one glance and one download.
+3. **AI classification, review-before-accept:** extend the existing
+   generic vault extraction (`entity-extraction.ts` already produces
+   document class, dates, parties, and reference numbers, and deliberately
+   writes no business fields) with a tax-form pass that *suggests* form
+   type, tax year, and issuer. Suggestions are confirmed in the bulk
+   post-upload detailing pass — accept-all when the batch is one year's
+   folder — never silently written. Applies to already-uploaded `tax`
+   documents too, via the existing re-extraction machinery.
+4. **Year completeness signal:** deterministic diff against prior years —
+   an issuer that sent a 1099 last year but is missing this year after
+   January becomes a gentle checklist entry on the year group (and, in
+   season, an Action Center item).
+5. **Tax-surface links:** the Year-End Tax Package and accountant
+   workspace can include the year's archived source forms; the tax
+   estimator's contribution/interest figures can cite the matching form as
+   evidence where amounts line up.
+
+**Checklist answers:** Feeds existing shared surfaces (Action Center for
+missing-form signals, tax package/accountant exports, document search) —
+no orphan page. Deterministic grouping and completeness math; AI only
+suggests classification from document text, with explicit user
+confirmation (product rule: deterministic before generative).
+Single-book; RBAC and storage limits unchanged.
+
+**Depends on:** Multi-file upload item above, entity documents service,
+canonical document extraction pipeline (`src/lib/documents/`), Year-End
+Tax Package, Action Center.
+
+**Effort:** M.
+
+---
+
 ## P4 - Receipt AI Re-Extraction Batch Job
 
 **Status:** Implemented 2026-07-26.
