@@ -353,22 +353,22 @@ export async function updateScheduledTransaction(
  *   - the XML importer runs template transactions through the same row
  *     builder as real ones (gnucash-xml/importer.ts, `addTransactionRows`
  *     with isTemplate=true), copying `reconciledState` straight from the file;
- *   - POST /api/splits/bulk/reconcile matches on split guid with no account
- *     scoping, so any guid can be flipped to 'y'.
+ *   - a stale or manually edited database row can carry the state.
  * So a guard here would not be dead code.
  *
  * It is still the wrong place for one. Template splits live under the
- * separate 'Template Root' account tree, outside the book's
- * root_account_guid, so they are excluded from `getBookAccountGuids()` and
- * therefore from every balance, report, and reconciliation surface. They post
- * to no real account and appear on no statement: a 'y' on a template split is
- * always a stale import artifact, never a user's agreement with a bank.
+ * separate 'Template Root' account tree, rooted at `root_template_guid` rather
+ * than `books.root_account_guid`. Bulk reconcile is book-scoped, so template
+ * splits are unreachable from every reconcile route as well as every balance,
+ * report, and reconciliation surface. They post to no real account and appear
+ * on no statement: a 'y' on a template split is always a stale import
+ * artifact, never a user's agreement with a bank.
  *
  * Guarding it would trade zero protection for a real failure — a scheduled
- * transaction that cannot be edited or deleted through the UI at all, with
- * the only release path being the unscoped bulk-reconcile route above (itself
- * a scoping bug that may well be closed). That is exactly the never-usefully-
- * firing check that let the original dead guard hide in TransactionService.
+ * transaction that cannot be edited or deleted through the UI at all. The
+ * no-guard decision rests solely on template splits posting to no real
+ * account. That is exactly the never-usefully-firing check that let the
+ * original dead guard hide in TransactionService.
  */
 export async function deleteScheduledTransaction(guid: string): Promise<CreateScheduledTxInput | null> {
   const before = await getScheduledTransaction(guid);

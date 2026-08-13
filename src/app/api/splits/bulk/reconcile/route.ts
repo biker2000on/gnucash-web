@@ -76,11 +76,19 @@ export async function POST(request: Request) {
             : null;
         const splitGuids = [...new Set(body.splits)];
         const bookAccountGuids = await getAccountGuidsForBook(roleResult.bookGuid);
+        if (bookAccountGuids.length === 0) {
+            return NextResponse.json(
+                { error: 'One or more splits not found in this book' },
+                { status: 404 }
+            );
+        }
 
-        // Reject the entire batch when any requested split is absent from this
-        // book. This is deliberately atomic: silently reconciling only a
-        // subset would leave callers unable to tell which requested rows were
-        // changed and makes safe retries difficult.
+        // Fast-fail a batch containing a split absent from this book. The
+        // in-transaction checks below are authoritative; this avoids opening
+        // a transaction for an immediately-invalid request. Rejection is
+        // atomic because silently reconciling only a subset would leave
+        // callers unable to tell which requested rows were changed and makes
+        // safe retries difficult.
         const scopedTargets = await prisma.splits.findMany({
             where: {
                 guid: { in: splitGuids },

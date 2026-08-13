@@ -101,6 +101,18 @@ describe('POST /api/splits/bulk/reconcile book scope', () => {
         }));
     });
 
+    it('fails closed when the caller book resolves to no accounts', async () => {
+        getAccountGuidsForBookMock.mockResolvedValue([]);
+
+        const response = await POST(request([SPLIT_A]));
+
+        expect(response.status).toBe(404);
+        expect(await response.json()).toEqual({ error: 'One or more splits not found in this book' });
+        expect(prismaMock.splits.findMany).not.toHaveBeenCalled();
+        expect(prismaMock.$transaction).not.toHaveBeenCalled();
+        expect(prismaMock.splits.updateMany).not.toHaveBeenCalled();
+    });
+
     it('rejects an out-of-book split without modifying its row', async () => {
         const response = await POST(request([SPLIT_B]));
 
@@ -122,5 +134,31 @@ describe('POST /api/splits/bulk/reconcile book scope', () => {
         ]);
         expect(prismaMock.$transaction).not.toHaveBeenCalled();
         expect(prismaMock.splits.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('returns the scoped 404 through the catch when the locked re-read is short', async () => {
+        prismaMock.splits.findMany
+            .mockResolvedValueOnce([{ guid: SPLIT_A }])
+            .mockResolvedValueOnce([]);
+
+        const response = await POST(request([SPLIT_A]));
+
+        expect(response.status).toBe(404);
+        expect(await response.json()).toEqual({ error: 'One or more splits not found in this book' });
+        expect(prismaMock.$transaction).toHaveBeenCalledOnce();
+        expect(lockTransactionsForUpdateMock).not.toHaveBeenCalled();
+        expect(prismaMock.splits.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('returns the scoped 404 through the catch when the scoped write is short', async () => {
+        prismaMock.splits.updateMany.mockResolvedValueOnce({ count: 0 });
+
+        const response = await POST(request([SPLIT_A]));
+
+        expect(response.status).toBe(404);
+        expect(await response.json()).toEqual({ error: 'One or more splits not found in this book' });
+        expect(prismaMock.$transaction).toHaveBeenCalledOnce();
+        expect(lockTransactionsForUpdateMock).toHaveBeenCalledWith([TX_A], prismaMock);
+        expect(prismaMock.transactions.updateMany).not.toHaveBeenCalled();
     });
 });
