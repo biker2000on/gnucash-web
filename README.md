@@ -89,6 +89,7 @@ Required: `DATABASE_URL`, `NEXTAUTH_SECRET`, `REDIS_URL`. See `.env.example` for
 
 ```bash
 npm install
+npx prisma generate
 npm run dev
 ```
 
