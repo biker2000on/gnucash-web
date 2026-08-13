@@ -6,7 +6,7 @@
  */
 
 import { XMLParser } from 'fast-xml-parser';
-import { Gunzip } from 'fflate';
+import { gunzipSync } from 'node:zlib';
 import { parseSlotsContainer } from './slots';
 import { parseBusinessObjects } from './business';
 import type {
@@ -26,37 +26,46 @@ import type {
   GnuCashSxDeferredInstance,
 } from './types';
 
-// A 64 MiB XML file is ample for normal personal and small-business GnuCash
-// books while keeping an uploaded gzip file from expanding without bound.
-const MAX_DECOMPRESSED_XML_BYTES = 64 * 1024 * 1024;
+const DEFAULT_MAX_DECOMPRESSED_XML_BYTES = 256 * 1024 * 1024;
+const MAX_DECOMPRESSED_XML_BYTES_ENV = 'GNUCASH_XML_MAX_DECOMPRESSED_BYTES';
 
-function decompressGzipWithinLimit(data: Uint8Array): Uint8Array {
-  const chunks: Uint8Array[] = [];
-  let totalBytes = 0;
+function getMaxDecompressedXmlBytes(): number {
+  const configured = process.env[MAX_DECOMPRESSED_XML_BYTES_ENV];
+  if (configured === undefined || configured === '') {
+    return DEFAULT_MAX_DECOMPRESSED_XML_BYTES;
+  }
 
+  const limit = Number(configured);
+  if (!Number.isSafeInteger(limit) || limit <= 0) {
+    throw new Error(`${MAX_DECOMPRESSED_XML_BYTES_ENV} must be a positive integer byte count.`);
+  }
+  return limit;
+}
+
+function sizeLimitError(limit: number): Error {
+  const displayLimit = limit % (1024 * 1024) === 0
+    ? `${limit / 1024 / 1024} MB`
+    : `${limit} ${limit === 1 ? 'byte' : 'bytes'}`;
+  return new Error(`GnuCash XML exceeds the ${displayLimit} decoded size limit.`);
+}
+
+function assertXmlSizeWithinLimit(data: Uint8Array, limit: number): void {
+  if (data.byteLength > limit) {
+    throw sizeLimitError(limit);
+  }
+}
+
+function decompressGzipWithinLimit(data: Uint8Array, limit: number): Uint8Array {
   try {
-    const gunzip = new Gunzip((chunk) => {
-      totalBytes += chunk.length;
-      if (totalBytes > MAX_DECOMPRESSED_XML_BYTES) {
-        throw new Error('GnuCash XML exceeds the 64 MB decompressed size limit.');
-      }
-      chunks.push(chunk);
-    });
-    gunzip.push(data, true);
+    // node:zlib enforces maxOutputLength during inflation, before allocating
+    // output beyond the limit. Do not replace this with a post-inflate check.
+    return gunzipSync(data, { maxOutputLength: limit });
   } catch (error) {
-    if (error instanceof Error && error.message.includes('decompressed size limit')) {
-      throw error;
+    if ((error as NodeJS.ErrnoException).code === 'ERR_BUFFER_TOO_LARGE') {
+      throw sizeLimitError(limit);
     }
     throw new Error('Unable to decompress the uploaded GnuCash gzip file.');
   }
-
-  const decompressed = new Uint8Array(totalBytes);
-  let offset = 0;
-  for (const chunk of chunks) {
-    decompressed.set(chunk, offset);
-    offset += chunk.length;
-  }
-  return decompressed;
 }
 
 /**
@@ -119,11 +128,13 @@ export function parseGnuCashXml(data: Buffer | Uint8Array): GnuCashXmlData {
   let xmlString: string;
 
   const uint8 = data instanceof Uint8Array ? data : new Uint8Array(data);
+  const maxDecompressedXmlBytes = getMaxDecompressedXmlBytes();
   // Check for gzip magic number (0x1f, 0x8b). A malformed gzip input is an
   // error; treating it as raw XML hides the cause and bypasses the guard.
   const xmlBytes = uint8.length >= 2 && uint8[0] === 0x1f && uint8[1] === 0x8b
-    ? decompressGzipWithinLimit(uint8)
+    ? decompressGzipWithinLimit(uint8, maxDecompressedXmlBytes)
     : uint8;
+  assertXmlSizeWithinLimit(xmlBytes, maxDecompressedXmlBytes);
   xmlString = new TextDecoder('utf-8').decode(xmlBytes);
 
   // Parse XML

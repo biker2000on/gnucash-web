@@ -13,10 +13,37 @@ describe('parser — compressed XML limits', () => {
   });
 
   it('rejects gzip content that expands beyond the decompressed size cap', () => {
-    const gzipBomb = gzipSync(new Uint8Array(65 * 1024 * 1024));
+    const previousLimit = process.env.GNUCASH_XML_MAX_DECOMPRESSED_BYTES;
+    process.env.GNUCASH_XML_MAX_DECOMPRESSED_BYTES = String(1024 * 1024);
+    const gzipBomb = gzipSync(new Uint8Array(2 * 1024 * 1024));
 
-    expect(() => parseGnuCashXml(gzipBomb)).toThrow(
-      'GnuCash XML exceeds the 64 MB decompressed size limit.',
-    );
+    try {
+      expect(() => parseGnuCashXml(gzipBomb)).toThrow(
+        'GnuCash XML exceeds the 1 MB decoded size limit.',
+      );
+    } finally {
+      if (previousLimit === undefined) {
+        delete process.env.GNUCASH_XML_MAX_DECOMPRESSED_BYTES;
+      } else {
+        process.env.GNUCASH_XML_MAX_DECOMPRESSED_BYTES = previousLimit;
+      }
+    }
+  });
+
+  it('applies the decoded size cap to raw XML too', () => {
+    const previousLimit = process.env.GNUCASH_XML_MAX_DECOMPRESSED_BYTES;
+    process.env.GNUCASH_XML_MAX_DECOMPRESSED_BYTES = '1';
+
+    try {
+      expect(() => parseGnuCashXml(strToU8(VALID_BOOK))).toThrow(
+        'GnuCash XML exceeds the 1 byte decoded size limit.',
+      );
+    } finally {
+      if (previousLimit === undefined) {
+        delete process.env.GNUCASH_XML_MAX_DECOMPRESSED_BYTES;
+      } else {
+        process.env.GNUCASH_XML_MAX_DECOMPRESSED_BYTES = previousLimit;
+      }
+    }
   });
 });
