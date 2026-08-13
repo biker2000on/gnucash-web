@@ -6,11 +6,22 @@
  * and fulfillment/return allocation validation.
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { beforeEach, describe, it, expect, vi } from 'vitest';
 
 // The engine module imports prisma at module scope; stub it so tests never
 // touch a database (only pure exports are exercised here).
-vi.mock('@/lib/prisma', () => ({ default: {} }));
+const { prismaMock } = vi.hoisted(() => ({
+  prismaMock: {
+    $transaction: vi.fn(),
+    $executeRawUnsafe: vi.fn(),
+  },
+}));
+vi.mock('@/lib/prisma', () => ({ default: prismaMock }));
+vi.mock('@/lib/services/period-lock.service', () => ({
+  assertAccountNotLocked: vi.fn().mockResolvedValue(undefined),
+  PeriodLockedError: class PeriodLockedError extends Error {},
+  periodLockedResponse: vi.fn(),
+}));
 
 import {
   MOVEMENT_SIGN,
@@ -23,6 +34,8 @@ import {
   validateReceiveAllocations,
   buildFifoLayers,
   computeFifoConsumption,
+  assertPostableAccount,
+  receiveStock,
   InventoryValidationError,
   InventoryStockError,
   type AssemblyComponentSpec,
@@ -30,6 +43,164 @@ import {
   type FifoLayer,
 } from '../inventory-engine';
 import type { MovementType } from '../services/inventory.service';
+import { mapInventoryError } from '../inventory-api-errors';
+
+// ---------------------------------------------------------------------------
+// Ledger posting account guards
+// ---------------------------------------------------------------------------
+
+describe('assertPostableAccount', () => {
+  const postableAccount = (bookGuid: string, placeholder: number | null = 0) => ({
+    guid: 'account-guid',
+    placeholder,
+    book_guid: bookGuid,
+  });
+
+  const transactionFor = (account: ReturnType<typeof postableAccount>) =>
+    ({ $queryRaw: vi.fn().mockResolvedValue([account]) }) as unknown as Parameters<typeof assertPostableAccount>[0];
+
+  it('rejects posting to an account owned by another book with an actionable API error', async () => {
+    const error = await assertPostableAccount(
+      transactionFor(postableAccount('other-book')),
+      'account-guid',
+      'Offset',
+      'requested-book',
+    ).catch(error => error);
+
+    expect(error).toBeInstanceOf(InventoryValidationError);
+    expect((error as Error).message).toBe(
+      'Offset account account-guid belongs to book other-book, not requested book requested-book',
+    );
+
+    const response = mapInventoryError(error);
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ error: (error as Error).message });
+  });
+
+  it('allows posting to an account owned by the requested book', async () => {
+    await expect(
+      assertPostableAccount(transactionFor(postableAccount('requested-book')), 'account-guid', 'Asset', 'requested-book'),
+    ).resolves.toBeUndefined();
+  });
+
+  it('still rejects placeholder accounts in the requested book', async () => {
+    await expect(
+      assertPostableAccount(transactionFor(postableAccount('requested-book', 1)), 'account-guid', 'Asset', 'requested-book'),
+    ).rejects.toThrow('Asset account account-guid is a placeholder');
+  });
+});
+
+describe('receiveStock ledger posting book guard', () => {
+  const itemRow = {
+    id: 1,
+    book_guid: 'active-book',
+    sku: 'WIDGET',
+    name: 'Widget',
+    description: null,
+    unit: 'each',
+    sale_price: null,
+    income_account_guid: null,
+    cogs_account_guid: null,
+    asset_account_guid: 'asset-account',
+    avg_cost: 0,
+    valuation_method: 'average',
+    reorder_point: null,
+    reorder_quantity: null,
+    active: true,
+    created_at: new Date('2026-01-01T00:00:00Z'),
+    updated_at: new Date('2026-01-01T00:00:00Z'),
+  };
+
+  function createReceiveTransaction(offsetBookGuid: string) {
+    const movementInsert = vi.fn().mockResolvedValue([{
+      id: 1,
+      item_id: 1,
+      location_id: 2,
+      movement_type: 'receive',
+      quantity: 2,
+      unit_cost: 3,
+      movement_date: new Date('2026-01-02T00:00:00Z'),
+      reference: null,
+      invoice_guid: null,
+      entry_guid: null,
+      txn_guid: 'transaction-guid',
+      counterpart_movement_id: null,
+      created_at: new Date('2026-01-02T00:00:00Z'),
+    }]);
+    const transaction = {
+      $queryRaw: vi.fn().mockImplementation(async (_query: TemplateStringsArray, guid: string) => [{
+        guid,
+        placeholder: 0,
+        book_guid: guid === 'offset-account' ? offsetBookGuid : 'active-book',
+      }]),
+      $queryRawUnsafe: vi.fn().mockImplementation(async (query: string) => {
+        if (query.includes('FROM gnucash_web_inventory_items')) return [itemRow];
+        if (query.includes('FROM gnucash_web_inventory_locations')) {
+          return [{ id: 2, name: 'Main warehouse', active: true }];
+        }
+        if (query.includes('SUM(quantity)')) return [{ total: 0 }];
+        if (query.includes('INSERT INTO gnucash_web_inventory_movements')) return movementInsert();
+        throw new Error(`Unexpected inventory query: ${query}`);
+      }),
+      $executeRawUnsafe: vi.fn().mockResolvedValue(undefined),
+      accounts: {
+        findUnique: vi.fn().mockResolvedValue({ guid: 'asset-account', commodity_guid: 'usd-guid' }),
+      },
+      commodities: {
+        findUnique: vi.fn().mockResolvedValue({ guid: 'usd-guid', namespace: 'CURRENCY', fraction: 100 }),
+        findFirst: vi.fn(),
+      },
+      transactions: { create: vi.fn().mockResolvedValue({}) },
+      slots: { create: vi.fn().mockResolvedValue({}) },
+      splits: { create: vi.fn().mockResolvedValue({}) },
+    } as unknown as Parameters<typeof assertPostableAccount>[0];
+    return { transaction, movementInsert };
+  }
+
+  async function postReceive(offsetBookGuid: string) {
+    const { transaction, movementInsert } = createReceiveTransaction(offsetBookGuid);
+    const transactionRunner = prismaMock.$transaction as unknown as {
+      mockImplementation: (implementation: (callback: (tx: unknown) => Promise<unknown>) => Promise<unknown>) => void;
+    };
+    transactionRunner.mockImplementation(async callback => callback(transaction));
+    const result = receiveStock({
+      bookGuid: 'active-book',
+      itemId: 1,
+      locationId: 2,
+      quantity: 2,
+      unitCost: 3,
+      date: '2026-01-02',
+      post: true,
+      offsetAccountGuid: 'offset-account',
+    });
+    return { result, transaction, movementInsert };
+  }
+
+  beforeEach(() => {
+    prismaMock.$transaction.mockReset();
+    prismaMock.$executeRawUnsafe.mockReset();
+  });
+
+  it('rejects a foreign offset before any ledger or movement write', async () => {
+    const { result, transaction, movementInsert } = await postReceive('foreign-book');
+
+    await expect(result).rejects.toThrow(
+      'Offset account offset-account belongs to book foreign-book, not requested book active-book',
+    );
+    expect(transaction.transactions.create).not.toHaveBeenCalled();
+    expect(transaction.splits.create).not.toHaveBeenCalled();
+    expect(movementInsert).not.toHaveBeenCalled();
+  });
+
+  it('posts through receiveStock when the offset account belongs to the active book', async () => {
+    const { result, transaction, movementInsert } = await postReceive('active-book');
+
+    await expect(result).resolves.toMatchObject({ txnGuid: expect.any(String) });
+    expect(transaction.transactions.create).toHaveBeenCalledOnce();
+    expect(transaction.splits.create).toHaveBeenCalledTimes(2);
+    expect(movementInsert).toHaveBeenCalledOnce();
+  });
+});
 
 // ---------------------------------------------------------------------------
 // Signed quantity / movement-type enforcement
