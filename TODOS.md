@@ -1,6 +1,6 @@
 # Product Roadmap and TODOs
 
-Updated 2026-08-04.
+Updated 2026-08-13.
 
 GnuCash Web has passed the point where desktop parity or raw feature count is the
 right roadmap. The product already has accounting-grade books, household and
@@ -2657,3 +2657,289 @@ deployment risk than the nit is worth.
 - [ ] Worker `stop_grace_period` + timer drain (ASI-7-005); Prisma ↔ db-init
   drift check in CI (ASI-7-006); bootstrap race lock (ASI-7-007); ESLint
   ignore `.claude/` + triage unused-var warnings (ASI-8-002).
+
+---
+
+# Correctness backlog — adversarial review 2026-08-12
+
+Source: `ADVERSARIAL-REVIEW-2026-08-12.md` (commit `c788906`). Six independent
+read-only audits across three vendors (codex, claude_code, agy) plus a
+cross-vendor adjudication of the tax findings; every claim was spot-verified
+against source before being recorded, and unverified vendor claims were struck
+(see the appendix in that file, including one fabricated finding and one false
+CRITICAL, so they don't resurface).
+
+**Re-verified 2026-08-13** against `main` after PR #24 landed. Tier 1 is closed;
+every item still listed as open below was re-confirmed present in the source on
+that date.
+
+Two structural themes dominate, and both are cheap to fix:
+
+1. **The correct implementation usually already exists but isn't wired to the
+   live path.** The reconcile guard, payment idempotency, decimal-safe amount
+   parsing, income-vs-expense variance semantics — all present in-repo, all
+   bypassed by the code that actually runs.
+2. **Exact stored fractions are floated before aggregation**, so the ledger's
+   arithmetic is not the arithmetic GnuCash guarantees.
+
+Gate status at review time: 4,689 tests green / 338 files, `tsc --noEmit` clean,
+lint 0 errors + 7 warnings. **Every bug below is green-but-wrong**, and the test
+suite locks several of them in — the mirror-image assertion is named per item.
+
+## Done — Tier 1 (shipped 2026-08-12, PR #24 `e950e5e`)
+
+- [x] **C3 — Amount input silently booked wrong or zero amounts.**
+  `validateForm` tested `parseFloat(amount) <= 0`, so `"$1,234.56"` gave
+  `NaN <= 0` → false and booked **$0.00**; `"1,234.56"` booked **$1.00**
+  (1000× off). Both reported success. Fixed with a strict parser scoped to
+  transaction entry that validates the *original* string's shape before
+  normalizing; advanced mode, auto-balance, mode switch, tax shortcut and the
+  API payload builder all route through it, and an unparseable split is named
+  in an inline error instead of silently counting as 0.
+- [x] **C4 — Keyboard save bypassed the in-flight guard → duplicate
+  transactions.** `disabled={saving}` covered only the mouse path; Ctrl+Enter
+  is a window-level listener. Fixed with a ref-based guard (state still reads
+  false on a second press in the same tick) plus a stable per-form-open client
+  guid so a retried POST collapses onto one record.
+- [x] **H7 — Payment API dropped the idempotency key it already supported.**
+  A retried $40 payment posted twice against a $100 invoice. Route now forwards
+  `body.transactionGuid`, and `PaymentModal` generates one per modal-open,
+  stable across retries.
+- [x] **C1 — Budget roll-up double-counted a subtree budgeted at two levels.**
+  Budget `Expenses:Auto` $500 + `Expenses:Auto:Gas` $200 with $300 truly spent
+  read as *Budgeted $700 / Spent $500*. Totals and Budget Report subtotals/net
+  now count only the topmost budgeted account per branch.
+- [x] **H12 — FIRE Monte Carlo inflated withdrawals but not contributions.**
+  $30k/yr real at 3% over 30 yrs contributed ≈$588k real instead of $900k.
+  Contributions now convert to nominal at the end-of-year price level.
+
+## P0 — Silent data corruption (still open)
+
+- [ ] **C2 — Reconciled splits can be freely edited, deleted, or re-parented.**
+  `src/app/api/transactions/[guid]/route.ts:330-358`,
+  `src/app/api/splits/bulk/move/route.ts:151-154`. The guard *exists* —
+  `transaction.service.ts:158-161` raises "Cannot modify transaction with
+  reconciled splits" — but **`TransactionService` has zero production callers**
+  (re-verified 2026-08-13: only its own definition, export, and a comment
+  reference in `scheduled-tx-execute.ts`). Editing a reconciled June txn
+  $250 → $520 makes July's reconcile demand $270 no statement will explain.
+  The reconcile flow itself is well built (advisory lock, server-side
+  re-tie-out, single `$transaction`); nothing protects the result afterwards.
+  **Fix:** route the live paths through `TransactionService`, or inline the check.
+- [ ] **C5 — Inventory permits cross-book ledger postings.**
+  `src/lib/inventory-engine.ts:708`. `assertPostableAccount` selects only
+  `{guid, placeholder}` and never checks book membership (re-verified
+  2026-08-13). A Book A item configured with a Book B inventory asset posts
+  Dr Book A COGS / Cr **Book B Inventory** — balances globally, corrupts both
+  books. **Fix:** add a book check to `assertPostableAccount`. **Effort:** S.
+
+## P1 — Data integrity
+
+- [ ] **H11 — Reconciliation can be finished out of balance, and the statement
+  balance is discarded.** `src/components/ReconciliationPanel.tsx:293`, `:89-97`,
+  `:141`. `disabled={saving || selectedSplits.size === 0}` — no check on
+  `difference`; GnuCash desktop refuses this. The POST body carries only
+  `{splits, reconcile_state, reconcile_date}`, so **`statementBalance` is never
+  transmitted** and nothing records what the reconciliation was reconciled
+  *against*. `parseFloat(statementBalance) || 0` turns an empty field into a
+  confidently-wrong difference.
+- [ ] **H1 — Unpriceable holdings are silently valued at $0.**
+  `src/lib/account-valuation.ts:187-194`. Price *selection* is correct
+  (latest-on-or-before); the fallback is not — `multiplierCache.set(guid, rate ?? 0)`.
+  **`isConvertible` and `warnings[]` have zero consumers** (re-verified
+  2026-08-13): balance sheet, net worth, family office and account summary all
+  multiply straight through. Sibling bug at `:195-199` — a **currency** account
+  with no FX path falls back to `?? 1`, i.e. parity, so €10,000 reports as
+  $10,000. Neither records a warning. **Fix:** surface `warnings`/`isConvertible`
+  instead of silently valuing at $0.
+- [ ] **H13 — Server validation errors discarded on create but shown on edit,
+  over a genuine tolerance drift.** `TransactionFormModal.tsx:109` vs
+  `api/transactions/route.ts:322`: POST returns `{errors:[...]}` with no `error`
+  key while PUT returns both, and the client reads `errorData.error || 'Failed
+  to create transaction'` — so every field-level create error becomes a generic
+  string. Compounded by a real epsilon drift: `TransactionForm.tsx:530` rejects
+  at `> 0.01` but `validation.ts:103` and `AccountLedger.tsx:917` reject at
+  `> 0.001` (re-verified 2026-08-13). A transaction off by 0.005 passes the
+  client, is refused by the server, and the reason is swallowed — an unfixable,
+  unexplained failure. *(Bonus: the comment at `validation.ts:102` reads "1 cent
+  / 100 = 0.01" directly above code using `0.001`.)*
+- [ ] **H14 — Fixed-asset adjustment uses transaction VALUE instead of account
+  QUANTITY.** `src/lib/asset-transaction-service.ts:37`, `:173`. For a EUR asset
+  holding €100 recorded at $120, "adjust to target 100" computes
+  `delta = 100 − 120 = −20` and posts €20 of depreciation. Correct: zero.
+- [ ] **H15 — Escape destroys a half-typed multi-split transaction.**
+  `TransactionFormModal.tsx:163-164`: `closeOnBackdrop={false}` (good) but
+  `closeOnEscape={true}`, and `Modal` calls `onClose()` unconditionally. Pressing
+  Escape to dismiss an account dropdown discards five splits. No dirty-state
+  tracking exists anywhere in `TransactionForm`.
+
+## P1 — Investment and tax correctness
+
+Note the overlap with the closed **P1 - Lot Scrub and Investment-Type
+Correctness (2026-08-04 audit)** above: H3 and H5 are *residuals in different
+call sites*, not re-openings of that item — record them as new work.
+
+- [ ] **H3 — Closed lots fabricate a realized loss equal to the entire basis.**
+  `src/lib/lots.ts:118-122`. Re-verified 2026-08-13 — still
+  `-splits.filter(...).reduce((s,x)=>s+x.value,0) - carriedBasis`. A transfer-out
+  carries qty −N, value $0, so the whole buy cost becomes a "realized loss";
+  a transfer between your own accounts is not a §1001 disposition. Buy 10 @ $100
+  then transfer out → realized gain **−$1,000**; correct is **$0**. Blast radius:
+  `detectWashSales` uses the same function to decide "was this a loss sale?", so
+  a transfer-out manufactures phantom wash-sale disallowances. The mirror error
+  is asserted by `lots-realized-gain.test.ts:80-87`.
+- [ ] **H4 — `average` cost basis admits transferred shares at $0.**
+  `src/lib/cost-basis.ts:358-360`. Re-verified 2026-08-13: `average` returns
+  early, *before* the `isTransferInSplit` recursion that FIFO and LIFO get —
+  and this is a user-selectable per-account preference. Transfer in 10 sh (real
+  basis $1,000) + buy 10 @ $150 → average basis $1,500 instead of $2,500:
+  **$1,000 of basis destroyed → $1,000 phantom gain.**
+- [ ] **H2 — Commissions are dropped from basis and proceeds.**
+  `src/components/InvestmentTransactionForm.tsx:111-145`, `:148-182`. The
+  security split is written with `total` rather than `total + commission` (buy)
+  and gross rather than net (sell), so the commission is expensed instead of
+  capitalised (IRC §1012 / Pub 551). Buy 10 @ $100 +$5, sell 10 @ $100 −$5 →
+  8949 reports gain **$0**; correct is proceeds $995, basis $1,005, **loss $10**.
+  Locked in by `investment-entry-regressions.test.ts:99-112`.
+- [ ] **H5 — Wash-sale disallowance matched per calendar *day* and
+  double-counted.** `src/lib/reports/capital-gains.ts:261-265`. The join is
+  ticker + account + **day**; `WashSaleResult.splitGuid` exists but is never
+  used. Same day: sale A loss $1,000 (fully washed) and sale B loss $3,000 (not
+  replaced) both absorb the day's $1,000 → net −$2,000 instead of −$3,000.
+  **Fix:** join on `splitGuid`.
+- [ ] **H6 — Investment Lots report re-implements basis math and gets it
+  wrong.** `src/app/api/reports/investment-lots/route.ts:126-179`. The slots
+  query fetches `name: 'title'` only — `carried_basis` and `acquisition_date`
+  appear **nowhere** in the file. Transferred lots show $0 basis; unrealized
+  gain compares full-lot basis against *remaining* shares (a partially-sold lot
+  shows −$100 where `lots.ts` shows +$300); holding period restarts on transfer,
+  contra §1223. **Fix:** delete the duplicate implementation and reuse `lots.ts`.
+- [ ] **Year-parameterize `NEC_THRESHOLD`.** It is a bare constant with no
+  tax-year parameter while `ssWageBase` right beside it *is* year-keyed
+  (`PARAMS[year]`). Verified structural defect — whether $600 is currently
+  correct is secondary to the fact that it *cannot* vary by year.
+- [ ] **Wire `CORP_CLASSIFICATIONS`, or delete it.** Exported and **never read**
+  (1 occurrence repo-wide); the 1099 corporate exemption is solely a manual
+  checkbox, so a `c_corp` with a W-9 and $50k paid shows `ready_to_file`.
+- [ ] **TXF omits realized capital gains entirely.**
+- [ ] **TXF `N304` for Traditional IRA may collide with Sch C line 24b
+  (meals).** **Unprovable in-repo** — circumstantially strong (the Sch C block
+  runs N293→N307 in exact line order with a single gap exactly where 24b
+  belongs), but settling it needs GnuCash's `txf.scm` or the TXF V042 list.
+- [ ] **Credit-card payments not excluded from 1099-NEC (§6050W).** Matters
+  mainly for card-heavy books. **Priority:** P3.
+- [ ] **Farmer flag not plumbed into the estimated-tax tracker.** The correct
+  math exists two modules away; the tracker doesn't pass the flag. **P4.**
+- [ ] **Jan 1–15 estimated payments.** Originally overstated — the payment *is*
+  displayed as "prior year" and correctly credited to year N−1 Q4. The real
+  defect is only that the YTD stat card and the quarter buckets disagree. **P4.**
+- [ ] **Delete a misleading comment.** `annualized-installments.ts:34-36` and
+  `route.ts:345` advertise a Schedule AI "simplification" that **does not
+  exist** — the code is exact. That comment is what produced the false CRITICAL
+  recorded in the review's Appendix A. **P4.**
+
+## P2 — Business workflow correctness
+
+- [ ] **H8 — "Unpost" deletes the posting transaction instead of reversing
+  it.** `src/lib/business/invoice-engine.ts:1258-1272` — hard `deleteMany` on
+  splits → `deleteSlotsRecursive` → `transactions.delete` → `lots.delete`. A
+  $1,000 March invoice leaves **zero evidence** it was ever posted. Asserted by
+  `invoice-engine.test.ts:934`.
+- [ ] **H9 — Aging never ties to the A/R control account, and ignores explicit
+  due dates.** `src/lib/business/business-reports.ts:624,640,644`; `:75`. Totals
+  only invoice-*lot* splits, so any non-lot A/R posting (write-off, credit memo,
+  opening balance) desynchronises aging from the GL. Separately the explicit
+  `trans-date-due` slot written at posting (`invoice-engine.ts:1150`) is
+  discarded and aging recomputes `post date + duedays`: an invoice posted Aug 1
+  with a negotiated Sep 30 due date reads **19 days overdue** on Aug 20 instead
+  of Current.
+- [ ] **H10 — COGS defaults to not posting.** `src/lib/inventory-engine.ts:968`
+  (`if (!post) return null`, re-verified 2026-08-13 at `:977` and `:1005`) and
+  `.../fulfillment/route.ts:68` forwards an omitted `body.post` as `undefined`.
+  Default fulfilment moves stock but books no COGS → gross profit $100 instead
+  of $40, inventory asset overstated.
+
+## P2 — Systemic: float8 money casts
+
+- [ ] **Aggregate money in PostgreSQL `numeric`, not `float8`.**
+  `src/lib/reports/utils.ts:42` is the worst instance — it feeds Balance Sheet,
+  Trial Balance, Income Statement, Cash Flow, General Ledger, Equity Statement
+  and Portfolio:
+
+  ```sql
+  SUM(s.quantity_num::float8 / NULLIF(s.quantity_denom,0)::float8)::float8
+  SUM(s.value_num::float8   / NULLIF(s.value_denom,0)::float8)::float8
+  ```
+
+  The review counted 53 such casts across 20+ files; `grep -rn "::float8" src/`
+  returns 93 matching lines on 2026-08-13, so **re-measure before scoping.**
+  GnuCash's whole point is that money is an exact rational; converting to
+  IEEE-754 *before* summing makes results depend on row order (float addition is
+  non-associative) and drift over large split counts. Same pattern in the
+  ledger's user-facing running balance
+  (`api/accounts/[guid]/transactions/route.ts:164,521,538`), float-summed in both
+  SQL and JS. **Fix direction:** aggregate in `numeric`, keep BigInt end-to-end
+  in JS. Start with `reports/utils.ts`.
+
+  > **Calibration.** The auditor's reproductions used values above 2⁵³
+  > ($90 trillion), which is not a realistic book. This is recorded on the
+  > *accumulation/ordering* argument, which is real at ordinary magnitudes — not
+  > on the 2⁵³ example. Same caveat for "Duplicate transaction changes stored
+  > int64" (`TransactionJournal.tsx:353`): the mechanism is real, the cited
+  > trigger is not reachable in a normal book. Treat as **P3**, not critical.
+
+- [ ] **No exact server-side balance check.** `src/lib/validation.ts:94-104`
+  sums splits as **floats** and accepts residuals up to `0.001`, then stores the
+  original fractions exactly, so a crafted API call or import can persist a
+  genuinely unbalanced transaction. There is no DB-level balance constraint
+  (`schema.prisma:69`), and `data-health.ts:253` only detects it later, also
+  with a tolerance. The multi-currency path *does* verify exactly with BigInt
+  (`trading-accounts.ts:322`) — the same-currency path doesn't.
+
+## P2 — Form UI slop and accessibility
+
+The forms are **better than expected**: zero `console.log`, zero `TODO`/`FIXME`,
+zero `: any`, zero commented-out blocks across the entire form surface. Two
+hypotheses were disproved — the TransactionForm family is *not* four duplicated
+copies (one real editor, a thin modal wrapper, a misnamed read-only viewer, and
+a row component; real drift is limited to `InlineEditRow` being a genuine second
+editor), and `CreateBookWizard`/`NewBookWizard` are *not* duplicate wizards
+(both delegate to the same `NewBookForm`). Genuine remaining slop:
+
+- [ ] `CreateBookWizard.tsx:41-72,220-255` hand-rolls a *second* book-creation
+  form hitting a **different endpoint** (`/api/books/from-template` vs
+  `/api/books/default`) with duplicated validation.
+- [ ] **Seven** hand-rolled "read the server error body" implementations
+  (incl. `AccountLedger.tsx:958`, `InvestmentTransactionForm.tsx:578`), four
+  with different precedence, one discarding the body entirely. Consolidate into
+  one helper — this is also the mechanism behind H13.
+- [ ] `InvestmentTransactionForm.tsx:57,75,908-914` — **write-only field**:
+  "Split Ratio (informational)" is typed by the user, never submitted, never
+  redisplayed. Plus dead prop `accountCommodityGuid`, three write-only state
+  vars and a dead `nameField` param at `:34,51,53,55`.
+- [ ] `AccountPickerDialog.tsx:137` — `focus:border-accent`, but **`--accent`
+  does not exist**; combined with `focus:outline-none` this input has **no focus
+  indicator at all**.
+- [ ] `AccountForm.tsx`, `BudgetForm.tsx`, `LoginForm.tsx` — `rounded-xl`/`2xl`
+  off `DESIGN.md:91`'s radius scale; three different input recipes across
+  sibling forms.
+- [ ] Six sites (incl. `InvestmentTransactionForm.tsx:643`) use native `title=`,
+  **banned by `DESIGN.md:116`**. At `:643` the only explanation of "Return of
+  Capital" lives in a tooltip invisible to touch and keyboard.
+- [ ] `AccountLedger.tsx:2276,2288` — `☑`/`☐` text glyphs as checkbox chrome;
+  screen readers announce "ballot box", not state.
+- [ ] `NotificationBell.tsx:151` vs `AccountForm.tsx:344` — `bg-error` and
+  `bg-negative` are the same colour (`#dc2626`) under two token names.
+- [ ] Server errors surface via toast rather than inline on the offending field,
+  and are not announced (`role="alert"` / `aria-live`) to screen readers.
+
+## P3 — CI and developer onboarding
+
+- [ ] **CI never runs typecheck.** `.github/workflows/deploy.yml` runs
+  `docs:check`, `test:run`, `lint` — no `tsc --noEmit`, and no `typecheck`
+  script exists (re-verified 2026-08-13). The repo currently passes clean, so
+  this is free regression insurance being left unclaimed.
+- [ ] **Document the Prisma prerequisite.** A fresh clone cannot typecheck until
+  `npx prisma generate` runs — it produces ~1,268 phantom errors otherwise,
+  which is exactly what caused a false "1,268 TypeScript errors" finding during
+  this review. Worth a line in the README.
