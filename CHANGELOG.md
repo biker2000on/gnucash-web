@@ -104,10 +104,48 @@ Covers work landed since 0.23.2.0 (2026-07-29).
   Sums are now computed in exact decimal arithmetic and converted once at the
   end, affecting Balance Sheet, Trial Balance, Income Statement, Cash Flow,
   General Ledger, Equity Statement and Portfolio.
+- **"Failed to save" no longer hides the reason a transaction was rejected.**
+  The reason was computed and logged on the server but never sent, and the
+  browser discarded the response body regardless. Validation failures now
+  explain themselves. Relatedly, the form checked a looser balance tolerance
+  than the server, so a half-cent imbalance passed the form and was refused by
+  the API with no explanation — and a legitimate multi-currency entry whose
+  rounded amounts balanced exactly could be rejected as "unbalanced by 0.00".
+  The form now validates the same rounded amounts it submits. An amount typed
+  on a line with no account selected is flagged on that line instead of being
+  silently dropped from the saved transaction.
 - Deployments now reach production reliably.
+
+### Security
+
+- **Security headers are now sent on every response** — `X-Frame-Options:
+  SAMEORIGIN`, `X-Content-Type-Options: nosniff`, a strict referrer policy, a
+  restrictive Permissions-Policy, and HSTS. HSTS ships at a deliberately short
+  `max-age=300`; raise it once you have confirmed a week of clean HTTPS
+  operation. `SAMEORIGIN` rather than `DENY` is intentional: in-app PDF and
+  receipt previews render in a same-origin frame, isolated by a per-response
+  content security policy.
+- **GnuCash XML imports are now bounded during decompression.** A highly
+  compressed upload could previously expand without limit; the bound is now
+  enforced inside the decompression loop rather than after the data is in
+  memory. The default ceiling is 256 MiB of decoded XML, overridable with
+  `GNUCASH_XML_MAX_DECOMPRESSED_BYTES`, and it applies equally to compressed
+  and uncompressed uploads. The limit is set well above a realistic book
+  because backups are gzipped GnuCash XML restored through this same parser.
+- **PostgreSQL no longer has a default password**, and the production stack
+  will refuse to start without one rather than starting insecurely.
 
 ### Infrastructure
 
+- **Data-store ports now bind to `127.0.0.1` instead of all interfaces** —
+  production PostgreSQL and MinIO, and development Redis and MinIO. The
+  application's own port is unchanged. If you previously connected to the
+  database or the MinIO console from another machine, use SSH port forwarding
+  (`ssh -L 9001:127.0.0.1:<console-port> <user>@<host>`). Access from the host
+  itself is unaffected, and no in-app functionality depends on these ports —
+  document and receipt downloads are proxied through the application.
+- Container logs are now size-bounded on every service, and local state
+  directories are excluded from the Docker build context.
 - CI now runs a **typecheck gate** (`npm run typecheck`) before the docs, test,
   and lint gates, and the image build and production deploy are blocked on it.
 - `npm run typecheck` regenerates the Prisma client first (`pretypecheck`), so a
