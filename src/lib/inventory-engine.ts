@@ -31,19 +31,35 @@
  *   FIFO items) — a documented approximation.
  *
  * ─────────────────────────────────────────────────────────────────────────
- * LEDGER POSTINGS (optional, per-operation `post: true`)
+ * LEDGER POSTINGS (per-operation `post` flag)
  * ─────────────────────────────────────────────────────────────────────────
+ *   OUTBOUND COGS RECOGNITION POSTS BY DEFAULT. ship / fulfillInvoiceLines
+ *   post unless the caller passes `post: false` — omitting the flag yields
+ *   correct double-entry accounting (inventory relieved, COGS recognized)
+ *   instead of silently overstating inventory and gross profit.
+ *   Cost-neutral or offset-dependent operations (receive, assemble) stay
+ *   opt-in with `post: true`, because they need a caller-supplied offset
+ *   account or move cost between asset accounts only.
+ *
+ *   returnToStock is the EXCEPTION and stays opt-in: it reverses at the item's
+ *   CURRENT average cost rather than the basis the original shipment was
+ *   relieved at, so defaulting it on would post a knowingly wrong reversal
+ *   whenever cost moved between ship and return. See shouldPostReturnCogs.
+ *
  *   receive  → DEBIT item.asset_account_guid / CREDIT offsetAccountGuid
  *              (caller-supplied, e.g. A/P or checking), amount = qty*unitCost.
+ *              OPT-IN (`post: true`).
  *   ship     → DEBIT item.cogs_account_guid / CREDIT item.asset_account_guid,
- *              amount = qty*avgCost (COGS recognition).
+ *              amount = qty*avgCost (COGS recognition). DEFAULT-ON.
  *   return   → DEBIT item.asset_account_guid / CREDIT item.cogs_account_guid,
- *              amount = qty*avgCost (reverses COGS).
+ *              amount = qty*avgCost (reverses COGS). OPT-IN (wrong basis —
+ *              see above).
  *   assemble → transfer txn moving consumed cost from each component's asset
  *              account into the output item's asset account; splits for
  *              components whose asset account equals the output's (or is
  *              unset) are skipped; the whole txn is skipped when nothing
- *              differs or the output asset account is unset.
+ *              differs or the output asset account is unset. OPT-IN
+ *              (`post: true`) — asset-to-asset, so it cannot misstate profit.
  *   adjust / transfer → never post (no ledger transaction).
  *   If posting is requested but a required account is unset, the operation
  *   fails with InventoryValidationError (HTTP 400). Amounts that round to
@@ -885,7 +901,11 @@ export interface ReceiveInput {
   /** ISO 'YYYY-MM-DD'; defaults to today. */
   date?: string;
   reference?: string | null;
-  /** Write a GnuCash txn: debit item.assetAccountGuid / credit offsetAccountGuid. */
+  /**
+   * Write a GnuCash txn: debit item.assetAccountGuid / credit offsetAccountGuid.
+   * OPT-IN (defaults to false) — a receive posting needs an offset account the
+   * engine cannot infer, so the caller must ask for it.
+   */
   post?: boolean;
   /** Required when post=true (e.g. A/P or checking account guid). */
   offsetAccountGuid?: string | null;
@@ -959,7 +979,11 @@ export interface ShipInput {
   quantity: number;
   date?: string;
   reference?: string | null;
-  /** Write a GnuCash txn: debit item.cogsAccountGuid / credit item.assetAccountGuid. */
+  /**
+   * Write a GnuCash COGS txn: debit item.cogsAccountGuid / credit
+   * item.assetAccountGuid. DEFAULTS TO TRUE — pass `false` to opt out.
+   * Requires both accounts on the item; posting fails loudly if either is unset.
+   */
   post?: boolean;
   /** Internal: link to an invoice entry (used by fulfillInvoiceLines). */
   invoiceGuid?: string | null;
@@ -1004,9 +1028,24 @@ export async function shipStock(input: ShipInput): Promise<MovementResult> {
 }
 
 /**
+ * Resolve the `post` flag for a COGS-bearing operation (ship, invoice
+ * fulfillment, return to stock).
+ *
+ * THE DEFAULT IS TRUE. Relieving inventory without recognizing COGS overstates
+ * both inventory value and gross profit, so an omitted flag must produce the
+ * complete double entry; skipping it is the exceptional case and has to be
+ * requested explicitly with `post: false` (e.g. when the cost side is booked
+ * by another system of record).
+ */
+export function shouldPostCogs(post: boolean | undefined): boolean {
+  return post !== false;
+}
+
+/**
  * Shared COGS posting for ship/fulfillment (debit COGS, credit asset).
  * `unitCost` is the effective consumption cost: the moving average for
  * 'average' items, the FIFO layer-weighted cost for 'fifo' items.
+ * Posts unless the caller opted out with `post: false` (see shouldPostCogs).
  */
 async function maybePostCogs(
   tx: PrismaTx,
@@ -1018,7 +1057,7 @@ async function maybePostCogs(
   reference: string | null | undefined,
   unitCost: number,
 ): Promise<string | null> {
-  if (!post) return null;
+  if (!shouldPostCogs(post)) return null;
   if (!item.cogsAccountGuid || !item.assetAccountGuid) {
     throw new InventoryValidationError(
       `Item ${item.sku} needs both cogsAccountGuid and assetAccountGuid configured before posting COGS`,
@@ -1037,6 +1076,34 @@ async function maybePostCogs(
   });
 }
 
+/**
+ * Whether a RETURN should post its reversing entry.
+ *
+ * OPT-IN (`post: true`), deliberately NOT matching shouldPostCogs.
+ *
+ * The reversal below is computed at the item's CURRENT average cost, not at the
+ * cost the original shipment was relieved at, and nothing links a return to the
+ * shipment it reverses. Ship 1 unit at a $10 average, let later receipts move
+ * the average to $20, then return that unit: the reversal posts inventory +$20 /
+ * COGS -$20 against an original -$10 / +$10, leaving a permanent $10 residual in
+ * both accounts. FIFO items are affected too — the shipment consumes at its
+ * layer-derived cost while the return still re-enters at the average.
+ *
+ * Neither default is universally less wrong. Skipping the reversal leaves COGS
+ * overstated by C and inventory understated by C; posting at the current
+ * average A leaves a residual of |C - A|. Posting is the better of the two
+ * whenever A < 2C, the worse one above that, and a wash at exactly 2C. Opt-in is
+ * therefore the CONSERVATIVE choice — a bounded, familiar error the user has
+ * always had, rather than a silently-introduced one — not a categorically
+ * smaller one. It stands until the return cost basis is resolved, which needs
+ * an allocation rule for partial returns spanning several shipments. The
+ * ship/fulfill default in shouldPostCogs is unaffected: shipments do consume at
+ * the correct effective cost.
+ */
+function shouldPostReturnCogs(post: boolean | undefined): boolean {
+  return post === true;
+}
+
 /** Reverse-COGS posting for returns (debit asset, credit COGS). */
 async function maybePostReturn(
   tx: PrismaTx,
@@ -1047,7 +1114,7 @@ async function maybePostReturn(
   post: boolean | undefined,
   reference: string | null | undefined,
 ): Promise<string | null> {
-  if (!post) return null;
+  if (!shouldPostReturnCogs(post)) return null;
   if (!item.cogsAccountGuid || !item.assetAccountGuid) {
     throw new InventoryValidationError(
       `Item ${item.sku} needs both cogsAccountGuid and assetAccountGuid configured before posting a return`,
@@ -1203,7 +1270,8 @@ export interface AssembleInput {
   /**
    * Write a GnuCash transfer txn moving consumed cost from component asset
    * accounts into the output item's asset account (skipped for same/unset
-   * accounts — see module header).
+   * accounts — see module header). OPT-IN (defaults to false): the transfer
+   * is asset-to-asset, so omitting it cannot misstate inventory or profit.
    */
   post?: boolean;
 }
@@ -1456,7 +1524,15 @@ export interface FulfillInput {
   invoiceGuid: string;
   allocations: FulfillmentAllocation[];
   date?: string;
-  /** Post COGS per allocation (debit item COGS / credit item asset at avgCost). */
+  /**
+   * Post COGS per allocation (debit item COGS / credit item asset at avgCost).
+   * Requires cogsAccountGuid + assetAccountGuid on every allocated item.
+   *
+   * fulfillInvoiceLines: DEFAULTS TO TRUE — pass `false` to opt out.
+   * returnToStock:       OPT-IN, pass `true` — the reversal uses the current
+   *                      average rather than the original shipment's basis
+   *                      (see shouldPostReturnCogs).
+   */
   post?: boolean;
 }
 
@@ -1466,10 +1542,44 @@ export interface FulfillResult {
 }
 
 /**
+ * Pre-flight check for a multi-allocation fulfillment: collect EVERY allocated
+ * item that LACKS THE REQUIRED ACCOUNT GUIDS and name them all in one error.
+ *
+ * Scope is deliberately narrow — a missing cogsAccountGuid/assetAccountGuid.
+ * Whether those guids resolve to a real, non-placeholder account owned by this
+ * book is still validated per item by assertPostableAccount inside
+ * maybePostCogs, which remains the necessary backstop: such an item fails only
+ * once its own allocation is reached, after earlier allocations have run. The
+ * shared transaction rolls all of them back, so no partial accounting escapes.
+ *
+ * This only turns a fix-one-retry-repeat loop into a single actionable message
+ * for the common misconfiguration. No-op when the caller opted out of posting.
+ */
+function assertItemsPostable(
+  allocations: FulfillmentAllocation[],
+  items: Map<number, InventoryItem>,
+  post: boolean | undefined,
+): void {
+  if (!shouldPostCogs(post)) return;
+  const unpostable: string[] = [];
+  for (const itemId of new Set(allocations.map((a) => a.itemId))) {
+    const item = items.get(itemId);
+    if (item && !(item.cogsAccountGuid && item.assetAccountGuid)) unpostable.push(item.sku);
+  }
+  if (unpostable.length === 0) return;
+  unpostable.sort();
+  const subject = unpostable.length === 1 ? `Item ${unpostable[0]} needs` : `Items ${unpostable.join(', ')} need`;
+  throw new InventoryValidationError(
+    `${subject} both a COGS account and an inventory asset account before COGS can be posted. ` +
+      `Set them on ${unpostable.length === 1 ? 'the item' : 'each item'}, or resubmit with COGS posting turned off.`,
+  );
+}
+
+/**
  * Fulfill (ship) lines of a POSTED customer invoice: creates 'ship' movements
- * linked via invoice_guid + entry_guid, with optional COGS posting. An entry
- * may be fulfilled across several calls/locations, but never beyond its
- * invoiced quantity.
+ * linked via invoice_guid + entry_guid, posting COGS per allocation unless the
+ * caller opts out with `post: false`. An entry may be fulfilled across several
+ * calls/locations, but never beyond its invoiced quantity.
  */
 export async function fulfillInvoiceLines(input: FulfillInput): Promise<FulfillResult> {
   await ensureInventoryTables();
@@ -1483,6 +1593,12 @@ export async function fulfillInvoiceLines(input: FulfillInput): Promise<FulfillR
 
     const items = await lockItems(tx, input.bookGuid, input.allocations.map((a) => a.itemId));
     for (const a of input.allocations) await assertLocation(tx, input.bookGuid, a.locationId);
+
+    // Every allocation shares this transaction, so one item missing its account
+    // guids rolls the whole invoice back. Name EVERY such offender up front
+    // instead of failing on the first and making the user fix them one retry at
+    // a time. (Bad-but-present guids are still caught later, per item.)
+    assertItemsPostable(input.allocations, items, input.post);
 
     // Aggregate stock demand per (item, location) so multi-allocation requests
     // cannot overdraw by splitting a single shortage across allocations.
@@ -1533,7 +1649,9 @@ export async function fulfillInvoiceLines(input: FulfillInput): Promise<FulfillR
  * Return previously fulfilled invoice lines to stock: creates 'return_in'
  * movements (positive quantity, unit cost = the item's current average cost,
  * which leaves the average unchanged) linked via invoice_guid + entry_guid,
- * with an optional reversing-COGS posting (debit asset / credit COGS).
+ * with an OPT-IN reversing-COGS posting (debit asset / credit COGS) written
+ * only when the caller passes `post: true` — see shouldPostReturnCogs for why
+ * this one does not follow fulfillment's post-by-default.
  * Rejects returns exceeding the net fulfilled quantity per entry.
  */
 export async function returnToStock(input: FulfillInput): Promise<FulfillResult> {

@@ -22,6 +22,10 @@ vi.mock('@/lib/services/period-lock.service', () => ({
   PeriodLockedError: class PeriodLockedError extends Error {},
   periodLockedResponse: vi.fn(),
 }));
+// Fulfillment resolves invoice→book ownership through its own prisma client.
+vi.mock('@/lib/business/entity-ownership', () => ({
+  isEntityOwnedByBook: vi.fn().mockResolvedValue(true),
+}));
 
 import {
   MOVEMENT_SIGN,
@@ -36,6 +40,9 @@ import {
   computeFifoConsumption,
   assertPostableAccount,
   receiveStock,
+  shouldPostCogs,
+  fulfillInvoiceLines,
+  returnToStock,
   InventoryValidationError,
   InventoryStockError,
   type AssemblyComponentSpec,
@@ -199,6 +206,285 @@ describe('receiveStock ledger posting book guard', () => {
     expect(transaction.transactions.create).toHaveBeenCalledOnce();
     expect(transaction.splits.create).toHaveBeenCalledTimes(2);
     expect(movementInsert).toHaveBeenCalledOnce();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// COGS posts by DEFAULT on fulfillment
+//
+// Relieving inventory without recognizing COGS overstates both inventory value
+// and gross profit, so an omitted `post` flag must still produce the complete
+// double entry. Opting out has to be explicit.
+// ---------------------------------------------------------------------------
+
+describe('shouldPostCogs', () => {
+  it('posts when the flag is omitted', () => {
+    expect(shouldPostCogs(undefined)).toBe(true);
+  });
+
+  it('posts when the flag is explicitly true', () => {
+    expect(shouldPostCogs(true)).toBe(true);
+  });
+
+  it('skips only on an explicit false', () => {
+    expect(shouldPostCogs(false)).toBe(false);
+  });
+});
+
+describe('invoice fulfillment COGS posting', () => {
+  const AVG_COST = 4;
+  const SHIP_QTY = 3;
+  /** Expected COGS amount: 3 × $4.00 = $12.00 → 1200/100 in GnuCash fractions. */
+  const EXPECTED_NUM = 1200n;
+
+  const fulfillmentItemRow = {
+    id: 1,
+    book_guid: 'active-book',
+    sku: 'WIDGET',
+    name: 'Widget',
+    description: null,
+    unit: 'each',
+    sale_price: null,
+    income_account_guid: 'income-account',
+    cogs_account_guid: 'cogs-account',
+    asset_account_guid: 'asset-account',
+    avg_cost: AVG_COST,
+    valuation_method: 'average',
+    reorder_point: null,
+    reorder_quantity: null,
+    active: true,
+    created_at: new Date('2026-01-01T00:00:00Z'),
+    updated_at: new Date('2026-01-01T00:00:00Z'),
+  };
+
+  interface CreatedSplit {
+    account_guid: string;
+    value_num: bigint;
+    value_denom: bigint;
+    quantity_num: bigint;
+    quantity_denom: bigint;
+  }
+
+  function createFulfillmentTransaction() {
+    const splitsCreated: CreatedSplit[] = [];
+    /** txn_guid stamped on each inserted movement (null = no ledger posting). */
+    const movementTxnGuids: Array<string | null> = [];
+    let nextMovementId = 1;
+
+    const transaction = {
+      $queryRaw: vi.fn().mockImplementation(async (_query: TemplateStringsArray, guid: string) => [
+        { guid, placeholder: 0, book_guid: 'active-book' },
+      ]),
+      $queryRawUnsafe: vi.fn().mockImplementation(async (query: string, ...args: unknown[]) => {
+        if (query.includes('INSERT INTO gnucash_web_inventory_movements')) {
+          const txnGuid = (args[9] ?? null) as string | null;
+          movementTxnGuids.push(txnGuid);
+          return [{
+            id: nextMovementId++,
+            item_id: args[0],
+            location_id: args[1],
+            movement_type: args[2],
+            quantity: args[3],
+            unit_cost: args[4],
+            movement_date: new Date('2026-02-01T00:00:00Z'),
+            reference: args[6],
+            invoice_guid: args[7],
+            entry_guid: args[8],
+            txn_guid: txnGuid,
+            counterpart_movement_id: null,
+            created_at: new Date('2026-02-01T00:00:00Z'),
+          }];
+        }
+        if (query.includes('FROM gnucash_web_inventory_items')) return [fulfillmentItemRow];
+        if (query.includes('FROM gnucash_web_inventory_locations')) {
+          return [{ id: 2, name: 'Main warehouse', active: true }];
+        }
+        // Net-fulfilled-per-entry lookup: nothing shipped against this invoice yet.
+        if (query.includes('GROUP BY entry_guid')) return [];
+        // On-hand: plenty of stock at the location.
+        if (query.includes('SUM(quantity)')) return [{ total: 100 }];
+        throw new Error(`Unexpected inventory query: ${query}`);
+      }),
+      $executeRawUnsafe: vi.fn().mockResolvedValue(undefined),
+      invoices: {
+        findUnique: vi.fn().mockResolvedValue({
+          guid: 'invoice-guid',
+          id: 'INV-001',
+          owner_type: 2,
+          owner_guid: 'customer-guid',
+          post_txn: 'invoice-post-txn',
+        }),
+      },
+      jobs: { findUnique: vi.fn() },
+      entries: {
+        findMany: vi.fn().mockResolvedValue([
+          { guid: 'entry-guid', quantity_num: 10n, quantity_denom: 1n },
+        ]),
+      },
+      accounts: {
+        findUnique: vi.fn().mockResolvedValue({ guid: 'cogs-account', commodity_guid: 'usd-guid' }),
+      },
+      commodities: {
+        findUnique: vi.fn().mockResolvedValue({ guid: 'usd-guid', namespace: 'CURRENCY', fraction: 100 }),
+        findFirst: vi.fn(),
+      },
+      transactions: { create: vi.fn().mockResolvedValue({}) },
+      slots: { create: vi.fn().mockResolvedValue({}) },
+      splits: {
+        create: vi.fn().mockImplementation(async ({ data }: { data: CreatedSplit }) => {
+          splitsCreated.push(data);
+          return {};
+        }),
+      },
+    } as unknown as Parameters<typeof assertPostableAccount>[0];
+
+    const transactionRunner = prismaMock.$transaction as unknown as {
+      mockImplementation: (implementation: (callback: (tx: unknown) => Promise<unknown>) => Promise<unknown>) => void;
+    };
+    transactionRunner.mockImplementation(async callback => callback(transaction));
+    return { transaction, splitsCreated, movementTxnGuids };
+  }
+
+  const fulfillInput = (post?: boolean) => ({
+    bookGuid: 'active-book',
+    invoiceGuid: 'invoice-guid',
+    allocations: [{ entryGuid: 'entry-guid', itemId: 1, quantity: SHIP_QTY, locationId: 2 }],
+    date: '2026-02-01',
+    ...(post === undefined ? {} : { post }),
+  });
+
+  beforeEach(() => {
+    prismaMock.$transaction.mockReset();
+    prismaMock.$executeRawUnsafe.mockReset();
+  });
+
+  it('posts COGS when no post option is supplied', async () => {
+    const { transaction, splitsCreated, movementTxnGuids } = createFulfillmentTransaction();
+
+    const result = await fulfillInvoiceLines(fulfillInput());
+
+    expect(transaction.transactions.create).toHaveBeenCalledOnce();
+    expect(splitsCreated).toHaveLength(2);
+    expect(result.movements).toHaveLength(1);
+    // The movement is linked to the ledger transaction that was just written.
+    expect(movementTxnGuids[0]).toEqual(expect.any(String));
+    expect(result.movements[0].txnGuid).toBe(movementTxnGuids[0]);
+  });
+
+  it('debits COGS and credits the inventory asset at quantity × avg cost', async () => {
+    const { splitsCreated } = createFulfillmentTransaction();
+
+    await fulfillInvoiceLines(fulfillInput());
+
+    const cogsSplit = splitsCreated.find(s => s.account_guid === 'cogs-account');
+    const assetSplit = splitsCreated.find(s => s.account_guid === 'asset-account');
+    expect(cogsSplit?.value_num).toBe(EXPECTED_NUM);
+    expect(cogsSplit?.value_denom).toBe(100n);
+    expect(assetSplit?.value_num).toBe(-EXPECTED_NUM);
+  });
+
+  it('writes a balanced entry (splits sum to zero, quantity mirrors value)', async () => {
+    const { splitsCreated } = createFulfillmentTransaction();
+
+    await fulfillInvoiceLines(fulfillInput());
+
+    const denominators = new Set(splitsCreated.map(s => s.value_denom));
+    expect(denominators.size).toBe(1);
+    const total = splitsCreated.reduce((sum, s) => sum + s.value_num, 0n);
+    expect(total).toBe(0n);
+    for (const split of splitsCreated) {
+      expect(split.quantity_num).toBe(split.value_num);
+      expect(split.quantity_denom).toBe(split.value_denom);
+    }
+  });
+
+  it('skips the COGS posting only when the caller opts out with post: false', async () => {
+    const { transaction, splitsCreated, movementTxnGuids } = createFulfillmentTransaction();
+
+    const result = await fulfillInvoiceLines(fulfillInput(false));
+
+    expect(transaction.transactions.create).not.toHaveBeenCalled();
+    expect(splitsCreated).toHaveLength(0);
+    // Stock still moves — only the ledger side is suppressed.
+    expect(result.movements).toHaveLength(1);
+    expect(movementTxnGuids[0]).toBeNull();
+    expect(result.movements[0].txnGuid).toBeNull();
+  });
+
+  it('names every unpostable item at once instead of failing one retry at a time', async () => {
+    const { transaction } = createFulfillmentTransaction();
+    // Two more allocated items, both missing their COGS/asset accounts.
+    const previous = transaction.$queryRawUnsafe as unknown as (query: string, ...args: unknown[]) => Promise<unknown>;
+    (transaction as unknown as { $queryRawUnsafe: unknown }).$queryRawUnsafe = vi.fn().mockImplementation(
+      async (query: string, ...args: unknown[]) => {
+        if (query.includes('FROM gnucash_web_inventory_items')) {
+          return [
+            fulfillmentItemRow,
+            { ...fulfillmentItemRow, id: 2, sku: 'GADGET', cogs_account_guid: null },
+            { ...fulfillmentItemRow, id: 3, sku: 'DOODAD', asset_account_guid: null },
+          ];
+        }
+        return previous(query, ...args);
+      },
+    );
+
+    const fulfillError = await fulfillInvoiceLines({
+      ...fulfillInput(),
+      allocations: [1, 2, 3].map(itemId => ({
+        entryGuid: 'entry-guid', itemId, quantity: 1, locationId: 2,
+      })),
+    }).catch(e => e);
+
+    expect(fulfillError).toBeInstanceOf(InventoryValidationError);
+    expect((fulfillError as Error).message).toContain('DOODAD');
+    expect((fulfillError as Error).message).toContain('GADGET');
+    // The correctly-configured item is not blamed.
+    expect((fulfillError as Error).message).not.toContain('WIDGET');
+    expect(transaction.transactions.create).not.toHaveBeenCalled();
+  });
+
+  // -------------------------------------------------------------------------
+  // Returns are OPT-IN: the reversal uses the item's CURRENT average cost, not
+  // the basis the original shipment was relieved at, so defaulting it on would
+  // post a knowingly wrong entry whenever cost moved between ship and return.
+  // -------------------------------------------------------------------------
+
+  /** Report 5 net-fulfilled units so a return is within bounds. */
+  function withFulfilledHistory(transaction: ReturnType<typeof createFulfillmentTransaction>['transaction']) {
+    const previous = transaction.$queryRawUnsafe as unknown as (query: string, ...args: unknown[]) => Promise<unknown>;
+    (transaction as unknown as { $queryRawUnsafe: unknown }).$queryRawUnsafe = vi.fn().mockImplementation(
+      async (query: string, ...args: unknown[]) => {
+        if (query.includes('GROUP BY entry_guid')) return [{ entry_guid: 'entry-guid', total: -5 }];
+        return previous(query, ...args);
+      },
+    );
+  }
+
+  it('does NOT post a reversal on returnToStock without an explicit post option', async () => {
+    const { transaction, splitsCreated, movementTxnGuids } = createFulfillmentTransaction();
+    withFulfilledHistory(transaction);
+
+    const result = await returnToStock(fulfillInput());
+
+    expect(transaction.transactions.create).not.toHaveBeenCalled();
+    expect(splitsCreated).toHaveLength(0);
+    // Stock still comes back; only the ledger reversal is withheld.
+    expect(result.movements).toHaveLength(1);
+    expect(movementTxnGuids[0]).toBeNull();
+  });
+
+  it('posts the reversal on returnToStock when the caller opts in with post: true', async () => {
+    const { transaction, splitsCreated } = createFulfillmentTransaction();
+    withFulfilledHistory(transaction);
+
+    await returnToStock(fulfillInput(true));
+
+    expect(transaction.transactions.create).toHaveBeenCalledOnce();
+    expect(splitsCreated).toHaveLength(2);
+    // Reversal direction: asset debited, COGS credited.
+    expect(splitsCreated.find(s => s.account_guid === 'asset-account')?.value_num).toBe(EXPECTED_NUM);
+    expect(splitsCreated.find(s => s.account_guid === 'cogs-account')?.value_num).toBe(-EXPECTED_NUM);
+    expect(splitsCreated.reduce((sum, s) => sum + s.value_num, 0n)).toBe(0n);
   });
 });
 

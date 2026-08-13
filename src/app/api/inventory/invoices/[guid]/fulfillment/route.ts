@@ -36,10 +36,12 @@ export async function GET(
  * Body: { mode?: 'fulfill' (default) | 'return',
  *         allocations: [{ entryGuid, itemId, quantity, locationId }],
  *         date?, post? }
+ *   post DEFAULTS TO TRUE: omitting it writes the COGS entry. Send the boolean
+ *   `false` to opt out (leaving inventory relieved with no cost recognized).
  *   mode 'fulfill': ship stock against a POSTED customer invoice
- *     (post=true also writes a COGS txn per allocation).
+ *     (writes a COGS txn per allocation).
  *   mode 'return' : return previously fulfilled quantities to stock
- *     (post=true writes a reversing COGS txn per allocation).
+ *     (writes a reversing COGS txn per allocation).
  * Response 201: { invoiceGuid, movements: InventoryMovement[] }
  * Errors: 400 validation/over-fulfillment, 404 unknown invoice,
  *         409 unposted invoice or insufficient stock.
@@ -70,7 +72,9 @@ export async function POST(
       invoiceGuid: guid,
       allocations: body.allocations,
       date: body.date,
-      post: body.post,
+      // Only an explicit boolean speaks: anything else (absent, null, a
+      // stray string) falls through to the engine's post-by-default.
+      post: typeof body.post === 'boolean' ? body.post : undefined,
     };
     const result = mode === 'return'
       ? await returnToStock(input)

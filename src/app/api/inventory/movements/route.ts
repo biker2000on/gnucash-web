@@ -44,7 +44,9 @@ export async function GET(request: NextRequest) {
  *   receive : + { locationId, unitCost?, post?, offsetAccountGuid? }
  *             (unitCost + offsetAccountGuid required when post=true)
  *             → { movement, item, txnGuid }
- *   ship    : + { locationId, post? }              → { movement, item, txnGuid }
+ *   ship    : + { locationId, post? } — post DEFAULTS TO TRUE (COGS txn);
+ *             send the boolean false to opt out
+ *                                                  → { movement, item, txnGuid }
  *   adjust  : + { locationId, unitCost? } — quantity is SIGNED, never posts
  *             → { movement, item, txnGuid: null }
  *   transfer: + { fromLocationId, toLocationId }   → { outMovement, inMovement }
@@ -100,7 +102,9 @@ export async function POST(request: NextRequest) {
         quantity: body.quantity,
         date: body.date,
         reference: body.reference,
-        post: body.post,
+        // Only an explicit boolean speaks: anything else (absent, null, a
+        // stray string) falls through to the engine's post-by-default.
+        post: typeof body.post === 'boolean' ? body.post : undefined,
       });
       afterLedgerWrite(bookGuid, 'transactions', { action: 'create' });
       return NextResponse.json(result, { status: 201 });
