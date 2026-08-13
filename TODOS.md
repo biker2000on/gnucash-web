@@ -1654,6 +1654,119 @@ contract (`src/lib/document-preview.ts`), extraction queue job, object storage.
 
 ---
 
+## P3 - Document Vault: Auto-Tagging, In-Vault Text Search, and (v2/v3) RAG
+
+**Status:** Open. Requested 2026-08-13.
+
+**Outcome:** Paperless-ngx's organizing model — documents carry meaningful
+tags applied automatically, and you can find any document by something it
+*says*, not just by what it's called. Semantic retrieval across document text
+is explicitly deferred to v2/v3.
+
+**Start here — most of this already exists and is simply not surfaced.**
+Verified 2026-08-13 before writing this item:
+
+- **Vault text is already extracted and already full-text indexed.**
+  `runEntityDocumentExtraction` (`src/lib/documents/entity-extraction.ts:103-115`)
+  upserts a canonical `gnucash_web_documents` row with
+  `sourceKind: 'entity_document'` carrying `extracted_text`, and db-init
+  maintains a generated `search_tsvector` + GIN `idx_documents_search_fts`.
+  `doc-search.ts:305-316` searches that table with
+  `source_kind NOT IN ('receipt','statement_batch','payslip')` — which
+  **includes** vault documents. So `GET /api/search/documents?q=` already
+  searches vault text today.
+- **The vault UI has no search box at all** (`grep -n "search" page.tsx` →
+  zero hits). The capability exists and is unreachable from the surface that
+  needs it most.
+- **Generic AI classification already exists.** The extraction pass emits
+  `suggestionKind` values `generic_document`, `insurance_policy`,
+  `estate_document`, and `tax_record`, each parsed and bounded before
+  persisting. But the vault UI consumes **only** `tax_record`
+  (`page.tsx:265`), so every non-tax document already has suggestions
+  computed and thrown away.
+- **A book-scoped tag model already exists** — `gnucash_web_tags` at
+  `schema.prisma:955`, with `gnucash_web_transaction_tags` and
+  `gnucash_web_account_tags` join tables and a `(book_guid, name)` unique.
+  Documents have no join table, and `doc_type` is a single VARCHAR, so a
+  document today has exactly one category and no tags.
+
+### v1 — surface what is already built
+
+1. **Search in the vault.** A search box on the vault page over the existing
+   `/api/search/documents` results, filtered to `entity_document`, with a
+   matched-text snippet on each hit. Fold it into the same filtered dataset
+   feeding the card and table views from the item above, so search, category
+   filter, and grouping compose instead of fighting.
+2. **Consume the generic suggestions for every document type**, not just tax.
+   The polling, review-before-accept, and apply flow already exist in the tax
+   detailing pass (`page.tsx:253-266,435-446`) — generalize it rather than
+   writing a second one. Keep the accept gate: suggestions stay advisory and
+   are applied through the ordinary `PUT`, per the deterministic-before-
+   generative product rule.
+3. **Multi-tag documents by reusing `gnucash_web_tags`.** Add a
+   `gnucash_web_document_tags` join table following the exact shape of the
+   transaction/account tag tables. Do **not** invent a second tag vocabulary —
+   a tag should mean the same thing on a transaction and on the document that
+   evidences it, which is also what makes tags useful for linking evidence
+   later. `doc_type` stays as the single primary category driving grouping;
+   tags are additive.
+4. **Auto-apply rules, deterministic first.** Paperless's real leverage is
+   that tagging becomes automatic. Ship rule-based matching (issuer/filename/
+   text contains → tag) before leaning on the model: rules are inspectable,
+   testable, and reproducible, and they give the AI pass something to be
+   checked against. AI-suggested tags land as suggestions, never as silent
+   writes.
+
+**v1 checklist answers:** Improves the recurring find-and-file workflow.
+Emits no new Action or Timeline event; it strengthens evidence linkage, which
+the provenance rule already depends on. Reuses the entity documents service,
+the canonical document store and its FTS index, the existing extraction/
+suggestion pipeline, and the existing tag model — no new engine. Deterministic
+where it matters: rule matching and search ranking are pure and testable, and
+the AI path is advisory with an explicit accept step. Preview/approve: every
+suggested value is reviewed before it is written; undo is the ordinary
+document edit. Single-book (all four tables are book-scoped); no currency
+involvement. Success measure: share of documents with at least one tag applied
+without manual entry, and whether search-by-content actually gets used.
+
+**v1 effort:** S–M. Most of the cost is UI; the pipeline is built.
+
+### v2/v3 — RAG store (deferred, do not start with this)
+
+Chunk + embed vault document text for semantic retrieval and grounded
+question-answering across the archive ("what's my deductible on the barn
+policy?"), where Postgres FTS's exact-token matching falls short.
+
+Deferred deliberately: auto-tagging plus working full-text search resolves
+most of the actual retrieval need at a fraction of the cost and operational
+surface, and it is the right thing to measure *before* deciding an embedding
+store is warranted. Recorded now only so v1 doesn't foreclose it.
+
+When it is picked up:
+- Chunking and embedding belong in the existing extraction worker, keyed off
+  `gnucash_web_documents.extracted_text`, so there is still exactly one
+  canonical text of record. Do not create a second document store.
+- Prefer `pgvector` in the existing Postgres over a new external service —
+  self-hosted is the product's whole posture, and a separate vector database
+  is a second thing to back up, secure, and keep book-scoped.
+- **Book scoping and RBAC must hold at retrieval time.** An embedding index
+  that ignores `book_guid` silently leaks documents across books; this is the
+  single largest correctness risk in the feature.
+- Retrieval must be hybrid (FTS + vector) and must **cite the source document
+  and page**. Per the product rules, generated text may explain and summarize
+  but never invent figures — any dollar amount in an answer has to trace to a
+  document or it does not ship.
+- Re-embedding on document change, and embedding cost/latency per upload, are
+  the operational unknowns to size first.
+
+**Depends on:** Entity documents service and vault page, canonical document
+store and its FTS index, extraction/suggestion pipeline, `gnucash_web_tags`.
+The vault browse rework above is the natural surface for all of it.
+
+**Effort:** S–M for v1. RAG is L and unscoped by design.
+
+---
+
 ## P4 - Receipt AI Re-Extraction Batch Job
 
 **Status:** Implemented 2026-07-26.
