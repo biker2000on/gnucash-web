@@ -610,6 +610,60 @@ describe('POST /api/splits/bulk/move book scoping', () => {
         expect(rows[0].account_guid).toBe(FOREIGN_ACCOUNT);
     });
 
+    it('404s — and names NO foreign account — when the row leaves the book AND is reconciled', async () => {
+        // The leak this guards. Both predicates on the write exclude the row
+        // at once: it has left the book AND become reconciled. Diagnosing the
+        // reconcile state first would answer with a 423 naming an account in
+        // SOMEONE ELSE'S book. The book scope must be ruled out first, so the
+        // answer is the same 404 any other out-of-book split gets.
+        const rows = installBookAwareDb([ownSplit(SPLIT_1)], (callIndex, live) => {
+            if (callIndex === 1) {
+                live[0].account_guid = FOREIGN_ACCOUNT;
+                live[0].reconcile_state = 'y';
+            }
+        });
+
+        const response = await POST(moveRequest({
+            splitGuids: [SPLIT_1],
+            targetAccountGuid: TARGET_ACCOUNT,
+        }));
+        const body = await response.json();
+
+        expect(response.status).toBe(404);
+        expect(body).toEqual({ error: 'Some splits not found in this book' });
+        // Nothing about the foreign account leaks: not its guid, not the name
+        // the 423 message would have embedded, not the 423 code itself.
+        const serialized = JSON.stringify(body);
+        expect(serialized).not.toContain(FOREIGN_ACCOUNT);
+        expect(serialized).not.toContain('Account ' + FOREIGN_ACCOUNT);
+        expect(serialized).not.toContain('RECONCILED_SPLIT');
+        expect(serialized).not.toMatch(/unreconcile/i);
+        // Rolled back: no enter_date bump, and the row never moved.
+        expect(prismaMock.transactions.updateMany).not.toHaveBeenCalled();
+        expect(rows[0].account_guid).toBe(FOREIGN_ACCOUNT);
+    });
+
+    it('still returns the actionable 423 — naming the account — for an IN-BOOK reconciled split', async () => {
+        // The counterpart to the test above: the diagnostic re-read is book
+        // scoped, but for a split that is still in this book it must keep
+        // naming the split and its account, or the 423 stops being actionable.
+        installBookAwareDb([ownSplit(SPLIT_1)], (callIndex, live) => {
+            if (callIndex === 1) live[0].reconcile_state = 'y';
+        });
+
+        const response = await POST(moveRequest({
+            splitGuids: [SPLIT_1],
+            targetAccountGuid: TARGET_ACCOUNT,
+        }));
+        const body = await response.json();
+
+        expect(response.status).toBe(423);
+        expect(body.code).toBe('RECONCILED_SPLIT');
+        expect(body.error).toContain(SPLIT_1);
+        expect(body.error).toContain(`Account ${ACCOUNT_FROM}`);
+        expect(body.error).toMatch(/unreconcile/i);
+    });
+
     it('404s when only the WRITE predicate excludes an out-of-book row', async () => {
         // Belt and braces: both reads see the split as in-book (stale), so the
         // book constraint on the updateMany itself is the last line of

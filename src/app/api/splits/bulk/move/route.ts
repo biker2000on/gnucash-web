@@ -11,7 +11,6 @@ import {
     periodLockedResponse,
 } from '@/lib/services/period-lock.service';
 import {
-    assertNoReconciledSplits,
     assertSplitsNotProtected,
     lockTransactionsForUpdate,
     PROTECTED_RECONCILE_STATES,
@@ -117,9 +116,11 @@ export async function POST(request: Request) {
             );
         }
 
-        // Verify target account exists IN THIS BOOK. `equals` + `in` in one
-        // filter renders as `guid = $1 AND guid IN (...)`, so an out-of-book
-        // account is indistinguishable from a nonexistent one.
+        // Verify target account exists IN THIS BOOK. `equals` and `in` on one
+        // filter compose as a conjunction — both must hold — so an
+        // out-of-book account is indistinguishable from a nonexistent one.
+        // (The engine is free to optimise the emitted SQL; it is the AND
+        // semantics that are guaranteed, not a particular statement shape.)
         const targetAccount = await prisma.accounts.findFirst({
             where: { guid: { equals: targetAccountGuid, in: bookAccountGuids } },
             select: { guid: true, commodity_guid: true },
@@ -242,18 +243,50 @@ export async function POST(request: Request) {
                 data: { account_guid: targetAccountGuid },
             });
             if (moved.count !== uniqueSplitGuids.length) {
-                // Fewer rows moved than asked for while holding the lock: two
-                // predicates can exclude one — the reconcile state, or the
-                // book scope. Try the reconcile diagnosis first (it produces
-                // the actionable 423 naming the split)...
-                await assertNoReconciledSplits(
-                    'move these splits to another account',
-                    { splitGuids: uniqueSplitGuids },
-                    { client: tx },
-                );
-                // ...and if no split was reconciled, the book predicate is
-                // what excluded it. Refuse rather than reporting a quietly
-                // short "updated" count; the transaction rolls back.
+                // Fewer rows moved than asked for while holding the lock. Two
+                // predicates can exclude a row — the book scope or the
+                // reconcile state — and the ORDER in which they are diagnosed
+                // is a security property, not a style choice.
+                //
+                // The book scope MUST be ruled out first. The 423 message
+                // names the offending split's ACCOUNT, so diagnosing the
+                // reconcile state first would, for a split that left this book
+                // after the reads above, hand the caller the name of an
+                // account in someone else's book. `assertNoReconciledSplits`
+                // cannot be used here for exactly that reason: it re-reads by
+                // guid with no account scope. (Giving it an account-scope
+                // parameter is filed separately as
+                // `reconciled-split-service-account-scope`.)
+                //
+                // No new lock is needed: the parent transaction rows were
+                // locked FOR UPDATE at the top of this transaction, a split's
+                // tx_guid never changes, so this read is still a
+                // read-after-lock and nothing can commit under it.
+                const diagnostic = await tx.splits.findMany({
+                    where: {
+                        guid: { in: uniqueSplitGuids },
+                        account_guid: { in: bookAccountGuids },
+                    },
+                    select: {
+                        guid: true,
+                        tx_guid: true,
+                        account_guid: true,
+                        reconcile_state: true,
+                        account: { select: { name: true } },
+                    },
+                });
+                if (diagnostic.length !== uniqueSplitGuids.length) {
+                    // A requested split is not in this book. Indistinguishable
+                    // from not-found, and no foreign account is named.
+                    throw new OutOfBookError(SPLITS_NOT_IN_BOOK);
+                }
+                // Every requested split IS in this book, so naming one is
+                // safe — and useful: this is the actionable 423 telling the
+                // caller which split to unreconcile.
+                assertSplitsNotProtected('move these splits to another account', diagnostic);
+                // Neither predicate explains the short count (the row was
+                // deleted underneath us, say). Refuse rather than report a
+                // quietly short "updated"; the transaction rolls back.
                 throw new OutOfBookError(SPLITS_NOT_IN_BOOK);
             }
 
