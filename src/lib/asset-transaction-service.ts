@@ -8,7 +8,7 @@
  */
 
 import prisma from '@/lib/prisma';
-import { generateGuid } from '@/lib/gnucash';
+import { generateGuid, toDecimalNumber } from '@/lib/gnucash';
 import { logAudit } from '@/lib/services/audit.service';
 import { assertAccountNotLocked } from '@/lib/services/period-lock.service';
 import { generateSchedule, type DepreciationConfig } from '@/lib/depreciation';
@@ -32,20 +32,27 @@ export interface AdjustToTargetValueParams {
 }
 
 /**
- * Get the current balance of an asset account by summing all splits.
+ * Get the current account-side quantity of an asset account by summing all splits.
+ *
+ * For fixed assets, quantity is the balance in the account's commodity. A
+ * split's value is denominated in the transaction currency and can differ
+ * from quantity, so it must not be used to calculate a target adjustment.
  */
 export async function getAssetBalance(accountGuid: string): Promise<number> {
-  // Prisma aggregate can't do per-row arithmetic (num/denom) before
-  // summing, so this stays as raw SQL.
-  const result = await prisma.$queryRaw<{ total: string | null }[]>`
-    SELECT COALESCE(
-      SUM(CAST(value_num AS DOUBLE PRECISION) / CAST(value_denom AS DOUBLE PRECISION)),
-      0
-    )::TEXT AS total
+  // Preserve each GnuCash fraction until conversion through the shared exact
+  // fraction helper. Split denominators are not necessarily powers of ten.
+  const splits = await prisma.$queryRaw<{
+    quantity_num: bigint;
+    quantity_denom: bigint;
+  }[]>`
+    SELECT quantity_num, quantity_denom
     FROM splits
     WHERE account_guid = ${accountGuid}
   `;
-  return parseFloat(result[0]?.total ?? '0');
+  return splits.reduce(
+    (balance, split) => balance + toDecimalNumber(split.quantity_num, split.quantity_denom),
+    0
+  );
 }
 
 /**
