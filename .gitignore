@@ -64,3 +64,4 @@ scripts/*
 !scripts/check-docs-coverage.ts
 !scripts/db-init-entrypoint.ts
 !scripts/dev-run-db-init.ts
+.polly/
