@@ -705,14 +705,55 @@ async function resolvePostingCurrency(
   return { guid: any.guid, fraction: any.fraction || 100 };
 }
 
-async function assertPostableAccount(tx: PrismaTx, guid: string, label: string): Promise<void> {
-  const account = await tx.accounts.findUnique({
-    where: { guid },
-    select: { guid: true, placeholder: true },
-  });
+/**
+ * Verify that a ledger posting target belongs to the book being mutated.
+ *
+ * GnuCash accounts have no direct book foreign key: ownership is determined
+ * by walking parent_guid to the ROOT account referenced by books.root_account_guid.
+ */
+export async function assertPostableAccount(
+  tx: PrismaTx,
+  guid: string,
+  label: string,
+  expectedBookGuid: string,
+): Promise<void> {
+  const accounts = await tx.$queryRaw<Array<{
+    guid: string;
+    placeholder: number | null;
+    book_guid: string | null;
+  }>>`
+    WITH RECURSIVE account_ancestors AS (
+      SELECT guid, parent_guid, 1 AS depth
+      FROM accounts
+      WHERE guid = ${guid}
+
+      UNION ALL
+
+      SELECT parent.guid, parent.parent_guid, account_ancestors.depth + 1
+      FROM accounts parent
+      JOIN account_ancestors ON parent.guid = account_ancestors.parent_guid
+      WHERE account_ancestors.depth < 200
+    )
+    SELECT account.guid,
+           account.placeholder,
+           (
+             SELECT book.guid
+             FROM books book
+             JOIN account_ancestors ON account_ancestors.guid = book.root_account_guid
+             LIMIT 1
+           ) AS book_guid
+    FROM accounts account
+    WHERE account.guid = ${guid}
+  `;
+  const account = accounts[0];
   if (!account) throw new InventoryValidationError(`${label} account not found: ${guid}`);
   if (account.placeholder === 1) {
     throw new InventoryValidationError(`${label} account ${guid} is a placeholder`);
+  }
+  if (account.book_guid !== expectedBookGuid) {
+    throw new InventoryValidationError(
+      `${label} account ${guid} belongs to book ${account.book_guid ?? 'none'}, not requested book ${expectedBookGuid}`,
+    );
   }
 }
 
@@ -878,8 +919,8 @@ export async function receiveStock(input: ReceiveInput): Promise<MovementResult>
           `Item ${item.sku} has no asset account configured — set assetAccountGuid before posting`,
         );
       }
-      await assertPostableAccount(tx, item.assetAccountGuid, 'Asset');
-      await assertPostableAccount(tx, input.offsetAccountGuid!, 'Offset');
+      await assertPostableAccount(tx, item.assetAccountGuid, 'Asset', input.bookGuid);
+      await assertPostableAccount(tx, input.offsetAccountGuid!, 'Offset', input.bookGuid);
       const amount = input.quantity * (input.unitCost ?? 0);
       txnGuid = await writeLedgerTxn(tx, {
         date,
@@ -939,7 +980,9 @@ export async function shipStock(input: ShipInput): Promise<MovementResult> {
 
     const isFifo = item.valuationMethod === 'fifo';
     const effectiveCost = await consumptionUnitCost(tx, item, input.quantity);
-    const txnGuid = await maybePostCogs(tx, item, input.quantity, date, input.post, input.reference, effectiveCost);
+    const txnGuid = await maybePostCogs(
+      tx, item, input.bookGuid, input.quantity, date, input.post, input.reference, effectiveCost,
+    );
 
     const movement = await insertMovement(tx, {
       itemId: item.id,
@@ -968,6 +1011,7 @@ export async function shipStock(input: ShipInput): Promise<MovementResult> {
 async function maybePostCogs(
   tx: PrismaTx,
   item: InventoryItem,
+  bookGuid: string,
   positiveQty: number,
   date: string,
   post: boolean | undefined,
@@ -980,8 +1024,8 @@ async function maybePostCogs(
       `Item ${item.sku} needs both cogsAccountGuid and assetAccountGuid configured before posting COGS`,
     );
   }
-  await assertPostableAccount(tx, item.cogsAccountGuid, 'COGS');
-  await assertPostableAccount(tx, item.assetAccountGuid, 'Asset');
+  await assertPostableAccount(tx, item.cogsAccountGuid, 'COGS', bookGuid);
+  await assertPostableAccount(tx, item.assetAccountGuid, 'Asset', bookGuid);
   const amount = positiveQty * unitCost;
   return writeLedgerTxn(tx, {
     date,
@@ -997,6 +1041,7 @@ async function maybePostCogs(
 async function maybePostReturn(
   tx: PrismaTx,
   item: InventoryItem,
+  bookGuid: string,
   positiveQty: number,
   date: string,
   post: boolean | undefined,
@@ -1008,8 +1053,8 @@ async function maybePostReturn(
       `Item ${item.sku} needs both cogsAccountGuid and assetAccountGuid configured before posting a return`,
     );
   }
-  await assertPostableAccount(tx, item.cogsAccountGuid, 'COGS');
-  await assertPostableAccount(tx, item.assetAccountGuid, 'Asset');
+  await assertPostableAccount(tx, item.cogsAccountGuid, 'COGS', bookGuid);
+  await assertPostableAccount(tx, item.assetAccountGuid, 'Asset', bookGuid);
   const amount = positiveQty * item.avgCost;
   return writeLedgerTxn(tx, {
     date,
@@ -1259,8 +1304,8 @@ export async function assembleBom(input: AssembleInput): Promise<AssembleResult>
         }
       }
       if (splits.length > 0 && transferred > 0) {
-        await assertPostableAccount(tx, outputItem.assetAccountGuid, 'Asset');
-        for (const s of splits) await assertPostableAccount(tx, s.accountGuid, 'Asset');
+        await assertPostableAccount(tx, outputItem.assetAccountGuid, 'Asset', input.bookGuid);
+        for (const s of splits) await assertPostableAccount(tx, s.accountGuid, 'Asset', input.bookGuid);
         splits.unshift({
           accountGuid: outputItem.assetAccountGuid,
           value: transferred,
@@ -1461,7 +1506,9 @@ export async function fulfillInvoiceLines(input: FulfillInput): Promise<FulfillR
       // Computed inside the loop so sequential FIFO consumptions of the same
       // item see each other's just-inserted movements.
       const effectiveCost = await consumptionUnitCost(tx, item, a.quantity);
-      const txnGuid = await maybePostCogs(tx, item, a.quantity, date, input.post, reference, effectiveCost);
+      const txnGuid = await maybePostCogs(
+        tx, item, input.bookGuid, a.quantity, date, input.post, reference, effectiveCost,
+      );
       movements.push(
         await insertMovement(tx, {
           itemId: item.id,
@@ -1506,7 +1553,7 @@ export async function returnToStock(input: FulfillInput): Promise<FulfillResult>
     const movements: InventoryMovement[] = [];
     for (const a of input.allocations) {
       const item = items.get(a.itemId)!;
-      const txnGuid = await maybePostReturn(tx, item, a.quantity, date, input.post, reference);
+      const txnGuid = await maybePostReturn(tx, item, input.bookGuid, a.quantity, date, input.post, reference);
       movements.push(
         await insertMovement(tx, {
           itemId: item.id,

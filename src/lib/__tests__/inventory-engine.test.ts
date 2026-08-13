@@ -23,6 +23,7 @@ import {
   validateReceiveAllocations,
   buildFifoLayers,
   computeFifoConsumption,
+  assertPostableAccount,
   InventoryValidationError,
   InventoryStockError,
   type AssemblyComponentSpec,
@@ -30,6 +31,52 @@ import {
   type FifoLayer,
 } from '../inventory-engine';
 import type { MovementType } from '../services/inventory.service';
+import { mapInventoryError } from '../inventory-api-errors';
+
+// ---------------------------------------------------------------------------
+// Ledger posting account guards
+// ---------------------------------------------------------------------------
+
+describe('assertPostableAccount', () => {
+  const postableAccount = (bookGuid: string, placeholder: number | null = 0) => ({
+    guid: 'account-guid',
+    placeholder,
+    book_guid: bookGuid,
+  });
+
+  const transactionFor = (account: ReturnType<typeof postableAccount>) =>
+    ({ $queryRaw: vi.fn().mockResolvedValue([account]) }) as unknown as Parameters<typeof assertPostableAccount>[0];
+
+  it('rejects posting to an account owned by another book with an actionable API error', async () => {
+    const error = await assertPostableAccount(
+      transactionFor(postableAccount('other-book')),
+      'account-guid',
+      'Offset',
+      'requested-book',
+    ).catch(error => error);
+
+    expect(error).toBeInstanceOf(InventoryValidationError);
+    expect((error as Error).message).toBe(
+      'Offset account account-guid belongs to book other-book, not requested book requested-book',
+    );
+
+    const response = mapInventoryError(error);
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ error: (error as Error).message });
+  });
+
+  it('allows posting to an account owned by the requested book', async () => {
+    await expect(
+      assertPostableAccount(transactionFor(postableAccount('requested-book')), 'account-guid', 'Asset', 'requested-book'),
+    ).resolves.toBeUndefined();
+  });
+
+  it('still rejects placeholder accounts in the requested book', async () => {
+    await expect(
+      assertPostableAccount(transactionFor(postableAccount('requested-book', 1)), 'account-guid', 'Asset', 'requested-book'),
+    ).rejects.toThrow('Asset account account-guid is a placeholder');
+  });
+});
 
 // ---------------------------------------------------------------------------
 // Signed quantity / movement-type enforcement
