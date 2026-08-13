@@ -18,17 +18,32 @@ import type { Currency } from '@/lib/currency';
 import {
   buildAccountValuationContext,
   type AccountValuationContext,
+  type ValuationGap,
 } from '@/lib/account-valuation';
 
 const ASSET_TYPES = ['ASSET', 'BANK', 'CASH', 'RECEIVABLE'];
 const LIABILITY_TYPES = ['LIABILITY', 'CREDIT', 'PAYABLE'];
 const INVESTMENT_TYPES = ['STOCK', 'MUTUAL'];
 
+/**
+ * How much of the book the accompanying total actually covers. `complete` is
+ * true for the ordinary fully-priced book; when it is false the total is a
+ * partial figure and must be presented with the gaps, never on its own.
+ */
+export interface ValuationCoverage {
+  complete: boolean;
+  /** Accounts with a non-zero balance that contributed nothing to the total. */
+  unvaluedAccountCount: number;
+  /** The commodities behind those accounts, with user-facing explanations. */
+  gaps: ValuationGap[];
+}
+
 export interface NetWorthResult {
   assets: number;
   liabilities: number;
   investmentValue: number;
   netWorth: number;
+  coverage: ValuationCoverage;
 }
 
 export interface NetWorthSummary {
@@ -59,6 +74,12 @@ export interface FinancialSummary {
   topExpenseCategory: string;
   topExpenseAmount: number;
   investmentValue: number;
+  /**
+   * Coverage of netWorth/investmentValue as of the end date. Surfaces alongside
+   * the numbers so an unpriceable holding reads as "excluded" rather than
+   * silently shrinking the headline figure.
+   */
+  coverage: ValuationCoverage;
 }
 
 /**
@@ -114,6 +135,7 @@ export class FinancialSummaryService {
       topExpenseCategory: topCategory.name,
       topExpenseAmount: round2(topCategory.amount),
       investmentValue: round2(netWorthSummary.end.investmentValue),
+      coverage: netWorthSummary.end.coverage,
     };
   }
 
@@ -179,6 +201,8 @@ export class FinancialSummaryService {
       let assetTotal = 0;
       let liabilityTotal = 0;
       let investmentValue = 0;
+      let unvaluedAccountCount = 0;
+      const unvaluedCommodityGuids = new Set<string>();
       const quantityByAccount = new Map<string, number>();
 
       for (const split of splits) {
@@ -194,11 +218,18 @@ export class FinancialSummaryService {
       for (const [accountGuid, quantity] of quantityByAccount) {
         const account = accountByGuid.get(accountGuid);
         if (!account) continue;
-        const value = quantity * valuation.getMultiplier({
+        const valuationInput = {
           accountType: account.account_type,
           commodityGuid: account.commodity_guid,
           commodityNamespace: account.commodity?.namespace,
-        });
+        };
+        // A balance we cannot price contributes 0 -- track it so the caller can
+        // say the total is partial instead of showing a quietly shrunken figure.
+        if (Math.abs(quantity) > 1e-9 && valuation.isConvertible?.(valuationInput) === false) {
+          unvaluedAccountCount++;
+          if (account.commodity_guid) unvaluedCommodityGuids.add(account.commodity_guid);
+        }
+        const value = quantity * valuation.getMultiplier(valuationInput);
         if (ASSET_TYPES.includes(account.account_type)) {
           assetTotal += value;
         } else if (LIABILITY_TYPES.includes(account.account_type)) {
@@ -213,6 +244,13 @@ export class FinancialSummaryService {
         liabilities: liabilityTotal,
         investmentValue,
         netWorth: assetTotal + investmentValue + liabilityTotal,
+        coverage: {
+          complete: unvaluedAccountCount === 0,
+          unvaluedAccountCount,
+          gaps: (valuation.gaps ?? []).filter(
+            gap => unvaluedCommodityGuids.has(gap.commodityGuid),
+          ),
+        },
       };
     }
 

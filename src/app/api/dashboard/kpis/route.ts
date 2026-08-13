@@ -29,7 +29,8 @@ export async function GET(request: NextRequest) {
         // Build cache key from book guid + metric + date params
         const bookGuid = roleResult.bookGuid;
         const dateRange = `${startDate.toISOString().split('T')[0]}-${endDate.toISOString().split('T')[0]}`;
-        const cacheKey = `cache:${bookGuid}:user:${roleResult.user.id}:kpis:v2:${dateRange}`;
+        // v3: payload now carries valuation coverage alongside the totals.
+        const cacheKey = `cache:${bookGuid}:user:${roleResult.user.id}:kpis:v3:${dateRange}`;
 
         // Check cache first
         const cached = await cacheGet(cacheKey);
@@ -121,6 +122,10 @@ export async function GET(request: NextRequest) {
                 ? [`${row.symbol}'s price is ${ageDays} days old.`]
                 : [];
         });
+        // Balances the valuation engine could not convert at all. These are
+        // excluded from the totals below, so every surface reporting those
+        // totals has to say so rather than implying full coverage.
+        const coverageWarnings = summary.coverage.gaps.map(gap => gap.message);
         const commonEvidence = [{
             kind: 'report_query' as const,
             id: `dashboard-kpis:${dateRange}`,
@@ -155,7 +160,7 @@ export async function GET(request: NextRequest) {
                     ...commonEvidence,
                     ...priceEvidence,
                 ],
-                warnings: priceWarnings,
+                warnings: [...coverageWarnings, ...priceWarnings],
             }),
             totalIncome: createCalculationTrace({
                 namespace: 'dashboard-kpi',
@@ -222,7 +227,7 @@ export async function GET(request: NextRequest) {
                     ...commonEvidence,
                     ...priceEvidence,
                 ],
-                warnings: priceWarnings,
+                warnings: [...coverageWarnings, ...priceWarnings],
             }),
         };
         await persistCalculationTraces(roleResult.user.id, bookGuid, Object.values(traces));

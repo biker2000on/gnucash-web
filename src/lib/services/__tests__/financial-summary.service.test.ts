@@ -237,6 +237,61 @@ describe('FinancialSummaryService.computeNetWorthSummary', () => {
       startDate,
       USD_CURRENCY,
     );
+    // Everything was priced, so the total stands on its own.
+    expect(result.end.coverage).toEqual({
+      complete: true,
+      unvaluedAccountCount: 0,
+      gaps: [],
+    });
+  });
+
+  it('reports an unpriceable holding as unvalued instead of silently contributing 0', async () => {
+    mockPrisma.accounts.findMany.mockResolvedValue([
+      { guid: 'checking-guid', account_type: 'BANK', commodity_guid: 'usd-guid', commodity: { namespace: 'CURRENCY' } },
+      { guid: 'stock-guid', account_type: 'STOCK', commodity_guid: 'privco-guid', commodity: { namespace: 'PRIVATE' } },
+    ] as never);
+    mockPrisma.splits.findMany.mockResolvedValue([
+      {
+        account_guid: 'checking-guid',
+        quantity_num: BigInt(100000),
+        quantity_denom: BigInt(100),
+        transaction: { post_date: new Date('2025-06-15') },
+      },
+      {
+        account_guid: 'stock-guid',
+        quantity_num: BigInt(40),
+        quantity_denom: BigInt(1),
+        transaction: { post_date: new Date('2025-06-15') },
+      },
+    ] as never);
+
+    const gap = {
+      commodityGuid: 'privco-guid',
+      label: 'PRIVCO',
+      reason: 'missing-security-price' as const,
+      message: 'PRIVCO excluded: no price path to USD as of 2025-12-31.',
+    };
+    mockBuildAccountValuationContext.mockResolvedValue({
+      reportCurrencyGuid: 'usd-guid',
+      reportCurrencyMnemonic: 'USD',
+      getMultiplier: account => (account.commodityGuid === 'privco-guid' ? 0 : 1),
+      isConvertible: account => account.commodityGuid !== 'privco-guid',
+      gaps: [gap],
+      warnings: [gap.message],
+    });
+
+    const result = await FinancialSummaryService.computeNetWorthSummary(
+      bookGuids, startDate, endDate, USD_CURRENCY
+    );
+
+    // The cash still counts; the unpriceable 40 shares are reported as
+    // excluded rather than quietly valued at zero.
+    expect(result.end.netWorth).toBeCloseTo(1000);
+    expect(result.end.coverage).toEqual({
+      complete: false,
+      unvaluedAccountCount: 1,
+      gaps: [gap],
+    });
   });
 });
 
