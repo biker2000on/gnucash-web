@@ -1,4 +1,25 @@
 /**
+ * SCOPE OF THESE ORDERING TESTS (read before trusting them)
+ *
+ * They assert the ORDER in which statements are issued against a mocked
+ * Prisma client: that the `FOR UPDATE` lock statement is emitted before the
+ * reconcile-state read, and the read before the write. That is exactly the
+ * regression that has now recurred twice, so it is worth pinning.
+ *
+ * They do NOT prove:
+ *   - that PostgreSQL actually acquires or holds the row lock (a no-op
+ *     $queryRaw would satisfy every assertion here);
+ *   - that a concurrent reconcile really blocks on it;
+ *   - rollback behaviour, or that the canonical guid ordering prevents a real
+ *     deadlock.
+ *
+ * Proving those needs two real database transactions and a barrier. This repo
+ * has no real-database test harness (no TEST_DATABASE_URL, no postgres service
+ * in docker-compose.yml, no testcontainers, and every prisma-touching test
+ * mocks the client), and building one is out of scope here — it is filed as a
+ * separate follow-up.
+ */
+/**
  * Route tests for POST /api/splits/bulk/move — canonical lock ordering.
  *
  * The deadlock-safe ordering shared by every split-writing path is:
@@ -281,29 +302,23 @@ describe('POST /api/splits/bulk/move canonical lock order', () => {
             },
         ]);
         prismaMock.splits.updateMany.mockResolvedValue({ count: 0 });
-        // The post-write diagnostic re-read now sees the committed 'y'.
-        prismaMock.splits.findMany.mockResolvedValueOnce([
-            {
-                guid: SPLIT_1, tx_guid: TX_A, account_guid: 'account00000000000000000000from',
-                reconcile_state: 'n',
-                account: { commodity_guid: COMMODITY, name: 'Assets:Checking' },
-                transaction: { post_date: POST_DATE },
-            },
-        ]).mockResolvedValueOnce([
-            {
-                guid: SPLIT_1, tx_guid: TX_A, account_guid: 'account00000000000000000000from',
-                reconcile_state: 'n',
-                account: { name: 'Assets:Checking' },
-                transaction: { post_date: POST_DATE },
-            },
-        ]).mockResolvedValueOnce([{ tx_guid: TX_A }])
-          .mockResolvedValueOnce([
-            {
+        // Reads, in order: (1) pre-transaction validation, (2) the guard's
+        // in-transaction read — still stale 'n', (3) the post-write
+        // diagnostic, which now sees the committed 'y'.
+        const stale = {
+            guid: SPLIT_1, tx_guid: TX_A, account_guid: 'account00000000000000000000from',
+            reconcile_state: 'n',
+            account: { commodity_guid: COMMODITY, name: 'Assets:Checking' },
+            transaction: { post_date: POST_DATE },
+        };
+        prismaMock.splits.findMany
+            .mockResolvedValueOnce([stale])
+            .mockResolvedValueOnce([stale])
+            .mockResolvedValueOnce([{
                 guid: SPLIT_1, tx_guid: TX_A, account_guid: 'account00000000000000000000from',
                 reconcile_state: 'y',
                 account: { name: 'Assets:Checking' },
-            },
-        ]);
+            }]);
 
         const response = await POST(moveRequest({
             splitGuids: [SPLIT_1],

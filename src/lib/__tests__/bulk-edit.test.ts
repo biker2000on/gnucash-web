@@ -1,3 +1,24 @@
+/**
+ * SCOPE OF THESE ORDERING TESTS (read before trusting them)
+ *
+ * They assert the ORDER in which statements are issued against a mocked
+ * Prisma client: that the `FOR UPDATE` lock statement is emitted before the
+ * reconcile-state read, and the read before the write. That is exactly the
+ * regression that has now recurred twice, so it is worth pinning.
+ *
+ * They do NOT prove:
+ *   - that PostgreSQL actually acquires or holds the row lock (a no-op
+ *     $queryRaw would satisfy every assertion here);
+ *   - that a concurrent reconcile really blocks on it;
+ *   - rollback behaviour, or that the canonical guid ordering prevents a real
+ *     deadlock.
+ *
+ * Proving those needs two real database transactions and a barrier. This repo
+ * has no real-database test harness (no TEST_DATABASE_URL, no postgres service
+ * in docker-compose.yml, no testcontainers, and every prisma-touching test
+ * mocks the client), and building one is out of scope here — it is filed as a
+ * separate follow-up.
+ */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('@/lib/prisma', () => ({

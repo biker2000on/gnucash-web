@@ -467,6 +467,10 @@ async function guardBookLock(
  * the token, so a user who loaded a transaction before the scrub would
  * otherwise silently revert those changes on save. Rows are locked in
  * canonical sorted order first, matching every other transaction-write path.
+ *
+ * The callers now take that same lock up front (see lockAccountTransactions),
+ * so re-taking it here is a no-op on rows this transaction already holds. It
+ * is kept so the function stays correct if ever called on its own.
  */
 async function bumpAccountTransactionTokens(
   tx: PrismaTx,
@@ -516,24 +520,48 @@ async function lockAccountTransactions(
  *     in the ledger and a user can reconcile them afterwards, so the check is
  *     live, not dead code. → GUARDED.
  *
- *  2. **Restoring a split that the run modified in place, where the run
- *     created NO other split in the same transaction.** That is the
- *     valueZeroValueTrade case: the "restore" puts a real FMV back to zero,
- *     with no compensating row. → GUARDED.
+ *  2. **Restoring a split the run rewrote IN PLACE with no sub-split rows to
+ *     delete alongside it.** That is the valueZeroValueTrade shape: the run
+ *     rewrote both trade legs from 0 to ±FMV and tagged both, so the "restore"
+ *     puts a real FMV back to zero on each leg with no compensating row. The
+ *     transaction stays balanced — which is exactly why a balance check misses
+ *     it — but EACH ACCOUNT's reconciled balance moves. → GUARDED.
  *
- *  3. **Deleting the run's sub-splits while restoring their parent in the
+ *  3. **Deleting the run's sub-split rows while restoring their parent in the
  *     same transaction.** This is the exact inverse of splitSellAcrossLots:
  *     the sub-splits inherit the parent's reconcile metadata and sum back to
  *     the restored original, so the account's reconciled total is identical
  *     before and after. → EXEMPT.
+ *
+ * ## Telling (2) apart from (3)
+ *
+ * Co-tagging within a transaction does NOT distinguish them — valueZeroValueTrade
+ * tags both of its legs, so each leg has a tagged sibling and a naive
+ * sibling-count test wrongly reads it as compensated. The distinction is the
+ * reversible PARTITION structure:
+ *
+ *   partition (3): parent restored in place  +  NEW sub-split ROWS DELETED
+ *                  in the same transaction, whose amounts sum back into it.
+ *                  Sub-splits are new rows, so they carry NO original_* slots.
+ *   in-place  (2): every tagged row in the transaction is itself being
+ *                  restored from its own original_* slots; nothing is deleted,
+ *                  so nothing compensates the rewrite.
+ *
+ * So a restore is compensated only when the same transaction contains at least
+ * one tagged split that is being DELETED (tagged, not itself restored, and not
+ * merely disappearing with a wholly-generated transaction). Everything else is
+ * guarded.
+ *
+ * This is fail-closed by construction: a missing or corrupt compensating tag
+ * yields no deleted sibling, so the restore is treated as uncompensated and
+ * blocked.
  *
  * The deliberate decision is (3): a generated row that merely INHERITED 'y'
  * or 'f' from the split it was carved out of is not an independent statement
  * agreement, and deleting it is only half of an atomic, net-zero repartition.
  * Guarding it would make lot revert impossible on any reconciled investment
  * account while protecting nothing — the same reasoning that makes the
- * forward scrub (splitSellAcrossLots) exempt. Where a deletion is NOT paired
- * with a compensating restore — case (1) — the guard fires.
+ * forward scrub (splitSellAcrossLots) exempt.
  */
 async function assertRevertPreservesReconciled(
   tx: PrismaTx,
@@ -569,29 +597,36 @@ async function assertRevertPreservesReconciled(
   });
   if (protectedRows.length === 0) return;
 
-  // A restore is "compensated" when this run also created another tagged
-  // split in the same transaction — i.e. the split was carved up and the
-  // pieces are being deleted alongside this restore (case 3).
+  // Count, per transaction, the tagged splits that this revert DELETES — the
+  // sub-split rows a partition created. A tagged split that is itself being
+  // restored compensates nothing (it is the parent, not a piece of it), and
+  // one vanishing with a wholly-generated transaction belongs to case (1),
+  // not to any partition.
   const restoredSet = new Set(restoredSplitGuids);
-  const taggedByTx = new Map<string, string[]>();
+  const deletedTxSet = new Set(deletedTxGuids);
+  const deletedSubSplitsByTx = new Map<string, number>();
   if (taggedSplitGuids.length > 0) {
     const tagged = await tx.splits.findMany({
       where: { guid: { in: taggedSplitGuids } },
       select: { guid: true, tx_guid: true },
     });
     for (const s of tagged) {
-      const list = taggedByTx.get(s.tx_guid) ?? [];
-      list.push(s.guid);
-      taggedByTx.set(s.tx_guid, list);
+      if (restoredSet.has(s.guid)) continue;
+      if (deletedTxSet.has(s.tx_guid)) continue;
+      deletedSubSplitsByTx.set(s.tx_guid, (deletedSubSplitsByTx.get(s.tx_guid) ?? 0) + 1);
     }
   }
 
-  const deletedTxSet = new Set(deletedTxGuids);
   const offending = protectedRows.filter(row => {
-    if (deletedTxSet.has(row.tx_guid)) return true; // case 1
+    // (1) vanishing with a wholly-generated transaction — nothing restores it.
+    if (deletedTxSet.has(row.tx_guid)) return true;
+    // Not restored and not in a deleted transaction: untouched by this revert.
     if (!restoredSet.has(row.guid)) return false;
-    const siblings = (taggedByTx.get(row.tx_guid) ?? []).filter(g => g !== row.guid);
-    return siblings.length === 0; // case 2 when nothing compensates it
+    // (3) compensated partition when sub-split rows are deleted alongside;
+    // (2) uncompensated in-place rewrite otherwise — including the
+    // valueZeroValueTrade pair, where both legs are restored and neither is
+    // deleted, so the count here is zero for both.
+    return (deletedSubSplitsByTx.get(row.tx_guid) ?? 0) === 0;
   });
 
   assertSplitsNotProtected(operation, offending);
@@ -604,6 +639,26 @@ export async function autoAssignLots(
 ): Promise<AutoAssignResult> {
   return prisma.$transaction(async (tx) => {
     await guardBookLock(tx, bookGuid, 'lot auto-assign');
+
+    // Canonical parent lock BEFORE the assign pass, not at the token bump
+    // below. Two things went wrong when it was taken late:
+    //
+    //  1. Correctness. assign* reaches splitSellAcrossLots, which rewrites the
+    //     original split's amount and creates sub-splits that INHERIT its
+    //     reconcile state. A concurrent reconcile could lock the parent and
+    //     commit 'y' after the unlocked read but before the write, so the
+    //     sub-splits inherited a stale 'n' while a now-reconciled split's
+    //     amount changed underneath it.
+    //  2. Deadlock. Auto-assign wrote splits first and only took the parent
+    //     lock at bumpAccountTransactionTokens; a reconcile takes the parent
+    //     lock first and then writes its split. Opposite orders — an ABBA
+    //     deadlock. Locking here restores the canonical parents-then-splits
+    //     order the rest of the codebase uses.
+    //
+    // The book advisory lock above does NOT cover this: it serializes lot
+    // operations against each other, not against the reconcile routes.
+    await lockAccountTransactions(tx, accountGuid);
+
     let result: AutoAssignResult;
     switch (method) {
       case 'fifo':

@@ -1,4 +1,25 @@
 /**
+ * SCOPE OF THESE ORDERING TESTS (read before trusting them)
+ *
+ * They assert the ORDER in which statements are issued against a mocked
+ * Prisma client: that the `FOR UPDATE` lock statement is emitted before the
+ * reconcile-state read, and the read before the write. That is exactly the
+ * regression that has now recurred twice, so it is worth pinning.
+ *
+ * They do NOT prove:
+ *   - that PostgreSQL actually acquires or holds the row lock (a no-op
+ *     $queryRaw would satisfy every assertion here);
+ *   - that a concurrent reconcile really blocks on it;
+ *   - rollback behaviour, or that the canonical guid ordering prevents a real
+ *     deadlock.
+ *
+ * Proving those needs two real database transactions and a barrier. This repo
+ * has no real-database test harness (no TEST_DATABASE_URL, no postgres service
+ * in docker-compose.yml, no testcontainers, and every prisma-touching test
+ * mocks the client), and building one is out of scope here — it is filed as a
+ * separate follow-up.
+ */
+/**
  * Reconciled-split guard tests.
  *
  * The guard is the single enforcement point every ledger-mutating path uses,
@@ -148,11 +169,22 @@ describe('assertSplitsNotProtected', () => {
 });
 
 describe('assertNoReconciledSplits', () => {
+    /**
+     * The transaction client is REQUIRED (it is not an optional convenience):
+     * without it the FOR UPDATE would run as its own implicit transaction and
+     * release before the caller's write, so the "race-free" contract would be
+     * a lie. These tests drive the guard through an explicit client stub, the
+     * way every production call site does.
+     */
+    function txClient() {
+        return { splits: { findMany: findManyMock }, $queryRaw: queryRawMock } as never;
+    }
+
     it('queries only for protected states and throws on a hit', async () => {
         findManyMock.mockResolvedValue([row({ reconcile_state: 'y' })]);
 
         await expect(
-            assertNoReconciledSplits('edit this transaction', { txGuids: [TX_GUID] }),
+            assertNoReconciledSplits('edit this transaction', { txGuids: [TX_GUID] }, { client: txClient() }),
         ).rejects.toBeInstanceOf(ReconciledSplitError);
 
         expect(findManyMock).toHaveBeenCalledWith(expect.objectContaining({
@@ -166,70 +198,69 @@ describe('assertNoReconciledSplits', () => {
     it('passes when the lookup finds nothing protected', async () => {
         findManyMock.mockResolvedValue([]);
         await expect(
-            assertNoReconciledSplits('edit this transaction', { splitGuids: [SPLIT_A] }),
+            assertNoReconciledSplits('edit this transaction', { splitGuids: [SPLIT_A] }, { client: txClient() }),
         ).resolves.toBeUndefined();
     });
 
     it('skips the query entirely when there is nothing to check', async () => {
         await expect(
-            assertNoReconciledSplits('edit this transaction', {}),
+            assertNoReconciledSplits('edit this transaction', {}, { client: txClient() }),
         ).resolves.toBeUndefined();
         expect(findManyMock).not.toHaveBeenCalled();
+        expect(queryRawMock).not.toHaveBeenCalled();
     });
 
-    it('runs on the caller-supplied transaction client, not the global pool', async () => {
+    it('runs only on the supplied transaction client, never the global pool', async () => {
         const clientFindMany = vi.fn().mockResolvedValue([]);
         const clientQueryRaw = vi.fn().mockResolvedValue([]);
         await assertNoReconciledSplits(
             'edit this transaction',
             { txGuids: [TX_GUID] },
-            // The guard needs splits.findMany + $queryRaw; the narrow stub
-            // proves it never reaches for the global client mid-transaction.
             { client: { splits: { findMany: clientFindMany }, $queryRaw: clientQueryRaw } as never },
         );
         expect(clientFindMany).toHaveBeenCalledTimes(1);
         expect(clientQueryRaw).toHaveBeenCalledTimes(1);
+        // Reaching for the global client mid-transaction would take a second
+        // pool connection AND read outside the transaction's snapshot.
         expect(findManyMock).not.toHaveBeenCalled();
-        expect(queryRawMock).not.toHaveBeenCalled();
     });
 
     it('locks the parent transactions FOR UPDATE before reading the splits', async () => {
         findManyMock.mockResolvedValue([]);
-        await assertNoReconciledSplits('edit this transaction', { txGuids: [TX_GUID] });
+        await assertNoReconciledSplits('edit this transaction', { txGuids: [TX_GUID] }, { client: txClient() });
 
         expect(queryRawMock).toHaveBeenCalledTimes(1);
         const sql = sqlText(queryRawMock.mock.calls[0]);
         expect(sql).toContain('FROM transactions');
         expect(sql).toContain('FOR UPDATE');
-        expect(sql).toContain('ORDER BY guid');
+        expect(sql).toContain('ORDER BY');
         // Lock strictly BEFORE the read — the whole point.
         expect(queryRawMock.mock.invocationCallOrder[0])
             .toBeLessThan(findManyMock.mock.invocationCallOrder[0]);
     });
 
-    it('resolves parents first when addressing splits by their own guid, then locks', async () => {
-        findManyMock
-            .mockResolvedValueOnce([{ tx_guid: TX_GUID }]) // parent lookup
-            .mockResolvedValueOnce([]);                    // protected-row read
-        await assertNoReconciledSplits('move these splits', { splitGuids: [SPLIT_A] });
+    it('resolves AND locks parents in one statement when addressing splits by guid', async () => {
+        findManyMock.mockResolvedValue([]);
+        await assertNoReconciledSplits('move these splits', { splitGuids: [SPLIT_A] }, { client: txClient() });
 
-        expect(findManyMock).toHaveBeenNthCalledWith(1, {
-            where: { guid: { in: [SPLIT_A] } },
-            select: { tx_guid: true },
-        });
-        expect(queryRawMock.mock.calls[0][1]).toEqual([TX_GUID]);
-        // parent lookup → lock → protected-row read
-        expect(findManyMock.mock.invocationCallOrder[0])
-            .toBeLessThan(queryRawMock.mock.invocationCallOrder[0]);
+        // A separate "read the tx_guids, then lock them" pair would be safe
+        // only by the tx_guid-immutability argument; folding the resolution
+        // into the locking statement removes the caveat entirely.
+        const sql = sqlText(queryRawMock.mock.calls[0]);
+        expect(sql).toContain('FROM transactions');
+        expect(sql).toContain('FROM splits');
+        expect(sql).toContain('FOR UPDATE');
+        expect(queryRawMock.mock.calls[0][1]).toEqual([SPLIT_A]);
+        // No unlocked parent lookup happened before the lock.
         expect(queryRawMock.mock.invocationCallOrder[0])
-            .toBeLessThan(findManyMock.mock.invocationCallOrder[1]);
+            .toBeLessThan(findManyMock.mock.invocationCallOrder[0]);
     });
 
     it('deduplicates and sorts the lock set so concurrent writers cannot ABBA-deadlock', async () => {
         findManyMock.mockResolvedValue([]);
         await assertNoReconciledSplits('edit these transactions', {
             txGuids: ['t2'.padEnd(32, '0'), 't1'.padEnd(32, '0'), 't2'.padEnd(32, '0')],
-        });
+        }, { client: txClient() });
         expect(queryRawMock.mock.calls[0][1]).toEqual(['t1'.padEnd(32, '0'), 't2'.padEnd(32, '0')]);
     });
 });
@@ -262,17 +293,21 @@ describe('reconciledSplitResponse', () => {
 });
 
 describe('withReconciledSplitCheck', () => {
+    function txClient() {
+        return { splits: { findMany: findManyMock }, $queryRaw: queryRawMock } as never;
+    }
+
     it('returns null when the mutation may proceed', async () => {
         findManyMock.mockResolvedValue([]);
         await expect(
-            withReconciledSplitCheck('edit this transaction', { txGuids: [TX_GUID] }),
+            withReconciledSplitCheck('edit this transaction', { txGuids: [TX_GUID] }, { client: txClient() }),
         ).resolves.toBeNull();
     });
 
     it('returns the ready 423 response when blocked', async () => {
         findManyMock.mockResolvedValue([row({ reconcile_state: 'f' })]);
         const response = await withReconciledSplitCheck(
-            'edit this transaction', { txGuids: [TX_GUID] },
+            'edit this transaction', { txGuids: [TX_GUID] }, { client: txClient() },
         );
         expect(response?.status).toBe(423);
     });
@@ -280,7 +315,7 @@ describe('withReconciledSplitCheck', () => {
     it('rethrows unrelated failures instead of masking them as a block', async () => {
         findManyMock.mockRejectedValue(new Error('connection reset'));
         await expect(
-            withReconciledSplitCheck('edit this transaction', { txGuids: [TX_GUID] }),
+            withReconciledSplitCheck('edit this transaction', { txGuids: [TX_GUID] }, { client: txClient() }),
         ).rejects.toThrow('connection reset');
     });
 });

@@ -28,7 +28,7 @@ import { generateGuid, toDecimalNumber, fromDecimal, findOrCreateAccount } from 
 import { isLongTerm } from './holding-period';
 import {
   assertSplitsNotProtected,
-  lockTransactionsForUpdate,
+  lockTransactionsForSplits,
 } from './services/reconciled-split.service';
 
 /** Prisma interactive transaction client type */
@@ -1109,19 +1109,14 @@ export async function valueZeroValueTrade(
   runId: string,
   tx: PrismaTx,
 ): Promise<ValueTradeResult> {
-  // Canonical parent lock BEFORE reading. The lot engine's book-wide advisory
-  // lock (guardBookLock) serializes lot operations against each other but not
-  // against the reconcile routes, which take the parent TRANSACTION row lock.
-  // Take it here so the reconcile-state check below cannot be raced. Both
-  // legs live in the same transaction, so one lock covers them.
-  const parentRef = await tx.splits.findUnique({
-    where: { guid: splitGuid },
-    select: { tx_guid: true },
-  });
-  if (!parentRef) {
-    throw new Error(`Split not found: ${splitGuid}`);
-  }
-  await lockTransactionsForUpdate([parentRef.tx_guid], tx);
+  // Canonical parent lock BEFORE anything is read. The lot engine's book-wide
+  // advisory lock (guardBookLock) serializes lot operations against each other
+  // but not against the reconcile routes, which take the parent TRANSACTION
+  // row lock — so take that lock here too, or the reconcile-state check below
+  // can be raced. Resolution and locking happen in one statement, so this is
+  // literally lock-then-read with no caveat. Both legs live in the same
+  // transaction, so the single lock covers them.
+  await lockTransactionsForSplits([splitGuid], tx);
 
   const split = await tx.splits.findUnique({
     where: { guid: splitGuid },

@@ -61,7 +61,6 @@
  */
 
 import { NextResponse } from 'next/server';
-import prisma from '@/lib/prisma';
 import type { DbClient } from '@/lib/scheduled-transactions';
 
 /** Reconcile states that pin a split to an external statement. */
@@ -189,12 +188,13 @@ export function assertSplitsNotProtected(
 
 export interface ReconciledCheckOptions {
     /**
-     * Run the lookup on this client instead of the global pool. In-transaction
-     * callers MUST pass their `tx` client: the global client grabs a SECOND
-     * pool connection mid-transaction, and it would also read outside the
-     * transaction's snapshot.
+     * The client of the database transaction performing the write. REQUIRED:
+     * the guard's `FOR UPDATE` must be held until that write commits, and the
+     * read must see that transaction's snapshot. Passing the global client
+     * would take a second pool connection, read outside the transaction, and
+     * release the lock the instant the locking statement returned.
      */
-    client?: DbClient;
+    client: DbClient;
 }
 
 /**
@@ -221,6 +221,31 @@ export async function lockTransactionsForUpdate(
 }
 
 /**
+ * Lock the parent transactions of a set of splits, addressed by SPLIT guid.
+ *
+ * Resolution and locking happen in ONE statement. Doing it as two (read the
+ * tx_guids, then lock them) would be defensible — a split's tx_guid is
+ * immutable — but "the lock is taken before anything is read" is a property
+ * worth being able to state without a caveat, so the subquery resolves inside
+ * the locking statement itself. Rows are still ordered by guid.
+ */
+export async function lockTransactionsForSplits(
+    splitGuids: readonly string[],
+    client: DbClient,
+): Promise<void> {
+    const ordered = [...new Set(splitGuids)].sort();
+    if (ordered.length === 0) return;
+    await client.$queryRaw`
+        SELECT t.guid FROM transactions t
+        WHERE t.guid IN (
+            SELECT s.tx_guid FROM splits s WHERE s.guid = ANY(${ordered}::text[])
+        )
+        ORDER BY t.guid
+        FOR UPDATE
+    `;
+}
+
+/**
  * Look up the splits the mutation would touch and throw when any is
  * reconciled or frozen. Pass `txGuids` to cover whole transactions
  * (edit/delete of a transaction), `splitGuids` to cover individual splits
@@ -228,32 +253,30 @@ export async function lockTransactionsForUpdate(
  *
  * Race-free by construction: the parent transaction rows are locked
  * `FOR UPDATE` (guid order) BEFORE the splits are read, so a concurrent
- * reconcile cannot commit between this check and the caller's write. Pass
- * `options.client` — the check must run in the same database transaction as
- * the write it is guarding, or the lock is released before the write happens.
+ * reconcile cannot commit between this check and the caller's write.
+ *
+ * `client` is REQUIRED, and must be the client of the database transaction
+ * that performs the write. Without it the `FOR UPDATE` would run as its own
+ * implicit transaction and release the moment that statement returned —
+ * leaving a function documented as race-free that is not. Making the
+ * parameter optional invited exactly the regression this guard exists to
+ * prevent, so the unsafe mode does not exist.
  */
 export async function assertNoReconciledSplits(
     operation: string,
     target: { txGuids?: readonly string[]; splitGuids?: readonly string[] },
-    options: ReconciledCheckOptions = {},
+    options: ReconciledCheckOptions,
 ): Promise<void> {
     const txGuids = target.txGuids ?? [];
     const splitGuids = target.splitGuids ?? [];
     if (txGuids.length === 0 && splitGuids.length === 0) return;
 
-    const db = options.client ?? prisma;
+    const db = options.client;
 
-    // Splits are addressed by their own guid here, so resolve their parents
-    // before locking — the lock has to be on the transaction rows.
-    let parentGuids = [...txGuids];
-    if (splitGuids.length > 0) {
-        const parents = await db.splits.findMany({
-            where: { guid: { in: [...splitGuids] } },
-            select: { tx_guid: true },
-        });
-        parentGuids = parentGuids.concat(parents.map(p => p.tx_guid));
-    }
-    await lockTransactionsForUpdate(parentGuids, db);
+    // Lock first, in both address spaces. Each is a single statement that
+    // resolves and locks together.
+    await lockTransactionsForUpdate(txGuids, db);
+    await lockTransactionsForSplits(splitGuids, db);
 
     // Read AFTER the lock: anything committed before it is visible, and
     // nothing new can commit while we hold it.
@@ -301,15 +324,17 @@ export function reconciledSplitResponse(error: ReconciledSplitError): NextRespon
 
 /**
  * Route-level guard: returns the ready-to-send 423 RECONCILED_SPLIT response,
- * or null when the mutation may proceed.
+ * or null when the mutation may proceed. Same contract as
+ * `assertNoReconciledSplits` — the write transaction's client is required.
  *
- *     const blocked = await withReconciledSplitCheck('edit this transaction', { txGuids: [guid] });
+ *     const blocked = await withReconciledSplitCheck(
+ *         'edit this transaction', { txGuids: [guid] }, { client: tx });
  *     if (blocked) return blocked;
  */
 export async function withReconciledSplitCheck(
     operation: string,
     target: { txGuids?: readonly string[]; splitGuids?: readonly string[] },
-    options: ReconciledCheckOptions = {},
+    options: ReconciledCheckOptions,
 ): Promise<NextResponse | null> {
     try {
         await assertNoReconciledSplits(operation, target, options);
