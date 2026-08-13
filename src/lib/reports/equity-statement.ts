@@ -1,6 +1,6 @@
 import prisma from '@/lib/prisma';
 import { ReportType, ReportData, ReportSection, ReportFilters, LineItem } from './types';
-import { buildHierarchy, resolveRootGuid, sumSplitsByAccount } from './utils';
+import { buildHierarchy, numericToNumber, resolveRootGuid, sumSplitsByAccount, ZERO_NUMERIC } from './utils';
 
 /**
  * Generate Equity Statement report
@@ -103,13 +103,13 @@ export async function generateEquityStatement(filters: ReportFilters): Promise<R
     // Period income (negated for display; income is stored as negative/credits)
     const periodIncomeBalances = incomeAccounts.map(account => ({
         ...account,
-        balance: -(periodSums.get(account.guid)?.quantity ?? 0),
+        balance: -numericToNumber(periodSums.get(account.guid)?.quantity ?? ZERO_NUMERIC),
     }));
 
     // Period expenses
     const periodExpenseBalances = expenseAccounts.map(account => ({
         ...account,
-        balance: periodSums.get(account.guid)?.quantity ?? 0,
+        balance: numericToNumber(periodSums.get(account.guid)?.quantity ?? ZERO_NUMERIC),
     }));
 
     // Other equity changes (direct equity transactions during period)

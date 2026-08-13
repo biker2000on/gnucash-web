@@ -1,6 +1,6 @@
 import prisma from '@/lib/prisma';
 import { ReportType, ReportData, ReportSection, LineItem, ReportFilters } from './types';
-import { buildAccountPathMap, sumSplitsByAccount } from './utils';
+import { buildAccountPathMap, numericToNumber, sumSplitsByAccount, ZERO_NUMERIC } from './utils';
 
 /**
  * Categorize account type for cash flow statement
@@ -83,8 +83,8 @@ export async function generateCashFlow(filters: ReportFilters): Promise<ReportDa
             const isInvestment = investmentTypes.includes(account.account_type);
             const sums = periodSums.get(account.guid);
             const netChange = isInvestment
-                ? (sums?.value ?? 0)
-                : (sums?.quantity ?? 0);
+                ? numericToNumber(sums?.value ?? ZERO_NUMERIC)
+                : numericToNumber(sums?.quantity ?? ZERO_NUMERIC);
 
             if (netChange !== 0 || filters.showZeroBalances) {
                 changes.push({

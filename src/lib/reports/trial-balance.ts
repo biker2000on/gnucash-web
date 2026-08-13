@@ -1,6 +1,6 @@
 import prisma from '@/lib/prisma';
 import { ReportType, ReportFilters, TrialBalanceData, TrialBalanceEntry } from './types';
-import { buildAccountPathMap, sumSplitsByAccount } from './utils';
+import { buildAccountPathMap, numericToNumber, sumSplitsByAccount, ZERO_NUMERIC } from './utils';
 
 /** Account types with debit-normal balances */
 const DEBIT_NORMAL_TYPES = new Set([
@@ -78,7 +78,7 @@ export async function generateTrialBalance(filters: ReportFilters): Promise<Tria
     for (const account of accounts) {
         // Posted book value (cost), NOT quantity x market price — see the
         // valuation note in the function doc.
-        const rawBalance = balanceSums.get(account.guid)?.value ?? 0;
+        const rawBalance = numericToNumber(balanceSums.get(account.guid)?.value ?? ZERO_NUMERIC);
 
         // Skip zero-balance accounts unless showZeroBalances is true
         if (Math.abs(rawBalance) < 0.005 && !filters.showZeroBalances) {

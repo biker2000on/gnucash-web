@@ -1,7 +1,7 @@
 import prisma from '@/lib/prisma';
 import { Prisma } from '@prisma/client';
 import { ReportType, ReportData, ReportSection, ReportFilters, LineItem } from './types';
-import { toDecimal, buildHierarchy, resolveRootGuid, sumSplitsByAccount, AccountWithBalance } from './utils';
+import { toDecimal, buildHierarchy, numericToNumber, resolveRootGuid, sumSplitsByAccount, AccountWithBalance, ZERO_NUMERIC } from './utils';
 import { allocatePaymentsToAccounts, PaymentLotSplit, PostingSplit } from './cash-basis';
 
 /**
@@ -20,7 +20,7 @@ async function getAccountBalances(
 
     return accounts.map(account => ({
         ...account,
-        balance: sums.get(account.guid)?.quantity ?? 0,
+        balance: numericToNumber(sums.get(account.guid)?.quantity ?? ZERO_NUMERIC),
     }));
 }
 

@@ -1,7 +1,7 @@
 import prisma from '@/lib/prisma';
 import { buildAccountValuationContext } from '@/lib/account-valuation';
 import { ReportType, ReportData, ReportSection, ReportFilters, LineItem } from './types';
-import { buildHierarchy, resolveRootGuid, sumSplitsByAccount } from './utils';
+import { buildHierarchy, numericToNumber, resolveRootGuid, sumSplitsByAccount, ZERO_NUMERIC } from './utils';
 
 /**
  * Flip the sign of a line item and every descendant. Credit-normal sections
@@ -67,7 +67,7 @@ export async function generateBalanceSheet(filters: ReportFilters): Promise<Repo
     );
 
     const accountBalances = accounts.map(account => {
-        const quantity = balanceSums.get(account.guid)?.quantity ?? 0;
+        const quantity = numericToNumber(balanceSums.get(account.guid)?.quantity ?? ZERO_NUMERIC);
 
         const balance = quantity * valuation.getMultiplier({
             accountType: account.account_type,

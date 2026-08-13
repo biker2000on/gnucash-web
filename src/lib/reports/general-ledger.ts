@@ -1,6 +1,6 @@
 import prisma from '@/lib/prisma';
 import { ReportType, ReportFilters, GeneralLedgerData, LedgerAccount, LedgerEntry } from './types';
-import { buildAccountPathMap, sumSplitsByAccount, toDecimal } from './utils';
+import { buildAccountPathMap, numericToNumber, sumSplitsByAccount, toDecimal } from './utils';
 
 /** Credit-normal account types where balance = credits - debits */
 const CREDIT_NORMAL_TYPES = new Set(['LIABILITY', 'CREDIT', 'EQUITY', 'INCOME', 'PAYABLE']);
@@ -59,7 +59,7 @@ export async function generateGeneralLedger(filters: ReportFilters): Promise<Gen
     const openingSums = await sumSplitsByAccount(accountGuids, { lt: startDate });
     const openingBalances = new Map<string, number>();
     for (const [guid, sums] of openingSums) {
-        openingBalances.set(guid, sums.value);
+        openingBalances.set(guid, numericToNumber(sums.value));
     }
 
     // Batch query: period splits with transaction details

@@ -14,17 +14,43 @@ export function toDecimal(num: bigint | null, denom: bigint | null): number {
 
 export interface SplitSums {
     /** SUM(quantity_num / quantity_denom) over the matched splits */
-    quantity: number;
+    quantity: NumericString;
     /** SUM(value_num / value_denom) over the matched splits */
-    value: number;
+    value: NumericString;
+}
+
+/**
+ * A decimal value returned by PostgreSQL's `numeric` type.
+ *
+ * node-postgres deliberately returns `numeric` values as strings so it does
+ * not lose precision by coercing them to an IEEE-754 number. Keep this type
+ * through aggregation; report generators explicitly convert at their legacy
+ * number-valued output boundary.
+ */
+export type NumericString = string & { readonly __numericString: unique symbol };
+
+export const ZERO_NUMERIC = '0' as NumericString;
+
+/**
+ * Deliberately convert an exact PostgreSQL numeric string for the existing
+ * number-valued report output contract. Call this only at that output edge;
+ * aggregation and transport remain exact decimal strings.
+ */
+export function numericToNumber(value: NumericString): number {
+    const numberValue = Number(value);
+    if (!Number.isFinite(numberValue)) {
+        throw new RangeError(`PostgreSQL numeric cannot be represented as a finite JavaScript number: ${value}`);
+    }
+    return numberValue;
 }
 
 /**
  * Batched per-account split sums via a single GROUP BY query.
  *
  * Replaces the one-query-per-account pattern in the report generators.
- * Sums are computed as float8 per-split quotients (num::float8 / denom::float8),
- * matching the previous JS behavior of `sum + Number(num) / Number(denom)`.
+ * Sums are computed as exact PostgreSQL `numeric` per-split quotients. The
+ * pg driver returns those numeric results as strings, which are preserved in
+ * the map rather than being implicitly rounded to IEEE-754 numbers.
  * Accounts with no matching splits are simply absent from the map (callers
  * default to 0, same as an empty findMany result).
  *
@@ -41,12 +67,12 @@ export async function sumSplitsByAccount(
 
     const rows = await prisma.$queryRaw<Array<{
         account_guid: string;
-        quantity_sum: number;
-        value_sum: number;
+        quantity_sum: string;
+        value_sum: string;
     }>>`
         SELECT s.account_guid,
-               COALESCE(SUM(s.quantity_num::float8 / NULLIF(s.quantity_denom, 0)::float8), 0)::float8 AS quantity_sum,
-               COALESCE(SUM(s.value_num::float8 / NULLIF(s.value_denom, 0)::float8), 0)::float8 AS value_sum
+               COALESCE(SUM(s.quantity_num::numeric / NULLIF(s.quantity_denom, 0)::numeric), 0)::numeric AS quantity_sum,
+               COALESCE(SUM(s.value_num::numeric / NULLIF(s.value_denom, 0)::numeric), 0)::numeric AS value_sum
         FROM splits s
         JOIN transactions t ON t.guid = s.tx_guid
         WHERE s.account_guid = ANY(${accountGuids}::text[])
@@ -56,7 +82,10 @@ export async function sumSplitsByAccount(
         GROUP BY s.account_guid
     `;
 
-    return new Map(rows.map(r => [r.account_guid, { quantity: r.quantity_sum, value: r.value_sum }]));
+    return new Map(rows.map(r => [r.account_guid, {
+        quantity: r.quantity_sum as NumericString,
+        value: r.value_sum as NumericString,
+    }]));
 }
 
 export interface AccountWithBalance {

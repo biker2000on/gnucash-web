@@ -10,7 +10,7 @@ import { Prisma } from '@prisma/client';
 import { calculateMarketValue, calculateGainLoss, calculateGainLossPercent } from '@/lib/commodities';
 import { getBaseCurrency } from '@/lib/currency';
 import { ReportType, ReportFilters, InvestmentPortfolioData, PortfolioHolding } from './types';
-import { sumSplitsByAccount, toDecimal } from './utils';
+import { numericToNumber, sumSplitsByAccount, toDecimal, ZERO_NUMERIC } from './utils';
 
 /**
  * Generate Investment Portfolio report data.
@@ -87,7 +87,7 @@ export async function generateInvestmentPortfolio(
 
     const holdingResults = accounts.map((account): PortfolioHolding | null => {
         const sums = holdingSums.get(account.guid);
-        const shares = sums?.quantity ?? 0;
+        const shares = numericToNumber(sums?.quantity ?? ZERO_NUMERIC);
 
         // Skip zero-share accounts unless requested
         const isZeroShares = Math.abs(shares) < 0.0001;
@@ -95,7 +95,7 @@ export async function generateInvestmentPortfolio(
             return null;
         }
 
-        const costBasis = isZeroShares ? 0 : (sums?.value ?? 0);
+        const costBasis = isZeroShares ? 0 : numericToNumber(sums?.value ?? ZERO_NUMERIC);
         const symbol = account.commodity?.mnemonic || '???';
 
         // Latest price up to endDate (in the report currency)
