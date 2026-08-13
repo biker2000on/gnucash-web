@@ -403,11 +403,17 @@ export function TransactionForm({
         // 0.33 credit even though the raw floats differ by 0.0033. Validating
         // the raw difference would reject a transaction the server accepts.
         let submittedValueUnits = 0;
+        // Rows carrying an amount that buildApiData will DROP because no
+        // account is selected. They are excluded from submittedValueUnits (it
+        // must describe exactly what is sent, or it could mask a real
+        // imbalance) and reported as their own per-row error instead, so the
+        // amount cannot be silently discarded by an accepted save.
+        const unassignedAmountRows: number[] = [];
         // Splits whose typed amount does not parse. They are NOT counted as 0:
         // a malformed amount must not be able to make a transaction look
         // balanced. validateForm reports them and blocks the save.
         const invalidAmountSplits: string[] = [];
-        formData.splits.forEach(split => {
+        formData.splits.forEach((split, index) => {
             const rate = resolveSplitExchangeRate(split);
             if (rate === null) return;
 
@@ -428,15 +434,23 @@ export function TransactionForm({
             totalDebit += debit * rate;
             totalCredit += credit * rate;
 
-            // Splits with no account are still counted here even though
-            // buildApiData drops them: a typed amount on an account-less row
-            // would otherwise be silently discarded by an accepted save.
-            submittedValueUnits += buildCurrencySplitAmounts(
+            // Exactly what buildApiData will serialize for this row.
+            const submittedValue = buildCurrencySplitAmounts(
                 debit - credit,
                 rate,
                 resolveAccountFraction(split),
                 TRANSACTION_FRACTION,
             ).valueNum;
+
+            // buildApiData sends only rows with an account, so only those count
+            // toward the balance the API will check. An account-less row that
+            // still rounds to a non-zero amount is a separate problem: its
+            // value is about to be dropped, which the user has to be told.
+            if (split.account_guid) {
+                submittedValueUnits += submittedValue;
+            } else if (submittedValue !== 0) {
+                unassignedAmountRows.push(index);
+            }
         });
         return {
             totalDebit,
@@ -445,6 +459,7 @@ export function TransactionForm({
             // What the API will see. This is the one to validate against.
             submittedDifference: submittedValueUnits / TRANSACTION_FRACTION,
             invalidAmountSplits,
+            unassignedAmountRows,
         };
     };
 
@@ -636,10 +651,25 @@ export function TransactionForm({
                 fieldErrors.splits = 'Exchange rate required';
             }
 
-            const { submittedDifference, invalidAmountSplits } = calculateBalance();
+            const { submittedDifference, invalidAmountSplits, unassignedAmountRows } = calculateBalance();
             if (invalidAmountSplits.length > 0) {
                 errors.push(`Enter a valid amount (e.g. 1234.56) for: ${invalidAmountSplits.join(', ')}.`);
                 fieldErrors.splits = 'Invalid amount';
+            }
+
+            // An amount on a row with no account is dropped from the request.
+            // Reported per row so the user can see which one, rather than as a
+            // global imbalance that would not explain itself.
+            for (const index of unassignedAmountRows) {
+                fieldErrors[`splits[${index}]`] = 'Select an account or clear this amount.';
+            }
+            if (unassignedAmountRows.length > 0) {
+                const rowLabel = unassignedAmountRows.map(index => `line ${index + 1}`).join(', ');
+                errors.push(
+                    unassignedAmountRows.length === 1
+                        ? `Select an account for ${rowLabel} or clear its amount — it would not be saved.`
+                        : `Select an account for ${rowLabel} or clear their amounts — they would not be saved.`
+                );
             }
 
             // Only meaningful once every amount parses. Checks the ROUNDED
@@ -1153,6 +1183,7 @@ export function TransactionForm({
                                 onRemove={handleRemoveSplit}
                                 canRemove={formData.splits.length > 2}
                                 transactionCurrencyGuid={formData.currency_guid}
+                                error={fieldErrors[`splits[${index}]`]}
                             />
                         ))}
                     </div>

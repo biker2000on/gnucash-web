@@ -142,6 +142,7 @@ describe('foreign-currency balance validation', () => {
     });
 
     it('rejects a same-currency one-cent imbalance', async () => {
+
         const onSave = vi.fn().mockResolvedValue(undefined);
         render(<TransactionForm onSave={onSave} onCancel={() => {}} defaultCurrencyGuid={USD} />);
 
@@ -157,5 +158,73 @@ describe('foreign-currency balance validation', () => {
 
         expect(await screen.findByText(/Transaction is unbalanced by 0\.01/)).toBeTruthy();
         expect(onSave).not.toHaveBeenCalled();
+    });
+});
+
+/**
+ * buildApiData drops rows with no account selected, so the balance the form
+ * checks must drop them too — otherwise such a row's amount silently offsets a
+ * real imbalance in the rows that ARE sent. The dropped amount is reported as
+ * its own per-row error instead.
+ */
+describe('rows with an amount but no account', () => {
+    /** Advanced mode with a third, initially blank, split row. */
+    function openAdvancedWithThirdRow(description: string) {
+        fireEvent.change(screen.getByLabelText('Description'), { target: { value: description } });
+        fireEvent.click(screen.getByRole('button', { name: 'Switch to Advanced (Multiple Splits)' }));
+        fireEvent.click(screen.getByRole('button', { name: '+ Add Split' }));
+
+        const accounts = screen.getAllByLabelText('account:Select account...');
+        fireEvent.change(accounts[0], { target: { value: USD_ACCOUNT } });
+        fireEvent.change(accounts[1], { target: { value: USD_ACCOUNT } });
+    }
+
+    it('does not let an account-less row mask a real imbalance in the submitted rows', async () => {
+        const onSave = vi.fn().mockResolvedValue(undefined);
+        render(<TransactionForm onSave={onSave} onCancel={() => {}} defaultCurrencyGuid={USD} />);
+
+        openAdvancedWithThirdRow('Masked imbalance');
+        // Sent rows are off by a cent; the third row's 0.01 would hide it.
+        fireEvent.change(screen.getAllByPlaceholderText('Debit')[0], { target: { value: '1.00' } });
+        fireEvent.change(screen.getAllByPlaceholderText('Credit')[1], { target: { value: '0.99' } });
+        fireEvent.change(screen.getAllByPlaceholderText('Credit')[2], { target: { value: '0.01' } });
+
+        fireEvent.click(screen.getByRole('button', { name: 'Create Transaction' }));
+
+        expect(await screen.findByText(/Select an account for line 3 or clear its amount/)).toBeTruthy();
+        expect(screen.getByRole('alert')).toHaveTextContent('Select an account or clear this amount.');
+        expect(onSave).not.toHaveBeenCalled();
+    });
+
+    it('reports the row rather than a bogus imbalance when the sent rows balance', async () => {
+        const onSave = vi.fn().mockResolvedValue(undefined);
+        render(<TransactionForm onSave={onSave} onCancel={() => {}} defaultCurrencyGuid={USD} />);
+
+        openAdvancedWithThirdRow('Stray amount');
+        fireEvent.change(screen.getAllByPlaceholderText('Debit')[0], { target: { value: '1.00' } });
+        fireEvent.change(screen.getAllByPlaceholderText('Credit')[1], { target: { value: '1.00' } });
+        fireEvent.change(screen.getAllByPlaceholderText('Credit')[2], { target: { value: '0.05' } });
+
+        fireEvent.click(screen.getByRole('button', { name: 'Create Transaction' }));
+
+        expect(await screen.findByText(/Select an account for line 3 or clear its amount/)).toBeTruthy();
+        expect(screen.queryByText(/unbalanced/i)).toBeNull();
+        expect(onSave).not.toHaveBeenCalled();
+    });
+
+    it('submits normally with a blank trailing row', async () => {
+        const onSave = vi.fn().mockResolvedValue(undefined);
+        render(<TransactionForm onSave={onSave} onCancel={() => {}} defaultCurrencyGuid={USD} />);
+
+        openAdvancedWithThirdRow('Blank trailing row');
+        fireEvent.change(screen.getAllByPlaceholderText('Debit')[0], { target: { value: '1.00' } });
+        fireEvent.change(screen.getAllByPlaceholderText('Credit')[1], { target: { value: '1.00' } });
+
+        fireEvent.click(screen.getByRole('button', { name: 'Create Transaction' }));
+
+        await waitFor(() => expect(onSave).toHaveBeenCalled());
+        expect(screen.queryByRole('alert')).toBeNull();
+        // The blank row is not sent.
+        expect(onSave.mock.calls[0][0].splits).toHaveLength(2);
     });
 });
