@@ -16,6 +16,7 @@ interface SplitRowProps {
     onRemove: (index: number) => void;
     canRemove: boolean;
     transactionCurrencyGuid?: string; // The transaction's currency GUID
+    error?: string; // Row-level validation message, shown under the account cell
 }
 
 export function SplitRow({
@@ -25,6 +26,7 @@ export function SplitRow({
     onRemove,
     canRemove,
     transactionCurrencyGuid,
+    error,
 }: SplitRowProps) {
     const [accountCommodity, setAccountCommodity] = useState<string | null>(null);
     const { defaultTaxRate } = useUserPreferences();
@@ -140,6 +142,11 @@ export function SplitRow({
                         onChange={handleAccountChange}
                         placeholder="Select account..."
                     />
+                    {error && (
+                        <p role="alert" className="mt-1 text-xs text-negative">
+                            {error}
+                        </p>
+                    )}
                 </div>
 
                 {/* Debit & Credit */}

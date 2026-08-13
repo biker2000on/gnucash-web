@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import prisma, { toDecimal, generateGuid } from '@/lib/prisma';
 import { serializeBigInts } from '@/lib/gnucash';
 import { CreateTransactionRequest } from '@/lib/types';
-import { validateTransaction } from '@/lib/validation';
+import { validateTransaction, summarizeValidationErrors } from '@/lib/validation';
 import { logAudit, snapshotTransactionByGuid } from '@/lib/services/audit.service';
 import { processMultiCurrencySplits } from '@/lib/trading-accounts';
 import { getBookAccountGuids, getActiveBookGuid } from '@/lib/book-scope';
@@ -208,7 +208,7 @@ export async function PUT(
         const validation = validateTransaction(body);
         if (!validation.valid) {
             return NextResponse.json({
-                error: validation.errors.map(item => item.message).join(' '),
+                error: summarizeValidationErrors(validation.errors),
                 errors: validation.errors,
             }, { status: 400 });
         }

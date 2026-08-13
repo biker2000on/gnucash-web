@@ -14,6 +14,7 @@ import {
     type TimeProject,
 } from '@/lib/timesheet';
 import type { TimeEntryDTO } from '@/lib/business/time-tracking.service';
+import { throwErrorBody } from '@/lib/api-error';
 
 const TNUM = { fontFeatureSettings: "'tnum'" } as const;
 const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -287,19 +288,19 @@ export function WeekGrid({ projects, canWrite, refreshKey, onDataChanged, onEdit
                         billable: isRowBillable(rowKey),
                     }),
                 });
-                if (!res.ok) throw new Error((await res.json().catch(() => null))?.error || 'Failed to save the cell');
+                if (!res.ok) await throwErrorBody(res, 'Failed to save the cell');
             } else if (cell.count === 1) {
                 const id = cell.entryIds[0];
                 if (minutes === 0) {
                     const res = await fetch(`/api/business/time/${id}`, { method: 'DELETE' });
-                    if (!res.ok) throw new Error((await res.json().catch(() => null))?.error || 'Failed to clear the cell');
+                    if (!res.ok) await throwErrorBody(res, 'Failed to clear the cell');
                 } else if (minutes !== cell.minutes) {
                     const res = await fetch(`/api/business/time/${id}`, {
                         method: 'PATCH',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ minutes }),
                     });
-                    if (!res.ok) throw new Error((await res.json().catch(() => null))?.error || 'Failed to save the cell');
+                    if (!res.ok) await throwErrorBody(res, 'Failed to save the cell');
                 }
             }
             onDataChanged();
@@ -318,7 +319,7 @@ export function WeekGrid({ projects, canWrite, refreshKey, onDataChanged, onEdit
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ description: text }),
             });
-            if (!res.ok) throw new Error((await res.json().catch(() => null))?.error || 'Failed to save the note');
+            if (!res.ok) await throwErrorBody(res, 'Failed to save the note');
             setNotesOpenFor(null);
             onDataChanged();
         } catch (err) {

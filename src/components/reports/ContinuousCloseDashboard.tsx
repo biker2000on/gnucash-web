@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import type { ReconciliationCoverage } from '@/lib/reconciliation-coverage';
+import { throwErrorBody } from '@/lib/api-error';
 
 function metric(value: string, label: string, tone = 'text-foreground') {
   return (
@@ -20,7 +21,7 @@ export function ContinuousCloseDashboard() {
   useEffect(() => {
     fetch('/api/reconciliation/coverage')
       .then(async response => {
-        if (!response.ok) throw new Error((await response.json().catch(() => null))?.error || 'Failed to load');
+        if (!response.ok) await throwErrorBody(response, 'Failed to load');
         return response.json() as Promise<ReconciliationCoverage>;
       })
       .then(setCoverage)

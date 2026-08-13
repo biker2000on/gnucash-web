@@ -28,6 +28,43 @@ export interface ValidationError {
     message: string;
 }
 
+/**
+ * Tolerance, in currency units, for the double-entry "splits sum to zero" check.
+ *
+ * The check divides each split's `value_num / value_denom` in IEEE-754 double
+ * precision, so an exactly-balanced transaction can still sum to a tiny
+ * non-zero residue (e.g. 1/3 + 1/3 + 1/3 - 1 !== 0). The tolerance only exists
+ * to absorb that representation error.
+ *
+ * 0.001 is a tenth of a cent: far above the ~1e-13 residue that accumulates
+ * over a realistic split count, and still an order of magnitude below the
+ * smallest imbalance a user could enter in a currency field (0.01). So it
+ * cannot mask a real one-cent error.
+ *
+ * Used by `validateTransaction` (API routes) and `validateSplitsBalance`
+ * (TransactionService) so both server-side create paths agree. Callers that
+ * work in a different unit or precision (import parsers, the lot scrub engine)
+ * deliberately keep their own thresholds and are not covered by this constant.
+ */
+export const BALANCE_TOLERANCE = 0.001;
+
+/**
+ * Separator between messages in a multi-error summary. Messages do not end in
+ * punctuation, so joining with a space produced run-on text
+ * ("Currency is required Post date is required"). Semicolon-space keeps the
+ * boundaries readable in a single-line toast.
+ */
+const ERROR_SUMMARY_SEPARATOR = '; ';
+
+/**
+ * Flatten validation errors into the single human-readable string API routes
+ * return as `error`. Both transaction write paths use this so the create and
+ * update responses read identically.
+ */
+export function summarizeValidationErrors(errors: ValidationError[]): string {
+    return errors.map(item => item.message).join(ERROR_SUMMARY_SEPARATOR);
+}
+
 export interface ValidationResult {
     valid: boolean;
     errors: ValidationError[];
@@ -99,8 +136,8 @@ export function validateTransaction(tx: TransactionInput): ValidationResult {
                 return acc + value;
             }, 0);
 
-            // Allow for small floating point errors (1 cent / 100 = 0.01)
-            if (Math.abs(sum) > 0.001) {
+            // Allow only for floating-point representation error — see BALANCE_TOLERANCE.
+            if (Math.abs(sum) > BALANCE_TOLERANCE) {
                 errors.push({ field: 'splits', message: `Splits must sum to zero (current sum: ${sum.toFixed(2)})` });
             }
         }

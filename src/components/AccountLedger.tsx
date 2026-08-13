@@ -18,6 +18,7 @@ import { EditableRow, EditableRowHandle } from './ledger/EditableRow';
 import { InvestmentEditRow, InvestmentEditRowHandle, InvestmentSaveData } from './ledger/InvestmentEditRow';
 import { useToast } from '@/contexts/ToastContext';
 import { toNumDenom } from '@/lib/validation';
+import { throwErrorBody } from '@/lib/api-error';
 import {
     useReactTable,
     getCoreRowModel,
@@ -853,10 +854,7 @@ export default function AccountLedger({
                 }
             }
 
-            if (!res.ok) {
-                const errData = await res.json().catch(() => null);
-                throw new Error(errData?.error || errData?.errors?.map((e: { message: string }) => e.message).join(', ') || 'Failed to save');
-            }
+            if (!res.ok) await throwErrorBody(res, 'Failed to save');
 
             success(isNewTransaction ? 'Transaction created' : 'Transaction updated');
             suppressNextDataEvent('transactions');
@@ -955,15 +953,15 @@ export default function AccountLedger({
                     return false;
                 }
             }
-            if (!res.ok) throw new Error('Failed to save');
+            if (!res.ok) await throwErrorBody(res, 'Failed to save transaction');
 
             success(isNewTransaction ? 'Transaction created' : 'Transaction updated');
             suppressNextDataEvent('transactions');
             setLastEditedDate(txData.post_date);
             await fetchTransactions();
             return true;
-        } catch {
-            error('Failed to save transaction');
+        } catch (err) {
+            error(err instanceof Error ? err.message : 'Failed to save transaction');
             return false;
         }
     }, [transactions, accountCommodityGuid, fetchTransactions, success, error]);
@@ -1065,10 +1063,7 @@ export default function AccountLedger({
                 }
             }
 
-            if (!res.ok) {
-                const errData = await res.json().catch(() => null);
-                throw new Error(errData?.error || errData?.errors?.map((e: { message: string }) => e.message).join(', ') || 'Failed to save');
-            }
+            if (!res.ok) await throwErrorBody(res, 'Failed to save');
 
             success(isNewTransaction ? 'Transaction created' : 'Transaction updated');
             suppressNextDataEvent('transactions');
@@ -1200,11 +1195,7 @@ export default function AccountLedger({
                 }),
             });
 
-            if (!res.ok) {
-                const errData = await res.json().catch(() => null);
-                const msg = errData?.errors?.map((e: { message: string }) => e.message).join(', ') || errData?.error || 'Failed to duplicate';
-                throw new Error(msg);
-            }
+            if (!res.ok) await throwErrorBody(res, 'Failed to duplicate');
 
             success('Transaction duplicated');
             // Refetch so running_balance column reflects the new transaction.
@@ -1393,10 +1384,7 @@ export default function AccountLedger({
                 body: JSON.stringify({ splitGuids, targetAccountGuid }),
             });
 
-            if (!res.ok) {
-                const data = await res.json();
-                throw new Error(data.error || 'Failed to move splits');
-            }
+            if (!res.ok) await throwErrorBody(res, 'Failed to move splits');
 
             const data = await res.json();
             setEditSelectedGuids(new Set());

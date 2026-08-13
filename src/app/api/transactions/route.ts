@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import prisma, { toDecimal, generateGuid } from '@/lib/prisma';
 import { serializeBigInts } from '@/lib/gnucash';
 import { CreateTransactionRequest } from '@/lib/types';
-import { validateTransaction } from '@/lib/validation';
+import { validateTransaction, summarizeValidationErrors } from '@/lib/validation';
 import { isValidGuid } from '@/lib/guid';
 import { Prisma } from '@prisma/client';
 import { logAudit, snapshotTransactionByGuid } from '@/lib/services/audit.service';
@@ -319,7 +319,13 @@ export async function POST(request: Request) {
         const validation = validateTransaction(body);
         if (!validation.valid) {
             console.error('[POST /api/transactions] Validation failed:', JSON.stringify(validation.errors), 'body:', JSON.stringify({ currency_guid: body.currency_guid, post_date: body.post_date, description: body.description, splits_count: body.splits?.length, splits_sample: body.splits?.slice(0, 2).map(s => ({ account_guid: s.account_guid, value_num: s.value_num, value_denom: s.value_denom })) }));
-            return NextResponse.json({ errors: validation.errors }, { status: 400 });
+            // Send both shapes, matching PUT /api/transactions/[guid]: `error`
+            // is the human-readable summary the client shows, `errors` keeps
+            // the per-field detail for form-level highlighting.
+            return NextResponse.json({
+                error: summarizeValidationErrors(validation.errors),
+                errors: validation.errors,
+            }, { status: 400 });
         }
 
         // Period lock pre-check (fast-fail; the authoritative check runs
