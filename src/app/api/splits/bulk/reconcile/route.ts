@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { requireRole } from '@/lib/auth';
+import { getAccountGuidsForBook } from '@/lib/book-scope';
 import { publishDataChange } from '@/lib/data-events';
 import { lockTransactionsForUpdate } from '@/lib/services/reconciled-split.service';
 
@@ -9,6 +10,8 @@ interface BulkReconcileBody {
     reconcile_state: 'n' | 'c' | 'y';
     reconcile_date?: string;
 }
+
+class SplitNotInBookError extends Error {}
 
 /**
  * @openapi
@@ -71,7 +74,26 @@ export async function POST(request: Request) {
         const reconcileDate = body.reconcile_state === 'y'
             ? new Date(body.reconcile_date || new Date().toISOString())
             : null;
+        const splitGuids = [...new Set(body.splits)];
+        const bookAccountGuids = await getAccountGuidsForBook(roleResult.bookGuid);
 
+        // Reject the entire batch when any requested split is absent from this
+        // book. This is deliberately atomic: silently reconciling only a
+        // subset would leave callers unable to tell which requested rows were
+        // changed and makes safe retries difficult.
+        const scopedTargets = await prisma.splits.findMany({
+            where: {
+                guid: { in: splitGuids },
+                account_guid: { in: bookAccountGuids },
+            },
+            select: { guid: true },
+        });
+        if (scopedTargets.length !== splitGuids.length) {
+            return NextResponse.json(
+                { error: 'One or more splits not found in this book' },
+                { status: 404 }
+            );
+        }
         // Bulk update all splits under the canonical parent-transaction lock
         // (guid order), matching every other split-writing path.
         //
@@ -84,21 +106,31 @@ export async function POST(request: Request) {
         // its siblings and bumps enter_date so stale editors 409.
         const result = await prisma.$transaction(async (tx) => {
             const targets = await tx.splits.findMany({
-                where: { guid: { in: body.splits } },
+                where: {
+                    guid: { in: splitGuids },
+                    account_guid: { in: bookAccountGuids },
+                },
                 select: { guid: true, tx_guid: true },
             });
+            if (targets.length !== splitGuids.length) {
+                throw new SplitNotInBookError();
+            }
             const parentTxGuids = [...new Set(targets.map(s => s.tx_guid))].sort();
             await lockTransactionsForUpdate(parentTxGuids, tx);
 
             const updated = await tx.splits.updateMany({
                 where: {
-                    guid: { in: body.splits },
+                    guid: { in: splitGuids },
+                    account_guid: { in: bookAccountGuids },
                 },
                 data: {
                     reconcile_state: body.reconcile_state,
                     reconcile_date: reconcileDate,
                 },
             });
+            if (updated.count !== splitGuids.length) {
+                throw new SplitNotInBookError();
+            }
             if (parentTxGuids.length > 0) {
                 await tx.transactions.updateMany({
                     where: { guid: { in: parentTxGuids } },
@@ -117,6 +149,12 @@ export async function POST(request: Request) {
             reconcile_date: reconcileDate,
         });
     } catch (error) {
+        if (error instanceof SplitNotInBookError) {
+            return NextResponse.json(
+                { error: 'One or more splits not found in this book' },
+                { status: 404 }
+            );
+        }
         console.error('Error bulk updating reconcile states:', error);
         return NextResponse.json(
             { error: 'Failed to update reconcile states' },
