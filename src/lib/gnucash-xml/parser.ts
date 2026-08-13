@@ -26,6 +26,7 @@ import type {
   GnuCashSxDeferredInstance,
 } from './types';
 
+// Invalid overrides fail the first import loudly rather than preventing startup.
 const DEFAULT_MAX_DECOMPRESSED_XML_BYTES = 256 * 1024 * 1024;
 const MAX_DECOMPRESSED_XML_BYTES_ENV = 'GNUCASH_XML_MAX_DECOMPRESSED_BYTES';
 
@@ -44,7 +45,7 @@ function getMaxDecompressedXmlBytes(): number {
 
 function sizeLimitError(limit: number): Error {
   const displayLimit = limit % (1024 * 1024) === 0
-    ? `${limit / 1024 / 1024} MB`
+    ? `${limit / 1024 / 1024} MiB`
     : `${limit} ${limit === 1 ? 'byte' : 'bytes'}`;
   return new Error(`GnuCash XML exceeds the ${displayLimit} decoded size limit.`);
 }

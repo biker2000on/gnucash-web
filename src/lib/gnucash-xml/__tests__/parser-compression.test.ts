@@ -19,7 +19,7 @@ describe('parser — compressed XML limits', () => {
 
     try {
       expect(() => parseGnuCashXml(gzipBomb)).toThrow(
-        'GnuCash XML exceeds the 1 MB decoded size limit.',
+        'GnuCash XML exceeds the 1 MiB decoded size limit.',
       );
     } finally {
       if (previousLimit === undefined) {
