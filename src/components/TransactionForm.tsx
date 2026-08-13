@@ -12,6 +12,7 @@ import { useToast } from '@/contexts/ToastContext';
 import { useAccounts } from '@/lib/hooks/useAccounts';
 import { evaluateMathExpression, containsMathExpression } from '@/lib/math-eval';
 import { parseAmountStrict } from '@/lib/parse-amount';
+import { BALANCE_TOLERANCE } from '@/lib/validation';
 import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 import { formatDateForDisplay, parseDateInput } from '@/lib/date-format';
 import { toLocalDateString } from '@/lib/datePresets';
@@ -607,9 +608,14 @@ export function TransactionForm({
                 fieldErrors.splits = 'Invalid amount';
             }
 
-            // Only meaningful once every amount parses.
-            if (invalidAmountSplits.length === 0 && missingRateAccounts.length === 0 && Math.abs(difference) > 0.01) {
-                errors.push(`Transaction is unbalanced by ${difference.toFixed(2)}. Debits must equal credits.`);
+            // Only meaningful once every amount parses. Uses the same tolerance
+            // the server applies, so the form never accepts an imbalance the
+            // API will reject (a 0.005 gap used to pass here and fail there).
+            if (invalidAmountSplits.length === 0 && missingRateAccounts.length === 0 && Math.abs(difference) > BALANCE_TOLERANCE) {
+                // A sub-cent gap renders as "0.00" at 2 decimals; show enough
+                // digits that the number explains the rejection.
+                const shown = Math.abs(difference) < 0.005 ? difference.toFixed(4) : difference.toFixed(2);
+                errors.push(`Transaction is unbalanced by ${shown}. Debits must equal credits.`);
                 fieldErrors.splits = 'Unbalanced';
             }
         }

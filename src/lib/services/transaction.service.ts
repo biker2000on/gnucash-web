@@ -12,6 +12,7 @@ import prisma from '@/lib/prisma';
 import { generateGuid, toDecimal } from '@/lib/gnucash';
 import { recordImpliedPrices } from '@/lib/services/implied-price.service';
 import { assertAccountNotLocked } from '@/lib/services/period-lock.service';
+import { BALANCE_TOLERANCE } from '@/lib/validation';
 import {
   assertNoReconciledSplits,
   assertSplitsNotProtected,
@@ -54,8 +55,8 @@ function validateSplitsBalance(splits: SplitInput[]): void {
     const value = split.value_num / split.value_denom;
     return sum + value;
   }, 0);
-  // Allow for floating point imprecision (within 0.001)
-  if (Math.abs(total) > 0.001) {
+  // Allow only for floating-point representation error — see BALANCE_TOLERANCE.
+  if (Math.abs(total) > BALANCE_TOLERANCE) {
     throw new Error(`Transaction splits must sum to zero. Current sum: ${total.toFixed(2)}`);
   }
 }
