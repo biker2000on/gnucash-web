@@ -6,7 +6,11 @@ import {
     type BudgetRecurrence,
 } from '@/lib/budget-actuals';
 import { toDecimalNumber } from '@/lib/gnucash';
-import { buildAccountValuationContext } from '@/lib/account-valuation';
+import {
+    buildAccountValuationContext,
+    collectValuationCoverage,
+    type ValuationCoverage,
+} from '@/lib/account-valuation';
 import { isBudgetOwnedByBook } from '@/lib/budget-ownership';
 
 /**
@@ -340,6 +344,23 @@ export interface BudgetBalanceSheetSection {
     total: BalanceSheetPair;
 }
 
+/** Totals as computed by the pure section builder, before disclosure rules. */
+export interface BudgetBalanceSheetTotals {
+    assets: BalanceSheetPair;
+    liabilities: BalanceSheetPair;
+    equity: BalanceSheetPair;
+    liabilitiesAndEquity: BalanceSheetPair;
+    /** assets − (liabilities + equity); ≈0 when the book closes cleanly. */
+    check: BalanceSheetPair;
+}
+
+export interface BudgetBalanceSheetSections {
+    assets: BudgetBalanceSheetSection;
+    liabilities: BudgetBalanceSheetSection;
+    equity: BudgetBalanceSheetSection;
+    totals: BudgetBalanceSheetTotals;
+}
+
 export interface BudgetBalanceSheetData {
     reportType: 'budget_balance_sheet';
     title: string;
@@ -357,14 +378,22 @@ export interface BudgetBalanceSheetData {
     assets: BudgetBalanceSheetSection;
     liabilities: BudgetBalanceSheetSection;
     equity: BudgetBalanceSheetSection;
-    totals: {
-        assets: BalanceSheetPair;
-        liabilities: BalanceSheetPair;
-        equity: BalanceSheetPair;
-        liabilitiesAndEquity: BalanceSheetPair;
-        /** assets − (liabilities + equity); ≈0 when the book closes cleanly */
-        check: BalanceSheetPair;
+    totals: Omit<BudgetBalanceSheetTotals, 'check'> & {
+        /**
+         * NULL when valuationCoverage is incomplete: an unvalued balance zeroes
+         * one side of the identity and not the other, so no number here would
+         * be a real balance check. Consumers must render the null as
+         * "not assessable" rather than substituting a value of their own.
+         */
+        check: BalanceSheetPair | null;
     };
+    /**
+     * The residual that WOULD have been published, kept only for diagnosing a
+     * coverage gap. Never display this as a balance check.
+     */
+    rawCheckDiagnostic?: BalanceSheetPair;
+    /** Incomplete when some balances could not be valued; see `check`. */
+    valuationCoverage: ValuationCoverage;
 }
 
 export const BALANCE_SHEET_ASSET_TYPES = ['ASSET', 'BANK', 'CASH', 'STOCK', 'MUTUAL', 'RECEIVABLE'] as const;
@@ -467,7 +496,7 @@ export function buildBudgetBalanceSheetSections(
     accounts: ReadonlyArray<BalanceProjectionInput>,
     periodIndex: number,
     periodNetIncome: { budgeted: number; actual: number },
-): Pick<BudgetBalanceSheetData, 'assets' | 'liabilities' | 'equity' | 'totals'> {
+): BudgetBalanceSheetSections {
     const balances = new Map(
         projectAccountBalances(accounts, periodIndex).map(b => [b.guid, b]),
     );
@@ -914,6 +943,41 @@ export async function generateBudgetBalanceSheet(
         else actualExpense += raw;
     }
 
+    // Coverage over the raw (pre-multiplier) units each account carries. An
+    // unconvertible balance is multiplied by 0 on one side of the identity
+    // only, so the check row cannot be trusted when this comes back incomplete.
+    //
+    // The two displayed bases are measured INDEPENDENTLY, each through the
+    // selected period only, and combined by magnitude. Netting them would let a
+    // budgeted -100 cancel an unvalued actual +100 and wrongly declare the
+    // statement assessable; summing future periods would let a balance the
+    // report never shows decide the disclosure.
+    const periodNums = Array.from({ length: clampedIndex + 1 }, (_, i) => i);
+    const throughPeriod = (row: number[] | undefined) =>
+        periodNums.reduce((sum, period) => sum + ((row ?? [])[period] || 0), 0);
+
+    const valuationCoverage = collectValuationCoverage(
+        valuation,
+        accounts.map(account => {
+            const openingBalance = opening.get(account.guid) || 0;
+            const budgeted = budgetedFlows.get(account.guid);
+            const actualQuantity = openingBalance + throughPeriod(flows.get(account.guid));
+            // Mirrors projectAccountBalances: an unbudgeted account projects its
+            // actual balance.
+            const projectedQuantity = budgeted !== undefined
+                ? openingBalance + throughPeriod(budgeted)
+                : actualQuantity;
+            return {
+                account: {
+                    accountType: account.account_type,
+                    commodityGuid: account.commodity_guid,
+                    commodityNamespace: account.commodity?.namespace,
+                },
+                quantity: Math.max(Math.abs(actualQuantity), Math.abs(projectedQuantity)),
+            };
+        }),
+    );
+
     const inputs: BalanceProjectionInput[] = accounts.map(account => {
         const multiplier = multiplierByGuid.get(account.guid) ?? 1;
         const budgeted = budgetedFlows.get(account.guid);
@@ -946,5 +1010,13 @@ export async function generateBudgetBalanceSheet(
         periodIndex: clampedIndex,
         asOfDate: ranges[clampedIndex].end,
         ...sections,
+        totals: {
+            ...sections.totals,
+            check: valuationCoverage.complete ? sections.totals.check : null,
+        },
+        ...(valuationCoverage.complete
+            ? {}
+            : { rawCheckDiagnostic: sections.totals.check }),
+        valuationCoverage,
     };
 }

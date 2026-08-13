@@ -27,9 +27,11 @@ vi.mock('@/lib/currency', () => ({
   findExchangeRate: vi.fn(),
 }));
 
-vi.mock('@/lib/account-valuation', () => ({
-  buildAccountValuationContext: vi.fn(),
-}));
+// Only the context builder is faked; the coverage helpers under test stay real.
+vi.mock('@/lib/account-valuation', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/account-valuation')>();
+  return { ...actual, buildAccountValuationContext: vi.fn() };
+});
 
 import prisma from '@/lib/prisma';
 import { getBaseCurrency, findExchangeRate } from '@/lib/currency';
@@ -237,6 +239,155 @@ describe('FinancialSummaryService.computeNetWorthSummary', () => {
       startDate,
       USD_CURRENCY,
     );
+    // Everything was priced, so the total stands on its own.
+    expect(result.end.coverage).toEqual({
+      complete: true,
+      unvaluedAccountCount: 0,
+      gaps: [],
+    });
+  });
+
+  it('reports an unpriceable holding as unvalued instead of silently contributing 0', async () => {
+    mockPrisma.accounts.findMany.mockResolvedValue([
+      { guid: 'checking-guid', account_type: 'BANK', commodity_guid: 'usd-guid', commodity: { namespace: 'CURRENCY' } },
+      { guid: 'stock-guid', account_type: 'STOCK', commodity_guid: 'privco-guid', commodity: { namespace: 'PRIVATE' } },
+    ] as never);
+    mockPrisma.splits.findMany.mockResolvedValue([
+      {
+        account_guid: 'checking-guid',
+        quantity_num: BigInt(100000),
+        quantity_denom: BigInt(100),
+        transaction: { post_date: new Date('2025-06-15') },
+      },
+      {
+        account_guid: 'stock-guid',
+        quantity_num: BigInt(40),
+        quantity_denom: BigInt(1),
+        transaction: { post_date: new Date('2025-06-15') },
+      },
+    ] as never);
+
+    const gap = {
+      commodityGuid: 'privco-guid',
+      label: 'PRIVCO',
+      reason: 'missing-security-price' as const,
+      message: 'PRIVCO excluded: no price path to USD as of 2025-12-31.',
+    };
+    mockBuildAccountValuationContext.mockResolvedValue({
+      reportCurrencyGuid: 'usd-guid',
+      reportCurrencyMnemonic: 'USD',
+      getMultiplier: account => (account.commodityGuid === 'privco-guid' ? 0 : 1),
+      isConvertible: account => account.commodityGuid !== 'privco-guid',
+      gaps: [gap],
+      warnings: [gap.message],
+    });
+
+    const result = await FinancialSummaryService.computeNetWorthSummary(
+      bookGuids, startDate, endDate, USD_CURRENCY
+    );
+
+    // The cash still counts; the unpriceable 40 shares are reported as
+    // excluded rather than quietly valued at zero.
+    expect(result.end.netWorth).toBeCloseTo(1000);
+    expect(result.end.coverage).toEqual({
+      complete: false,
+      unvaluedAccountCount: 1,
+      gaps: [gap],
+    });
+  });
+
+  it('marks the change as not comparable when only the start date has a gap', async () => {
+    mockPrisma.accounts.findMany.mockResolvedValue([
+      { guid: 'stock-guid', account_type: 'STOCK', commodity_guid: 'voo-guid', commodity: { namespace: 'NYSE' } },
+    ] as never);
+    // 100 shares held all along, with no transactions during the period.
+    mockPrisma.splits.findMany.mockResolvedValue([
+      {
+        account_guid: 'stock-guid',
+        quantity_num: BigInt(100),
+        quantity_denom: BigInt(1),
+        transaction: { post_date: new Date('2024-06-01') },
+      },
+    ] as never);
+
+    const gap = {
+      commodityGuid: 'voo-guid',
+      label: 'VOO',
+      reason: 'missing-security-price' as const,
+      message: 'VOO excluded: no price path to USD as of 2025-01-01.',
+    };
+    mockBuildAccountValuationContext
+      // Start date: no price at all.
+      .mockResolvedValueOnce({
+        reportCurrencyGuid: 'usd-guid',
+        reportCurrencyMnemonic: 'USD',
+        getMultiplier: () => 0,
+        isConvertible: () => false,
+        gaps: [gap],
+        warnings: [gap.message],
+      })
+      // End date: priced at $10.
+      .mockResolvedValueOnce({
+        reportCurrencyGuid: 'usd-guid',
+        reportCurrencyMnemonic: 'USD',
+        getMultiplier: () => 10,
+        isConvertible: () => true,
+        gaps: [],
+        warnings: [],
+      });
+
+    const result = await FinancialSummaryService.computeNetWorthSummary(
+      bookGuids, startDate, endDate, USD_CURRENCY
+    );
+
+    // End coverage alone looks clean, and the raw change reads as a $1,000
+    // gain that never happened -- the holding merely became priceable.
+    expect(result.end.coverage.complete).toBe(true);
+    expect(result.change).toBeCloseTo(1000);
+    expect(result.changeCoverage).toEqual({
+      complete: false,
+      comparable: false,
+      unvaluedAccountCount: 1,
+      gaps: [gap],
+    });
+  });
+
+  it('keeps the change comparable when both endpoints exclude the same commodity', async () => {
+    mockPrisma.accounts.findMany.mockResolvedValue([
+      { guid: 'stock-guid', account_type: 'STOCK', commodity_guid: 'voo-guid', commodity: { namespace: 'NYSE' } },
+    ] as never);
+    mockPrisma.splits.findMany.mockResolvedValue([
+      {
+        account_guid: 'stock-guid',
+        quantity_num: BigInt(100),
+        quantity_denom: BigInt(1),
+        transaction: { post_date: new Date('2024-06-01') },
+      },
+    ] as never);
+
+    const gap = {
+      commodityGuid: 'voo-guid',
+      label: 'VOO',
+      reason: 'missing-security-price' as const,
+      message: 'VOO excluded: no price path to USD.',
+    };
+    mockBuildAccountValuationContext.mockResolvedValue({
+      reportCurrencyGuid: 'usd-guid',
+      reportCurrencyMnemonic: 'USD',
+      getMultiplier: () => 0,
+      isConvertible: () => false,
+      gaps: [gap],
+      warnings: [gap.message],
+    });
+
+    const result = await FinancialSummaryService.computeNetWorthSummary(
+      bookGuids, startDate, endDate, USD_CURRENCY
+    );
+
+    // Both ends exclude the same holding, so the change over what IS valued is
+    // a genuine (if partial) figure.
+    expect(result.changeCoverage.comparable).toBe(true);
+    expect(result.changeCoverage.complete).toBe(false);
   });
 });
 

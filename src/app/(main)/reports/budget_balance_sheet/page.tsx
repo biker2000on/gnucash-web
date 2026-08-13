@@ -10,6 +10,7 @@ import type {
 import { escapeCSVField, downloadCSV } from '@/lib/reports/csv-export';
 import { formatCurrency } from '@/lib/format';
 import { pickCurrentBudget, type BudgetRecurrenceLike } from '@/lib/budget-select';
+import { ValuationCoverageNotice } from '@/components/reports/ValuationCoverageNotice';
 
 const TNUM = { fontFeatureSettings: "'tnum'" } as const;
 
@@ -38,7 +39,21 @@ function generateBalanceSheetCSV(data: BudgetBalanceSheetData): string {
         rows.push('');
     }
     rows.push(line('', 'Liabilities + Equity', data.totals.liabilitiesAndEquity));
-    rows.push(line('', 'Check (Assets − L−E)', data.totals.check));
+    if (data.totals.check) {
+        rows.push(line('', 'Check (Assets − L−E)', data.totals.check));
+    } else {
+        // The exported file outlives this screen, so the caveat travels with it.
+        rows.push([
+            '',
+            escapeCSVField('Check (Assets − L−E)'),
+            escapeCSVField('not assessable'),
+            escapeCSVField('not assessable'),
+            escapeCSVField('not assessable'),
+        ].join(','));
+        for (const gap of data.valuationCoverage.gaps) {
+            rows.push(['', escapeCSVField(gap.message), '', '', ''].join(','));
+        }
+    }
     return rows.join('\n');
 }
 
@@ -244,6 +259,8 @@ export default function BudgetBalanceSheetPage() {
                     <div className="text-negative">{error}</div>
                 </div>
             ) : reportData && (
+                <>
+                <ValuationCoverageNotice coverage={reportData.valuationCoverage} />
                 <div className="bg-background-secondary/30 backdrop-blur-xl border border-border rounded-xl overflow-hidden">
                     <div className="flex flex-wrap items-center justify-between gap-2 p-3 border-b border-border text-sm text-foreground-secondary">
                         <span className="font-semibold text-foreground">{reportData.budgetName}</span>
@@ -276,10 +293,16 @@ export default function BudgetBalanceSheetPage() {
                                 Check: Assets − (Liabilities + Equity). Non-zero when the book carries unclosed
                                 pre-budget earnings — same caveat as the regular balance sheet.
                             </span>
-                            <span className="text-xs font-mono text-foreground-muted" style={TNUM}>
-                                Budgeted {formatCurrency(reportData.totals.check.budgeted, currency)}
-                                {' '}· Actual {formatCurrency(reportData.totals.check.actual, currency)}
-                            </span>
+                            {reportData.totals.check ? (
+                                <span className="text-xs font-mono text-foreground-muted" style={TNUM}>
+                                    Budgeted {formatCurrency(reportData.totals.check.budgeted, currency)}
+                                    {' '}· Actual {formatCurrency(reportData.totals.check.actual, currency)}
+                                </span>
+                            ) : (
+                                <span className="text-xs text-warning">
+                                    Not assessable — some balances could not be valued
+                                </span>
+                            )}
                         </div>
                     </div>
 
@@ -296,6 +319,7 @@ export default function BudgetBalanceSheetPage() {
                         </button>
                     </div>
                 </div>
+                </>
             )}
         </div>
     );

@@ -11,9 +11,103 @@ export interface AccountValuationInput {
   commodityNamespace?: string | null;
 }
 
+export type ValuationGapReason = 'missing-security-price' | 'missing-exchange-rate';
+
+/**
+ * One commodity that could not be expressed in the report currency. Balances in
+ * that commodity are left OUT of any total rather than being valued at zero on
+ * purpose or converted at a fabricated 1:1 rate, so callers can report
+ * "$X plus these unvalued holdings" instead of a confidently wrong $X.
+ */
+export interface ValuationGap {
+  commodityGuid: string;
+  /** Commodity mnemonic when it is known, otherwise the raw GUID. */
+  label: string;
+  reason: ValuationGapReason;
+  /** User-facing sentence describing what was left out and why. */
+  message: string;
+}
+
+/**
+ * How much of a set of balances a total actually covers. `complete` is true for
+ * the ordinary fully-priced book; when it is false the total omits the listed
+ * commodities and must never be presented as a whole figure -- nor may any
+ * identity derived from it (a balance check, a period-over-period change) be
+ * presented as assessable.
+ */
+export interface ValuationCoverage {
+  complete: boolean;
+  /** Accounts with a material balance that contributed nothing to the total. */
+  unvaluedAccountCount: number;
+  /** The commodities behind those accounts, with user-facing explanations. */
+  gaps: ValuationGap[];
+}
+
+/**
+ * Materiality POLICY for coverage reporting: quantities at or below this are
+ * treated as an empty account rather than a hidden holding, so closed accounts
+ * stay out of the warning list.
+ *
+ * This is a floating-point comparison against balances accumulated as floats,
+ * not an exact-fraction test, and it is chosen rather than derived -- it is not
+ * a proof that every commodity denomination sorts correctly against it. An
+ * exact-fraction balance assertion is tracked separately.
+ */
+export const UNVALUED_QUANTITY_EPSILON = 1e-9;
+
+/**
+ * Builds the coverage record for a set of valued balances. Only accounts
+ * carrying a material quantity count, so a closed account in a dead commodity
+ * does not raise a warning about a total it does not affect.
+ */
+export function collectValuationCoverage(
+  valuation: AccountValuationContext,
+  balances: Iterable<{ account: AccountValuationInput; quantity: number }>,
+): ValuationCoverage {
+  let unvaluedAccountCount = 0;
+  const unvaluedCommodityGuids = new Set<string>();
+
+  for (const { account, quantity } of balances) {
+    if (Math.abs(quantity) <= UNVALUED_QUANTITY_EPSILON) continue;
+    if (valuation.isConvertible?.(account) === false) {
+      unvaluedAccountCount++;
+      if (account.commodityGuid) unvaluedCommodityGuids.add(account.commodityGuid);
+    }
+  }
+
+  return {
+    complete: unvaluedAccountCount === 0,
+    unvaluedAccountCount,
+    gaps: (valuation.gaps ?? []).filter(gap => unvaluedCommodityGuids.has(gap.commodityGuid)),
+  };
+}
+
+/** Union of two coverage records, for a figure derived from both. */
+export function mergeValuationCoverage(
+  a: ValuationCoverage,
+  b: ValuationCoverage,
+): ValuationCoverage {
+  const gaps = [...a.gaps];
+  for (const gap of b.gaps) {
+    if (!gaps.some(existing => existing.commodityGuid === gap.commodityGuid)) {
+      gaps.push(gap);
+    }
+  }
+  return {
+    complete: a.complete && b.complete,
+    unvaluedAccountCount: Math.max(a.unvaluedAccountCount, b.unvaluedAccountCount),
+    gaps,
+  };
+}
+
 export interface AccountValuationContext {
   reportCurrencyGuid: string | null;
   reportCurrencyMnemonic: string;
+  /**
+   * Units of report currency per unit of account commodity. Returns 0 when no
+   * price or rate path exists; that 0 means "not valued", NOT "worthless", so
+   * pair it with isConvertible()/gaps before folding it into a headline total.
+   */
   getMultiplier(account: AccountValuationInput): number;
   /**
    * False when getMultiplier() returned 0 only because no price path to the
@@ -21,7 +115,9 @@ export interface AccountValuationContext {
    * Optional so existing test doubles of this context stay valid.
    */
   isConvertible?(account: AccountValuationInput): boolean;
-  /** Human-readable reasons for each unconvertible commodity. */
+  /** One entry per commodity that could not be valued in the report currency. */
+  gaps?: ValuationGap[];
+  /** Human-readable reasons for each unconvertible commodity, one per gap. */
   warnings?: string[];
 }
 
@@ -126,6 +222,29 @@ function getConversionRate(
 }
 
 /**
+ * Fills in mnemonics for commodities that never appeared in a price row, so a
+ * gap can name the symbol the user knows instead of a raw GUID. Only called
+ * when at least one gap exists, keeping the fully-priced path query-for-query
+ * identical.
+ */
+async function resolveMissingMnemonics(
+  commodityGuids: string[],
+  mnemonics: Map<string, string>,
+): Promise<void> {
+  const missing = commodityGuids.filter(guid => !mnemonics.has(guid));
+  if (missing.length === 0) return;
+
+  const rows = await prisma.commodities.findMany({
+    where: { guid: { in: missing } },
+    select: { guid: true, mnemonic: true },
+  });
+
+  for (const row of rows) {
+    if (row.mnemonic) mnemonics.set(row.guid, row.mnemonic);
+  }
+}
+
+/**
  * Builds a per-request valuation context for account hierarchy/report-currency
  * balances. Raw balances stay in account commodity units; this multiplier
  * converts those units into the active book/report currency.
@@ -171,8 +290,7 @@ export async function buildAccountValuationContext(
 
   const mnemonics = new Map<string, string>();
   const pricePairs = await loadLatestPricePairs([...commodityGuids], asOf, mnemonics);
-  const unconvertible = new Set<string>();
-  const warnings: string[] = [];
+  const gapReasons = new Map<string, ValuationGapReason>();
   const reportMnemonic = reportCurrency?.mnemonic ?? 'the report currency';
 
   for (const account of accounts) {
@@ -186,21 +304,39 @@ export async function buildAccountValuationContext(
       // have a value; triangulate rather than valuing the holding at zero.
       const rate = getConversionRate(pricePairs, commodityGuid, reportCurrencyGuid, pivotGuids);
       if (rate === null) {
-        unconvertible.add(commodityGuid);
-        warnings.push(
-          `${mnemonics.get(commodityGuid) ?? commodityGuid} excluded: no price path to ${reportMnemonic} as of ${asOf.toISOString().slice(0, 10)}.`
-        );
+        gapReasons.set(commodityGuid, 'missing-security-price');
       }
       multiplierCache.set(commodityGuid, rate ?? 0);
     } else if (account.commodityNamespace === 'CURRENCY') {
-      multiplierCache.set(
-        commodityGuid,
-        getConversionRate(pricePairs, commodityGuid, reportCurrencyGuid, pivotGuids) ?? 1
-      );
+      const rate = getConversionRate(pricePairs, commodityGuid, reportCurrencyGuid, pivotGuids);
+      if (rate === null) {
+        // Falling back to 1 here would present a made-up parity rate as real.
+        // Report the gap and let the caller exclude the balance out loud.
+        gapReasons.set(commodityGuid, 'missing-exchange-rate');
+      }
+      multiplierCache.set(commodityGuid, rate ?? 0);
     } else {
       multiplierCache.set(commodityGuid, 1);
     }
   }
+
+  if (gapReasons.size > 0) {
+    await resolveMissingMnemonics([...gapReasons.keys()], mnemonics);
+  }
+
+  const asOfLabel = asOf.toISOString().slice(0, 10);
+  const gaps: ValuationGap[] = [...gapReasons].map(([commodityGuid, reason]) => {
+    const label = mnemonics.get(commodityGuid) ?? commodityGuid;
+    return {
+      commodityGuid,
+      label,
+      reason,
+      message: reason === 'missing-security-price'
+        ? `${label} excluded: no price path to ${reportMnemonic} as of ${asOfLabel}.`
+        : `${label} excluded: no exchange rate to ${reportMnemonic} as of ${asOfLabel}; a 1:1 rate is never assumed.`,
+    };
+  });
+  const warnings = gaps.map(gap => gap.message);
 
   return {
     reportCurrencyGuid,
@@ -211,8 +347,9 @@ export async function buildAccountValuationContext(
     },
     isConvertible(account: AccountValuationInput) {
       if (!account.commodityGuid) return true;
-      return !unconvertible.has(account.commodityGuid);
+      return !gapReasons.has(account.commodityGuid);
     },
+    gaps,
     warnings,
   };
 }

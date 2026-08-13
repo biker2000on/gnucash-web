@@ -8,6 +8,22 @@ interface TraceReference {
     href: string;
 }
 
+interface ValuationGap {
+    commodityGuid: string;
+    label: string;
+    message: string;
+}
+
+interface ValuationCoverage {
+    complete: boolean;
+    unvaluedAccountCount: number;
+    gaps: ValuationGap[];
+}
+
+interface ValuationChangeCoverage extends ValuationCoverage {
+    comparable: boolean;
+}
+
 interface KPIData {
     netWorth: number;
     netWorthChange: number;
@@ -18,6 +34,9 @@ interface KPIData {
     topExpenseCategory: string;
     topExpenseAmount: number;
     investmentValue: number;
+    /** Optional so a payload cached before coverage existed still renders. */
+    coverage?: ValuationCoverage;
+    changeCoverage?: ValuationChangeCoverage;
     traces?: Partial<Record<'netWorth' | 'totalIncome' | 'totalExpenses' | 'savingsRate' | 'investmentValue', TraceReference>>;
 }
 
@@ -79,6 +98,8 @@ interface KPICardProps {
     value: string;
     change?: React.ReactNode;
     sublabel?: string;
+    /** Short note that the number is partial; rendered in the warning color. */
+    caveat?: string;
     traceId?: string;
     onExplain?: (traceId: string) => void;
 }
@@ -103,7 +124,7 @@ function ExplainButton({
     );
 }
 
-function KPICard({ icon, label, value, change, sublabel, traceId, onExplain }: KPICardProps) {
+function KPICard({ icon, label, value, change, sublabel, caveat, traceId, onExplain }: KPICardProps) {
     return (
         <div className="bg-surface border border-border rounded-xl p-4 sm:p-6 transition-all hover:border-primary/30">
             <div className="flex items-center gap-3 sm:mb-4">
@@ -130,6 +151,7 @@ function KPICard({ icon, label, value, change, sublabel, traceId, onExplain }: K
             <div className="hidden sm:block text-2xl font-bold text-foreground mb-1">{value}</div>
             {change && <div className="hidden sm:block">{change}</div>}
             {sublabel && <div className="hidden sm:block text-xs text-foreground-muted mt-1">{sublabel}</div>}
+            {caveat && <div className="hidden sm:block text-xs text-warning mt-1">{caveat}</div>}
         </div>
     );
 }
@@ -221,18 +243,47 @@ export default function KPIGrid({ data, loading }: KPIGridProps) {
         );
     }
 
+    // A holding with no price and a currency with no exchange rate are both
+    // left out of the totals entirely. Say so on the numbers they affect.
+    const coverage = data.coverage;
+    const changeCoverage = data.changeCoverage;
+    const unvaluedCount = coverage && !coverage.complete ? coverage.unvaluedAccountCount : 0;
+    const partialCaveat = unvaluedCount > 0
+        ? `Partial: excludes ${unvaluedCount} unvalued ${unvaluedCount === 1 ? 'account' : 'accounts'}`
+        : undefined;
+    // When the two dates could not value the same holdings, the difference
+    // between them is an artifact of the missing data, not a gain or loss.
+    // An ABSENT field means unknown, and unknown fails safe to "not shown": a
+    // payload predating this check (a stale cache entry, a missed key bump)
+    // then withholds the number rather than fabricating one.
+    const changeComparable = changeCoverage?.comparable ?? false;
+    // The banner covers the level totals and the change alike: a gap at only the
+    // START date leaves end coverage complete, and that is exactly the case
+    // where an uncaveated change would be most misleading.
+    const bannerCoverage = coverage && !coverage.complete
+        ? coverage
+        : changeCoverage && !changeCoverage.complete
+            ? changeCoverage
+            : undefined;
+    const showBanner = bannerCoverage !== undefined || !changeComparable;
+
     const cards: KPICardProps[] = [
         {
             icon: <IconNetWorth />,
             label: 'Net Worth',
             value: formatCurrency(data.netWorth),
-            change: (
+            caveat: partialCaveat,
+            change: changeComparable ? (
                 <div className="flex items-center gap-2">
                     <ChangeIndicator value={data.netWorthChange} />
                     <span className="text-xs text-foreground-muted">
                         ({formatPercent(data.netWorthChangePercent)})
                     </span>
                 </div>
+            ) : (
+                <span className="text-xs font-medium text-warning">
+                    Change not available
+                </span>
             ),
             traceId: data.traces?.netWorth?.traceId,
             onExplain: setSelectedTraceId,
@@ -268,6 +319,7 @@ export default function KPIGrid({ data, loading }: KPIGridProps) {
             icon: <IconInvestment />,
             label: 'Investment Value',
             value: formatCurrency(data.investmentValue),
+            caveat: partialCaveat,
             traceId: data.traces?.investmentValue?.traceId,
             onExplain: setSelectedTraceId,
         },
@@ -275,6 +327,39 @@ export default function KPIGrid({ data, loading }: KPIGridProps) {
 
     return (
         <>
+            {showBanner && (
+                <div
+                    role="alert"
+                    className="bg-warning/10 border border-warning/30 rounded-lg px-4 py-3 mb-4 text-sm text-warning"
+                >
+                    <div className="font-medium">
+                        {bannerCoverage
+                            ? 'These totals are incomplete'
+                            : 'Net worth change is not available'}
+                    </div>
+                    {bannerCoverage && bannerCoverage.gaps.length > 0 && (
+                        <ul className="mt-1.5 space-y-1 text-xs">
+                            {bannerCoverage.gaps.map(gap => (
+                                <li key={gap.commodityGuid}>{gap.message}</li>
+                            ))}
+                        </ul>
+                    )}
+                    {bannerCoverage && bannerCoverage.gaps.length === 0 && (
+                        <p className="mt-1.5 text-xs">
+                            {bannerCoverage.unvaluedAccountCount} account balance(s) could not be
+                            converted to the report currency and are excluded.
+                        </p>
+                    )}
+                    {!changeComparable && (
+                        <p className="mt-1.5 text-xs">
+                            {changeCoverage
+                                ? 'The start and end dates could not value the same holdings, so the net worth change and percentage are not shown.'
+                                : 'The net worth change could not be checked against both dates, so it is not shown. Reload to recompute.'}
+                        </p>
+                    )}
+                </div>
+            )}
+
             {/* Phone: one condensed card with a row per KPI */}
             <div className="sm:hidden bg-surface border border-border rounded-xl divide-y divide-border/40">
                 {cards.map(card => (
@@ -296,6 +381,9 @@ export default function KPIGrid({ data, loading }: KPIGridProps) {
                                         <span className="text-[11px] text-foreground-muted truncate max-w-36">{card.sublabel}</span>
                                     )}
                                 </div>
+                            )}
+                            {card.caveat && (
+                                <div className="text-[11px] text-warning">{card.caveat}</div>
                             )}
                             <ExplainButton traceId={card.traceId} onExplain={card.onExplain} />
                         </div>

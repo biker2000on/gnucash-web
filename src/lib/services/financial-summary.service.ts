@@ -17,18 +17,37 @@ import { getBaseCurrency, findExchangeRate } from '@/lib/currency';
 import type { Currency } from '@/lib/currency';
 import {
   buildAccountValuationContext,
+  collectValuationCoverage,
+  mergeValuationCoverage,
   type AccountValuationContext,
+  type ValuationCoverage,
 } from '@/lib/account-valuation';
+
+export type { ValuationCoverage };
 
 const ASSET_TYPES = ['ASSET', 'BANK', 'CASH', 'RECEIVABLE'];
 const LIABILITY_TYPES = ['LIABILITY', 'CREDIT', 'PAYABLE'];
 const INVESTMENT_TYPES = ['STOCK', 'MUTUAL'];
+
+/**
+ * Coverage of a period-over-period change, which depends on BOTH endpoints.
+ * A gap at only one endpoint is worse than a partial total: the holding enters
+ * or leaves the valued set, so the change contains a swing that never happened.
+ */
+export interface NetWorthChangeCoverage extends ValuationCoverage {
+  /**
+   * False when the endpoints exclude different commodities. The change and
+   * change-percent are then artifacts and must not be shown as gain or loss.
+   */
+  comparable: boolean;
+}
 
 export interface NetWorthResult {
   assets: number;
   liabilities: number;
   investmentValue: number;
   netWorth: number;
+  coverage: ValuationCoverage;
 }
 
 export interface NetWorthSummary {
@@ -36,6 +55,8 @@ export interface NetWorthSummary {
   end: NetWorthResult;
   change: number;
   changePercent: number;
+  /** Coverage of change/changePercent, folding in BOTH endpoints. */
+  changeCoverage: NetWorthChangeCoverage;
 }
 
 export interface IncomeExpenseSummary {
@@ -59,6 +80,14 @@ export interface FinancialSummary {
   topExpenseCategory: string;
   topExpenseAmount: number;
   investmentValue: number;
+  /**
+   * Coverage of netWorth/investmentValue as of the end date. Surfaces alongside
+   * the numbers so an unpriceable holding reads as "excluded" rather than
+   * silently shrinking the headline figure.
+   */
+  coverage: ValuationCoverage;
+  /** Coverage of netWorthChange/netWorthChangePercent, across both endpoints. */
+  changeCoverage: NetWorthChangeCoverage;
 }
 
 /**
@@ -114,6 +143,8 @@ export class FinancialSummaryService {
       topExpenseCategory: topCategory.name,
       topExpenseAmount: round2(topCategory.amount),
       investmentValue: round2(netWorthSummary.end.investmentValue),
+      coverage: netWorthSummary.end.coverage,
+      changeCoverage: netWorthSummary.changeCoverage,
     };
   }
 
@@ -179,6 +210,7 @@ export class FinancialSummaryService {
       let assetTotal = 0;
       let liabilityTotal = 0;
       let investmentValue = 0;
+      const valuedBalances: Array<{ account: typeof valuationInputs[number]; quantity: number }> = [];
       const quantityByAccount = new Map<string, number>();
 
       for (const split of splits) {
@@ -194,11 +226,15 @@ export class FinancialSummaryService {
       for (const [accountGuid, quantity] of quantityByAccount) {
         const account = accountByGuid.get(accountGuid);
         if (!account) continue;
-        const value = quantity * valuation.getMultiplier({
+        const valuationInput = {
           accountType: account.account_type,
           commodityGuid: account.commodity_guid,
           commodityNamespace: account.commodity?.namespace,
-        });
+        };
+        // A balance we cannot price contributes 0 -- track it so the caller can
+        // say the total is partial instead of showing a quietly shrunken figure.
+        valuedBalances.push({ account: valuationInput, quantity });
+        const value = quantity * valuation.getMultiplier(valuationInput);
         if (ASSET_TYPES.includes(account.account_type)) {
           assetTotal += value;
         } else if (LIABILITY_TYPES.includes(account.account_type)) {
@@ -213,6 +249,7 @@ export class FinancialSummaryService {
         liabilities: liabilityTotal,
         investmentValue,
         netWorth: assetTotal + investmentValue + liabilityTotal,
+        coverage: collectValuationCoverage(valuation, valuedBalances),
       };
     }
 
@@ -223,11 +260,25 @@ export class FinancialSummaryService {
       ? (change / Math.abs(startNW.netWorth)) * 100
       : 0;
 
+    // The change spans both endpoints, so it inherits both sets of gaps. When
+    // the endpoints exclude DIFFERENT commodities the holding enters or leaves
+    // the valued set between them, and the resulting swing is an artifact of
+    // the missing data rather than a gain or loss.
+    const startGapKeys = startNW.coverage.gaps.map(gap => gap.commodityGuid).sort();
+    const endGapKeys = endNW.coverage.gaps.map(gap => gap.commodityGuid).sort();
+    const changeCoverage: NetWorthChangeCoverage = {
+      ...mergeValuationCoverage(startNW.coverage, endNW.coverage),
+      comparable:
+        startGapKeys.length === endGapKeys.length &&
+        startGapKeys.every((guid, index) => guid === endGapKeys[index]),
+    };
+
     return {
       start: startNW,
       end: endNW,
       change,
       changePercent,
+      changeCoverage,
     };
   }
 

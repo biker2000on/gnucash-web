@@ -186,6 +186,108 @@ describe('buildAccountValuationContext', () => {
     expect(valuation.warnings?.[0]).toContain('GBP');
   });
 
+  it('reports an unpriceable holding as an explicit valuation gap', async () => {
+    mockPrisma.$queryRaw.mockResolvedValue([]);
+    mockPrisma.commodities.findMany.mockImplementation(((args: {
+      where: { guid?: { in: string[] } };
+    }) => Promise.resolve(
+      args.where.guid
+        ? [{ guid: 'illiquid-guid', mnemonic: 'PRIVCO' }]
+        : [{ guid: 'usd-guid' }, { guid: 'eur-guid' }],
+    )) as never);
+
+    const stock = {
+      accountType: 'STOCK',
+      commodityGuid: 'illiquid-guid',
+      commodityNamespace: 'PRIVATE',
+    };
+
+    const valuation = await buildAccountValuationContext([stock], new Date('2026-07-28'), USD);
+
+    // The 0 multiplier means "not valued", and the gap says so out loud with
+    // the symbol the user recognizes rather than a raw GUID.
+    expect(valuation.gaps).toEqual([
+      {
+        commodityGuid: 'illiquid-guid',
+        label: 'PRIVCO',
+        reason: 'missing-security-price',
+        message: 'PRIVCO excluded: no price path to USD as of 2026-07-28.',
+      },
+    ]);
+    expect(valuation.isConvertible?.(stock)).toBe(false);
+  });
+
+  it('never presents a missing exchange rate as a real 1:1 conversion', async () => {
+    // No price rows at all: there is no IDR->USD rate on or before the date.
+    mockPrisma.$queryRaw.mockResolvedValue([]);
+
+    const cash = {
+      accountType: 'CASH',
+      commodityGuid: 'idr-guid',
+      commodityNamespace: 'CURRENCY',
+    };
+
+    const valuation = await buildAccountValuationContext([cash], new Date('2026-07-28'), USD);
+
+    // Pre-fix this returned 1, silently reporting 1,123,000 IDR as $1,123,000.
+    expect(valuation.getMultiplier(cash)).not.toBe(1);
+    expect(valuation.isConvertible?.(cash)).toBe(false);
+    expect(valuation.gaps).toEqual([
+      {
+        commodityGuid: 'idr-guid',
+        label: 'idr-guid',
+        reason: 'missing-exchange-rate',
+        message: 'idr-guid excluded: no exchange rate to USD as of 2026-07-28; a 1:1 rate is never assumed.',
+      },
+    ]);
+  });
+
+  it('reports no gaps and no extra queries when every price and rate is available', async () => {
+    mockPrisma.$queryRaw.mockResolvedValue([
+      pricePair('idr-guid', 'usd-guid', 0.000061),
+      pricePair('stock-guid', 'usd-guid', 123.45),
+    ]);
+
+    const cash = {
+      accountType: 'CASH',
+      commodityGuid: 'idr-guid',
+      commodityNamespace: 'CURRENCY',
+    };
+    const bank = {
+      accountType: 'BANK',
+      commodityGuid: 'usd-guid',
+      commodityNamespace: 'CURRENCY',
+    };
+    const stock = {
+      accountType: 'STOCK',
+      commodityGuid: 'stock-guid',
+      commodityNamespace: 'NASDAQ',
+    };
+    const house = {
+      accountType: 'ASSET',
+      commodityGuid: 'usd-guid',
+      commodityNamespace: 'CURRENCY',
+    };
+
+    const valuation = await buildAccountValuationContext(
+      [cash, bank, stock, house],
+      new Date('2026-07-28'),
+    );
+
+    expect(valuation.getMultiplier(cash)).toBeCloseTo(0.000061);
+    expect(valuation.getMultiplier(bank)).toBe(1);
+    expect(valuation.getMultiplier(stock)).toBe(123.45);
+    expect(valuation.getMultiplier(house)).toBe(1);
+    expect(valuation.isConvertible?.(cash)).toBe(true);
+    expect(valuation.isConvertible?.(stock)).toBe(true);
+    expect(valuation.gaps).toEqual([]);
+    expect(valuation.warnings).toEqual([]);
+    // One price query and one pivot lookup -- no mnemonic backfill happens
+    // when nothing is missing.
+    expect(mockPrisma.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.commodities.findMany).toHaveBeenCalledTimes(1);
+  });
+
   it('uses an explicit report currency for cross-book valuation', async () => {
     mockPrisma.$queryRaw.mockResolvedValue([
       pricePair('gbp-guid', 'eur-guid', 1.17),

@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { ReportViewer } from '@/components/reports/ReportViewer';
 import { ReportTable } from '@/components/reports/ReportTable';
+import { ValuationCoverageNotice } from '@/components/reports/ValuationCoverageNotice';
 import { ReportFilters, ReportData } from '@/lib/reports/types';
 
 function getDefaultFilters(): ReportFilters {
@@ -60,10 +61,13 @@ export default function BalanceSheetPage() {
             reportData={reportData ?? undefined}
         >
             {reportData && (
-                <ReportTable
-                    sections={reportData.sections}
-                    showComparison={filters.compareToPrevious}
-                />
+                <>
+                    <ValuationCoverageNotice coverage={reportData.valuationCoverage} />
+                    <ReportTable
+                        sections={reportData.sections}
+                        showComparison={filters.compareToPrevious}
+                    />
+                </>
             )}
         </ReportViewer>
     );
