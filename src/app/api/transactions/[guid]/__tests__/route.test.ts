@@ -1,6 +1,7 @@
 /**
  * Route tests for /api/transactions/[guid] PUT + DELETE — mandatory
- * in-transaction optimistic concurrency (original_enter_date token).
+ * in-transaction optimistic concurrency (original_enter_date token) and the
+ * reconciled/frozen split guard.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -284,6 +285,112 @@ describe('PUT /api/transactions/[guid] optimistic concurrency', () => {
             routeParams,
         );
         expect(response.status).toBe(404);
+    });
+});
+
+/**
+ * A live split row as the route reads it inside the DB transaction (PUT reads
+ * with an account include; DELETE selects the same fields).
+ */
+function liveSplit(reconcileState: string, guid = 's'.repeat(32)) {
+    return {
+        guid,
+        tx_guid: TX_GUID,
+        account_guid: ACCOUNT_A,
+        memo: '',
+        action: '',
+        reconcile_state: reconcileState,
+        reconcile_date: null,
+        value_num: 100n,
+        value_denom: 100n,
+        quantity_num: 100n,
+        quantity_denom: 100n,
+        lot_guid: null,
+        account: { name: 'Assets:Checking' },
+    };
+}
+
+describe('PUT /api/transactions/[guid] reconciled-split guard', () => {
+    it.each([
+        ['reconciled', 'y'],
+        ['frozen', 'f'],
+    ])('423s on a %s split and writes nothing', async (_label, state) => {
+        prismaMock.splits.findMany.mockResolvedValue([liveSplit(state)]);
+
+        const response = await PUT(
+            putRequest({ ...validBody, original_enter_date: CURRENT_ENTER_DATE.toISOString() }),
+            routeParams,
+        );
+        const body = await response.json();
+
+        expect(response.status).toBe(423);
+        expect(body.code).toBe('RECONCILED_SPLIT');
+        expect(body.error).toContain('s'.repeat(32));
+        expect(body.error).toContain('Assets:Checking');
+        expect(body.error).toMatch(/unreconcile/i);
+        // The guard fires before ANY write in the transaction.
+        expect(prismaMock.transactions.update).not.toHaveBeenCalled();
+        expect(prismaMock.splits.deleteMany).not.toHaveBeenCalled();
+        expect(prismaMock.splits.create).not.toHaveBeenCalled();
+        expect(logAuditMock).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        ['not reconciled', 'n'],
+        ['cleared', 'c'],
+    ])('still edits a %s split normally', async (_label, state) => {
+        prismaMock.splits.findMany.mockResolvedValue([liveSplit(state)]);
+
+        const response = await PUT(
+            putRequest({ ...validBody, original_enter_date: CURRENT_ENTER_DATE.toISOString() }),
+            routeParams,
+        );
+
+        expect(response.status).toBe(200);
+        expect(prismaMock.transactions.update).toHaveBeenCalled();
+        expect(prismaMock.splits.create).toHaveBeenCalled();
+    });
+});
+
+describe('DELETE /api/transactions/[guid] reconciled-split guard', () => {
+    it.each([
+        ['reconciled', 'y'],
+        ['frozen', 'f'],
+    ])('423s on a %s split and destroys nothing', async (_label, state) => {
+        prismaMock.splits.findMany.mockResolvedValue([liveSplit(state)]);
+
+        const response = await DELETE(
+            deleteRequest(`?original_enter_date=${encodeURIComponent(CURRENT_ENTER_DATE.toISOString())}`),
+            routeParams,
+        );
+        const body = await response.json();
+
+        expect(response.status).toBe(423);
+        expect(body.code).toBe('RECONCILED_SPLIT');
+        expect(body.error).toContain('s'.repeat(32));
+        expect(body.error).toMatch(/delete this transaction/i);
+        // Nothing destroyed — not the splits, not the transaction, and not the
+        // SimpleFin dedup meta (which the route rewrites before the deletes).
+        expect(prismaMock.transactions.delete).not.toHaveBeenCalled();
+        expect(prismaMock.splits.deleteMany).not.toHaveBeenCalled();
+        expect(prismaMock.slots.deleteMany).not.toHaveBeenCalled();
+        expect(prismaMock.$executeRaw).not.toHaveBeenCalled();
+        expect(logAuditMock).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        ['not reconciled', 'n'],
+        ['cleared', 'c'],
+    ])('still deletes a %s split normally', async (_label, state) => {
+        prismaMock.splits.findMany.mockResolvedValue([liveSplit(state)]);
+
+        const response = await DELETE(
+            deleteRequest(`?original_enter_date=${encodeURIComponent(CURRENT_ENTER_DATE.toISOString())}`),
+            routeParams,
+        );
+
+        expect(response.status).toBe(200);
+        expect(prismaMock.transactions.delete).toHaveBeenCalled();
     });
 });
 

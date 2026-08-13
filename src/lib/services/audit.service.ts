@@ -13,6 +13,10 @@ import type { ExtendedPrismaClient } from '@/lib/prisma';
 import { getCurrentUser } from '@/lib/auth';
 import { getActiveBookGuid } from '@/lib/book-scope';
 import { assertNotLocked } from '@/lib/services/period-lock.service';
+import {
+    assertSplitsNotProtected,
+    lockTransactionsForUpdate,
+} from '@/lib/services/reconciled-split.service';
 import { afterLedgerWrite } from '@/lib/data-events';
 
 /** Global client or an interactive-transaction client. */
@@ -376,6 +380,12 @@ export async function undoAuditEntry(auditId: number, activeBookGuid: string): P
                     await claimUndo(tx, auditId, userId);
                     // Re-read INSIDE the transaction: the pre-check above ran on a
                     // stale snapshot that a concurrent edit may have invalidated.
+                    // Canonical parent lock BEFORE the live read: the undo
+                    // claim locks the audit row, not the transaction, so
+                    // without this the snapshot below is an unlocked READ
+                    // COMMITTED select and a concurrent reconcile could
+                    // commit between it and writeSnapshot.
+                    await lockTransactionsForUpdate([plan.snapshot.guid], tx);
                     const live = await snapshotTransactionByGuid(plan.snapshot.guid, tx);
                     if (!live) {
                         throw new UndoConflictError('Transaction no longer exists — restore it from its DELETE entry instead');
@@ -387,6 +397,11 @@ export async function undoAuditEntry(auditId: number, activeBookGuid: string): P
                             'The transaction has been edited since this entry — undoing it now would discard those later changes. Undo the newer entries first.',
                         );
                     }
+                    // Reverting rewrites every split (amount, account) and the
+                    // post date. A split that is reconciled or frozen TODAY is
+                    // agreed against a statement, whatever the snapshot says —
+                    // refuse before the rewrite.
+                    assertSplitsNotProtected('revert this transaction', live.splits);
                     await writeSnapshot(tx, plan.snapshot, true);
                     return live;
                 });
@@ -404,8 +419,16 @@ export async function undoAuditEntry(auditId: number, activeBookGuid: string): P
                 await assertNotLocked(activeBookGuid, [probe.post_date]);
                 const current = await prisma.$transaction(async (tx) => {
                     await claimUndo(tx, auditId, userId);
+                    // Canonical parent lock BEFORE the live read (see the
+                    // revert_update branch for why the audit-row claim is not
+                    // enough).
+                    await lockTransactionsForUpdate([plan.guid], tx);
                     const live = await snapshotTransactionByGuid(plan.guid, tx);
                     if (!live) throw new UndoConflictError('Transaction no longer exists');
+                    // Undoing a CREATE deletes the transaction outright; if it
+                    // has since been reconciled, that would break the book's
+                    // agreement with the statement.
+                    assertSplitsNotProtected('delete this transaction', live.splits);
                     // Slots have no FK — the deleted splits' and the
                     // transaction's slots must be removed with them.
                     await tx.slots.deleteMany({

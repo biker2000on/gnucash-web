@@ -1,3 +1,24 @@
+/**
+ * SCOPE OF THESE ORDERING TESTS (read before trusting them)
+ *
+ * They assert the ORDER in which statements are issued against a mocked
+ * Prisma client: that the `FOR UPDATE` lock statement is emitted before the
+ * reconcile-state read, and the read before the write. That is exactly the
+ * regression that has now recurred twice, so it is worth pinning.
+ *
+ * They do NOT prove:
+ *   - that PostgreSQL actually acquires or holds the row lock (a no-op
+ *     $queryRaw would satisfy every assertion here);
+ *   - that a concurrent reconcile really blocks on it;
+ *   - rollback behaviour, or that the canonical guid ordering prevents a real
+ *     deadlock.
+ *
+ * Proving those needs two real database transactions and a barrier. This repo
+ * has no real-database test harness (no TEST_DATABASE_URL, no postgres service
+ * in docker-compose.yml, no testcontainers, and every prisma-touching test
+ * mocks the client), and building one is out of scope here — it is filed as a
+ * separate follow-up.
+ */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('@/lib/prisma', () => ({
@@ -490,62 +511,171 @@ describe('planHistoricalApplication', () => {
 /* ------------------------------------------------------------------ */
 
 describe('applyHistoricalMatches', () => {
+    const SPLIT_1 = 'split1'.padEnd(32, '0');
+
+    function match(overrides: Record<string, unknown> = {}) {
+        return {
+            guid: 'tx1'.padEnd(32, '0'),
+            splitGuid: SPLIT_1,
+            date: '2025-01-01',
+            description: 'KING SOOPERS',
+            currentAccountGuid: GUIDS.imbalance,
+            currentAccount: 'Imbalance-USD',
+            newAccountGuid: GUIDS.target,
+            newAccount: 'Groceries',
+            amount: 5,
+            ...overrides,
+        };
+    }
+
+    /**
+     * Wire the interactive-transaction client. `protectedRows` is what the
+     * reconciled-split lookup returns (empty = nothing reconciled).
+     */
+    function wireTx(updateMany: ReturnType<typeof vi.fn>, protectedRows: unknown[] = []) {
+        const findMany = vi.fn().mockResolvedValue(protectedRows);
+        const queryRaw = vi.fn().mockResolvedValue([]);
+        mockPrisma.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<void>) =>
+            fn({ splits: { updateMany, findMany }, $queryRaw: queryRaw })
+        );
+        return { findMany, queryRaw };
+    }
+
     beforeEach(() => {
         vi.clearAllMocks();
     });
 
     it('moves each planned split inside one transaction, guarded on the planned source account', async () => {
         const updateMany = vi.fn().mockResolvedValue({ count: 1 });
-        mockPrisma.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<void>) =>
-            fn({ splits: { updateMany } })
-        );
+        wireTx(updateMany);
 
-        const applied = await applyHistoricalMatches([
-            {
-                guid: 'tx1'.padEnd(32, '0'),
-                splitGuid: 'split1'.padEnd(32, '0'),
-                date: '2025-01-01',
-                description: 'KING SOOPERS',
-                currentAccountGuid: GUIDS.imbalance,
-                currentAccount: 'Imbalance-USD',
-                newAccountGuid: GUIDS.target,
-                newAccount: 'Groceries',
-                amount: 5,
-            },
-        ]);
+        const result = await applyHistoricalMatches([match()]);
 
-        expect(applied).toBe(1);
+        expect(result.applied).toBe(1);
+        expect(result.reconciledSkipped).toEqual([]);
+        // The protected states are in the predicate too (belt and braces on
+        // top of the parent-row lock), so the write itself can never land on
+        // a reconciled row.
         expect(updateMany).toHaveBeenCalledWith({
-            where: { guid: 'split1'.padEnd(32, '0'), account_guid: GUIDS.imbalance },
+            where: {
+                guid: SPLIT_1,
+                account_guid: GUIDS.imbalance,
+                reconcile_state: { notIn: ['y', 'f'] },
+            },
             data: { account_guid: GUIDS.target },
         });
     });
 
     it('does not count splits that were concurrently moved away (guard misses)', async () => {
         const updateMany = vi.fn().mockResolvedValue({ count: 0 });
-        mockPrisma.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<void>) =>
-            fn({ splits: { updateMany } })
-        );
+        wireTx(updateMany);
 
-        const applied = await applyHistoricalMatches([
-            {
-                guid: 'tx1'.padEnd(32, '0'),
-                splitGuid: 'split1'.padEnd(32, '0'),
-                date: '2025-01-01',
-                description: 'KING SOOPERS',
-                currentAccountGuid: GUIDS.imbalance,
-                currentAccount: 'Imbalance-USD',
-                newAccountGuid: GUIDS.target,
-                newAccount: 'Groceries',
-                amount: 5,
-            },
-        ]);
-        expect(applied).toBe(0);
+        const result = await applyHistoricalMatches([match()]);
+        expect(result.applied).toBe(0);
     });
 
     it('is a no-op for an empty match list', async () => {
-        const applied = await applyHistoricalMatches([]);
-        expect(applied).toBe(0);
+        const result = await applyHistoricalMatches([]);
+        expect(result).toEqual({ applied: 0, reconciledSkipped: [] });
         expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        ['reconciled', 'y'],
+        ['frozen', 'f'],
+    ])('refuses to re-book a %s split and names it in the result', async (_label, state) => {
+        const updateMany = vi.fn().mockResolvedValue({ count: 1 });
+        const { findMany } = wireTx(updateMany, [{
+            guid: SPLIT_1,
+            tx_guid: 'tx1'.padEnd(32, '0'),
+            account_guid: GUIDS.imbalance,
+            reconcile_state: state,
+            account: { name: 'Imbalance-USD' },
+        }]);
+
+        const result = await applyHistoricalMatches([match()]);
+
+        expect(result.applied).toBe(0);
+        expect(updateMany).not.toHaveBeenCalled();
+        expect(result.reconciledSkipped).toEqual([{
+            splitGuid: SPLIT_1,
+            txGuid: 'tx1'.padEnd(32, '0'),
+            accountGuid: GUIDS.imbalance,
+            accountName: 'Imbalance-USD',
+            reconcileState: state,
+        }]);
+        // The reconcile state is read INSIDE the transaction, not from the plan.
+        expect(findMany).toHaveBeenCalledWith(expect.objectContaining({
+            where: expect.objectContaining({
+                reconcile_state: { in: ['y', 'f'] },
+            }),
+        }));
+    });
+
+    /* TOCTOU: a Prisma transaction alone takes no locks on a plain SELECT, so
+       the reconcile-state read is only authoritative while the parent
+       transaction rows are held FOR UPDATE. These two tests pin the ordering
+       and the predicate that make the race impossible. */
+
+    it('locks the parent transactions FOR UPDATE before reading reconcile state', async () => {
+        const updateMany = vi.fn().mockResolvedValue({ count: 1 });
+        const { findMany, queryRaw } = wireTx(updateMany);
+
+        await applyHistoricalMatches([match()]);
+
+        const lockSql = (queryRaw.mock.calls[0][0] as TemplateStringsArray).join('?');
+        expect(lockSql).toContain('FROM transactions');
+        expect(lockSql).toContain('FOR UPDATE');
+        expect(lockSql).toContain('ORDER BY guid');
+        expect(queryRaw.mock.calls[0][1]).toEqual(['tx1'.padEnd(32, '0')]);
+        // lock → read → write, in that order
+        expect(queryRaw.mock.invocationCallOrder[0])
+            .toBeLessThan(findMany.mock.invocationCallOrder[0]);
+        expect(findMany.mock.invocationCallOrder[0])
+            .toBeLessThan(updateMany.mock.invocationCallOrder[0]);
+    });
+
+    it('cannot write a split that got reconciled after the check (predicate backstop)', async () => {
+        // Model the losing interleaving directly: the guard's read sees an
+        // unreconciled split (nothing protected returned), but by the time the
+        // write runs the row is 'y', so the predicate excludes it and the
+        // updateMany reports zero rows. The applied count must reflect that
+        // rather than claiming a change that never happened.
+        const updateMany = vi.fn().mockResolvedValue({ count: 0 });
+        wireTx(updateMany, []);
+
+        const result = await applyHistoricalMatches([match()]);
+
+        expect(result.applied).toBe(0);
+        expect(updateMany.mock.calls[0][0].where.reconcile_state).toEqual({ notIn: ['y', 'f'] });
+    });
+
+    it('still applies the unreconciled matches alongside a blocked one', async () => {
+        const SPLIT_2 = 'split2'.padEnd(32, '0');
+        const updateMany = vi.fn().mockResolvedValue({ count: 1 });
+        wireTx(updateMany, [{
+            guid: SPLIT_1,
+            tx_guid: 'tx1'.padEnd(32, '0'),
+            account_guid: GUIDS.imbalance,
+            reconcile_state: 'y',
+            account: { name: 'Imbalance-USD' },
+        }]);
+
+        const result = await applyHistoricalMatches([
+            match(),
+            match({ guid: 'tx2'.padEnd(32, '0'), splitGuid: SPLIT_2 }),
+        ]);
+
+        expect(result.applied).toBe(1);
+        expect(result.reconciledSkipped).toHaveLength(1);
+        expect(updateMany).toHaveBeenCalledTimes(1);
+        expect(updateMany).toHaveBeenCalledWith({
+            where: {
+                guid: SPLIT_2,
+                account_guid: GUIDS.imbalance,
+                reconcile_state: { notIn: ['y', 'f'] },
+            },
+            data: { account_guid: GUIDS.target },
+        });
     });
 });

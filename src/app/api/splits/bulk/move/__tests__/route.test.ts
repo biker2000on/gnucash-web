@@ -1,4 +1,25 @@
 /**
+ * SCOPE OF THESE ORDERING TESTS (read before trusting them)
+ *
+ * They assert the ORDER in which statements are issued against a mocked
+ * Prisma client: that the `FOR UPDATE` lock statement is emitted before the
+ * reconcile-state read, and the read before the write. That is exactly the
+ * regression that has now recurred twice, so it is worth pinning.
+ *
+ * They do NOT prove:
+ *   - that PostgreSQL actually acquires or holds the row lock (a no-op
+ *     $queryRaw would satisfy every assertion here);
+ *   - that a concurrent reconcile really blocks on it;
+ *   - rollback behaviour, or that the canonical guid ordering prevents a real
+ *     deadlock.
+ *
+ * Proving those needs two real database transactions and a barrier. This repo
+ * has no real-database test harness (no TEST_DATABASE_URL, no postgres service
+ * in docker-compose.yml, no testcontainers, and every prisma-touching test
+ * mocks the client), and building one is out of scope here — it is filed as a
+ * separate follow-up.
+ */
+/**
  * Route tests for POST /api/splits/bulk/move — canonical lock ordering.
  *
  * The deadlock-safe ordering shared by every split-writing path is:
@@ -147,6 +168,169 @@ describe('POST /api/splits/bulk/move canonical lock order', () => {
             where: { guid: { in: [TX_A, TX_B] } },
             data: { enter_date: expect.any(Date) },
         });
+    });
+
+    it.each([
+        ['reconciled', 'y'],
+        ['frozen', 'f'],
+    ])('423s when a %s split is in the batch, before opening the transaction', async (_label, state) => {
+        prismaMock.splits.findMany.mockResolvedValue([
+            {
+                guid: SPLIT_1, tx_guid: TX_A, account_guid: 'account00000000000000000000from',
+                reconcile_state: state,
+                account: { commodity_guid: COMMODITY, name: 'Assets:Checking' },
+                transaction: { post_date: POST_DATE },
+            },
+        ]);
+
+        const response = await POST(moveRequest({
+            splitGuids: [SPLIT_1],
+            targetAccountGuid: TARGET_ACCOUNT,
+        }));
+        const body = await response.json();
+
+        expect(response.status).toBe(423);
+        expect(body.code).toBe('RECONCILED_SPLIT');
+        expect(body.error).toContain(SPLIT_1);
+        expect(body.error).toContain('Assets:Checking');
+        expect(body.error).toMatch(/unreconcile/i);
+        expect(prismaMock.$transaction).not.toHaveBeenCalled();
+        expect(prismaMock.splits.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('423s when a split is reconciled only by the in-transaction re-read', async () => {
+        // Fast-fail sees 'n', the authoritative in-transaction read sees 'y'
+        // (a concurrent reconcile landed in between) — nothing may move.
+        prismaMock.splits.findMany
+            .mockResolvedValueOnce([
+                {
+                    guid: SPLIT_1, tx_guid: TX_A, account_guid: 'account00000000000000000000from',
+                    reconcile_state: 'n',
+                    account: { commodity_guid: COMMODITY, name: 'Assets:Checking' },
+                    transaction: { post_date: POST_DATE },
+                },
+            ])
+            .mockResolvedValueOnce([
+                {
+                    guid: SPLIT_1, tx_guid: TX_A, account_guid: 'account00000000000000000000from',
+                    reconcile_state: 'y',
+                    account: { name: 'Assets:Checking' },
+                    transaction: { post_date: POST_DATE },
+                },
+            ]);
+
+        const response = await POST(moveRequest({
+            splitGuids: [SPLIT_1],
+            targetAccountGuid: TARGET_ACCOUNT,
+        }));
+
+        expect(response.status).toBe(423);
+        expect(prismaMock.splits.updateMany).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        ['not reconciled', 'n'],
+        ['cleared', 'c'],
+    ])('still moves a %s split normally', async (_label, state) => {
+        prismaMock.splits.findMany.mockResolvedValue([
+            {
+                guid: SPLIT_1, tx_guid: TX_A, account_guid: 'account00000000000000000000from',
+                reconcile_state: state,
+                account: { commodity_guid: COMMODITY, name: 'Assets:Checking' },
+                transaction: { post_date: POST_DATE },
+            },
+        ]);
+        prismaMock.splits.updateMany.mockResolvedValue({ count: 1 });
+
+        const response = await POST(moveRequest({
+            splitGuids: [SPLIT_1],
+            targetAccountGuid: TARGET_ACCOUNT,
+        }));
+
+        expect(response.status).toBe(200);
+        // Belt and braces: the protected states are in the predicate too, so
+        // the write can never land on a reconciled row even without the lock.
+        expect(prismaMock.splits.updateMany).toHaveBeenCalledWith({
+            where: {
+                guid: { in: [SPLIT_1] },
+                reconcile_state: { notIn: ['y', 'f'] },
+            },
+            data: { account_guid: TARGET_ACCOUNT },
+        });
+    });
+
+    /* TOCTOU. The guard used to sit between the in-transaction read and the
+       parent FOR UPDATE lock, so a concurrent reconcile could take the lock
+       first and commit 'y' after the guard had already observed 'n'. The lock
+       now precedes the read. */
+
+    it('takes the parent lock BEFORE the reconcile-state read, not after it', async () => {
+        prismaMock.splits.findMany.mockResolvedValue([
+            {
+                guid: SPLIT_1, tx_guid: TX_A, account_guid: 'account00000000000000000000from',
+                reconcile_state: 'n',
+                account: { commodity_guid: COMMODITY, name: 'Assets:Checking' },
+                transaction: { post_date: POST_DATE },
+            },
+        ]);
+        prismaMock.splits.updateMany.mockResolvedValue({ count: 1 });
+
+        await POST(moveRequest({
+            splitGuids: [SPLIT_1],
+            targetAccountGuid: TARGET_ACCOUNT,
+        }));
+
+        const lockOrder = prismaMock.$queryRaw.mock.invocationCallOrder[0];
+        // findMany call 0 is the pre-transaction validation read; call 1 is
+        // the authoritative in-transaction read the guard runs on.
+        const guardReadOrder = prismaMock.splits.findMany.mock.invocationCallOrder[1];
+        const writeOrder = prismaMock.splits.updateMany.mock.invocationCallOrder[0];
+        expect(lockOrder).toBeLessThan(guardReadOrder);
+        expect(guardReadOrder).toBeLessThan(writeOrder);
+    });
+
+    it('423s when the write predicate excludes a row the guard read as unreconciled', async () => {
+        // The losing interleaving: guard reads 'n', the row becomes 'y', the
+        // predicate then excludes it and updateMany reports fewer rows than
+        // requested. That must be a 423, never a quietly short "updated" count.
+        prismaMock.splits.findMany.mockResolvedValue([
+            {
+                guid: SPLIT_1, tx_guid: TX_A, account_guid: 'account00000000000000000000from',
+                reconcile_state: 'n',
+                account: { commodity_guid: COMMODITY, name: 'Assets:Checking' },
+                transaction: { post_date: POST_DATE },
+            },
+        ]);
+        prismaMock.splits.updateMany.mockResolvedValue({ count: 0 });
+        // Reads, in order: (1) pre-transaction validation, (2) the guard's
+        // in-transaction read — still stale 'n', (3) the post-write
+        // diagnostic, which now sees the committed 'y'.
+        const stale = {
+            guid: SPLIT_1, tx_guid: TX_A, account_guid: 'account00000000000000000000from',
+            reconcile_state: 'n',
+            account: { commodity_guid: COMMODITY, name: 'Assets:Checking' },
+            transaction: { post_date: POST_DATE },
+        };
+        prismaMock.splits.findMany
+            .mockResolvedValueOnce([stale])
+            .mockResolvedValueOnce([stale])
+            .mockResolvedValueOnce([{
+                guid: SPLIT_1, tx_guid: TX_A, account_guid: 'account00000000000000000000from',
+                reconcile_state: 'y',
+                account: { name: 'Assets:Checking' },
+            }]);
+
+        const response = await POST(moveRequest({
+            splitGuids: [SPLIT_1],
+            targetAccountGuid: TARGET_ACCOUNT,
+        }));
+        const body = await response.json();
+
+        expect(response.status).toBe(423);
+        expect(body.code).toBe('RECONCILED_SPLIT');
+        expect(body.error).toContain(SPLIT_1);
+        // The enter_date bump never ran — the whole transaction rolled back.
+        expect(prismaMock.transactions.updateMany).not.toHaveBeenCalled();
     });
 
     it('rejects a currency mismatch before opening the transaction', async () => {

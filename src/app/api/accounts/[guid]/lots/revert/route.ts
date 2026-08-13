@@ -3,6 +3,10 @@ import { requireRole } from '@/lib/auth';
 import { getBookAccountGuids, isAccountInActiveBook } from '@/lib/book-scope';
 import { revertScrubRun, ScrubRunNotInBookError } from '@/lib/lot-assignment';
 import { BookBusyError } from '@/lib/book-lock';
+import {
+  ReconciledSplitError,
+  reconciledSplitResponse,
+} from '@/lib/services/reconciled-split.service';
 import { publishDataChange } from '@/lib/data-events';
 
 export async function POST(
@@ -34,6 +38,9 @@ export async function POST(
     void publishDataChange(bookGuid, 'transactions', { action: 'bulk' });
     return NextResponse.json(result);
   } catch (error) {
+    if (error instanceof ReconciledSplitError) {
+      return reconciledSplitResponse(error);
+    }
     if (error instanceof BookBusyError) {
       return NextResponse.json(
         { error: 'Another operation on this book is in progress. Try again shortly.' },

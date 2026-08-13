@@ -63,7 +63,14 @@ export default function ApplyHistoryModal({ rule, onClose }: ApplyHistoryModalPr
   const [preview, setPreview] = useState<Preview | null>(null);
   const [previewing, setPreviewing] = useState(false);
   const [applying, setApplying] = useState(false);
-  const [applyResult, setApplyResult] = useState<{ applied: number; moreRemain: boolean } | null>(null);
+  const [applyResult, setApplyResult] = useState<{
+    applied: number;
+    moreRemain: boolean;
+    /** Matches left alone because their split is reconciled ('y') or frozen ('f'). */
+    reconciledSkipped: number;
+    /** Server-built message naming those splits and how to release them. */
+    reconciledMessage: string | null;
+  } | null>(null);
 
   // Reset all state whenever the modal opens for a (different) rule.
   useEffect(() => {
@@ -119,12 +126,27 @@ export default function ApplyHistoryModal({ rule, onClose }: ApplyHistoryModalPr
     setApplying(true);
     try {
       const data = await post(false);
-      setApplyResult({ applied: data.applied, moreRemain: data.moreRemain });
+      const reconciledSkipped: number = data.reconciledSkipped ?? 0;
+      setApplyResult({
+        applied: data.applied,
+        moreRemain: data.moreRemain,
+        reconciledSkipped,
+        reconciledMessage: data.reconciledMessage ?? null,
+      });
       setPreview(null);
-      success(
+      const summary =
         `Recategorized ${data.applied} transaction${data.applied !== 1 ? 's' : ''}` +
-        (data.moreRemain ? ' — more remain, preview again' : ''),
-      );
+        (data.moreRemain ? ' — more remain, preview again' : '');
+      if (reconciledSkipped > 0) {
+        // Never let a protected split be dropped silently: the whole point of
+        // the reconciled guard is that the user is told what did NOT change.
+        showError(
+          `${summary}. ${reconciledSkipped} left unchanged because ` +
+          `${reconciledSkipped === 1 ? 'its split is' : 'their splits are'} reconciled or frozen.`,
+        );
+      } else {
+        success(summary);
+      }
     } catch (err) {
       showError(err instanceof Error ? err.message : 'Apply failed');
     } finally {
@@ -187,9 +209,28 @@ export default function ApplyHistoryModal({ rule, onClose }: ApplyHistoryModalPr
         )}
 
         {applyResult && (
-          <div className="px-3 py-2 text-sm rounded border border-border bg-background-tertiary">
-            Applied {applyResult.applied} change{applyResult.applied !== 1 ? 's' : ''}.
-            {applyResult.moreRemain && ' More matches remain — run Preview again for the next batch.'}
+          <div className="space-y-2">
+            <div className="px-3 py-2 text-sm rounded border border-border bg-background-tertiary">
+              Applied {applyResult.applied} change{applyResult.applied !== 1 ? 's' : ''}.
+              {applyResult.moreRemain && ' More matches remain — run Preview again for the next batch.'}
+            </div>
+            {applyResult.reconciledSkipped > 0 && (
+              <div
+                className="px-3 py-2 text-sm rounded border border-warning text-warning"
+                data-testid="reconciled-skipped"
+              >
+                <p className="font-medium">
+                  {applyResult.reconciledSkipped} change
+                  {applyResult.reconciledSkipped !== 1 ? 's were' : ' was'} skipped —
+                  reconciled or frozen splits cannot be recategorized.
+                </p>
+                {applyResult.reconciledMessage && (
+                  <p className="mt-1 break-words text-foreground-secondary">
+                    {applyResult.reconciledMessage}
+                  </p>
+                )}
+              </div>
+            )}
           </div>
         )}
 

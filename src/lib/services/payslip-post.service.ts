@@ -13,6 +13,7 @@ import type { PayslipLineItem } from '@/lib/types';
 import { validatePayslipBalance, buildSplitsFromLineItems } from '@/lib/payslip-splits';
 import { upsertTemplate, type PrismaTx } from '@/lib/payslips';
 import { assertNotLocked, assertTxnMutable } from '@/lib/services/period-lock.service';
+import { assertNoReconciledSplits } from '@/lib/services/reconciled-split.service';
 export type { PayslipSplit } from '@/lib/payslip-splits';
 export { validatePayslipBalance, buildSplitsFromLineItems } from '@/lib/payslip-splits';
 
@@ -332,6 +333,13 @@ export async function postPayslipTransaction(
 
       // Replace SimpleFin lump-sum deposit with detailed payslip splits
       if (simpleFinMatch) {
+        // The lump-sum deposit is a real bank line the user may already have
+        // reconciled; replacing its splits would rewrite reconciled amounts
+        // and accounts. Refuse before the delete.
+        await assertNoReconciledSplits('replace this deposit with payslip detail', {
+          txGuids: [simpleFinMatch],
+        }, { client: tx });
+
         // Delete the old lump-sum splits
         await tx.$executeRaw`DELETE FROM splits WHERE tx_guid = ${simpleFinMatch}`;
 

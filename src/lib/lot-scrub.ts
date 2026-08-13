@@ -26,6 +26,47 @@
 import prisma from './prisma';
 import { generateGuid, toDecimalNumber, fromDecimal, findOrCreateAccount } from './gnucash';
 import { isLongTerm } from './holding-period';
+import {
+  assertSplitsNotProtected,
+  lockTransactionsForSplits,
+} from './services/reconciled-split.service';
+
+/**
+ * Slot recording WHICH split a generated sub-split was carved out of.
+ *
+ * The revert paths need to know, per restored split, whether the rows being
+ * deleted alongside it actually came from IT. Co-tagging with the same runId
+ * cannot answer that: one run covers every event in an account, so a single
+ * parent transaction can hold both a partitioned sale and an unrelated
+ * in-place rewrite, and "some sub-split is being deleted in this transaction"
+ * says nothing about any particular parent.
+ *
+ * Written on every sub-split at creation time; read by
+ * assertRevertPreservesReconciled. It is a plain slot row — the slots table is
+ * generic (obj_guid, name, slot_type, string_val), so no schema change is
+ * involved, and the existing wholesale `slots.deleteMany({ obj_guid })`
+ * cleanup on the revert paths removes it with its sub-split.
+ *
+ * Sub-splits created before this marker existed simply have no row here, so
+ * their parent's restore reads as uncompensated and is BLOCKED — the required
+ * fail-closed behaviour, not a silent pass.
+ */
+export const PARENT_SPLIT_SLOT = 'gnucash_web_parent_split';
+
+/** Tag a generated sub-split with its run and the parent it was carved from. */
+async function tagGeneratedSubSplit(
+  tx: PrismaTx,
+  subGuid: string,
+  parentSplitGuid: string,
+  runId: string,
+): Promise<void> {
+  await tx.slots.create({
+    data: { obj_guid: subGuid, name: 'gnucash_web_generated', slot_type: 4, string_val: runId },
+  });
+  await tx.slots.create({
+    data: { obj_guid: subGuid, name: PARENT_SPLIT_SLOT, slot_type: 4, string_val: parentSplitGuid },
+  });
+}
 
 /** Prisma interactive transaction client type */
 export type PrismaTx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
@@ -390,14 +431,7 @@ export async function splitSellAcrossLots(
         lot_guid: lotGuid,
       },
     });
-    await tx.slots.create({
-      data: {
-        obj_guid: subGuid,
-        name: 'gnucash_web_generated',
-        slot_type: 4,
-        string_val: runId,
-      },
-    });
+    await tagGeneratedSubSplit(tx, subGuid, sellSplitGuid, runId);
     subSplitsCreated.push(subGuid);
     return subGuid;
   };
@@ -1015,15 +1049,8 @@ export async function splitTransferAcrossSourceLots(
       },
     });
 
-    // Tag sub-split
-    await tx.slots.create({
-      data: {
-        obj_guid: subGuid,
-        name: 'gnucash_web_generated',
-        slot_type: 4,
-        string_val: runId,
-      },
-    });
+    // Tag sub-split with its run and the transfer-in split it came from
+    await tagGeneratedSubSplit(tx, subGuid, splitGuid, runId);
 
     subSplitsCreated++;
   }
@@ -1105,6 +1132,15 @@ export async function valueZeroValueTrade(
   runId: string,
   tx: PrismaTx,
 ): Promise<ValueTradeResult> {
+  // Canonical parent lock BEFORE anything is read. The lot engine's book-wide
+  // advisory lock (guardBookLock) serializes lot operations against each other
+  // but not against the reconcile routes, which take the parent TRANSACTION
+  // row lock — so take that lock here too, or the reconcile-state check below
+  // can be raced. Resolution and locking happen in one statement, so this is
+  // literally lock-then-read with no caveat. Both legs live in the same
+  // transaction, so the single lock covers them.
+  await lockTransactionsForSplits([splitGuid], tx);
+
   const split = await tx.splits.findUnique({
     where: { guid: splitGuid },
     include: {
@@ -1186,6 +1222,19 @@ export async function valueZeroValueTrade(
       warning: `No price found on/before ${postDate.toISOString().slice(0, 10)} to value zero-value trade (tx ${split.tx_guid}) — refusing to book a gain/loss from a $0-value trade`,
     };
   }
+
+  // Reconciled/frozen guard. Unlike splitSellAcrossLots — which re-partitions
+  // a split into sub-splits that inherit reconcile metadata and sum back to
+  // the original, leaving every reconciled balance untouched — this function
+  // REWRITES a leg's value from 0 to ±FMV. That is a real change to an amount
+  // the user may have agreed against a statement, so it is refused rather than
+  // exempted. Checked before the original_* slot writes below, so a blocked
+  // trade leaves no half-written revert metadata behind, and read under the
+  // parent lock taken at the top of this function.
+  assertSplitsNotProtected('value this zero-value trade', [
+    { ...split, account: null },
+    { ...counter, account: null },
+  ]);
 
   // Rewrite both legs: positive-qty leg debits +value, negative-qty leg
   // credits −value; the transaction stays balanced.
@@ -1320,9 +1369,7 @@ export async function assignAdjustmentToLots(
           lot_guid: lot.guid,
         },
       });
-      await tx.slots.create({
-        data: { obj_guid: subGuid, name: 'gnucash_web_generated', slot_type: 4, string_val: runId },
-      });
+      await tagGeneratedSubSplit(tx, subGuid, adjSplitGuid, runId);
       subSplitsCreated.push(subGuid);
     }
     lot.shares += allocDecimal;

@@ -10,6 +10,12 @@
 import prisma from '@/lib/prisma';
 import type { Prisma } from '@prisma/client';
 import { selectHistoryCounterSplit } from '@/lib/bulk-edit';
+import {
+  findProtectedSplits,
+  lockTransactionsForUpdate,
+  PROTECTED_RECONCILE_STATES,
+  type ProtectedSplitRef,
+} from '@/lib/services/reconciled-split.service';
 
 export type MatchType = 'contains' | 'exact' | 'regex';
 
@@ -707,24 +713,73 @@ export async function planHistoricalApplication(
   return { matches, skipped, moreRemain };
 }
 
+export interface ApplyHistoricalResult {
+  /** Splits actually re-booked to the rule's target account. */
+  applied: number;
+  /**
+   * Matches refused because the counter-split is reconciled ('y') or frozen
+   * ('f') — re-booking one would desynchronize the book from the statement it
+   * was reconciled against. Reported, never silently dropped.
+   */
+  reconciledSkipped: ProtectedSplitRef[];
+}
+
 /**
  * Apply a set of planned historical matches inside a single Prisma
  * transaction. Each split move is guarded on the split still being on the
  * account we planned to move it from, so a concurrently-edited transaction is
- * silently left alone rather than corrupted. Returns the number of splits
- * actually moved.
+ * silently left alone rather than corrupted.
+ *
+ * Reconciled/frozen counter-splits are excluded and returned to the caller so
+ * the API can name them. Like the period-lock handling in the calling route,
+ * one protected split narrows the run rather than failing all of it — a rule
+ * spanning years of history must stay usable.
  */
-export async function applyHistoricalMatches(matches: HistoricalMatch[]): Promise<number> {
-  if (matches.length === 0) return 0;
+export async function applyHistoricalMatches(
+  matches: HistoricalMatch[],
+): Promise<ApplyHistoricalResult> {
+  if (matches.length === 0) return { applied: 0, reconciledSkipped: [] };
   let applied = 0;
+  let reconciledSkipped: ProtectedSplitRef[] = [];
   await prisma.$transaction(async tx => {
+    // Canonical parent lock first (guid order). Without it the read below is
+    // a plain READ COMMITTED SELECT that takes no locks, so a concurrent
+    // reconcile could commit between it and the updateMany. HistoricalMatch
+    // already carries the parent transaction guid, so no extra lookup.
+    await lockTransactionsForUpdate(matches.map(m => m.guid), tx);
+
+    // Live reconcile state, read under that lock.
+    const protectedRows = await tx.splits.findMany({
+      where: {
+        guid: { in: matches.map(m => m.splitGuid) },
+        reconcile_state: { in: [...PROTECTED_RECONCILE_STATES] },
+      },
+      select: {
+        guid: true,
+        tx_guid: true,
+        account_guid: true,
+        reconcile_state: true,
+        account: { select: { name: true } },
+      },
+    });
+    reconciledSkipped = findProtectedSplits(protectedRows);
+    const blocked = new Set(reconciledSkipped.map(ref => ref.splitGuid));
+
     for (const m of matches) {
+      if (blocked.has(m.splitGuid)) continue;
+      // Belt and braces on top of the lock: the protected states are in the
+      // predicate too, so no future caller can re-book a reconciled split
+      // through this function even without the lock.
       const res = await tx.splits.updateMany({
-        where: { guid: m.splitGuid, account_guid: m.currentAccountGuid },
+        where: {
+          guid: m.splitGuid,
+          account_guid: m.currentAccountGuid,
+          reconcile_state: { notIn: [...PROTECTED_RECONCILE_STATES] },
+        },
         data: { account_guid: m.newAccountGuid },
       });
       applied += res.count;
     }
   });
-  return applied;
+  return { applied, reconciledSkipped };
 }

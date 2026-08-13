@@ -15,6 +15,11 @@ import {
     PeriodLockedError,
     periodLockedResponse,
 } from '@/lib/services/period-lock.service';
+import {
+    assertSplitsNotProtected,
+    ReconciledSplitError,
+    reconciledSplitResponse,
+} from '@/lib/services/reconciled-split.service';
 
 /** Thrown inside the DB transaction when the optimistic version check fails. */
 class TransactionConflictError extends Error {
@@ -280,8 +285,16 @@ export async function PUT(
             // stale pre-transaction snapshot).
             const existingSplits = await tx.splits.findMany({
                 where: { tx_guid: guid },
+                include: { account: { select: { name: true } } },
             });
             const existingSplitByGuid = new Map(existingSplits.map(split => [split.guid, split]));
+
+            // Reconciled/frozen splits pin this transaction to a bank
+            // statement. This edit replaces every split (amount, account, and
+            // the transaction's post date), so refuse before the first write.
+            // The row is locked and this read is inside the transaction, so a
+            // concurrent reconcile cannot slip past the check.
+            assertSplitsNotProtected('edit this transaction', existingSplits);
 
             // Process multi-currency splits and add trading splits if needed
             const multiCurrencyResult = await processMultiCurrencySplits(
@@ -446,6 +459,9 @@ export async function PUT(
         if (error instanceof PeriodLockedError) {
             return periodLockedResponse(error);
         }
+        if (error instanceof ReconciledSplitError) {
+            return reconciledSplitResponse(error);
+        }
         console.error('Error updating transaction:', error);
         return NextResponse.json({ error: 'Failed to update transaction' }, { status: 500 });
     }
@@ -524,8 +540,20 @@ export async function DELETE(
             const snapshot = await snapshotTransactionByGuid(guid, tx);
             const splitRows = await tx.splits.findMany({
                 where: { tx_guid: guid },
-                select: { guid: true },
+                select: {
+                    guid: true,
+                    tx_guid: true,
+                    account_guid: true,
+                    reconcile_state: true,
+                    account: { select: { name: true } },
+                },
             });
+
+            // Reconciled/frozen splits pin this transaction to a bank
+            // statement — deleting it would silently break that agreement.
+            // Checked inside the transaction on the locked row, before any
+            // write, so nothing is destroyed when the guard fires.
+            assertSplitsNotProtected('delete this transaction', splitRows);
 
             // Preserve SimpleFin meta rows for dedup (NULL out transaction_guid, mark deleted)
             await tx.$executeRaw`
@@ -602,6 +630,9 @@ export async function DELETE(
         }
         if (error instanceof PeriodLockedError) {
             return periodLockedResponse(error);
+        }
+        if (error instanceof ReconciledSplitError) {
+            return reconciledSplitResponse(error);
         }
         console.error('Error deleting transaction:', error);
         return NextResponse.json({ error: 'Failed to delete transaction' }, { status: 500 });
