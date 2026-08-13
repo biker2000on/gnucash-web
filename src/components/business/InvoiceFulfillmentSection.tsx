@@ -66,7 +66,10 @@ function AllocationModal({
     const { success, error } = useToast();
     const [rows, setRows] = useState<AllocationDraft[]>([]);
     const [date, setDate] = useState(todayIso());
-    const [post, setPost] = useState(false);
+    // Checked by default: shipping stock without recognizing COGS (or returning
+    // it without reversing COGS) overstates inventory and gross profit. Matches
+    // the engine's post-by-default for fulfillment.
+    const [post, setPost] = useState(true);
     const [busy, setBusy] = useState(false);
 
     const activeLocations = useMemo(() => locations.filter((l) => l.active), [locations]);

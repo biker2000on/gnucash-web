@@ -95,10 +95,13 @@ function StockActionModal({
             setUnitCost('');
             setDate(todayIso());
             setReference('');
-            setPost(false);
+            // Ship relieves inventory, so COGS posting is on by default (matching
+            // the engine) whenever the item has the accounts to post it. Receive
+            // stays off: it needs an offset account the user has to pick.
+            setPost(action === 'ship' && !!item.cogsAccountGuid && !!item.assetAccountGuid);
             setOffsetAccountGuid('');
         }
-    }, [action, activeLocations]);
+    }, [action, activeLocations, item.cogsAccountGuid, item.assetAccountGuid]);
 
     if (!action) return null;
 
