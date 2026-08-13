@@ -19,6 +19,25 @@ Covers work landed since 0.23.2.0 (2026-07-29).
   is `y` or `f` returns **423 Locked**. Previously these writes silently
   succeeded and could change a balance you had already agreed to a statement.
   To edit such a split, set its reconcile state back to `n` first.
+- **Cost of goods sold now posts by default when stock ships or an invoice is
+  fulfilled.** Previously it posted only if a caller explicitly opted in, so
+  inventory stayed on the balance sheet after the goods left and gross profit
+  was overstated. On a book that has been fulfilling without posting, reported
+  profit will drop in the first period after upgrade — that is the correction
+  landing, not a new error. Historical fulfilments are not rewritten; correcting
+  them needs manual journal entries. **Items lacking both a COGS account and an
+  inventory asset account now fail fulfilment with a clear error naming them**,
+  where they previously succeeded silently. Returns remain opt-in, because the
+  reversal uses the current average cost rather than the original shipment cost.
+- **Investment lot and fixed-asset figures will change for some accounts.**
+  Lots acquired by in-kind transfer now report their carried cost basis and
+  their original acquisition date, so previously-inflated gains shrink and
+  positions misreported as short-term become long-term. Fixed-asset value
+  adjustments are now computed against the account's quantity — the same basis
+  the ledger and the on-screen balance already use — which changes the
+  adjustment for assets whose quantity and transaction-currency value differ
+  (multi-currency holdings and books imported from GnuCash desktop). Reports
+  produced before this release should be regenerated.
 
 ### Added
 
@@ -56,6 +75,35 @@ Covers work landed since 0.23.2.0 (2026-07-29).
 - **Five Tier-1 integrity defects**, including budget roll-up double-counting a
   subtree budgeted at two levels, and FIRE Monte Carlo inflating withdrawals but
   not contributions.
+- **Cross-book writes through bulk split operations.** Bulk reconcile and bulk
+  move selected and updated splits by identifier alone with no book constraint,
+  so an editor holding another book's split identifiers could change its
+  reconciliation state, move its splits into their own account, or push their
+  own splits into it. Bulk move also bumped the other book's transaction
+  timestamps, invalidating its editors' concurrency checks. Both operations are
+  now scoped to the caller's book and reject the whole batch if any identifier
+  falls outside it, so a partially-applied batch cannot occur. A related
+  diagnostic could name an account from another book in its error message;
+  it no longer can.
+- **Duplicated wash-sale disallowance on Form 8949.** The adjustment was matched
+  to a sale by ticker, account and day, so two sales of the same security in one
+  account on one day each absorbed the other's disallowed loss. Matching is now
+  per disposal. Wash-sale rows that correspond to no reported disposal — zero
+  value in-kind transfers out, and unlotted sells — now raise a warning instead
+  of disappearing silently.
+- **Investment lots report re-derived its own cost basis** rather than using the
+  shared lot engine, ignoring basis carried through in-kind transfers and dating
+  holding periods from the transfer instead of the original purchase. It now
+  uses the engine. It also valued holdings from a price quote in any currency
+  when a book had no reporting currency configured, and counted holdings with no
+  available quote as zero — presenting a partial portfolio total as complete.
+  Both now report no value rather than a wrong one.
+- **Rounding drift in financial statement totals.** Split sums were divided and
+  added in floating point, so error accumulated across thousands of splits —
+  seven splits of one seventh summed to 0.99999999999999977796 rather than 1.
+  Sums are now computed in exact decimal arithmetic and converted once at the
+  end, affecting Balance Sheet, Trial Balance, Income Statement, Cash Flow,
+  General Ledger, Equity Statement and Portfolio.
 - Deployments now reach production reliably.
 
 ### Infrastructure
