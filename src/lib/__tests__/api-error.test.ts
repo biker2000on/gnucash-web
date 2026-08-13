@@ -32,7 +32,7 @@ describe('extractErrorMessage — legacy payload shapes', () => {
             ],
         };
         expect(extractErrorMessage(body, FALLBACK)).toBe(
-            'Splits must sum to zero (current sum: 0.05) Description is required'
+            'Splits must sum to zero (current sum: 0.05); Description is required'
         );
     });
 
@@ -69,7 +69,7 @@ describe('extractErrorMessage — legacy payload shapes', () => {
 
     it('skips unreadable entries but keeps readable siblings', () => {
         const body = { errors: [null, { message: 'Account is required' }, 'Value is required'] };
-        expect(extractErrorMessage(body, FALLBACK)).toBe('Account is required Value is required');
+        expect(extractErrorMessage(body, FALLBACK)).toBe('Account is required; Value is required');
     });
 });
 

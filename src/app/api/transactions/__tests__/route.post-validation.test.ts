@@ -109,7 +109,7 @@ describe('POST /api/transactions — validation failure payload', () => {
 
         expect(Array.isArray(body.errors)).toBe(true);
         expect(body.errors[0]).toMatchObject({ field: 'splits' });
-        expect(body.error).toBe(body.errors.map((item: { message: string }) => item.message).join(' '));
+        expect(body.error).toBe(body.errors.map((item: { message: string }) => item.message).join('; '));
     });
 
     it('gives the shared client helper a real reason to show the user', async () => {

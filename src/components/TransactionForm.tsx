@@ -382,9 +382,27 @@ export function TransactionForm({
         return parseExchangeRate(split.exchange_rate) ?? 1;
     };
 
+    // The smallest fraction the transaction currency is stored in. Must match
+    // the `transactionFraction` buildApiData passes to
+    // buildCurrencySplitAmounts, or the form would balance different numbers
+    // than it submits.
+    const TRANSACTION_FRACTION = 100;
+
+    const resolveAccountFraction = (split: SplitFormData): number => {
+        const scu = accountMap.get(split.account_guid)?.commodity_scu;
+        return typeof scu === 'number' && Number.isInteger(scu) && scu > 0 ? scu : 100;
+    };
+
     const calculateBalance = () => {
         let totalDebit = 0;
         let totalCredit = 0;
+        // Sum of the values the API will actually receive, in whole units of
+        // TRANSACTION_FRACTION. Kept separate from the raw debit/credit totals
+        // because buildCurrencySplitAmounts ROUNDS to those units: a debit of 1
+        // at rate 0.3333 is submitted as 33/100, which balances a plainly-typed
+        // 0.33 credit even though the raw floats differ by 0.0033. Validating
+        // the raw difference would reject a transaction the server accepts.
+        let submittedValueUnits = 0;
         // Splits whose typed amount does not parse. They are NOT counted as 0:
         // a malformed amount must not be able to make a transaction look
         // balanced. validateForm reports them and blocks the save.
@@ -409,20 +427,36 @@ export function TransactionForm({
             // by split values in the transaction currency.
             totalDebit += debit * rate;
             totalCredit += credit * rate;
+
+            // Splits with no account are still counted here even though
+            // buildApiData drops them: a typed amount on an account-less row
+            // would otherwise be silently discarded by an accepted save.
+            submittedValueUnits += buildCurrencySplitAmounts(
+                debit - credit,
+                rate,
+                resolveAccountFraction(split),
+                TRANSACTION_FRACTION,
+            ).valueNum;
         });
         return {
             totalDebit,
             totalCredit,
             difference: totalDebit - totalCredit,
+            // What the API will see. This is the one to validate against.
+            submittedDifference: submittedValueUnits / TRANSACTION_FRACTION,
             invalidAmountSplits,
         };
     };
 
     const autoBalanceLastSplit = () => {
-        const { difference, invalidAmountSplits } = calculateBalance();
+        const { difference, submittedDifference, invalidAmountSplits } = calculateBalance();
         // The difference is meaningless while any typed amount is unparseable.
         if (invalidAmountSplits.length > 0) return;
-        if (Math.abs(difference) < 0.01) return;
+        // Nothing to do when the values that will be submitted already balance
+        // — otherwise an FX-rounding artefact would push a correct transaction
+        // out of balance. The adjustment itself uses the raw difference, which
+        // is what actually has to reach zero before rounding.
+        if (Math.abs(submittedDifference) <= BALANCE_TOLERANCE) return;
 
         setFormData(prev => {
             const newSplits = [...prev.splits];
@@ -602,20 +636,19 @@ export function TransactionForm({
                 fieldErrors.splits = 'Exchange rate required';
             }
 
-            const { difference, invalidAmountSplits } = calculateBalance();
+            const { submittedDifference, invalidAmountSplits } = calculateBalance();
             if (invalidAmountSplits.length > 0) {
                 errors.push(`Enter a valid amount (e.g. 1234.56) for: ${invalidAmountSplits.join(', ')}.`);
                 fieldErrors.splits = 'Invalid amount';
             }
 
-            // Only meaningful once every amount parses. Uses the same tolerance
-            // the server applies, so the form never accepts an imbalance the
-            // API will reject (a 0.005 gap used to pass here and fail there).
-            if (invalidAmountSplits.length === 0 && missingRateAccounts.length === 0 && Math.abs(difference) > BALANCE_TOLERANCE) {
-                // A sub-cent gap renders as "0.00" at 2 decimals; show enough
-                // digits that the number explains the rejection.
-                const shown = Math.abs(difference) < 0.005 ? difference.toFixed(4) : difference.toFixed(2);
-                errors.push(`Transaction is unbalanced by ${shown}. Debits must equal credits.`);
+            // Only meaningful once every amount parses. Checks the ROUNDED
+            // values the API will receive against the same tolerance the server
+            // applies, so the form neither accepts an imbalance the API rejects
+            // (a 0.005 gap used to pass here and fail there) nor rejects an
+            // FX-rounding artefact the API would have accepted.
+            if (invalidAmountSplits.length === 0 && missingRateAccounts.length === 0 && Math.abs(submittedDifference) > BALANCE_TOLERANCE) {
+                errors.push(`Transaction is unbalanced by ${submittedDifference.toFixed(2)}. Debits must equal credits.`);
                 fieldErrors.splits = 'Unbalanced';
             }
         }
@@ -651,14 +684,16 @@ export function TransactionForm({
             const accountAmount = debit - credit;
             const exchangeRate = resolveSplitExchangeRate(split);
             if (exchangeRate === null) return null;
-            const accountFraction = accountMap.get(split.account_guid)?.commodity_scu || 100;
+            // Same fraction resolution calculateBalance uses, so the balance
+            // the form validated is the balance that gets submitted.
+            const accountFraction = resolveAccountFraction(split);
 
             const {
                 valueNum,
                 valueDenom,
                 quantityNum,
                 quantityDenom,
-            } = buildCurrencySplitAmounts(accountAmount, exchangeRate, accountFraction);
+            } = buildCurrencySplitAmounts(accountAmount, exchangeRate, accountFraction, TRANSACTION_FRACTION);
 
             apiSplits.push({
                 guid: /^[0-9a-f]{32}$/.test(split.id) ? split.id : undefined,
@@ -809,7 +844,7 @@ export function TransactionForm({
         }
     };
 
-    const { totalDebit, totalCredit, difference } = calculateBalance();
+    const { totalDebit, totalCredit, submittedDifference } = calculateBalance();
 
     // Setup keyboard shortcut (Ctrl+Enter for save)
     useFormKeyboardShortcuts(formRef, () => handleSubmit(), {
@@ -1132,9 +1167,9 @@ export function TransactionForm({
                             {totalCredit.toFixed(2)}
                         </div>
                         <div className="col-span-3 text-right">
-                            {Math.abs(difference) > 0.01 ? (
+                            {Math.abs(submittedDifference) > BALANCE_TOLERANCE ? (
                                 <span className="text-warning">
-                                    Difference: {difference.toFixed(2)}
+                                    Difference: {submittedDifference.toFixed(2)}
                                 </span>
                             ) : (
                                 <span className="text-positive">Balanced</span>
@@ -1148,9 +1183,9 @@ export function TransactionForm({
                             <span className="text-negative">Cr: {totalCredit.toFixed(2)}</span>
                         </div>
                         <div>
-                            {Math.abs(difference) > 0.01 ? (
+                            {Math.abs(submittedDifference) > BALANCE_TOLERANCE ? (
                                 <span className="text-warning">
-                                    Diff: {difference.toFixed(2)}
+                                    Diff: {submittedDifference.toFixed(2)}
                                 </span>
                             ) : (
                                 <span className="text-positive">Balanced</span>

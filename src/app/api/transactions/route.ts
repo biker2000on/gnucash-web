@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import prisma, { toDecimal, generateGuid } from '@/lib/prisma';
 import { serializeBigInts } from '@/lib/gnucash';
 import { CreateTransactionRequest } from '@/lib/types';
-import { validateTransaction } from '@/lib/validation';
+import { validateTransaction, summarizeValidationErrors } from '@/lib/validation';
 import { isValidGuid } from '@/lib/guid';
 import { Prisma } from '@prisma/client';
 import { logAudit, snapshotTransactionByGuid } from '@/lib/services/audit.service';
@@ -323,7 +323,7 @@ export async function POST(request: Request) {
             // is the human-readable summary the client shows, `errors` keeps
             // the per-field detail for form-level highlighting.
             return NextResponse.json({
-                error: validation.errors.map(item => item.message).join(' '),
+                error: summarizeValidationErrors(validation.errors),
                 errors: validation.errors,
             }, { status: 400 });
         }

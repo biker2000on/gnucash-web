@@ -48,6 +48,23 @@ export interface ValidationError {
  */
 export const BALANCE_TOLERANCE = 0.001;
 
+/**
+ * Separator between messages in a multi-error summary. Messages do not end in
+ * punctuation, so joining with a space produced run-on text
+ * ("Currency is required Post date is required"). Semicolon-space keeps the
+ * boundaries readable in a single-line toast.
+ */
+const ERROR_SUMMARY_SEPARATOR = '; ';
+
+/**
+ * Flatten validation errors into the single human-readable string API routes
+ * return as `error`. Both transaction write paths use this so the create and
+ * update responses read identically.
+ */
+export function summarizeValidationErrors(errors: ValidationError[]): string {
+    return errors.map(item => item.message).join(ERROR_SUMMARY_SEPARATOR);
+}
+
 export interface ValidationResult {
     valid: boolean;
     errors: ValidationError[];

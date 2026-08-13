@@ -58,7 +58,10 @@ export function extractErrorMessage(body: unknown, fallback: string): string {
                 return null;
             })
             .filter((message): message is string => message !== null);
-        if (messages.length > 0) return messages.join(' ');
+        // Same separator the server uses for its `error` summary
+        // (summarizeValidationErrors), so a body carrying only `errors` reads
+        // identically to one carrying both.
+        if (messages.length > 0) return messages.join('; ');
     }
 
     // 3. `{ message: string }`
