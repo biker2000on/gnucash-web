@@ -42,6 +42,8 @@ export type Form8949Box = 'A' | 'B' | 'C' | 'D' | 'E' | 'F';
 
 /** One realized disposal, before wash-sale / bucketing logic is applied. */
 export interface RealizedSaleInput {
+  /** GnuCash GUID of the stock-account split that disposed of these shares. */
+  splitGuid: string;
   accountGuid: string;
   ticker: string;
   shares: number;          // shares sold (positive)
@@ -233,6 +235,7 @@ export function lotToRealizedSales(lot: LotSummary, ticker: string): RealizedSal
     if (Math.abs(proceeds) < 0.005) continue; // transfer-out / unvalued trade
     const shares = Math.abs(sell.shares);
     sales.push({
+      splitGuid: sell.guid,
       accountGuid: lot.accountGuid,
       ticker,
       shares,
@@ -247,9 +250,9 @@ export function lotToRealizedSales(lot: LotSummary, ticker: string): RealizedSal
 
 /**
  * Find the wash-sale disallowed amount for a sale (>= 0), or 0 if none.
- * Matches on ticker + account + same sale day. WashSaleResult.loss is stored
- * negative; the disallowed adjustment is capped at the sale's actual loss so a
- * gain never flips positive.
+ * Matches the unique GnuCash disposal split GUID. WashSaleResult.loss is
+ * stored negative; the disallowed adjustment is capped at the sale's actual
+ * loss so a gain never flips positive.
  */
 function washAdjustmentFor(
   sale: RealizedSaleInput,
@@ -257,13 +260,7 @@ function washAdjustmentFor(
   washSales: WashSaleResult[],
 ): number {
   if (rawGain >= 0) return 0;
-  const saleDay = toDay(sale.dateSold);
-  const matches = washSales.filter(
-    ws =>
-      ws.ticker === sale.ticker &&
-      ws.sellAccountGuid === sale.accountGuid &&
-      toDay(ws.sellDate) === saleDay,
-  );
+  const matches = washSales.filter(ws => ws.splitGuid === sale.splitGuid);
   if (matches.length === 0) return 0;
   const disallowed = matches.reduce((sum, match) => sum + Math.abs(match.loss), 0);
   return Math.min(disallowed, -rawGain);
@@ -332,6 +329,13 @@ export function buildCapitalGainsReport(
   year: number,
 ): CapitalGainsReport {
   const rows = sales.map(s => buildForm8949Row(s, washSales));
+  const saleGuids = new Set(sales.map(sale => sale.splitGuid));
+  const unmatchedWashWarnings = washSales
+    .filter(washSale => !saleGuids.has(washSale.splitGuid))
+    .map(washSale =>
+      `Wash-sale adjustment for ${washSale.ticker} ($${Math.abs(washSale.loss).toFixed(2)}) ` +
+      'was not applied because its disposal split is not reported on Form 8949; review this transaction.',
+    );
 
   const buckets: Form8949Bucket[] = BUCKET_ORDER.map(def => ({
     ...def,
@@ -360,7 +364,7 @@ export function buildCapitalGainsReport(
     net: shortTerm.gain + longTerm.gain,
   };
 
-  const warnings = flagSuspectRows(rows);
+  const warnings = [...unmatchedWashWarnings, ...flagSuspectRows(rows)];
 
   return { year, rows, buckets, scheduleD, warnings };
 }

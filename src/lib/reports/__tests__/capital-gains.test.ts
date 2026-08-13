@@ -25,6 +25,7 @@ import {
 } from '../capital-gains';
 
 const sale = (over: Partial<RealizedSaleInput> = {}): RealizedSaleInput => ({
+  splitGuid: 's1',
   accountGuid: 'acct-1',
   ticker: 'AAPL',
   shares: 10,
@@ -256,13 +257,49 @@ describe('wash-sale adjustment', () => {
     expect(row.gain).toBe(500);
   });
 
-  it('does not match a wash sale on a different day / ticker', () => {
+  it('does not match a different disposal split', () => {
     const row = buildForm8949Row(
-      sale({ ticker: 'MSFT', dateAcquired: '2024-01-02', dateSold: '2024-06-01', proceeds: 800, costBasis: 1000 }),
+      sale({ splitGuid: 'other-split', ticker: 'MSFT', dateAcquired: '2024-01-02', dateSold: '2024-06-01', proceeds: 800, costBasis: 1000 }),
       washSales,
     );
     expect(row.code).toBe('');
     expect(row.gain).toBe(-200);
+  });
+
+  it('warns when a wash-sale disposal split is absent from Form 8949 sales', () => {
+    const report = buildCapitalGainsReport(
+      [sale({ splitGuid: 'reported-sale', dateAcquired: '2024-01-02', dateSold: '2024-06-01', proceeds: 800, costBasis: 1000 })],
+      [{ ...washSales[0], splitGuid: 'unreported-sale', loss: -200 }],
+      2024,
+    );
+
+    expect(report.rows[0].adjustment).toBe(0);
+    expect(report.warnings).toContain(
+      'Wash-sale adjustment for AAPL ($200.00) was not applied because its disposal split is not reported on Form 8949; review this transaction.',
+    );
+  });
+
+  it('attributes same-day sales to their own disposal splits without duplicating the adjustment', () => {
+    const sameDayWashSales: WashSaleResult[] = [
+      { ...washSales[0], splitGuid: 'sale-split-1', loss: -200 },
+      { ...washSales[0], splitGuid: 'sale-split-2', loss: -300 },
+    ];
+    const report = buildCapitalGainsReport([
+      sale({ splitGuid: 'sale-split-1', dateAcquired: '2024-01-02', dateSold: '2024-06-01', proceeds: 700, costBasis: 1000 }),
+      sale({ splitGuid: 'sale-split-2', dateAcquired: '2024-01-02', dateSold: '2024-06-01', proceeds: 600, costBasis: 1000 }),
+    ], sameDayWashSales, 2024);
+
+    expect(report.rows.map(row => row.adjustment)).toEqual([200, 300]);
+    expect(report.rows.map(row => row.gain)).toEqual([-100, -100]);
+    expect(report.scheduleD.shortTerm.adjustments).toBe(500);
+  });
+
+  it('keeps a single-sale wash adjustment unchanged', () => {
+    const row = buildForm8949Row(
+      sale({ splitGuid: 's1', dateAcquired: '2024-01-02', dateSold: '2024-06-01', proceeds: 800, costBasis: 1000 }),
+      washSales,
+    );
+    expect(row).toMatchObject({ code: 'W', adjustment: 200, gain: 0 });
   });
 });
 
