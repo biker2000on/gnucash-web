@@ -12,7 +12,10 @@ import { describe, it, expect } from 'vitest';
 // importing the pure function doesn't require a database.
 import { vi } from 'vitest';
 vi.mock('@/lib/prisma', () => ({ default: {} }));
-vi.mock('@/lib/account-valuation', () => ({ buildAccountValuationContext: vi.fn() }));
+vi.mock('@/lib/account-valuation', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/account-valuation')>();
+  return { ...actual, buildAccountValuationContext: vi.fn() };
+});
 
 import { bucketAccountsByOwner, OwnerBalanceInput } from '../net-worth-by-owner';
 import type { AccountOwner } from '@/lib/ownership';

@@ -45,9 +45,13 @@ vi.mock('@/lib/services/account.service', () => ({
     AccountService: { create: vi.fn() },
     CreateAccountSchema: { safeParse: vi.fn() },
 }));
-vi.mock('@/lib/account-valuation', () => ({
-    buildAccountValuationContext: vi.fn(async () => ({ getMultiplier: () => 1 })),
-}));
+vi.mock('@/lib/account-valuation', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/lib/account-valuation')>();
+    return {
+        ...actual,
+        buildAccountValuationContext: vi.fn(async () => ({ getMultiplier: () => 1 })),
+    };
+});
 vi.mock('@/lib/account-path', () => ({ buildBookRelativeAccountPaths: buildPathsMock }));
 vi.mock('@prisma/client', () => ({
     Prisma: { sql: vi.fn(() => ({})), empty: {} },

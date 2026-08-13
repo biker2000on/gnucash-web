@@ -22,14 +22,20 @@ vi.mock('../prisma', () => ({
   },
 }));
 
-// Balance sheet valuation: identity multiplier (single-currency book)
-vi.mock('../account-valuation', () => ({
-  buildAccountValuationContext: vi.fn(async () => ({
-    reportCurrencyGuid: 'usd',
-    reportCurrencyMnemonic: 'USD',
-    getMultiplier: () => 1,
-  })),
-}));
+// Balance sheet valuation: identity multiplier (single-currency book). Only
+// the context builder is faked; the rest of the module (coverage helpers etc.)
+// stays real so new exports the reports call don't silently vanish.
+vi.mock('../account-valuation', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../account-valuation')>();
+  return {
+    ...actual,
+    buildAccountValuationContext: vi.fn(async () => ({
+      reportCurrencyGuid: 'usd',
+      reportCurrencyMnemonic: 'USD',
+      getMultiplier: () => 1,
+    })),
+  };
+});
 
 import { buildHierarchy, AccountWithBalance } from '../reports/utils';
 import { generateBalanceSheet } from '../reports/balance-sheet';

@@ -27,14 +27,20 @@ vi.mock('../prisma', () => ({
   },
 }));
 
-// Single-currency book: identity multiplier.
-vi.mock('../account-valuation', () => ({
-  buildAccountValuationContext: vi.fn(async () => ({
-    reportCurrencyGuid: 'usd',
-    reportCurrencyMnemonic: 'USD',
-    getMultiplier: () => 1,
-  })),
-}));
+// Single-currency book: identity multiplier. Only the context builder is
+// faked; the rest of the module (coverage helpers etc.) stays real so new
+// exports the reports call don't silently vanish from the mock.
+vi.mock('../account-valuation', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../account-valuation')>();
+  return {
+    ...actual,
+    buildAccountValuationContext: vi.fn(async () => ({
+      reportCurrencyGuid: 'usd',
+      reportCurrencyMnemonic: 'USD',
+      getMultiplier: () => 1,
+    })),
+  };
+});
 
 import { generateIncomeStatement } from '../reports/income-statement';
 import { generateBalanceSheet } from '../reports/balance-sheet';
