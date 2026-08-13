@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { requireRole } from '@/lib/auth';
 import { publishDataChange } from '@/lib/data-events';
+import { lockTransactionsForUpdate } from '@/lib/services/reconciled-split.service';
 
 interface BulkReconcileBody {
     splits: string[];
@@ -71,15 +72,40 @@ export async function POST(request: Request) {
             ? new Date(body.reconcile_date || new Date().toISOString())
             : null;
 
-        // Bulk update all splits
-        const result = await prisma.splits.updateMany({
-            where: {
-                guid: { in: body.splits },
-            },
-            data: {
-                reconcile_state: body.reconcile_state,
-                reconcile_date: reconcileDate,
-            },
+        // Bulk update all splits under the canonical parent-transaction lock
+        // (guid order), matching every other split-writing path.
+        //
+        // This route is one half of the reconciled-split guard's contract:
+        // that guard is only race-free because EVERY writer of
+        // reconcile_state takes the parent transaction lock first, so a
+        // reconcile cannot commit between a guarded path's check and its
+        // write. This used to be a bare updateMany outside any transaction —
+        // exactly the writer that could slip through — so it now locks like
+        // its siblings and bumps enter_date so stale editors 409.
+        const result = await prisma.$transaction(async (tx) => {
+            const targets = await tx.splits.findMany({
+                where: { guid: { in: body.splits } },
+                select: { guid: true, tx_guid: true },
+            });
+            const parentTxGuids = [...new Set(targets.map(s => s.tx_guid))].sort();
+            await lockTransactionsForUpdate(parentTxGuids, tx);
+
+            const updated = await tx.splits.updateMany({
+                where: {
+                    guid: { in: body.splits },
+                },
+                data: {
+                    reconcile_state: body.reconcile_state,
+                    reconcile_date: reconcileDate,
+                },
+            });
+            if (parentTxGuids.length > 0) {
+                await tx.transactions.updateMany({
+                    where: { guid: { in: parentTxGuids } },
+                    data: { enter_date: new Date() },
+                });
+            }
+            return updated;
         });
 
         void publishDataChange(roleResult.bookGuid, 'transactions', { action: 'bulk' });

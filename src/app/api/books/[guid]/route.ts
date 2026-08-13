@@ -306,7 +306,18 @@ export async function DELETE(
                 `;
             }
 
-            // Delete splits for these accounts
+            // DELIBERATE EXCLUSION from the reconciled-split guard
+            // (src/lib/services/reconciled-split.service.ts).
+            //
+            // Every other path that deletes a split refuses when its
+            // reconcile_state is 'y' or 'f'. Book deletion does not, and must
+            // not: any book that has ever been reconciled contains reconciled
+            // splits, so the guard here would make books permanently
+            // undeletable. Deleting a book is an explicit, admin-level,
+            // whole-dataset destructive act — the user's intent covers the
+            // reconciled rows too — unlike editing one split inside a live
+            // book, where the guard protects an agreement the user did not
+            // mean to touch.
             await tx.splits.deleteMany({
                 where: { account_guid: { in: allAccountGuids } },
             });

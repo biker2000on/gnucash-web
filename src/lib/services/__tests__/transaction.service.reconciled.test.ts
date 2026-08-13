@@ -15,8 +15,10 @@ const {
 } = vi.hoisted(() => ({
     prismaMock: {
         transactions: { findUnique: vi.fn(), update: vi.fn(), create: vi.fn(), delete: vi.fn() },
-        splits: { createMany: vi.fn(), deleteMany: vi.fn() },
+        splits: { createMany: vi.fn(), deleteMany: vi.fn(), findMany: vi.fn() },
         $transaction: vi.fn(),
+        // Parent-transaction FOR UPDATE lock taken by the shared guard.
+        $queryRaw: vi.fn(),
     },
     assertAccountNotLockedMock: vi.fn(),
     recordImpliedPricesMock: vi.fn(),
@@ -80,6 +82,9 @@ beforeEach(() => {
     prismaMock.$transaction.mockImplementation(
         async (cb: (tx: unknown) => unknown) => cb(prismaMock),
     );
+    prismaMock.$queryRaw.mockResolvedValue([]);
+    // Authoritative in-transaction re-read: nothing protected by default.
+    prismaMock.splits.findMany.mockResolvedValue([]);
     prismaMock.splits.deleteMany.mockResolvedValue({ count: 2 });
     prismaMock.splits.createMany.mockResolvedValue({ count: 2 });
     prismaMock.transactions.update.mockResolvedValue({});

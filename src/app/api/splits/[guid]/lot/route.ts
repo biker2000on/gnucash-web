@@ -59,6 +59,15 @@ export async function PATCH(
       targetLotGuid = lot_guid;
     }
 
+    // DELIBERATE EXCLUSION from the reconciled-split guard
+    // (src/lib/services/reconciled-split.service.ts): this route writes
+    // `lot_guid` and nothing else. It changes no amount, no account, no post
+    // date, and deletes nothing, so it cannot desynchronize the book from a
+    // statement. Lot assignment on an already-reconciled holding is ordinary
+    // GnuCash practice — reconciliation is about the cash line, lots are
+    // about cost basis — so guarding it would block a legitimate action
+    // without protecting anything.
+    //
     // Create the lot (if requested), update the split, and bump the parent
     // transaction's enter_date atomically so concurrent editors' optimistic
     // locks invalidate.

@@ -13,7 +13,10 @@ import type { ExtendedPrismaClient } from '@/lib/prisma';
 import { getCurrentUser } from '@/lib/auth';
 import { getActiveBookGuid } from '@/lib/book-scope';
 import { assertNotLocked } from '@/lib/services/period-lock.service';
-import { assertSplitsNotProtected } from '@/lib/services/reconciled-split.service';
+import {
+    assertSplitsNotProtected,
+    lockTransactionsForUpdate,
+} from '@/lib/services/reconciled-split.service';
 import { afterLedgerWrite } from '@/lib/data-events';
 
 /** Global client or an interactive-transaction client. */
@@ -377,6 +380,12 @@ export async function undoAuditEntry(auditId: number, activeBookGuid: string): P
                     await claimUndo(tx, auditId, userId);
                     // Re-read INSIDE the transaction: the pre-check above ran on a
                     // stale snapshot that a concurrent edit may have invalidated.
+                    // Canonical parent lock BEFORE the live read: the undo
+                    // claim locks the audit row, not the transaction, so
+                    // without this the snapshot below is an unlocked READ
+                    // COMMITTED select and a concurrent reconcile could
+                    // commit between it and writeSnapshot.
+                    await lockTransactionsForUpdate([plan.snapshot.guid], tx);
                     const live = await snapshotTransactionByGuid(plan.snapshot.guid, tx);
                     if (!live) {
                         throw new UndoConflictError('Transaction no longer exists — restore it from its DELETE entry instead');
@@ -410,6 +419,10 @@ export async function undoAuditEntry(auditId: number, activeBookGuid: string): P
                 await assertNotLocked(activeBookGuid, [probe.post_date]);
                 const current = await prisma.$transaction(async (tx) => {
                     await claimUndo(tx, auditId, userId);
+                    // Canonical parent lock BEFORE the live read (see the
+                    // revert_update branch for why the audit-row claim is not
+                    // enough).
+                    await lockTransactionsForUpdate([plan.guid], tx);
                     const live = await snapshotTransactionByGuid(plan.guid, tx);
                     if (!live) throw new UndoConflictError('Transaction no longer exists');
                     // Undoing a CREATE deletes the transaction outright; if it

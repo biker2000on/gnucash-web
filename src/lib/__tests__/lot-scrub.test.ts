@@ -33,6 +33,8 @@ const mockTransactionsCreate = vi.fn();
 const mockCommoditiesFindUnique = vi.fn();
 const mockCommoditiesFindMany = vi.fn();
 const mockPricesFindFirst = vi.fn();
+// Parent-transaction FOR UPDATE lock taken by the reconciled-split guard.
+const mockQueryRaw = vi.fn();
 
 vi.mock('../prisma', () => ({
   default: {
@@ -112,6 +114,7 @@ function createMockTx() {
     prices: {
       findFirst: mockPricesFindFirst,
     },
+    $queryRaw: mockQueryRaw,
   } as never;
 }
 
@@ -128,12 +131,16 @@ import {
   DEFAULT_QTY_EPSILON,
   type OpenLot,
 } from '../lot-scrub';
+import { ReconciledSplitError } from '../services/reconciled-split.service';
 
 beforeEach(() => {
   // Full reset (implementations AND once-queues): the scrub engine now makes
   // additional slots/splits lookups (carried_basis, transfer-out detection),
   // so leftover mock implementations from a previous test must never bleed in.
   vi.resetAllMocks();
+  // Re-arm after the reset: the reconciled-split guard takes a parent-row
+  // FOR UPDATE lock through $queryRaw on every scrub path.
+  mockQueryRaw.mockResolvedValue([]);
 });
 
 // ---------------------------------------------------------------------------
@@ -1783,6 +1790,87 @@ describe('valueZeroValueTrade', () => {
 
     expect(result.valued).toBe(true);
     expect(mockSplitsUpdate).not.toHaveBeenCalled();
+  });
+
+  /* Reconciled/frozen guard. Unlike splitSellAcrossLots, this path REWRITES a
+     leg's value from 0 to ±FMV — not a value-preserving repartition — so a
+     reconciled or frozen leg must stop it before any write. */
+  function armPrices() {
+    mockSplitsUpdate.mockResolvedValue({});
+    mockSlotsCreate.mockResolvedValue({});
+    mockPricesFindFirst.mockImplementation(
+      async (args: { where: { commodity_guid: string } }) =>
+        args.where.commodity_guid === BTC_GUID
+          ? { value_num: 3000000n, value_denom: 100n }
+          : null,
+    );
+  }
+
+  it.each([
+    ['reconciled', 'y'],
+    ['frozen', 'f'],
+  ])('refuses when the primary leg is %s — no slots, no value rewrite', async (_label, state) => {
+    const { ethSplit } = makeTradeSplit();
+    (ethSplit as Record<string, unknown>).reconcile_state = state;
+    mockSplitsFindUnique.mockResolvedValue(ethSplit);
+    armPrices();
+
+    await expect(valueZeroValueTrade(ethSplit.guid, runId, tx))
+      .rejects.toBeInstanceOf(ReconciledSplitError);
+    // Guarded BEFORE the original_* slot writes, so no half-written revert
+    // metadata is left behind.
+    expect(mockSlotsCreate).not.toHaveBeenCalled();
+    expect(mockSplitsUpdate).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['reconciled', 'y'],
+    ['frozen', 'f'],
+  ])('refuses when only the COUNTER leg is %s', async (_label, state) => {
+    const { ethSplit } = makeTradeSplit();
+    const counterLeg = (ethSplit.transaction.splits as Record<string, unknown>[])[1];
+    counterLeg.reconcile_state = state;
+    mockSplitsFindUnique.mockResolvedValue(ethSplit);
+    armPrices();
+
+    await expect(valueZeroValueTrade(ethSplit.guid, runId, tx))
+      .rejects.toBeInstanceOf(ReconciledSplitError);
+    expect(mockSplitsUpdate).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['not reconciled', 'n'],
+    ['cleared', 'c'],
+  ])('still values the trade when both legs are %s', async (_label, state) => {
+    const { ethSplit } = makeTradeSplit();
+    (ethSplit as Record<string, unknown>).reconcile_state = state;
+    for (const leg of ethSplit.transaction.splits as Record<string, unknown>[]) {
+      leg.reconcile_state = state;
+    }
+    mockSplitsFindUnique.mockResolvedValue(ethSplit);
+    armPrices();
+
+    const result = await valueZeroValueTrade(ethSplit.guid, runId, tx);
+    expect(result.valued).toBe(true);
+    expect(mockSplitsUpdate).toHaveBeenCalledTimes(2);
+  });
+
+  it('takes the parent transaction FOR UPDATE lock before reading the legs', async () => {
+    const { ethSplit } = makeTradeSplit();
+    mockSplitsFindUnique.mockResolvedValue(ethSplit);
+    armPrices();
+
+    await valueZeroValueTrade(ethSplit.guid, runId, tx);
+
+    const lockSql = mockQueryRaw.mock.calls
+      .map(c => (c[0] as TemplateStringsArray).join('?'))
+      .join('\n');
+    expect(lockSql).toContain('FROM transactions');
+    expect(lockSql).toContain('FOR UPDATE');
+    // The lock precedes the value rewrite, so a concurrent reconcile of these
+    // legs cannot commit between the guard's read and the update.
+    expect(mockQueryRaw.mock.invocationCallOrder[0])
+      .toBeLessThan(mockSplitsUpdate.mock.invocationCallOrder[0]);
   });
 });
 

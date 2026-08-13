@@ -23,6 +23,12 @@ import {
   type OpenLot,
   type PrismaTx,
 } from './lot-scrub';
+import type { Prisma } from '@prisma/client';
+import {
+  assertSplitsNotProtected,
+  lockTransactionsForUpdate,
+  PROTECTED_RECONCILE_STATES,
+} from './services/reconciled-split.service';
 
 interface SplitForAssignment {
   guid: string;
@@ -478,6 +484,119 @@ async function bumpAccountTransactionTokens(
   `;
 }
 
+/**
+ * Lock every transaction holding a split in this account, in canonical guid
+ * order. Lot operations rewrite the account's splits wholesale, and the
+ * reconciled-split policy below is only race-free while these rows are held:
+ * the book advisory lock serializes lot runs against each other, not against
+ * the reconcile routes, which take exactly this transaction-row lock.
+ */
+async function lockAccountTransactions(
+  tx: PrismaTx,
+  accountGuid: string,
+): Promise<void> {
+  await tx.$queryRaw`
+    SELECT guid FROM transactions
+    WHERE guid IN (SELECT DISTINCT tx_guid FROM splits WHERE account_guid = ${accountGuid})
+    ORDER BY guid
+    FOR UPDATE
+  `;
+}
+
+/**
+ * Reconciled/frozen policy for the lot engine's REVERT paths
+ * (clearLotAssignments, revertScrubRun).
+ *
+ * A revert does three different things, and only two of them can break the
+ * book's agreement with a bank statement:
+ *
+ *  1. **Deleting a wholly generated transaction** (a realized-gain posting
+ *     from generateCapitalGains). Nothing restores that amount — the account
+ *     simply loses a posting. Those splits are created 'n', but they appear
+ *     in the ledger and a user can reconcile them afterwards, so the check is
+ *     live, not dead code. → GUARDED.
+ *
+ *  2. **Restoring a split that the run modified in place, where the run
+ *     created NO other split in the same transaction.** That is the
+ *     valueZeroValueTrade case: the "restore" puts a real FMV back to zero,
+ *     with no compensating row. → GUARDED.
+ *
+ *  3. **Deleting the run's sub-splits while restoring their parent in the
+ *     same transaction.** This is the exact inverse of splitSellAcrossLots:
+ *     the sub-splits inherit the parent's reconcile metadata and sum back to
+ *     the restored original, so the account's reconciled total is identical
+ *     before and after. → EXEMPT.
+ *
+ * The deliberate decision is (3): a generated row that merely INHERITED 'y'
+ * or 'f' from the split it was carved out of is not an independent statement
+ * agreement, and deleting it is only half of an atomic, net-zero repartition.
+ * Guarding it would make lot revert impossible on any reconciled investment
+ * account while protecting nothing — the same reasoning that makes the
+ * forward scrub (splitSellAcrossLots) exempt. Where a deletion is NOT paired
+ * with a compensating restore — case (1) — the guard fires.
+ */
+async function assertRevertPreservesReconciled(
+  tx: PrismaTx,
+  operation: string,
+  input: {
+    /** Transactions being deleted whole (generated gains transactions). */
+    deletedTxGuids: string[];
+    /** Splits being restored in place from their original_* slots. */
+    restoredSplitGuids: string[];
+    /** Every split this run tagged, used to detect the compensated case. */
+    taggedSplitGuids: string[];
+  },
+): Promise<void> {
+  const { deletedTxGuids, restoredSplitGuids, taggedSplitGuids } = input;
+  if (deletedTxGuids.length === 0 && restoredSplitGuids.length === 0) return;
+
+  const or: Prisma.splitsWhereInput[] = [];
+  if (deletedTxGuids.length > 0) or.push({ tx_guid: { in: deletedTxGuids } });
+  if (restoredSplitGuids.length > 0) or.push({ guid: { in: restoredSplitGuids } });
+
+  const protectedRows = await tx.splits.findMany({
+    where: {
+      OR: or,
+      reconcile_state: { in: [...PROTECTED_RECONCILE_STATES] },
+    },
+    select: {
+      guid: true,
+      tx_guid: true,
+      account_guid: true,
+      reconcile_state: true,
+      account: { select: { name: true } },
+    },
+  });
+  if (protectedRows.length === 0) return;
+
+  // A restore is "compensated" when this run also created another tagged
+  // split in the same transaction — i.e. the split was carved up and the
+  // pieces are being deleted alongside this restore (case 3).
+  const restoredSet = new Set(restoredSplitGuids);
+  const taggedByTx = new Map<string, string[]>();
+  if (taggedSplitGuids.length > 0) {
+    const tagged = await tx.splits.findMany({
+      where: { guid: { in: taggedSplitGuids } },
+      select: { guid: true, tx_guid: true },
+    });
+    for (const s of tagged) {
+      const list = taggedByTx.get(s.tx_guid) ?? [];
+      list.push(s.guid);
+      taggedByTx.set(s.tx_guid, list);
+    }
+  }
+
+  const deletedTxSet = new Set(deletedTxGuids);
+  const offending = protectedRows.filter(row => {
+    if (deletedTxSet.has(row.tx_guid)) return true; // case 1
+    if (!restoredSet.has(row.guid)) return false;
+    const siblings = (taggedByTx.get(row.tx_guid) ?? []).filter(g => g !== row.guid);
+    return siblings.length === 0; // case 2 when nothing compensates it
+  });
+
+  assertSplitsNotProtected(operation, offending);
+}
+
 export async function autoAssignLots(
   accountGuid: string,
   method: 'fifo' | 'lifo' | 'average',
@@ -510,6 +629,12 @@ export async function clearLotAssignments(
 ): Promise<{ splitsUnassigned: number; lotsDeleted: number }> {
   return prisma.$transaction(async (tx) => {
     await guardBookLock(tx, bookGuid, 'clear lot assignments');
+
+    // Canonical parent lock before anything is read: everything this function
+    // rewrites or deletes hangs off a transaction holding a split in this
+    // account, and the reconciled policy below must not be raced.
+    await lockAccountTransactions(tx, accountGuid);
+
     // 1. Find and delete auto-generated sub-splits and gains transactions
 
     // Find splits in this account tagged with gnucash_web_generated
@@ -539,6 +664,33 @@ export async function clearLotAssignments(
         },
       },
       select: { obj_guid: true, string_val: true },
+    });
+
+    // Identify the wholly-generated (gains) transactions up front, so the
+    // reconciled policy can run BEFORE the first write below rather than
+    // after half the restores have landed.
+    const taggedSplitsInAccount = await tx.splits.findMany({
+      where: { guid: { in: taggedSplitGuids } },
+      select: { tx_guid: true, guid: true },
+    });
+    const candidateTxGuids = [...new Set(taggedSplitsInAccount.map(s => s.tx_guid))];
+    const generatedTxGuids: string[] = [];
+    for (const txGuid of candidateTxGuids) {
+      const txSplitGuids = (await tx.splits.findMany({
+        where: { tx_guid: txGuid },
+        select: { guid: true },
+      })).map(s => s.guid);
+      const taggedCount = await tx.slots.count({
+        where: { obj_guid: { in: txSplitGuids }, name: 'gnucash_web_generated' },
+      });
+      if (taggedCount === txSplitGuids.length) generatedTxGuids.push(txGuid);
+    }
+
+    // Reconciled/frozen policy — see assertRevertPreservesReconciled.
+    await assertRevertPreservesReconciled(tx, 'clear the lot assignments on this account', {
+      deletedTxGuids: generatedTxGuids,
+      restoredSplitGuids: originalQtySlots.map(s => s.obj_guid),
+      taggedSplitGuids,
     });
 
     // Restore original sell splits
@@ -575,48 +727,29 @@ export async function clearLotAssignments(
       });
     }
 
-    // Find gains transactions: transactions where ALL splits are tagged with gnucash_web_generated
-    // First, get all transactions that have at least one tagged split in this account
-    const taggedSplitsInAccount = await tx.splits.findMany({
-      where: { guid: { in: taggedSplitGuids } },
-      select: { tx_guid: true, guid: true },
-    });
-    const candidateTxGuids = [...new Set(taggedSplitsInAccount.map(s => s.tx_guid))];
-
-    for (const txGuid of candidateTxGuids) {
-      const txSplits = await tx.splits.findMany({
+    // Delete the wholly-generated (gains) transactions identified above.
+    for (const txGuid of generatedTxGuids) {
+      const txSplitGuids = (await tx.splits.findMany({
         where: { tx_guid: txGuid },
         select: { guid: true },
-      });
-      const txSplitGuids = txSplits.map(s => s.guid);
+      })).map(s => s.guid);
 
-      // Check if ALL splits in this transaction are tagged
-      const taggedCount = await tx.slots.count({
-        where: {
-          obj_guid: { in: txSplitGuids },
-          name: 'gnucash_web_generated',
-        },
+      // Delete slots for splits
+      await tx.slots.deleteMany({
+        where: { obj_guid: { in: txSplitGuids } },
       });
-
-      if (taggedCount === txSplitGuids.length) {
-        // All splits tagged — this is a generated gains transaction. Delete it.
-        // Delete slots for splits
-        await tx.slots.deleteMany({
-          where: { obj_guid: { in: txSplitGuids } },
-        });
-        // Delete splits
-        await tx.splits.deleteMany({
-          where: { tx_guid: txGuid },
-        });
-        // Delete transaction slots
-        await tx.slots.deleteMany({
-          where: { obj_guid: txGuid },
-        });
-        // Delete transaction
-        await tx.transactions.deleteMany({
-          where: { guid: txGuid },
-        });
-      }
+      // Delete splits
+      await tx.splits.deleteMany({
+        where: { tx_guid: txGuid },
+      });
+      // Delete transaction slots
+      await tx.slots.deleteMany({
+        where: { obj_guid: txGuid },
+      });
+      // Delete transaction
+      await tx.transactions.deleteMany({
+        where: { guid: txGuid },
+      });
     }
 
     // Delete remaining tagged sub-splits (not part of fully-generated transactions)
@@ -723,7 +856,7 @@ export async function revertScrubRun(
       : [];
     const taggedSplits = await tx.splits.findMany({
       where: { guid: { in: taggedGuids } },
-      select: { guid: true, account_guid: true },
+      select: { guid: true, account_guid: true, tx_guid: true },
     });
     const taggedLots = await tx.lots.findMany({
       where: { guid: { in: taggedGuids } },
@@ -749,6 +882,30 @@ export async function revertScrubRun(
       }
     }
 
+    // Canonical parent lock over every transaction this revert touches —
+    // the generated ones being deleted plus the parents of the splits being
+    // restored or removed — taken BEFORE the reconcile-state read below and
+    // before the first write. Ordered by guid inside the helper.
+    await lockTransactionsForUpdate(
+      [...txGuids, ...taggedSplits.map(s => s.tx_guid)],
+      tx,
+    );
+
+    // The splits this run modified IN PLACE carry original_* slots; they are
+    // restored rather than deleted. Enumerated here (before any write) both
+    // for the policy check and for the restore loop further down.
+    const originalQtySlots = await tx.slots.findMany({
+      where: { name: 'original_quantity_num', obj_guid: { in: taggedGuids } },
+      select: { obj_guid: true, string_val: true },
+    });
+
+    // Reconciled/frozen policy — see assertRevertPreservesReconciled.
+    await assertRevertPreservesReconciled(tx, 'revert this lot scrub run', {
+      deletedTxGuids: txGuids,
+      restoredSplitGuids: originalQtySlots.map(s => s.obj_guid),
+      taggedSplitGuids: taggedSplits.map(s => s.guid),
+    });
+
     // Delete tagged transactions (and their splits)
     if (txGuids.length > 0) {
       // Also delete the slots attached to those transactions' splits
@@ -764,11 +921,7 @@ export async function revertScrubRun(
     // Splits modified IN-PLACE by this run (sell/transfer splits that were
     // sub-split) are tagged with the runId AND carry original_* slots.
     // They are the user's original splits — they must be RESTORED, never deleted.
-    // Scope to taggedGuids so other runs' modified splits are left alone.
-    const originalQtySlots = await tx.slots.findMany({
-      where: { name: 'original_quantity_num', obj_guid: { in: taggedGuids } },
-      select: { obj_guid: true, string_val: true },
-    });
+    // (originalQtySlots was read above, before the policy check.)
     const modifiedOriginalGuids = new Set(originalQtySlots.map(s => s.obj_guid));
 
     // Delete tagged sub-splits (excluding the modified originals). Splits

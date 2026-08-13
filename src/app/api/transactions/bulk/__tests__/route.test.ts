@@ -18,10 +18,12 @@ const {
     prismaMock: {
         accounts: { findUnique: vi.fn() },
         transactions: { findMany: vi.fn(), update: vi.fn() },
-        splits: { findMany: vi.fn(), update: vi.fn() },
+        splits: { findMany: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
         gnucash_web_tags: { findMany: vi.fn() },
         gnucash_web_transaction_tags: { deleteMany: vi.fn(), createMany: vi.fn() },
         $transaction: vi.fn(),
+        // Canonical parent-transaction FOR UPDATE lock.
+        $queryRaw: vi.fn(),
     },
     requireRoleMock: vi.fn(),
     getBookAccountGuidsMock: vi.fn(),
@@ -136,6 +138,8 @@ beforeEach(() => {
     prismaMock.transactions.findMany.mockResolvedValue([txRow()]);
     prismaMock.transactions.update.mockResolvedValue({});
     prismaMock.splits.update.mockResolvedValue({});
+    prismaMock.splits.updateMany.mockResolvedValue({ count: 1 });
+    prismaMock.$queryRaw.mockResolvedValue([]);
     withPeriodLockCheckMock.mockResolvedValue(null);
     assertNotLockedMock.mockResolvedValue(undefined);
     cacheInvalidateFromMock.mockResolvedValue(undefined);
@@ -159,7 +163,7 @@ describe('PATCH /api/transactions/bulk reconciled-split guard', () => {
         expect(body.error).toContain(COUNTER_SPLIT);
         expect(body.error).toContain('Imbalance-USD');
         expect(body.error).toMatch(/unreconcile/i);
-        expect(prismaMock.splits.update).not.toHaveBeenCalled();
+        expect(prismaMock.splits.updateMany).not.toHaveBeenCalled();
         expect(prismaMock.transactions.update).not.toHaveBeenCalled();
     });
 
@@ -174,10 +178,78 @@ describe('PATCH /api/transactions/bulk reconciled-split guard', () => {
 
         expect(response.status).toBe(200);
         expect(body.updated).toBe(1);
-        expect(prismaMock.splits.update).toHaveBeenCalledWith({
-            where: { guid: COUNTER_SPLIT },
+        // Belt and braces: the protected states are in the predicate too.
+        expect(prismaMock.splits.updateMany).toHaveBeenCalledWith({
+            where: {
+                guid: COUNTER_SPLIT,
+                reconcile_state: { notIn: ['y', 'f'] },
+            },
             data: { account_guid: TARGET_ACCOUNT },
         });
+    });
+
+    /* TOCTOU. Opening a Prisma transaction takes no row locks — under READ
+       COMMITTED a plain SELECT lets a concurrent reconcile commit between the
+       guard's read and the write. These tests pin the lock/check/write
+       ordering and the predicate backstop that close that window. */
+
+    it('locks every targeted transaction FOR UPDATE before reading any split state', async () => {
+        prismaMock.splits.findMany.mockResolvedValue(liveSplits('n'));
+
+        await PATCH(patchRequest(recategorizeBody));
+
+        const lockCalls = prismaMock.$queryRaw.mock.calls.filter(
+            (call: unknown[]) => (call[0] as TemplateStringsArray).join('?').includes('FOR UPDATE'),
+        );
+        expect(lockCalls).toHaveLength(1);
+        const sql = (lockCalls[0][0] as TemplateStringsArray).join('?');
+        expect(sql).toContain('FROM transactions');
+        expect(sql).toContain('ORDER BY guid');
+        expect(lockCalls[0][1]).toEqual([TX_GUID]);
+
+        // lock → reconcile-state read → split write, in that order.
+        const lockOrder = prismaMock.$queryRaw.mock.invocationCallOrder[0];
+        const readOrder = prismaMock.splits.findMany.mock.invocationCallOrder[0];
+        const writeOrder = prismaMock.splits.updateMany.mock.invocationCallOrder[0];
+        expect(lockOrder).toBeLessThan(readOrder);
+        expect(readOrder).toBeLessThan(writeOrder);
+    });
+
+    it('locks the whole batch in one ordered statement, not per-row in iteration order', async () => {
+        // Per-row locking in caller-supplied order is an ABBA deadlock with a
+        // concurrent bulk edit of the same set in the opposite order.
+        const TX_2 = 'transaction000000000000000000002';
+        prismaMock.transactions.findMany.mockResolvedValue([txRow()]);
+        prismaMock.splits.findMany.mockResolvedValue(liveSplits('n'));
+
+        await PATCH(patchRequest({
+            // Deliberately unsorted so the sort is observable.
+            transactionGuids: [TX_2, TX_GUID],
+            anchorAccountGuid: ANCHOR_ACCOUNT,
+            set: { recategorize: { toAccountGuid: TARGET_ACCOUNT } },
+        }));
+
+        const lockCalls = prismaMock.$queryRaw.mock.calls.filter(
+            (call: unknown[]) => (call[0] as TemplateStringsArray).join('?').includes('FOR UPDATE'),
+        );
+        expect(lockCalls).toHaveLength(1);
+        expect(lockCalls[0][1]).toEqual([TX_GUID, TX_2].sort());
+    });
+
+    it('423s when the split is reconciled only by the time the write runs', async () => {
+        // Model the losing interleaving: the guard's read still sees 'n'
+        // (stale), but the write's own predicate excludes the row, so
+        // updateMany reports zero. That must surface as the standard 423, not
+        // as a silent skip reported as success.
+        prismaMock.splits.findMany.mockResolvedValue(liveSplits('n'));
+        prismaMock.splits.updateMany.mockResolvedValue({ count: 0 });
+
+        const response = await PATCH(patchRequest(recategorizeBody));
+        const body = await response.json();
+
+        expect(response.status).toBe(423);
+        expect(body.code).toBe('RECONCILED_SPLIT');
+        expect(body.error).toContain(COUNTER_SPLIT);
     });
 
     it('reads reconcile state INSIDE the transaction, not from the planning snapshot', async () => {

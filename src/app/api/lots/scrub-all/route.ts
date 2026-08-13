@@ -3,6 +3,10 @@ import { NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
 import { scrubAllAccounts } from '@/lib/lot-assignment';
 import { BookBusyError } from '@/lib/book-lock';
+import {
+  ReconciledSplitError,
+  reconciledSplitResponse,
+} from '@/lib/services/reconciled-split.service';
 import { getBookAccountGuids } from '@/lib/book-scope';
 import { jobProgressEmitter } from '@/lib/job-progress';
 import { publishDataChange } from '@/lib/data-events';
@@ -59,6 +63,9 @@ export async function POST(request: Request) {
       throw error;
     }
   } catch (error) {
+    if (error instanceof ReconciledSplitError) {
+      return reconciledSplitResponse(error);
+    }
     if (error instanceof BookBusyError) {
       return NextResponse.json(
         { error: 'Another operation on this book is in progress. Try again shortly.' },

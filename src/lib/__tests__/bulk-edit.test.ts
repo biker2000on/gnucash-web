@@ -513,10 +513,11 @@ describe('applyHistoricalMatches', () => {
      */
     function wireTx(updateMany: ReturnType<typeof vi.fn>, protectedRows: unknown[] = []) {
         const findMany = vi.fn().mockResolvedValue(protectedRows);
+        const queryRaw = vi.fn().mockResolvedValue([]);
         mockPrisma.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<void>) =>
-            fn({ splits: { updateMany, findMany } })
+            fn({ splits: { updateMany, findMany }, $queryRaw: queryRaw })
         );
-        return findMany;
+        return { findMany, queryRaw };
     }
 
     beforeEach(() => {
@@ -531,8 +532,15 @@ describe('applyHistoricalMatches', () => {
 
         expect(result.applied).toBe(1);
         expect(result.reconciledSkipped).toEqual([]);
+        // The protected states are in the predicate too (belt and braces on
+        // top of the parent-row lock), so the write itself can never land on
+        // a reconciled row.
         expect(updateMany).toHaveBeenCalledWith({
-            where: { guid: SPLIT_1, account_guid: GUIDS.imbalance },
+            where: {
+                guid: SPLIT_1,
+                account_guid: GUIDS.imbalance,
+                reconcile_state: { notIn: ['y', 'f'] },
+            },
             data: { account_guid: GUIDS.target },
         });
     });
@@ -556,7 +564,7 @@ describe('applyHistoricalMatches', () => {
         ['frozen', 'f'],
     ])('refuses to re-book a %s split and names it in the result', async (_label, state) => {
         const updateMany = vi.fn().mockResolvedValue({ count: 1 });
-        const findMany = wireTx(updateMany, [{
+        const { findMany } = wireTx(updateMany, [{
             guid: SPLIT_1,
             tx_guid: 'tx1'.padEnd(32, '0'),
             account_guid: GUIDS.imbalance,
@@ -583,6 +591,44 @@ describe('applyHistoricalMatches', () => {
         }));
     });
 
+    /* TOCTOU: a Prisma transaction alone takes no locks on a plain SELECT, so
+       the reconcile-state read is only authoritative while the parent
+       transaction rows are held FOR UPDATE. These two tests pin the ordering
+       and the predicate that make the race impossible. */
+
+    it('locks the parent transactions FOR UPDATE before reading reconcile state', async () => {
+        const updateMany = vi.fn().mockResolvedValue({ count: 1 });
+        const { findMany, queryRaw } = wireTx(updateMany);
+
+        await applyHistoricalMatches([match()]);
+
+        const lockSql = (queryRaw.mock.calls[0][0] as TemplateStringsArray).join('?');
+        expect(lockSql).toContain('FROM transactions');
+        expect(lockSql).toContain('FOR UPDATE');
+        expect(lockSql).toContain('ORDER BY guid');
+        expect(queryRaw.mock.calls[0][1]).toEqual(['tx1'.padEnd(32, '0')]);
+        // lock → read → write, in that order
+        expect(queryRaw.mock.invocationCallOrder[0])
+            .toBeLessThan(findMany.mock.invocationCallOrder[0]);
+        expect(findMany.mock.invocationCallOrder[0])
+            .toBeLessThan(updateMany.mock.invocationCallOrder[0]);
+    });
+
+    it('cannot write a split that got reconciled after the check (predicate backstop)', async () => {
+        // Model the losing interleaving directly: the guard's read sees an
+        // unreconciled split (nothing protected returned), but by the time the
+        // write runs the row is 'y', so the predicate excludes it and the
+        // updateMany reports zero rows. The applied count must reflect that
+        // rather than claiming a change that never happened.
+        const updateMany = vi.fn().mockResolvedValue({ count: 0 });
+        wireTx(updateMany, []);
+
+        const result = await applyHistoricalMatches([match()]);
+
+        expect(result.applied).toBe(0);
+        expect(updateMany.mock.calls[0][0].where.reconcile_state).toEqual({ notIn: ['y', 'f'] });
+    });
+
     it('still applies the unreconciled matches alongside a blocked one', async () => {
         const SPLIT_2 = 'split2'.padEnd(32, '0');
         const updateMany = vi.fn().mockResolvedValue({ count: 1 });
@@ -603,7 +649,11 @@ describe('applyHistoricalMatches', () => {
         expect(result.reconciledSkipped).toHaveLength(1);
         expect(updateMany).toHaveBeenCalledTimes(1);
         expect(updateMany).toHaveBeenCalledWith({
-            where: { guid: SPLIT_2, account_guid: GUIDS.imbalance },
+            where: {
+                guid: SPLIT_2,
+                account_guid: GUIDS.imbalance,
+                reconcile_state: { notIn: ['y', 'f'] },
+            },
             data: { account_guid: GUIDS.target },
         });
     });

@@ -10,7 +10,10 @@ import {
     periodLockedResponse,
 } from '@/lib/services/period-lock.service';
 import {
+    assertNoReconciledSplits,
     assertSplitsNotProtected,
+    lockTransactionsForUpdate,
+    PROTECTED_RECONCILE_STATES,
     ReconciledSplitError,
     reconciledSplitResponse,
 } from '@/lib/services/reconciled-split.service';
@@ -127,6 +130,22 @@ export async function POST(request: Request) {
         // lock check and an enter_date bump on every parent transaction (so
         // concurrent editors' optimistic locks invalidate).
         const result = await prisma.$transaction(async (tx) => {
+            // Canonical lock order (same as the transaction PUT/DELETE
+            // routes): lock the parent TRANSACTION rows FIRST, ordered by
+            // guid, then read and write the splits. Two reasons the lock has
+            // to come before the read, not just before the write:
+            //   1. a concurrent transaction save also locks its transactions
+            //      row before touching splits, so the reverse order would
+            //      ABBA-deadlock;
+            //   2. READ COMMITTED takes no locks on a plain SELECT, so a
+            //      reconcile committing between an unlocked read and our
+            //      write would sail past the guard below.
+            // A split's tx_guid never changes, so deriving the lock set from
+            // the pre-transaction read is safe even though the rest of that
+            // snapshot is treated as stale.
+            const parentTxGuids = [...new Set(splits.map(s => s.tx_guid))].sort();
+            await lockTransactionsForUpdate(parentTxGuids, tx);
+
             const freshSplits = await tx.splits.findMany({
                 where: { guid: { in: splitGuids } },
                 select: {
@@ -138,8 +157,8 @@ export async function POST(request: Request) {
                     transaction: { select: { post_date: true } },
                 },
             });
-            // Authoritative re-check: a concurrent reconcile between the
-            // fast-fail above and this transaction must not slip through.
+            // Authoritative check: read under the parent lock, so a
+            // concurrent reconcile cannot slip between it and the write.
             assertSplitsNotProtected('move these splits to another account', freshSplits);
             await assertNotLocked(
                 roleResult.bookGuid,
@@ -147,27 +166,25 @@ export async function POST(request: Request) {
                 { bypassCache: true, client: tx },
             );
 
-            // Canonical lock order (same as the transaction PUT/DELETE
-            // routes): lock the parent TRANSACTION rows first, ordered by
-            // guid, then write the splits. The enter_date bump below then
-            // updates rows this transaction already holds locks on, so a
-            // concurrent transaction save (which also locks its transactions
-            // row before touching splits) can never ABBA-deadlock with a
-            // bulk move.
-            const parentTxGuids = [...new Set(freshSplits.map(s => s.tx_guid))].sort();
-            if (parentTxGuids.length > 0) {
-                await tx.$queryRaw`
-                    SELECT guid FROM transactions
-                    WHERE guid = ANY(${parentTxGuids}::text[])
-                    ORDER BY guid
-                    FOR UPDATE
-                `;
-            }
-
+            // Belt and braces: the protected states are also in the WHERE
+            // clause, so the write can never land on a reconciled row even if
+            // a future caller reaches this code without the lock.
             const moved = await tx.splits.updateMany({
-                where: { guid: { in: splitGuids } },
+                where: {
+                    guid: { in: splitGuids },
+                    reconcile_state: { notIn: [...PROTECTED_RECONCILE_STATES] },
+                },
                 data: { account_guid: targetAccountGuid },
             });
+            if (moved.count !== splitGuids.length) {
+                // Fewer rows moved than asked for while holding the lock: the
+                // only predicate that can exclude one is the reconcile state.
+                await assertNoReconciledSplits(
+                    'move these splits to another account',
+                    { splitGuids },
+                    { client: tx },
+                );
+            }
 
             if (parentTxGuids.length > 0) {
                 await tx.transactions.updateMany({

@@ -12,6 +12,8 @@ import {
 } from '@/lib/services/period-lock.service';
 import {
     assertSplitsNotProtected,
+    lockTransactionsForUpdate,
+    PROTECTED_RECONCILE_STATES,
     ReconciledSplitError,
     reconciledSplitResponse,
     type SplitReconcileRow,
@@ -240,6 +242,19 @@ export async function PATCH(request: Request) {
         let liveSplitByGuid = new Map<string, SplitReconcileRow>();
 
         await prisma.$transaction(async dbTx => {
+            // Canonical lock, taken FIRST for the whole batch: every row this
+            // request may write is locked in guid order before anything is
+            // read. Two things depend on it —
+            //   1. the reconciled-split guard below is only authoritative
+            //      while the parent rows are locked (READ COMMITTED takes no
+            //      locks on a plain SELECT, so a concurrent reconcile could
+            //      otherwise commit between our read and our write);
+            //   2. the per-transaction `update` calls further down used to
+            //      take their row locks one at a time in iteration order,
+            //      which could ABBA-deadlock with a concurrent bulk edit of
+            //      the same set in a different order.
+            await lockTransactionsForUpdate(transactionGuids, dbTx);
+
             // Period lock (authoritative, in-transaction, cache bypassed):
             // re-read the targeted transactions' post dates fresh so a
             // just-locked period cannot be edited through a stale snapshot.
@@ -257,10 +272,10 @@ export async function PATCH(request: Request) {
 
             // Recategorizing re-books a split to another account. Reconciled
             // and frozen splits are agreed against a bank statement and must
-            // not move, so read their live state inside the transaction and
-            // refuse the whole batch if any selected counter-split is
-            // protected. Read here (not from the pre-transaction snapshot) so
-            // a concurrent reconcile cannot slip past the check.
+            // not move, so read their live state here — after the parent
+            // rows were locked above, and not from the pre-transaction
+            // snapshot — and refuse the whole batch if any selected
+            // counter-split is protected.
             if (recatOp) {
                 const liveSplits = await dbTx.splits.findMany({
                     where: { tx_guid: { in: transactionGuids } },
@@ -351,20 +366,36 @@ export async function PATCH(request: Request) {
                 }
                 if (moveSplit && recatOp) {
                     if (!coreChanged) {
-                        // Canonical lock order: take the parent transaction's
-                        // row lock (and bump the version token) BEFORE
-                        // touching its splits — the PUT/DELETE paths lock in
-                        // that order, so the reverse would be an ABBA deadlock.
+                        // Bump the version token so stale editors 409. The
+                        // parent row lock was already taken for the whole
+                        // batch at the top of this transaction.
                         await dbTx.transactions.update({
                             where: { guid },
                             data: { enter_date: bulkEditTimestamp },
                         });
                         coreChanged = true;
                     }
-                    await dbTx.splits.update({
-                        where: { guid: moveSplit.guid },
+                    // Belt and braces on top of the lock + guard above: the
+                    // protected states are in the WHERE clause, so the write
+                    // itself cannot land on a reconciled row. A zero count
+                    // means the row changed under us despite the lock — fail
+                    // the batch rather than silently skip it.
+                    const moved = await dbTx.splits.updateMany({
+                        where: {
+                            guid: moveSplit.guid,
+                            reconcile_state: { notIn: [...PROTECTED_RECONCILE_STATES] },
+                        },
                         data: { account_guid: recatOp.toAccountGuid },
                     });
+                    if (moved.count === 0) {
+                        assertSplitsNotProtected('recategorize this transaction', [{
+                            guid: moveSplit.guid,
+                            tx_guid: guid,
+                            account_guid: moveSplit.accountGuid,
+                            reconcile_state: 'y',
+                            account: { name: moveSplit.accountName },
+                        }]);
+                    }
                     changed = true;
                     recategorized = true;
                     if (t.post_date) touchedDates.push(t.post_date);

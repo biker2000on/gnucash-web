@@ -8,10 +8,13 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { findManyMock } = vi.hoisted(() => ({ findManyMock: vi.fn() }));
+const { findManyMock, queryRawMock } = vi.hoisted(() => ({
+    findManyMock: vi.fn(),
+    queryRawMock: vi.fn(),
+}));
 
 vi.mock('@/lib/prisma', () => ({
-    default: { splits: { findMany: findManyMock } },
+    default: { splits: { findMany: findManyMock }, $queryRaw: queryRawMock },
 }));
 
 import {
@@ -45,7 +48,14 @@ function row(overrides: Partial<SplitReconcileRow> = {}): SplitReconcileRow {
 
 beforeEach(() => {
     findManyMock.mockReset();
+    queryRawMock.mockReset();
+    queryRawMock.mockResolvedValue([]);
 });
+
+/** SQL text of a tagged-template $queryRaw call. */
+function sqlText(call: unknown[]): string {
+    return (call[0] as TemplateStringsArray).join('?');
+}
 
 describe('isProtectedReconcileState', () => {
     it('protects reconciled and frozen splits', () => {
@@ -169,15 +179,58 @@ describe('assertNoReconciledSplits', () => {
 
     it('runs on the caller-supplied transaction client, not the global pool', async () => {
         const clientFindMany = vi.fn().mockResolvedValue([]);
+        const clientQueryRaw = vi.fn().mockResolvedValue([]);
         await assertNoReconciledSplits(
             'edit this transaction',
             { txGuids: [TX_GUID] },
-            // The guard only needs splits.findMany; the narrow stub proves it
-            // never reaches for the global client mid-transaction.
-            { client: { splits: { findMany: clientFindMany } } as never },
+            // The guard needs splits.findMany + $queryRaw; the narrow stub
+            // proves it never reaches for the global client mid-transaction.
+            { client: { splits: { findMany: clientFindMany }, $queryRaw: clientQueryRaw } as never },
         );
         expect(clientFindMany).toHaveBeenCalledTimes(1);
+        expect(clientQueryRaw).toHaveBeenCalledTimes(1);
         expect(findManyMock).not.toHaveBeenCalled();
+        expect(queryRawMock).not.toHaveBeenCalled();
+    });
+
+    it('locks the parent transactions FOR UPDATE before reading the splits', async () => {
+        findManyMock.mockResolvedValue([]);
+        await assertNoReconciledSplits('edit this transaction', { txGuids: [TX_GUID] });
+
+        expect(queryRawMock).toHaveBeenCalledTimes(1);
+        const sql = sqlText(queryRawMock.mock.calls[0]);
+        expect(sql).toContain('FROM transactions');
+        expect(sql).toContain('FOR UPDATE');
+        expect(sql).toContain('ORDER BY guid');
+        // Lock strictly BEFORE the read — the whole point.
+        expect(queryRawMock.mock.invocationCallOrder[0])
+            .toBeLessThan(findManyMock.mock.invocationCallOrder[0]);
+    });
+
+    it('resolves parents first when addressing splits by their own guid, then locks', async () => {
+        findManyMock
+            .mockResolvedValueOnce([{ tx_guid: TX_GUID }]) // parent lookup
+            .mockResolvedValueOnce([]);                    // protected-row read
+        await assertNoReconciledSplits('move these splits', { splitGuids: [SPLIT_A] });
+
+        expect(findManyMock).toHaveBeenNthCalledWith(1, {
+            where: { guid: { in: [SPLIT_A] } },
+            select: { tx_guid: true },
+        });
+        expect(queryRawMock.mock.calls[0][1]).toEqual([TX_GUID]);
+        // parent lookup → lock → protected-row read
+        expect(findManyMock.mock.invocationCallOrder[0])
+            .toBeLessThan(queryRawMock.mock.invocationCallOrder[0]);
+        expect(queryRawMock.mock.invocationCallOrder[0])
+            .toBeLessThan(findManyMock.mock.invocationCallOrder[1]);
+    });
+
+    it('deduplicates and sorts the lock set so concurrent writers cannot ABBA-deadlock', async () => {
+        findManyMock.mockResolvedValue([]);
+        await assertNoReconciledSplits('edit these transactions', {
+            txGuids: ['t2'.padEnd(32, '0'), 't1'.padEnd(32, '0'), 't2'.padEnd(32, '0')],
+        });
+        expect(queryRawMock.mock.calls[0][1]).toEqual(['t1'.padEnd(32, '0'), 't2'.padEnd(32, '0')]);
     });
 });
 

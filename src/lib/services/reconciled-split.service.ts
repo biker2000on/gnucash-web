@@ -16,19 +16,48 @@
  * layers, cheapest first:
  *
  *   assertSplitsNotProtected()      pure — rows already in hand (no extra query)
- *   assertNoReconciledSplits()      async — looks the rows up itself
+ *   assertNoReconciledSplits()      async — locks the parents, then looks up
  *   withReconciledSplitCheck()      API routes — returns a ready NextResponse
+ *
+ * ## Locking: why a Prisma transaction alone is NOT enough
+ *
+ * Reading the splits inside `prisma.$transaction` does not make the check
+ * authoritative. Postgres' default READ COMMITTED isolation takes no locks on
+ * a plain SELECT, so this interleaving loses:
+ *
+ *     writer A: read splits → sees 'n'
+ *     writer B: UPDATE splits SET reconcile_state='y' … COMMIT
+ *     writer A: guard passes on the stale read → rewrites a reconciled split
+ *
+ * The codebase's canonical fix, already used by every split-writing path, is
+ * to take a `SELECT … FROM transactions … ORDER BY guid FOR UPDATE` on the
+ * parent transaction rows FIRST, then read and write the splits. Ordering by
+ * guid keeps concurrent writers from ABBA-deadlocking. Every reconcile-state
+ * writer takes that same parent lock, so once we hold it no reconcile can
+ * commit between our read and our write.
+ *
+ * `assertNoReconciledSplits` therefore takes the parent lock itself — callers
+ * get a race-free check by construction. `assertSplitsNotProtected` is pure
+ * and cannot lock: callers of THAT overload must already hold the parent
+ * transaction lock (each call site documents where it was taken).
+ *
+ * Belt and braces: bulk `updateMany` paths additionally push
+ * `reconcile_state NOT IN ('y','f')` into their own WHERE clause, so even a
+ * future caller that forgets the lock cannot write a protected row.
  *
  * The escape hatch is deliberate and preserved: the reconcile routes
  * (`PATCH|POST /api/splits/[guid]/reconcile`, `POST /api/splits/bulk/reconcile`)
- * set `reconcile_state` back to 'n', after which the same edit succeeds. Those
- * routes intentionally do NOT call this guard — they are the way out.
+ * set `reconcile_state` back to 'n' — and accept 'n' for a currently-frozen
+ * ('f') split too, so 'f' is recoverable, not a dead end. Those routes
+ * intentionally do NOT call this guard: they are the way out.
  *
- * HTTP status is 423 Locked, not 409: the transaction routes already use 409
- * for the optimistic-concurrency conflict, and their clients react to it by
- * silently reloading and retrying — which would turn a reconciled block into
- * an invisible loop. 423 falls through to the generic error surface, so the
- * user actually reads the message.
+ * HTTP status is 423 Locked, not 409. The transaction routes already use 409
+ * for the optimistic-concurrency conflict and their clients special-case it:
+ * `AccountLedger.tsx` silently reloads and returns (the block would vanish
+ * entirely), and `TransactionFormModal.tsx` reloads and then throws a fixed
+ * "changed by someone else" message (the block would be shown, but with the
+ * wrong reason and no mention of unreconciling). 423 falls through to both
+ * components' generic error surface, which renders this module's message.
  */
 
 import { NextResponse } from 'next/server';
@@ -139,9 +168,14 @@ export class ReconciledSplitError extends Error {
 }
 
 /**
- * Throw when any of the supplied rows is reconciled or frozen. Pure — use it
- * when the caller already holds the split rows (ideally read inside the same
- * database transaction, so the check cannot race a concurrent reconcile).
+ * Throw when any of the supplied rows is reconciled or frozen. Pure.
+ *
+ * PRECONDITION: the caller must already hold the `FOR UPDATE` lock on the
+ * parent transaction rows of every split passed in, and must have read those
+ * splits AFTER taking it — otherwise a concurrent reconcile can commit
+ * between the read and the write and this check is decorative. Use
+ * `lockTransactionsForUpdate` (or an existing parent-row lock) first, or call
+ * `assertNoReconciledSplits`, which does both for you.
  *
  * @param operation gerund-free verb phrase, e.g. 'delete this transaction'
  */
@@ -164,10 +198,39 @@ export interface ReconciledCheckOptions {
 }
 
 /**
+ * Take the canonical `FOR UPDATE` lock on a set of parent transaction rows,
+ * ordered by guid so concurrent writers cannot ABBA-deadlock. This is the
+ * same lock (and the same ordering) every split-writing path in the codebase
+ * takes before touching splits — including the reconcile routes, which is
+ * what makes holding it sufficient to freeze `reconcile_state`.
+ *
+ * Call inside a database transaction, passing that transaction's client.
+ */
+export async function lockTransactionsForUpdate(
+    txGuids: readonly string[],
+    client: DbClient,
+): Promise<void> {
+    const ordered = [...new Set(txGuids)].sort();
+    if (ordered.length === 0) return;
+    await client.$queryRaw`
+        SELECT guid FROM transactions
+        WHERE guid = ANY(${ordered}::text[])
+        ORDER BY guid
+        FOR UPDATE
+    `;
+}
+
+/**
  * Look up the splits the mutation would touch and throw when any is
  * reconciled or frozen. Pass `txGuids` to cover whole transactions
  * (edit/delete of a transaction), `splitGuids` to cover individual splits
  * (move/recategorize), or both.
+ *
+ * Race-free by construction: the parent transaction rows are locked
+ * `FOR UPDATE` (guid order) BEFORE the splits are read, so a concurrent
+ * reconcile cannot commit between this check and the caller's write. Pass
+ * `options.client` — the check must run in the same database transaction as
+ * the write it is guarding, or the lock is released before the write happens.
  */
 export async function assertNoReconciledSplits(
     operation: string,
@@ -179,6 +242,21 @@ export async function assertNoReconciledSplits(
     if (txGuids.length === 0 && splitGuids.length === 0) return;
 
     const db = options.client ?? prisma;
+
+    // Splits are addressed by their own guid here, so resolve their parents
+    // before locking — the lock has to be on the transaction rows.
+    let parentGuids = [...txGuids];
+    if (splitGuids.length > 0) {
+        const parents = await db.splits.findMany({
+            where: { guid: { in: [...splitGuids] } },
+            select: { tx_guid: true },
+        });
+        parentGuids = parentGuids.concat(parents.map(p => p.tx_guid));
+    }
+    await lockTransactionsForUpdate(parentGuids, db);
+
+    // Read AFTER the lock: anything committed before it is visible, and
+    // nothing new can commit while we hold it.
     const or: { tx_guid?: { in: string[] }; guid?: { in: string[] } }[] = [];
     if (txGuids.length > 0) or.push({ tx_guid: { in: [...txGuids] } });
     if (splitGuids.length > 0) or.push({ guid: { in: [...splitGuids] } });

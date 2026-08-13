@@ -12,7 +12,10 @@ import prisma from '@/lib/prisma';
 import { generateGuid, toDecimal } from '@/lib/gnucash';
 import { recordImpliedPrices } from '@/lib/services/implied-price.service';
 import { assertAccountNotLocked } from '@/lib/services/period-lock.service';
-import { assertSplitsNotProtected } from '@/lib/services/reconciled-split.service';
+import {
+  assertNoReconciledSplits,
+  assertSplitsNotProtected,
+} from '@/lib/services/reconciled-split.service';
 import { Prisma } from '@prisma/client';
 
 // Validation schemas - using num/denom format for API compatibility
@@ -156,7 +159,8 @@ export class TransactionService {
     }
 
     // Reconciled/frozen splits pin this transaction to a bank statement.
-    // Shared guard — same enforcement the live API routes use.
+    // Fast-fail on the unlocked pre-read; the authoritative locked check runs
+    // inside the write transaction below.
     assertSplitsNotProtected('edit this transaction', existing.splits);
 
     // Period lock: both the current and the new post date must be open
@@ -165,6 +169,14 @@ export class TransactionService {
 
     // Update transaction and replace splits atomically
     const transaction = await prisma.$transaction(async (tx) => {
+      // Authoritative: locks the parent row, then re-reads the splits, so a
+      // reconcile committed since the pre-read above cannot be overwritten.
+      await assertNoReconciledSplits(
+        'edit this transaction',
+        { txGuids: [data.guid] },
+        { client: tx },
+      );
+
       // Delete existing splits
       await tx.splits.deleteMany({
         where: { tx_guid: data.guid },
@@ -241,6 +253,8 @@ export class TransactionService {
     }
 
     // Reconciled/frozen splits pin this transaction to a bank statement.
+    // Fast-fail on the unlocked pre-read; the authoritative locked check runs
+    // inside the delete transaction below.
     assertSplitsNotProtected('delete this transaction', existing.splits);
 
     // Period lock: transactions dated in a closed period cannot be deleted
@@ -250,6 +264,13 @@ export class TransactionService {
 
     // Delete transaction and splits atomically
     await prisma.$transaction(async (tx) => {
+      // Authoritative: locks the parent row, then re-reads the splits.
+      await assertNoReconciledSplits(
+        'delete this transaction',
+        { txGuids: [guid] },
+        { client: tx },
+      );
+
       // Delete splits first (due to foreign key)
       await tx.splits.deleteMany({
         where: { tx_guid: guid },

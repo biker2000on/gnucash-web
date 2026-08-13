@@ -26,6 +26,10 @@
 import prisma from './prisma';
 import { generateGuid, toDecimalNumber, fromDecimal, findOrCreateAccount } from './gnucash';
 import { isLongTerm } from './holding-period';
+import {
+  assertSplitsNotProtected,
+  lockTransactionsForUpdate,
+} from './services/reconciled-split.service';
 
 /** Prisma interactive transaction client type */
 export type PrismaTx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
@@ -1105,6 +1109,20 @@ export async function valueZeroValueTrade(
   runId: string,
   tx: PrismaTx,
 ): Promise<ValueTradeResult> {
+  // Canonical parent lock BEFORE reading. The lot engine's book-wide advisory
+  // lock (guardBookLock) serializes lot operations against each other but not
+  // against the reconcile routes, which take the parent TRANSACTION row lock.
+  // Take it here so the reconcile-state check below cannot be raced. Both
+  // legs live in the same transaction, so one lock covers them.
+  const parentRef = await tx.splits.findUnique({
+    where: { guid: splitGuid },
+    select: { tx_guid: true },
+  });
+  if (!parentRef) {
+    throw new Error(`Split not found: ${splitGuid}`);
+  }
+  await lockTransactionsForUpdate([parentRef.tx_guid], tx);
+
   const split = await tx.splits.findUnique({
     where: { guid: splitGuid },
     include: {
@@ -1186,6 +1204,19 @@ export async function valueZeroValueTrade(
       warning: `No price found on/before ${postDate.toISOString().slice(0, 10)} to value zero-value trade (tx ${split.tx_guid}) — refusing to book a gain/loss from a $0-value trade`,
     };
   }
+
+  // Reconciled/frozen guard. Unlike splitSellAcrossLots — which re-partitions
+  // a split into sub-splits that inherit reconcile metadata and sum back to
+  // the original, leaving every reconciled balance untouched — this function
+  // REWRITES a leg's value from 0 to ±FMV. That is a real change to an amount
+  // the user may have agreed against a statement, so it is refused rather than
+  // exempted. Checked before the original_* slot writes below, so a blocked
+  // trade leaves no half-written revert metadata behind, and read under the
+  // parent lock taken at the top of this function.
+  assertSplitsNotProtected('value this zero-value trade', [
+    { ...split, account: null },
+    { ...counter, account: null },
+  ]);
 
   // Rewrite both legs: positive-qty leg debits +value, negative-qty leg
   // credits −value; the transaction stays balanced.

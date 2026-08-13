@@ -290,6 +290,9 @@ export async function updateScheduledTransaction(
         : [];
       const transactionGuids = [...new Set(splitRows.map(row => row.tx_guid))];
 
+      // DELIBERATE EXCLUSION from the reconciled-split guard
+      // (src/lib/services/reconciled-split.service.ts). See the note above
+      // `deleteScheduledTransaction` for the evidence.
       if (childGuids.length > 0) {
         await tx.splits.deleteMany({ where: { account_guid: { in: childGuids } } });
         await tx.slots.deleteMany({ where: { obj_guid: { in: childGuids } } });
@@ -340,6 +343,33 @@ export async function updateScheduledTransaction(
   }
 }
 
+/**
+ * DELIBERATE EXCLUSION from the reconciled-split guard
+ * (src/lib/services/reconciled-split.service.ts).
+ *
+ * This function and `updateScheduledTransaction` delete template splits. A
+ * template split CAN technically carry reconcile_state 'y'/'f' — two paths
+ * reach it:
+ *   - the XML importer runs template transactions through the same row
+ *     builder as real ones (gnucash-xml/importer.ts, `addTransactionRows`
+ *     with isTemplate=true), copying `reconciledState` straight from the file;
+ *   - POST /api/splits/bulk/reconcile matches on split guid with no account
+ *     scoping, so any guid can be flipped to 'y'.
+ * So a guard here would not be dead code.
+ *
+ * It is still the wrong place for one. Template splits live under the
+ * separate 'Template Root' account tree, outside the book's
+ * root_account_guid, so they are excluded from `getBookAccountGuids()` and
+ * therefore from every balance, report, and reconciliation surface. They post
+ * to no real account and appear on no statement: a 'y' on a template split is
+ * always a stale import artifact, never a user's agreement with a bank.
+ *
+ * Guarding it would trade zero protection for a real failure — a scheduled
+ * transaction that cannot be edited or deleted through the UI at all, with
+ * the only release path being the unscoped bulk-reconcile route above (itself
+ * a scoping bug that may well be closed). That is exactly the never-usefully-
+ * firing check that let the original dead guard hide in TransactionService.
+ */
 export async function deleteScheduledTransaction(guid: string): Promise<CreateScheduledTxInput | null> {
   const before = await getScheduledTransaction(guid);
   if (!before) return null;
