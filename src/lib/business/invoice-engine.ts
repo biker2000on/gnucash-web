@@ -50,6 +50,7 @@ import {
   getBookGuidForAccount,
   getBookGuidForRoot,
 } from '@/lib/services/period-lock.service';
+import { assertNoReconciledSplits } from '@/lib/services/reconciled-split.service';
 import {
   recordEntityOwnership,
   isEntityOwnedByBook,
@@ -1254,6 +1255,12 @@ export async function unpostInvoice(bookGuid: string, guid: string): Promise<voi
         );
       }
     }
+
+    // Reconciled/frozen splits on the posting transaction are agreed against
+    // a statement — unposting would delete them out from under it.
+    await assertNoReconciledSplits('unpost this invoice', {
+      txGuids: [invoice.post_txn],
+    }, { client: tx });
 
     // Delete the posting transaction, its splits, and all their slots
     const splits = await tx.splits.findMany({

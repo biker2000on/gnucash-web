@@ -23,6 +23,10 @@ import {
   FundStateError,
 } from '@/lib/services/funds.service';
 import { PeriodLockedError, periodLockedResponse } from '@/lib/services/period-lock.service';
+import {
+  ReconciledSplitError,
+  reconciledSplitResponse,
+} from '@/lib/services/reconciled-split.service';
 
 /** Maps recurring-invoice service errors (falls through to invoice errors). */
 export function mapRecurringError(error: unknown): NextResponse {
@@ -38,6 +42,9 @@ export function mapRecurringError(error: unknown): NextResponse {
 export function mapInvoiceError(error: unknown): NextResponse {
   if (error instanceof PeriodLockedError) {
     return periodLockedResponse(error);
+  }
+  if (error instanceof ReconciledSplitError) {
+    return reconciledSplitResponse(error);
   }
   if (error instanceof InvoiceValidationError) {
     return NextResponse.json({ error: error.message }, { status: 400 });
@@ -56,6 +63,9 @@ export function mapInvoiceError(error: unknown): NextResponse {
 export function mapPackageError(error: unknown): NextResponse {
   if (error instanceof PeriodLockedError) {
     return periodLockedResponse(error);
+  }
+  if (error instanceof ReconciledSplitError) {
+    return reconciledSplitResponse(error);
   }
   if (error instanceof PackageValidationError) {
     return NextResponse.json({ error: error.message }, { status: 400 });

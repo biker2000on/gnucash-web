@@ -149,6 +149,90 @@ describe('POST /api/splits/bulk/move canonical lock order', () => {
         });
     });
 
+    it.each([
+        ['reconciled', 'y'],
+        ['frozen', 'f'],
+    ])('423s when a %s split is in the batch, before opening the transaction', async (_label, state) => {
+        prismaMock.splits.findMany.mockResolvedValue([
+            {
+                guid: SPLIT_1, tx_guid: TX_A, account_guid: 'account00000000000000000000from',
+                reconcile_state: state,
+                account: { commodity_guid: COMMODITY, name: 'Assets:Checking' },
+                transaction: { post_date: POST_DATE },
+            },
+        ]);
+
+        const response = await POST(moveRequest({
+            splitGuids: [SPLIT_1],
+            targetAccountGuid: TARGET_ACCOUNT,
+        }));
+        const body = await response.json();
+
+        expect(response.status).toBe(423);
+        expect(body.code).toBe('RECONCILED_SPLIT');
+        expect(body.error).toContain(SPLIT_1);
+        expect(body.error).toContain('Assets:Checking');
+        expect(body.error).toMatch(/unreconcile/i);
+        expect(prismaMock.$transaction).not.toHaveBeenCalled();
+        expect(prismaMock.splits.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('423s when a split is reconciled only by the in-transaction re-read', async () => {
+        // Fast-fail sees 'n', the authoritative in-transaction read sees 'y'
+        // (a concurrent reconcile landed in between) — nothing may move.
+        prismaMock.splits.findMany
+            .mockResolvedValueOnce([
+                {
+                    guid: SPLIT_1, tx_guid: TX_A, account_guid: 'account00000000000000000000from',
+                    reconcile_state: 'n',
+                    account: { commodity_guid: COMMODITY, name: 'Assets:Checking' },
+                    transaction: { post_date: POST_DATE },
+                },
+            ])
+            .mockResolvedValueOnce([
+                {
+                    guid: SPLIT_1, tx_guid: TX_A, account_guid: 'account00000000000000000000from',
+                    reconcile_state: 'y',
+                    account: { name: 'Assets:Checking' },
+                    transaction: { post_date: POST_DATE },
+                },
+            ]);
+
+        const response = await POST(moveRequest({
+            splitGuids: [SPLIT_1],
+            targetAccountGuid: TARGET_ACCOUNT,
+        }));
+
+        expect(response.status).toBe(423);
+        expect(prismaMock.splits.updateMany).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        ['not reconciled', 'n'],
+        ['cleared', 'c'],
+    ])('still moves a %s split normally', async (_label, state) => {
+        prismaMock.splits.findMany.mockResolvedValue([
+            {
+                guid: SPLIT_1, tx_guid: TX_A, account_guid: 'account00000000000000000000from',
+                reconcile_state: state,
+                account: { commodity_guid: COMMODITY, name: 'Assets:Checking' },
+                transaction: { post_date: POST_DATE },
+            },
+        ]);
+        prismaMock.splits.updateMany.mockResolvedValue({ count: 1 });
+
+        const response = await POST(moveRequest({
+            splitGuids: [SPLIT_1],
+            targetAccountGuid: TARGET_ACCOUNT,
+        }));
+
+        expect(response.status).toBe(200);
+        expect(prismaMock.splits.updateMany).toHaveBeenCalledWith({
+            where: { guid: { in: [SPLIT_1] } },
+            data: { account_guid: TARGET_ACCOUNT },
+        });
+    });
+
     it('rejects a currency mismatch before opening the transaction', async () => {
         prismaMock.splits.findMany.mockResolvedValue([
             {

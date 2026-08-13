@@ -9,6 +9,11 @@ import {
     PeriodLockedError,
     periodLockedResponse,
 } from '@/lib/services/period-lock.service';
+import {
+    assertSplitsNotProtected,
+    ReconciledSplitError,
+    reconciledSplitResponse,
+} from '@/lib/services/reconciled-split.service';
 
 /**
  * @openapi
@@ -81,7 +86,7 @@ export async function POST(request: Request) {
         const splits = await prisma.splits.findMany({
             where: { guid: { in: splitGuids } },
             include: {
-                account: { select: { commodity_guid: true } },
+                account: { select: { commodity_guid: true, name: true } },
                 transaction: { select: { post_date: true } },
             },
         });
@@ -103,6 +108,11 @@ export async function POST(request: Request) {
             );
         }
 
+        // Reconciled/frozen splits are agreed against a bank statement;
+        // re-booking one to another account silently breaks that agreement.
+        // Fast-fail here, re-checked authoritatively inside the transaction.
+        assertSplitsNotProtected('move these splits to another account', splits);
+
         // Period lock pre-check: moving a split re-books it to another
         // account, so every affected transaction must be after the lock date.
         // (Fast-fail only — the authoritative check runs inside the DB
@@ -122,9 +132,15 @@ export async function POST(request: Request) {
                 select: {
                     guid: true,
                     tx_guid: true,
+                    account_guid: true,
+                    reconcile_state: true,
+                    account: { select: { name: true } },
                     transaction: { select: { post_date: true } },
                 },
             });
+            // Authoritative re-check: a concurrent reconcile between the
+            // fast-fail above and this transaction must not slip through.
+            assertSplitsNotProtected('move these splits to another account', freshSplits);
             await assertNotLocked(
                 roleResult.bookGuid,
                 freshSplits.map(s => s.transaction?.post_date),
@@ -187,6 +203,9 @@ export async function POST(request: Request) {
     } catch (error) {
         if (error instanceof PeriodLockedError) {
             return periodLockedResponse(error);
+        }
+        if (error instanceof ReconciledSplitError) {
+            return reconciledSplitResponse(error);
         }
         console.error('Failed to bulk move splits:', error);
         return NextResponse.json(

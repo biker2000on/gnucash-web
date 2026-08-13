@@ -3,6 +3,10 @@ import { requireRole } from '@/lib/auth';
 import { getActiveBookGuid } from '@/lib/book-scope';
 import { undoAuditEntry } from '@/lib/services/audit.service';
 import { PeriodLockedError, periodLockedResponse } from '@/lib/services/period-lock.service';
+import {
+  ReconciledSplitError,
+  reconciledSplitResponse,
+} from '@/lib/services/reconciled-split.service';
 
 /**
  * POST /api/audit/[id]/undo — undo one audit entry (transactions only):
@@ -31,6 +35,7 @@ export async function POST(
     return NextResponse.json({ success: true, message: result.message });
   } catch (error) {
     if (error instanceof PeriodLockedError) return periodLockedResponse(error);
+    if (error instanceof ReconciledSplitError) return reconciledSplitResponse(error);
     console.error('Error undoing audit entry:', error);
     return NextResponse.json({ error: 'Failed to undo' }, { status: 500 });
   }

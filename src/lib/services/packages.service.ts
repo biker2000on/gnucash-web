@@ -24,6 +24,7 @@ import {
 } from '@/lib/business/entity-ownership';
 import { getAccountGuidsForBook } from '@/lib/book-scope';
 import { assertNotLocked } from '@/lib/services/period-lock.service';
+import { assertNoReconciledSplits } from '@/lib/services/reconciled-split.service';
 
 export type PrismaTx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
 
@@ -276,6 +277,12 @@ async function createTwoSplitTxn(
 
 /** Delete a GnuCash transaction with its splits and slots (idempotent). */
 async function deleteTxn(db: PrismaTx, txnGuid: string): Promise<void> {
+    // A reconciled/frozen split pins this transaction to a statement; the
+    // package lifecycle must not delete it out from under the reconciliation.
+    await assertNoReconciledSplits('delete this transaction', {
+        txGuids: [txnGuid],
+    }, { client: db });
+
     // Slots have no FK on obj_guid — split slots must be removed explicitly.
     const splitRows = await db.splits.findMany({
         where: { tx_guid: txnGuid },

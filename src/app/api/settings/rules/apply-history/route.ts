@@ -10,6 +10,7 @@ import {
     HISTORY_APPLY_CAP,
 } from '@/lib/services/categorization.service';
 import { getCachedLockDate, findLockedDate } from '@/lib/services/period-lock.service';
+import { describeProtectedSplits } from '@/lib/services/reconciled-split.service';
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -103,7 +104,10 @@ export async function POST(request: Request) {
             : plan.matches;
         const lockedSkipped = plan.matches.length - applicableMatches.length;
 
-        const applied = await applyHistoricalMatches(applicableMatches);
+        // Reconciled/frozen counter-splits are refused by the service and
+        // reported back here so the response names them instead of quietly
+        // returning a lower `applied` count.
+        const { applied, reconciledSkipped } = await applyHistoricalMatches(applicableMatches);
 
         // Recategorizing changes account-scoped metrics; invalidate caches
         // from the earliest affected date (best-effort).
@@ -129,6 +133,17 @@ export async function POST(request: Request) {
             skippedCount: plan.skipped.length,
             skipped: plan.skipped,
             lockedSkipped,
+            reconciledSkipped: reconciledSkipped.length,
+            reconciledSplits: reconciledSkipped.map(ref => ({
+                guid: ref.splitGuid,
+                tx_guid: ref.txGuid,
+                account_guid: ref.accountGuid,
+                reconcile_state: ref.reconcileState,
+            })),
+            reconciledMessage: reconciledSkipped.length > 0
+                ? `Left unchanged because they are reconciled or frozen — unreconcile them first: `
+                    + `${describeProtectedSplits(reconciledSkipped)}.`
+                : undefined,
             moreRemain: plan.moreRemain,
         });
     } catch (error) {

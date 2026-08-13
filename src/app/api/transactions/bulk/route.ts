@@ -11,6 +11,12 @@ import {
     periodLockedResponse,
 } from '@/lib/services/period-lock.service';
 import {
+    assertSplitsNotProtected,
+    ReconciledSplitError,
+    reconciledSplitResponse,
+    type SplitReconcileRow,
+} from '@/lib/services/reconciled-split.service';
+import {
     selectRecategorizeSplit,
     replaceDescription,
     type RecategorizeSplitInfo,
@@ -228,6 +234,11 @@ export async function PATCH(request: Request) {
         const touchedDates: Date[] = [];
         const bulkEditTimestamp = new Date();
 
+        // Live reconcile state of every split in the targeted transactions,
+        // populated inside the DB transaction below when a recategorize is
+        // requested.
+        let liveSplitByGuid = new Map<string, SplitReconcileRow>();
+
         await prisma.$transaction(async dbTx => {
             // Period lock (authoritative, in-transaction, cache bypassed):
             // re-read the targeted transactions' post dates fresh so a
@@ -242,6 +253,26 @@ export async function PATCH(request: Request) {
                     freshRows.map(t => t.post_date),
                     { bypassCache: true, client: dbTx },
                 );
+            }
+
+            // Recategorizing re-books a split to another account. Reconciled
+            // and frozen splits are agreed against a bank statement and must
+            // not move, so read their live state inside the transaction and
+            // refuse the whole batch if any selected counter-split is
+            // protected. Read here (not from the pre-transaction snapshot) so
+            // a concurrent reconcile cannot slip past the check.
+            if (recatOp) {
+                const liveSplits = await dbTx.splits.findMany({
+                    where: { tx_guid: { in: transactionGuids } },
+                    select: {
+                        guid: true,
+                        tx_guid: true,
+                        account_guid: true,
+                        reconcile_state: true,
+                        account: { select: { name: true } },
+                    },
+                });
+                liveSplitByGuid = new Map(liveSplits.map(s => [s.guid, s]));
             }
 
             for (const guid of transactionGuids) {
@@ -276,6 +307,16 @@ export async function PATCH(request: Request) {
                         continue;
                     }
                     moveSplit = sel.split;
+                    // Hard stop (not a per-transaction skip): moving a
+                    // reconciled/frozen split desynchronizes the book from
+                    // its statement. Throwing rolls the whole batch back.
+                    if (moveSplit) {
+                        const liveRow = liveSplitByGuid.get(moveSplit.guid);
+                        assertSplitsNotProtected(
+                            'recategorize this transaction',
+                            liveRow ? [liveRow] : [],
+                        );
+                    }
                     if (
                         moveSplit &&
                         targetCommodityGuid &&
@@ -368,6 +409,9 @@ export async function PATCH(request: Request) {
     } catch (error) {
         if (error instanceof PeriodLockedError) {
             return periodLockedResponse(error);
+        }
+        if (error instanceof ReconciledSplitError) {
+            return reconciledSplitResponse(error);
         }
         console.error('Failed to bulk edit transactions:', error);
         return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

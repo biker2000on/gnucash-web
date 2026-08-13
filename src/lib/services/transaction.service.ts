@@ -12,6 +12,7 @@ import prisma from '@/lib/prisma';
 import { generateGuid, toDecimal } from '@/lib/gnucash';
 import { recordImpliedPrices } from '@/lib/services/implied-price.service';
 import { assertAccountNotLocked } from '@/lib/services/period-lock.service';
+import { assertSplitsNotProtected } from '@/lib/services/reconciled-split.service';
 import { Prisma } from '@prisma/client';
 
 // Validation schemas - using num/denom format for API compatibility
@@ -154,11 +155,9 @@ export class TransactionService {
       throw new Error(`Transaction not found: ${data.guid}`);
     }
 
-    // Check for reconciled splits
-    const hasReconciled = existing.splits.some(s => s.reconcile_state === 'y');
-    if (hasReconciled) {
-      throw new Error('Cannot modify transaction with reconciled splits. Unreconcile first.');
-    }
+    // Reconciled/frozen splits pin this transaction to a bank statement.
+    // Shared guard — same enforcement the live API routes use.
+    assertSplitsNotProtected('edit this transaction', existing.splits);
 
     // Period lock: both the current and the new post date must be open
     const anchorAccountGuid = existing.splits[0]?.account_guid ?? data.splits[0].account_guid;
@@ -241,11 +240,8 @@ export class TransactionService {
       throw new Error(`Transaction not found: ${guid}`);
     }
 
-    // Check for reconciled splits
-    const hasReconciled = existing.splits.some(s => s.reconcile_state === 'y');
-    if (hasReconciled) {
-      throw new Error('Cannot delete transaction with reconciled splits. Unreconcile first.');
-    }
+    // Reconciled/frozen splits pin this transaction to a bank statement.
+    assertSplitsNotProtected('delete this transaction', existing.splits);
 
     // Period lock: transactions dated in a closed period cannot be deleted
     if (existing.splits[0]) {

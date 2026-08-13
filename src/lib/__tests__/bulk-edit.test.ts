@@ -490,62 +490,121 @@ describe('planHistoricalApplication', () => {
 /* ------------------------------------------------------------------ */
 
 describe('applyHistoricalMatches', () => {
+    const SPLIT_1 = 'split1'.padEnd(32, '0');
+
+    function match(overrides: Record<string, unknown> = {}) {
+        return {
+            guid: 'tx1'.padEnd(32, '0'),
+            splitGuid: SPLIT_1,
+            date: '2025-01-01',
+            description: 'KING SOOPERS',
+            currentAccountGuid: GUIDS.imbalance,
+            currentAccount: 'Imbalance-USD',
+            newAccountGuid: GUIDS.target,
+            newAccount: 'Groceries',
+            amount: 5,
+            ...overrides,
+        };
+    }
+
+    /**
+     * Wire the interactive-transaction client. `protectedRows` is what the
+     * reconciled-split lookup returns (empty = nothing reconciled).
+     */
+    function wireTx(updateMany: ReturnType<typeof vi.fn>, protectedRows: unknown[] = []) {
+        const findMany = vi.fn().mockResolvedValue(protectedRows);
+        mockPrisma.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<void>) =>
+            fn({ splits: { updateMany, findMany } })
+        );
+        return findMany;
+    }
+
     beforeEach(() => {
         vi.clearAllMocks();
     });
 
     it('moves each planned split inside one transaction, guarded on the planned source account', async () => {
         const updateMany = vi.fn().mockResolvedValue({ count: 1 });
-        mockPrisma.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<void>) =>
-            fn({ splits: { updateMany } })
-        );
+        wireTx(updateMany);
 
-        const applied = await applyHistoricalMatches([
-            {
-                guid: 'tx1'.padEnd(32, '0'),
-                splitGuid: 'split1'.padEnd(32, '0'),
-                date: '2025-01-01',
-                description: 'KING SOOPERS',
-                currentAccountGuid: GUIDS.imbalance,
-                currentAccount: 'Imbalance-USD',
-                newAccountGuid: GUIDS.target,
-                newAccount: 'Groceries',
-                amount: 5,
-            },
-        ]);
+        const result = await applyHistoricalMatches([match()]);
 
-        expect(applied).toBe(1);
+        expect(result.applied).toBe(1);
+        expect(result.reconciledSkipped).toEqual([]);
         expect(updateMany).toHaveBeenCalledWith({
-            where: { guid: 'split1'.padEnd(32, '0'), account_guid: GUIDS.imbalance },
+            where: { guid: SPLIT_1, account_guid: GUIDS.imbalance },
             data: { account_guid: GUIDS.target },
         });
     });
 
     it('does not count splits that were concurrently moved away (guard misses)', async () => {
         const updateMany = vi.fn().mockResolvedValue({ count: 0 });
-        mockPrisma.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<void>) =>
-            fn({ splits: { updateMany } })
-        );
+        wireTx(updateMany);
 
-        const applied = await applyHistoricalMatches([
-            {
-                guid: 'tx1'.padEnd(32, '0'),
-                splitGuid: 'split1'.padEnd(32, '0'),
-                date: '2025-01-01',
-                description: 'KING SOOPERS',
-                currentAccountGuid: GUIDS.imbalance,
-                currentAccount: 'Imbalance-USD',
-                newAccountGuid: GUIDS.target,
-                newAccount: 'Groceries',
-                amount: 5,
-            },
-        ]);
-        expect(applied).toBe(0);
+        const result = await applyHistoricalMatches([match()]);
+        expect(result.applied).toBe(0);
     });
 
     it('is a no-op for an empty match list', async () => {
-        const applied = await applyHistoricalMatches([]);
-        expect(applied).toBe(0);
+        const result = await applyHistoricalMatches([]);
+        expect(result).toEqual({ applied: 0, reconciledSkipped: [] });
         expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        ['reconciled', 'y'],
+        ['frozen', 'f'],
+    ])('refuses to re-book a %s split and names it in the result', async (_label, state) => {
+        const updateMany = vi.fn().mockResolvedValue({ count: 1 });
+        const findMany = wireTx(updateMany, [{
+            guid: SPLIT_1,
+            tx_guid: 'tx1'.padEnd(32, '0'),
+            account_guid: GUIDS.imbalance,
+            reconcile_state: state,
+            account: { name: 'Imbalance-USD' },
+        }]);
+
+        const result = await applyHistoricalMatches([match()]);
+
+        expect(result.applied).toBe(0);
+        expect(updateMany).not.toHaveBeenCalled();
+        expect(result.reconciledSkipped).toEqual([{
+            splitGuid: SPLIT_1,
+            txGuid: 'tx1'.padEnd(32, '0'),
+            accountGuid: GUIDS.imbalance,
+            accountName: 'Imbalance-USD',
+            reconcileState: state,
+        }]);
+        // The reconcile state is read INSIDE the transaction, not from the plan.
+        expect(findMany).toHaveBeenCalledWith(expect.objectContaining({
+            where: expect.objectContaining({
+                reconcile_state: { in: ['y', 'f'] },
+            }),
+        }));
+    });
+
+    it('still applies the unreconciled matches alongside a blocked one', async () => {
+        const SPLIT_2 = 'split2'.padEnd(32, '0');
+        const updateMany = vi.fn().mockResolvedValue({ count: 1 });
+        wireTx(updateMany, [{
+            guid: SPLIT_1,
+            tx_guid: 'tx1'.padEnd(32, '0'),
+            account_guid: GUIDS.imbalance,
+            reconcile_state: 'y',
+            account: { name: 'Imbalance-USD' },
+        }]);
+
+        const result = await applyHistoricalMatches([
+            match(),
+            match({ guid: 'tx2'.padEnd(32, '0'), splitGuid: SPLIT_2 }),
+        ]);
+
+        expect(result.applied).toBe(1);
+        expect(result.reconciledSkipped).toHaveLength(1);
+        expect(updateMany).toHaveBeenCalledTimes(1);
+        expect(updateMany).toHaveBeenCalledWith({
+            where: { guid: SPLIT_2, account_guid: GUIDS.imbalance },
+            data: { account_guid: GUIDS.target },
+        });
     });
 });

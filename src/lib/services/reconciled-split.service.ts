@@ -1,0 +1,243 @@
+/**
+ * Reconciled-Split Guard
+ *
+ * A split whose `reconcile_state` is 'y' (reconciled) or 'f' (frozen) has been
+ * agreed against an external statement. Silently rewriting or deleting one
+ * desynchronizes the book from that statement, so every ledger-mutating path
+ * must refuse the write instead:
+ *
+ *   - changing a split's value/quantity (amount)
+ *   - changing the account a split posts to
+ *   - changing the parent transaction's post date
+ *   - deleting a split
+ *   - deleting the parent transaction
+ *
+ * This module is the single enforcement point. Callers use one of three
+ * layers, cheapest first:
+ *
+ *   assertSplitsNotProtected()      pure — rows already in hand (no extra query)
+ *   assertNoReconciledSplits()      async — looks the rows up itself
+ *   withReconciledSplitCheck()      API routes — returns a ready NextResponse
+ *
+ * The escape hatch is deliberate and preserved: the reconcile routes
+ * (`PATCH|POST /api/splits/[guid]/reconcile`, `POST /api/splits/bulk/reconcile`)
+ * set `reconcile_state` back to 'n', after which the same edit succeeds. Those
+ * routes intentionally do NOT call this guard — they are the way out.
+ *
+ * HTTP status is 423 Locked, not 409: the transaction routes already use 409
+ * for the optimistic-concurrency conflict, and their clients react to it by
+ * silently reloading and retrying — which would turn a reconciled block into
+ * an invisible loop. 423 falls through to the generic error surface, so the
+ * user actually reads the message.
+ */
+
+import { NextResponse } from 'next/server';
+import prisma from '@/lib/prisma';
+import type { DbClient } from '@/lib/scheduled-transactions';
+
+/** Reconcile states that pin a split to an external statement. */
+export const PROTECTED_RECONCILE_STATES = ['y', 'f'] as const;
+export type ProtectedReconcileState = (typeof PROTECTED_RECONCILE_STATES)[number];
+
+const STATE_LABEL: Record<ProtectedReconcileState, string> = {
+    y: 'reconciled',
+    f: 'frozen',
+};
+
+/** How many offending splits are named before the message is elided. */
+const MAX_NAMED_SPLITS = 5;
+
+/**
+ * The subset of a split row this guard reads. Deliberately loose so callers
+ * can hand over rows they already fetched for other reasons (the transaction
+ * PUT/DELETE routes, bulk move, bulk edit) instead of paying for a second
+ * query.
+ */
+export interface SplitReconcileRow {
+    guid: string;
+    tx_guid?: string | null;
+    account_guid?: string | null;
+    reconcile_state?: string | null;
+    account?: { name?: string | null } | null;
+}
+
+/** A split the guard refuses to let the caller touch. */
+export interface ProtectedSplitRef {
+    splitGuid: string;
+    txGuid: string | null;
+    accountGuid: string | null;
+    accountName: string | null;
+    reconcileState: ProtectedReconcileState;
+}
+
+/** True when the state pins the split to a statement ('y' or 'f'). */
+export function isProtectedReconcileState(
+    state: string | null | undefined,
+): state is ProtectedReconcileState {
+    return state === 'y' || state === 'f';
+}
+
+/** Pick the reconciled/frozen rows out of a split list. Pure. */
+export function findProtectedSplits(
+    rows: readonly SplitReconcileRow[],
+): ProtectedSplitRef[] {
+    const protectedRefs: ProtectedSplitRef[] = [];
+    for (const row of rows) {
+        if (!isProtectedReconcileState(row.reconcile_state)) continue;
+        protectedRefs.push({
+            splitGuid: row.guid,
+            txGuid: row.tx_guid ?? null,
+            accountGuid: row.account_guid ?? null,
+            accountName: row.account?.name ?? null,
+            reconcileState: row.reconcile_state,
+        });
+    }
+    return protectedRefs;
+}
+
+/** Human-readable list naming the offending splits (elided past 5). */
+export function describeProtectedSplits(refs: readonly ProtectedSplitRef[]): string {
+    const named = refs.slice(0, MAX_NAMED_SPLITS).map(ref => {
+        const where = ref.accountName ?? ref.accountGuid;
+        const on = where ? ` on ${where}` : '';
+        const inTx = ref.txGuid ? ` (transaction ${ref.txGuid})` : '';
+        return `split ${ref.splitGuid}${on} is ${STATE_LABEL[ref.reconcileState]}`
+            + ` (reconcile_state '${ref.reconcileState}')${inTx}`;
+    });
+    const rest = refs.length - named.length;
+    if (rest > 0) named.push(`and ${rest} more`);
+    return named.join('; ');
+}
+
+/**
+ * The full user-facing message: what was refused, which split blocked it, and
+ * the exact way out.
+ */
+export function reconciledSplitMessage(
+    operation: string,
+    refs: readonly ProtectedSplitRef[],
+): string {
+    return `Cannot ${operation}: ${describeProtectedSplits(refs)}.`
+        + ' Unreconcile the split first (set its reconcile state back to "n"'
+        + ' via /api/splits/{guid}/reconcile), then retry.';
+}
+
+/**
+ * Thrown by the service-layer guards. API routes map it to a 423 via
+ * `reconciledSplitResponse`.
+ */
+export class ReconciledSplitError extends Error {
+    readonly code = 'RECONCILED_SPLIT';
+    /** Every split that blocked the write, so callers can report all of them. */
+    readonly splits: ProtectedSplitRef[];
+
+    constructor(operation: string, splits: ProtectedSplitRef[]) {
+        super(reconciledSplitMessage(operation, splits));
+        this.name = 'ReconciledSplitError';
+        this.splits = splits;
+    }
+}
+
+/**
+ * Throw when any of the supplied rows is reconciled or frozen. Pure — use it
+ * when the caller already holds the split rows (ideally read inside the same
+ * database transaction, so the check cannot race a concurrent reconcile).
+ *
+ * @param operation gerund-free verb phrase, e.g. 'delete this transaction'
+ */
+export function assertSplitsNotProtected(
+    operation: string,
+    rows: readonly SplitReconcileRow[],
+): void {
+    const refs = findProtectedSplits(rows);
+    if (refs.length > 0) throw new ReconciledSplitError(operation, refs);
+}
+
+export interface ReconciledCheckOptions {
+    /**
+     * Run the lookup on this client instead of the global pool. In-transaction
+     * callers MUST pass their `tx` client: the global client grabs a SECOND
+     * pool connection mid-transaction, and it would also read outside the
+     * transaction's snapshot.
+     */
+    client?: DbClient;
+}
+
+/**
+ * Look up the splits the mutation would touch and throw when any is
+ * reconciled or frozen. Pass `txGuids` to cover whole transactions
+ * (edit/delete of a transaction), `splitGuids` to cover individual splits
+ * (move/recategorize), or both.
+ */
+export async function assertNoReconciledSplits(
+    operation: string,
+    target: { txGuids?: readonly string[]; splitGuids?: readonly string[] },
+    options: ReconciledCheckOptions = {},
+): Promise<void> {
+    const txGuids = target.txGuids ?? [];
+    const splitGuids = target.splitGuids ?? [];
+    if (txGuids.length === 0 && splitGuids.length === 0) return;
+
+    const db = options.client ?? prisma;
+    const or: { tx_guid?: { in: string[] }; guid?: { in: string[] } }[] = [];
+    if (txGuids.length > 0) or.push({ tx_guid: { in: [...txGuids] } });
+    if (splitGuids.length > 0) or.push({ guid: { in: [...splitGuids] } });
+
+    const rows = await db.splits.findMany({
+        where: {
+            OR: or,
+            reconcile_state: { in: [...PROTECTED_RECONCILE_STATES] },
+        },
+        select: {
+            guid: true,
+            tx_guid: true,
+            account_guid: true,
+            reconcile_state: true,
+            account: { select: { name: true } },
+        },
+    });
+
+    assertSplitsNotProtected(operation, rows);
+}
+
+// ---------------------------------------------------------------------------
+// API-route helpers
+// ---------------------------------------------------------------------------
+
+/** The standard reconciled-split payload (423 Locked). */
+export function reconciledSplitResponse(error: ReconciledSplitError): NextResponse {
+    return NextResponse.json(
+        {
+            error: error.message,
+            code: error.code,
+            splits: error.splits.map(ref => ({
+                guid: ref.splitGuid,
+                tx_guid: ref.txGuid,
+                account_guid: ref.accountGuid,
+                reconcile_state: ref.reconcileState,
+            })),
+        },
+        { status: 423 },
+    );
+}
+
+/**
+ * Route-level guard: returns the ready-to-send 423 RECONCILED_SPLIT response,
+ * or null when the mutation may proceed.
+ *
+ *     const blocked = await withReconciledSplitCheck('edit this transaction', { txGuids: [guid] });
+ *     if (blocked) return blocked;
+ */
+export async function withReconciledSplitCheck(
+    operation: string,
+    target: { txGuids?: readonly string[]; splitGuids?: readonly string[] },
+    options: ReconciledCheckOptions = {},
+): Promise<NextResponse | null> {
+    try {
+        await assertNoReconciledSplits(operation, target, options);
+        return null;
+    } catch (err) {
+        if (err instanceof ReconciledSplitError) return reconciledSplitResponse(err);
+        throw err;
+    }
+}
