@@ -66,10 +66,12 @@ function AllocationModal({
     const { success, error } = useToast();
     const [rows, setRows] = useState<AllocationDraft[]>([]);
     const [date, setDate] = useState(todayIso());
-    // Checked by default: shipping stock without recognizing COGS (or returning
-    // it without reversing COGS) overstates inventory and gross profit. Matches
-    // the engine's post-by-default for fulfillment.
-    const [post, setPost] = useState(true);
+    // Fulfillment is checked by default — shipping stock without recognizing
+    // COGS overstates inventory and gross profit. Returns stay UNCHECKED: the
+    // engine reverses at the item's current average rather than the original
+    // shipment's basis, so it must be an informed choice (see the engine's
+    // shouldPostReturnCogs). Kept in sync with the reset effect below.
+    const [post, setPost] = useState(mode === 'fulfill');
     const [busy, setBusy] = useState(false);
 
     const activeLocations = useMemo(() => locations.filter((l) => l.active), [locations]);
@@ -92,7 +94,10 @@ function AllocationModal({
             };
         }));
         setDate(todayIso());
-        setPost(false);
+        // Re-arm on EVERY open (this modal is reused across opens and modes, so
+        // a blanket reset here would silently opt every later fulfillment out
+        // again). Must match the initial state above.
+        setPost(mode === 'fulfill');
     }, [mode, fulfillment, entryInfo, activeLocations]);
 
     if (!mode) return null;
@@ -250,7 +255,7 @@ function AllocationModal({
                         />
                         {mode === 'fulfill'
                             ? 'Post COGS to ledger (needs COGS + asset accounts on each item)'
-                            : 'Post reversing COGS to ledger'}
+                            : 'Post reversing COGS to ledger (reverses at the current average cost)'}
                     </label>
                 </div>
 

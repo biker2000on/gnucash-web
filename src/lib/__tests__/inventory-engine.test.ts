@@ -411,17 +411,73 @@ describe('invoice fulfillment COGS posting', () => {
     expect(result.movements[0].txnGuid).toBeNull();
   });
 
-  it('posts the reversing COGS entry on returnToStock without a post option', async () => {
-    const { transaction, splitsCreated } = createFulfillmentTransaction();
-    // A return is bounded by what was shipped, so report 5 net-fulfilled units.
+  it('names every unpostable item at once instead of failing one retry at a time', async () => {
+    const { transaction } = createFulfillmentTransaction();
+    // Two more allocated items, both missing their COGS/asset accounts.
     const previous = transaction.$queryRawUnsafe as unknown as (query: string, ...args: unknown[]) => Promise<unknown>;
-    const patched = vi.fn().mockImplementation(async (query: string, ...args: unknown[]) => {
-      if (query.includes('GROUP BY entry_guid')) return [{ entry_guid: 'entry-guid', total: -5 }];
-      return previous(query, ...args);
-    });
-    (transaction as unknown as { $queryRawUnsafe: unknown }).$queryRawUnsafe = patched;
+    (transaction as unknown as { $queryRawUnsafe: unknown }).$queryRawUnsafe = vi.fn().mockImplementation(
+      async (query: string, ...args: unknown[]) => {
+        if (query.includes('FROM gnucash_web_inventory_items')) {
+          return [
+            fulfillmentItemRow,
+            { ...fulfillmentItemRow, id: 2, sku: 'GADGET', cogs_account_guid: null },
+            { ...fulfillmentItemRow, id: 3, sku: 'DOODAD', asset_account_guid: null },
+          ];
+        }
+        return previous(query, ...args);
+      },
+    );
 
-    await returnToStock(fulfillInput());
+    const fulfillError = await fulfillInvoiceLines({
+      ...fulfillInput(),
+      allocations: [1, 2, 3].map(itemId => ({
+        entryGuid: 'entry-guid', itemId, quantity: 1, locationId: 2,
+      })),
+    }).catch(e => e);
+
+    expect(fulfillError).toBeInstanceOf(InventoryValidationError);
+    expect((fulfillError as Error).message).toContain('DOODAD');
+    expect((fulfillError as Error).message).toContain('GADGET');
+    // The correctly-configured item is not blamed.
+    expect((fulfillError as Error).message).not.toContain('WIDGET');
+    expect(transaction.transactions.create).not.toHaveBeenCalled();
+  });
+
+  // -------------------------------------------------------------------------
+  // Returns are OPT-IN: the reversal uses the item's CURRENT average cost, not
+  // the basis the original shipment was relieved at, so defaulting it on would
+  // post a knowingly wrong entry whenever cost moved between ship and return.
+  // -------------------------------------------------------------------------
+
+  /** Report 5 net-fulfilled units so a return is within bounds. */
+  function withFulfilledHistory(transaction: ReturnType<typeof createFulfillmentTransaction>['transaction']) {
+    const previous = transaction.$queryRawUnsafe as unknown as (query: string, ...args: unknown[]) => Promise<unknown>;
+    (transaction as unknown as { $queryRawUnsafe: unknown }).$queryRawUnsafe = vi.fn().mockImplementation(
+      async (query: string, ...args: unknown[]) => {
+        if (query.includes('GROUP BY entry_guid')) return [{ entry_guid: 'entry-guid', total: -5 }];
+        return previous(query, ...args);
+      },
+    );
+  }
+
+  it('does NOT post a reversal on returnToStock without an explicit post option', async () => {
+    const { transaction, splitsCreated, movementTxnGuids } = createFulfillmentTransaction();
+    withFulfilledHistory(transaction);
+
+    const result = await returnToStock(fulfillInput());
+
+    expect(transaction.transactions.create).not.toHaveBeenCalled();
+    expect(splitsCreated).toHaveLength(0);
+    // Stock still comes back; only the ledger reversal is withheld.
+    expect(result.movements).toHaveLength(1);
+    expect(movementTxnGuids[0]).toBeNull();
+  });
+
+  it('posts the reversal on returnToStock when the caller opts in with post: true', async () => {
+    const { transaction, splitsCreated } = createFulfillmentTransaction();
+    withFulfilledHistory(transaction);
+
+    await returnToStock(fulfillInput(true));
 
     expect(transaction.transactions.create).toHaveBeenCalledOnce();
     expect(splitsCreated).toHaveLength(2);
