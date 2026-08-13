@@ -15,9 +15,10 @@ beforeEach(() => {
 });
 
 describe('sumSplitsByAccount', () => {
-    it('uses numeric per-split division and casts the final aggregate to a number', async () => {
-        // Seven 1/7 splits sum to one in PostgreSQL numeric before the one
-        // final float8 conversion. Per-split float8 division drifts instead.
+    it('guards numeric per-split division and final float8 cast placement', async () => {
+        // This is a query-text guard: PostgreSQL exercises the numeric
+        // behavior. Seven 1/7 numeric quotients round just below one, then
+        // the one final float8 conversion rounds the completed aggregate to 1.
         mockQueryRaw.mockResolvedValue([
             {
                 account_guid: 'checking',
@@ -29,6 +30,8 @@ describe('sumSplitsByAccount', () => {
         const sums = await sumSplitsByAccount(['checking'], {});
         const checking = sums.get('checking')!;
 
+        // The mapper passes number rows through unchanged; these are not
+        // precision assertions.
         expect(checking.quantity).toBe(1);
         expect(checking.value).toBe(1);
 
