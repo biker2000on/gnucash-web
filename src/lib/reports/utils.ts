@@ -23,8 +23,10 @@ export interface SplitSums {
  * Batched per-account split sums via a single GROUP BY query.
  *
  * Replaces the one-query-per-account pattern in the report generators.
- * Sums are computed as float8 per-split quotients (num::float8 / denom::float8),
- * matching the previous JS behavior of `sum + Number(num) / Number(denom)`.
+ * Per-split quotients and their sum are computed with high-precision
+ * PostgreSQL `numeric`, then cast once to float8 for the existing
+ * number-valued report contract. This prevents floating-point error from
+ * accumulating across the individual split divisions.
  * Accounts with no matching splits are simply absent from the map (callers
  * default to 0, same as an empty findMany result).
  *
@@ -45,8 +47,8 @@ export async function sumSplitsByAccount(
         value_sum: number;
     }>>`
         SELECT s.account_guid,
-               COALESCE(SUM(s.quantity_num::float8 / NULLIF(s.quantity_denom, 0)::float8), 0)::float8 AS quantity_sum,
-               COALESCE(SUM(s.value_num::float8 / NULLIF(s.value_denom, 0)::float8), 0)::float8 AS value_sum
+               COALESCE(SUM(s.quantity_num::numeric / NULLIF(s.quantity_denom, 0)::numeric), 0)::float8 AS quantity_sum,
+               COALESCE(SUM(s.value_num::numeric / NULLIF(s.value_denom, 0)::numeric), 0)::float8 AS value_sum
         FROM splits s
         JOIN transactions t ON t.guid = s.tx_guid
         WHERE s.account_guid = ANY(${accountGuids}::text[])
