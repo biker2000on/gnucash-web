@@ -126,8 +126,6 @@ function parseCommodityRef(cmdtyObj: unknown): { space: string; id: string } | u
  * Parse a GnuCash XML file (gzip-compressed or raw XML) into typed data.
  */
 export function parseGnuCashXml(data: Buffer | Uint8Array): GnuCashXmlData {
-  let xmlString: string;
-
   const uint8 = data instanceof Uint8Array ? data : new Uint8Array(data);
   const maxDecompressedXmlBytes = getMaxDecompressedXmlBytes();
   // Check for gzip magic number (0x1f, 0x8b). A malformed gzip input is an
@@ -136,7 +134,7 @@ export function parseGnuCashXml(data: Buffer | Uint8Array): GnuCashXmlData {
     ? decompressGzipWithinLimit(uint8, maxDecompressedXmlBytes)
     : uint8;
   assertXmlSizeWithinLimit(xmlBytes, maxDecompressedXmlBytes);
-  xmlString = new TextDecoder('utf-8').decode(xmlBytes);
+  const xmlString = new TextDecoder('utf-8').decode(xmlBytes);
 
   // Parse XML
   const parser = new XMLParser({
