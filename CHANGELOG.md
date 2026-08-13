@@ -4,6 +4,75 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+Covers work landed since 0.23.2.0 (2026-07-29).
+
+### ⚠️ Behavior changes you should read before upgrading
+
+- **Reverting a lot assignment on a reconciled or frozen split now fails safely
+  when the assignment was made before this release.** Those sub-splits carry no
+  revert-provenance marker, so the system cannot prove the reversal is
+  balance-neutral. Unreconcile the affected split (set its reconcile state back
+  to `n`) and retry. There is no data migration; this affects historical lot
+  assignments only.
+- **Reconciled and frozen splits are now protected on every write path.**
+  Editing, deleting, re-parenting, or bulk-moving a split whose reconcile state
+  is `y` or `f` returns **423 Locked**. Previously these writes silently
+  succeeded and could change a balance you had already agreed to a statement.
+  To edit such a split, set its reconcile state back to `n` first.
+
+### Added
+
+- **Tax:** OBBBA individual provisions; MFJ vs MFS breakeven analysis; filing
+  status derived from the household profile; Form 2210 Schedule AI; farmer safe
+  harbor with NIIT and carryover handling.
+- **GnuCash XML:** full-fidelity round-trip across three waves — slots and lots,
+  scheduled and template transactions, and nine business object families.
+- **Documents:** unified storage with evidence links; multi-file upload with
+  staged detailing and a tax archive organized by year; staged bill-review
+  queue; drag-and-drop upload; service periods and itemized charges.
+- **UI:** abbreviation glossary with accessible tooltips; multi-window pop-out
+  panes and a compact sidebar; memo and double-line editing; investment date
+  shortcuts.
+
+### Changed
+
+- **Lots and investments:** transfer-close basis carryover, per-sale LIFO,
+  oversell handling, and wash-sale plus long-term holding rules; closed lots
+  with no offset are now swept.
+- **Book scoping:** business entities and budgets are now isolated per book.
+
+### Fixed
+
+- **Reconciled-split protection (C2).** The guard existed but had zero
+  production callers, so every live write path bypassed it. It is now enforced
+  in 11 write paths, inside the writing transaction, after parent transactions
+  are locked in canonical order. Covers the lot engine, including the
+  zero-value-trade rewrite that changes both legs to ±FMV.
+- **Cross-book inventory postings (C5).** Inventory posting validated only that
+  an account existed, permitting a Book A item to post against a Book B
+  inventory asset — balancing globally while corrupting both books. Posting now
+  resolves and matches the account's owning book, and fails closed on orphan or
+  cyclic account chains.
+- **Five Tier-1 integrity defects**, including budget roll-up double-counting a
+  subtree budgeted at two levels, and FIRE Monte Carlo inflating withdrawals but
+  not contributions.
+- Deployments now reach production reliably.
+
+### Infrastructure
+
+- CI now runs a **typecheck gate** (`npm run typecheck`) before the docs, test,
+  and lint gates, and the image build and production deploy are blocked on it.
+- `npm run typecheck` regenerates the Prisma client first (`pretypecheck`), so a
+  stale generated client can no longer produce phantom local type errors after
+  pulling a schema change.
+- README documents the required `npx prisma generate` step for fresh clones.
+
+### Known open
+
+Cross-book writes remain possible through the general ledger create/update
+routes and through bulk reconcile. See `TODOS.md`,
+`## P0 — Cross-book writes still open`.
+
 ## [0.23.2.0] - 2026-07-29
 
 ### Changed — Folio branding completion

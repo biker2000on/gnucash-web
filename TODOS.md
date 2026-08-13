@@ -2925,25 +2925,59 @@ suite locks several of them in — the mirror-image assertion is named per item.
   $30k/yr real at 3% over 30 yrs contributed ≈$588k real instead of $900k.
   Contributions now convert to nominal at the end-of-year price level.
 
-## P0 — Silent data corruption (still open)
+## P0 — Silent data corruption (resolved 2026-08-13)
 
-- [ ] **C2 — Reconciled splits can be freely edited, deleted, or re-parented.**
-  `src/app/api/transactions/[guid]/route.ts:330-358`,
-  `src/app/api/splits/bulk/move/route.ts:151-154`. The guard *exists* —
-  `transaction.service.ts:158-161` raises "Cannot modify transaction with
-  reconciled splits" — but **`TransactionService` has zero production callers**
-  (re-verified 2026-08-13: only its own definition, export, and a comment
-  reference in `scheduled-tx-execute.ts`). Editing a reconciled June txn
-  $250 → $520 makes July's reconcile demand $270 no statement will explain.
-  The reconcile flow itself is well built (advisory lock, server-side
-  re-tie-out, single `$transaction`); nothing protects the result afterwards.
-  **Fix:** route the live paths through `TransactionService`, or inline the check.
-- [ ] **C5 — Inventory permits cross-book ledger postings.**
-  `src/lib/inventory-engine.ts:708`. `assertPostableAccount` selects only
-  `{guid, placeholder}` and never checks book membership (re-verified
-  2026-08-13). A Book A item configured with a Book B inventory asset posts
-  Dr Book A COGS / Cr **Book B Inventory** — balances globally, corrupts both
-  books. **Fix:** add a book check to `assertPostableAccount`. **Effort:** S.
+- [x] **C2 — Reconciled splits can be freely edited, deleted, or re-parented.**
+  Fixed 2026-08-13. The guard was extracted to
+  `src/lib/services/reconciled-split.service.ts` and wired into **11 live write
+  paths**, each check running inside the writing DB transaction after the parent
+  transactions are locked `FOR UPDATE` in canonical order and before the first
+  mutation. Live paths were *not* routed through `TransactionService` — that
+  class lacks optimistic concurrency, locking, audit snapshots, trading-split
+  handling, and book scoping, so routing through it would have regressed all
+  five. Protected splits return **423 Locked** (not 409, which both
+  `AccountLedger.tsx` and `TransactionFormModal.tsx` treat as an optimistic-lock
+  conflict and silently retry, which would have made the block invisible).
+  Lot-engine writes are covered, including `valueZeroValueTrade`, which rewrites
+  both trade legs to ±FMV and is *not* a value-preserving repartition.
+  Revert compensation is established **per split** via a provenance slot
+  (`gnucash_web_parent_split`), not per transaction.
+  **Deliberately excluded, with reasons recorded in code:** book deletion (an
+  unambiguous admin-level destructive act; guarding it would make every real
+  book undeletable) and scheduled-transaction template splits (they live under
+  `Template Root`, outside `books.root_account_guid`, so they appear on no
+  balance or reconciliation surface — a `y` there is a stale XML-import artifact,
+  never a statement agreement).
+- [x] **C5 — Inventory permits cross-book ledger postings.**
+  Fixed 2026-08-13. `assertPostableAccount` now resolves the account's owning
+  book by walking `parent_guid` to a root and matching `books.root_account_guid`
+  (`src/lib/inventory-engine.ts:708-746`), rejecting a mismatch at `:753-757`.
+  It **fails closed**: an orphan account whose chain never reaches a root
+  resolves to `NULL` and is rejected, and a cyclic chain terminates at
+  `depth < 200`. `bookGuid` is never request-supplied — all call sites take it
+  from `requireRole()`.
+  **Note:** this closed the *inventory* path only. The general ledger routes
+  still validate account existence without book scoping — see P0 below.
+
+## P0 — Cross-book writes still open
+
+- [ ] **Transaction create/update accept out-of-book accounts.**
+  `src/app/api/transactions/route.ts:330-345` and
+  `src/app/api/transactions/[guid]/route.ts:216-231` check account GUID
+  *existence only*, with no book constraint, while taking `account_guid`
+  straight from the request body under the `edit` role. Same class as C5 with a
+  larger blast radius — this is the app's most-used write endpoint. The in-repo
+  fix already exists: `getAccountGuidsForBook(bookGuid)`
+  (`src/lib/book-scope.ts:232`), used in exactly this shape at
+  `src/app/api/webhooks/inbound/transaction/route.ts:64`. **Effort:** M.
+- [ ] **Bulk reconcile lacks book-membership validation.**
+  `src/app/api/splits/bulk/reconcile/route.ts:86-101` selects and updates
+  exclusively by split GUID, never constraining to `roleResult.bookGuid`.
+  An editor holding another book's split GUIDs can alter its reconciliation
+  state. **Effort:** S.
+- [ ] **SimpleFin sync: check-then-create race and unscoped Imbalance lookup.**
+  `src/lib/services/simplefin-sync.service.ts:1150` — can produce duplicate
+  accounts or post to the wrong book. **Effort:** M.
 
 ## P1 — Data integrity
 
