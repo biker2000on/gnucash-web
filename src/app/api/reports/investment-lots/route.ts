@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import prisma, { toDecimal } from '@/lib/prisma';
+import prisma from '@/lib/prisma';
 import { getBookAccountGuids } from '@/lib/book-scope';
 import { requireRole } from '@/lib/auth';
 import { getLatestPrice } from '@/lib/commodities';
 import { getBaseCurrency } from '@/lib/currency';
 import { buildAccountPathMap } from '@/lib/reports/utils';
-import { isLongTerm } from '@/lib/reports/capital-gains';
+import { getLotsForAccounts, type LotSummary } from '@/lib/lots';
 
 interface LotReportRow {
     accountName: string;
@@ -15,6 +15,13 @@ interface LotReportRow {
     lotGuid: string;
     isClosed: boolean;
     openDate: string | null;
+    /**
+     * Original acquisition date carried through an in-kind transfer, when the
+     * lot has one. This — not openDate — is what the holding period and
+     * daysHeld are measured from, so the UI can explain a long-term lot whose
+     * destination account only received the shares recently.
+     */
+    acquisitionDate: string | null;
     closeDate: string | null;
     shares: number;
     costBasis: number;
@@ -41,6 +48,34 @@ interface InvestmentLotsReportData {
     generatedAt: string;
 }
 
+const SHARE_EPSILON = 0.0001;
+const MS_PER_DAY = 1000 * 60 * 60 * 24;
+
+/** Calendar-day (YYYY-MM-DD) form of an ISO timestamp from the lot engine. */
+function toDateOnly(iso: string | null): string | null {
+    return iso ? iso.slice(0, 10) : null;
+}
+
+/**
+ * Cost basis attributable to the shares still held, pro-rated over the lot's
+ * purchased shares so a partially-sold lot doesn't count the sold shares'
+ * basis twice. `lot.totalCost` already includes any `carried_basis` brought in
+ * by an in-kind transfer, so a transferred lot prices against its real basis.
+ *
+ * This mirrors the allocation getLotsForAccounts uses for its own
+ * `unrealizedGain`; the report re-applies it over engine-supplied figures only
+ * because it must value holdings at the book's base currency, and the engine's
+ * price lookup takes no currency argument.
+ */
+function remainingCostBasis(lot: LotSummary): number {
+    const boughtShares = lot.splits
+        .filter(s => s.shares > 0)
+        .reduce((sum, s) => sum + s.shares, 0);
+    return boughtShares > SHARE_EPSILON
+        ? lot.totalCost * (lot.totalShares / boughtShares)
+        : lot.totalCost;
+}
+
 export async function GET(request: NextRequest) {
     try {
         const roleResult = await requireRole('readonly');
@@ -52,7 +87,9 @@ export async function GET(request: NextRequest) {
         const endDate = searchParams.get('endDate');
         const bookAccountGuids = await getBookAccountGuids();
 
-        // Find all investment accounts (STOCK, MUTUAL) in the active book
+        // Find all investment accounts (STOCK, MUTUAL) in the active book.
+        // Lots, their splits and their metadata slots are loaded by the lot
+        // engine below — this query only needs the account's own attributes.
         const investmentAccounts = await prisma.accounts.findMany({
             where: {
                 guid: { in: bookAccountGuids },
@@ -60,18 +97,6 @@ export async function GET(request: NextRequest) {
             },
             include: {
                 commodity: true,
-                lots: {
-                    include: {
-                        splits: {
-                            include: {
-                                transaction: true,
-                            },
-                            orderBy: {
-                                transaction: { post_date: 'asc' },
-                            },
-                        },
-                    },
-                },
             },
         });
 
@@ -79,7 +104,12 @@ export async function GET(request: NextRequest) {
         // Price lookups are filtered to the base/report currency so a newer
         // quote in another currency is never used for unrealized gains.
         const baseCurrency = await getBaseCurrency();
+        // Every shares/basis/realized/holding-period figure below comes from
+        // this one canonical engine, which is the only place that knows about
+        // carried basis, transferred acquisition dates and gains-offset splits.
+        const lotsByAccount = await getLotsForAccounts(investmentAccounts.map(a => a.guid));
         const now = new Date();
+        const nowIso = now.toISOString();
         const rows: LotReportRow[] = [];
 
         for (const account of investmentAccounts) {
@@ -87,98 +117,50 @@ export async function GET(request: NextRequest) {
             const commodityMnemonic = account.commodity?.mnemonic || '';
             const commodityGuid = account.commodity_guid;
 
-            // Get current price for unrealized gain calculation
+            // Get current price for unrealized gain calculation.
+            // getLatestPrice DROPS its currency filter when the argument is
+            // undefined, so an unknown base currency must skip the lookup
+            // outright rather than accept a quote denominated in anything. The
+            // lot then reports a null market value, which is honest; a number
+            // derived from an arbitrary-currency quote would not be.
             let currentPrice: number | null = null;
-            if (commodityGuid) {
+            if (commodityGuid && baseCurrency) {
                 try {
-                    const priceData = await getLatestPrice(commodityGuid, baseCurrency?.guid);
+                    const priceData = await getLatestPrice(commodityGuid, baseCurrency.guid);
                     if (priceData) currentPrice = priceData.value;
                 } catch {
                     // No price available
                 }
             }
 
-            // Get lot titles from slots table
-            const lotGuids = account.lots.map(l => l.guid);
-            const lotTitleSlots = lotGuids.length > 0
-                ? await prisma.slots.findMany({
-                    where: {
-                        obj_guid: { in: lotGuids },
-                        name: 'title',
-                    },
-                })
-                : [];
-            const lotTitleMap = new Map(lotTitleSlots.map(s => [s.obj_guid, s.string_val || '']));
-
-            for (const lot of account.lots) {
-                const splits = lot.splits;
-                if (splits.length === 0) continue;
-
-                // Calculate lot metrics.
-                // Native GnuCash convention: buy splits have positive value
-                // (debit), sell splits negative (credit). Zero-quantity splits
-                // are gains offsets (scrub-generated or GnuCash desktop) and
-                // are excluded from the basis/proceeds sum.
-                let totalShares = 0;
-                let buyCost = 0;
-                let tradeValue = 0; // basis - proceeds (non-gain splits only)
-
-                for (const split of splits) {
-                    const qty = parseFloat(toDecimal(split.quantity_num, split.quantity_denom));
-                    const val = parseFloat(toDecimal(split.value_num, split.value_denom));
-                    totalShares += qty;
-                    if (Math.abs(qty) > 0.0001) {
-                        tradeValue += val;
-                    }
-                    if (qty > 0) {
-                        buyCost += Math.abs(val);
-                    }
-                }
-
-                // Treat lots with ~0 remaining shares as effectively closed
-                const isClosed = lot.is_closed === 1 || Math.abs(totalShares) < 0.0001;
+            for (const lot of lotsByAccount.get(account.guid) ?? []) {
+                if (lot.splits.length === 0) continue;
+                const { isClosed, totalShares } = lot;
                 if (!showClosed && isClosed) continue;
 
-                // Dates
-                const openDate = splits[0]?.transaction?.post_date
-                    ? new Date(splits[0].transaction.post_date).toISOString().split('T')[0]
-                    : null;
-                const lastSplitDate = splits[splits.length - 1]?.transaction?.post_date;
-                const closeDate = isClosed && lastSplitDate
-                    ? new Date(lastSplitDate).toISOString().split('T')[0]
-                    : null;
+                const openDate = toDateOnly(lot.openDate);
+                const closeDate = toDateOnly(lot.closeDate);
+                const acquisitionDate = toDateOnly(lot.acquisitionDate);
 
-                // Realized gain for closed lots: proceeds - basis, i.e. the
-                // NEGATION of the trading splits' sum (native GnuCash signs)
-                const realizedGain = isClosed ? -tradeValue : 0;
-
-                // Unrealized gain for open lots
-                const unrealizedGain = !isClosed && currentPrice !== null && totalShares !== 0
-                    ? (currentPrice * totalShares) - buyCost
-                    : null;
-
+                // Value the remaining shares against the base-currency price.
                 const marketValue = !isClosed && currentPrice !== null
                     ? currentPrice * totalShares
                     : null;
+                const unrealizedGain = marketValue !== null && Math.abs(totalShares) > SHARE_EPSILON
+                    ? marketValue - remainingCostBasis(lot)
+                    : null;
 
-                // Holding period
-                let holdingPeriod: 'short_term' | 'long_term' | null = null;
-                let daysHeld: number | null = null;
-                if (openDate) {
-                    const openMs = new Date(openDate).getTime();
-                    const endMs = closeDate ? new Date(closeDate).getTime() : now.getTime();
-                    daysHeld = Math.floor((endMs - openMs) / (1000 * 60 * 60 * 24));
-                    // Delegate the term rule rather than comparing against 365:
-                    // the IRS period is calendar-year based and starts the day
-                    // after acquisition, so a day count is off by one at exactly
-                    // one year and drifts across leap years.
-                    holdingPeriod = isLongTerm(
-                        openDate,
-                        closeDate ?? now.toISOString(),
-                    ) ? 'long_term' : 'short_term';
-                }
-
-                const lotTitle = lotTitleMap.get(lot.guid) || `Lot ${account.lots.indexOf(lot) + 1}`;
+                // Holding period runs from the ORIGINAL acquisition date when a
+                // transfer carried one, not from the date this account received
+                // the shares; the engine already resolves that.
+                const holdingPeriod = lot.holdingPeriod;
+                const termStart = acquisitionDate ?? openDate;
+                const daysHeld = termStart
+                    ? Math.floor(
+                        (new Date(`${closeDate ?? nowIso.slice(0, 10)}T00:00:00.000Z`).getTime()
+                            - new Date(`${termStart}T00:00:00.000Z`).getTime()) / MS_PER_DAY,
+                    )
+                    : null;
 
                 // Date filtering: skip lots opened after the end date,
                 // or closed lots that closed before the start date
@@ -189,17 +171,23 @@ export async function GET(request: NextRequest) {
                     accountName,
                     accountGuid: account.guid,
                     commodityMnemonic,
-                    lotTitle,
+                    lotTitle: lot.title,
                     lotGuid: lot.guid,
                     isClosed,
                     openDate,
+                    acquisitionDate,
                     closeDate,
                     shares: totalShares,
-                    costBasis: buyCost,
+                    costBasis: lot.totalCost,
                     marketValue,
-                    realizedGain,
+                    realizedGain: lot.realizedGain,
                     unrealizedGain,
-                    totalGain: unrealizedGain !== null ? unrealizedGain : (isClosed ? realizedGain : null),
+                    // A partially-sold open lot has BOTH a realized and an
+                    // unrealized component; total gain is their sum. Open lots
+                    // with no price have no knowable total.
+                    totalGain: unrealizedGain !== null
+                        ? lot.realizedGain + unrealizedGain
+                        : (isClosed ? lot.realizedGain : null),
                     holdingPeriod,
                     daysHeld,
                 });
@@ -214,16 +202,29 @@ export async function GET(request: NextRequest) {
             return 0;
         });
 
+        // Market-value and unrealized totals cover the OPEN lots only. An
+        // unpriced open lot has no knowable market value, and summing it as 0
+        // would present an incomplete total as though it were complete — the
+        // same class of error as pricing it off an arbitrary-currency quote.
+        // If any open lot is unpriced, the whole aggregate reports null.
+        const openRows = rows.filter(r => !r.isClosed);
+        const everyOpenRowPriced = openRows.length > 0
+            && openRows.every(r => r.marketValue !== null);
+        const everyOpenGainKnown = openRows.length > 0
+            && openRows.every(r => r.unrealizedGain !== null);
+
         const summary = {
-            totalCostBasis: rows.filter(r => !r.isClosed).reduce((s, r) => s + r.costBasis, 0),
-            totalMarketValue: rows.some(r => r.marketValue !== null)
-                ? rows.filter(r => !r.isClosed).reduce((s, r) => s + (r.marketValue || 0), 0)
+            totalCostBasis: openRows.reduce((s, r) => s + r.costBasis, 0),
+            totalMarketValue: everyOpenRowPriced
+                ? openRows.reduce((s, r) => s + (r.marketValue ?? 0), 0)
                 : null,
-            totalRealizedGain: rows.filter(r => r.isClosed).reduce((s, r) => s + r.realizedGain, 0),
-            totalUnrealizedGain: rows.some(r => r.unrealizedGain !== null)
-                ? rows.filter(r => !r.isClosed).reduce((s, r) => s + (r.unrealizedGain || 0), 0)
+            // Includes the realized portion of partially-sold OPEN lots, which
+            // the engine reports and which a closed-only filter would drop.
+            totalRealizedGain: rows.reduce((s, r) => s + r.realizedGain, 0),
+            totalUnrealizedGain: everyOpenGainKnown
+                ? openRows.reduce((s, r) => s + (r.unrealizedGain ?? 0), 0)
                 : null,
-            openLotCount: rows.filter(r => !r.isClosed).length,
+            openLotCount: openRows.length,
             closedLotCount: rows.filter(r => r.isClosed).length,
             shortTermCount: rows.filter(r => r.holdingPeriod === 'short_term').length,
             longTermCount: rows.filter(r => r.holdingPeriod === 'long_term').length,
