@@ -43,7 +43,7 @@ export type Form8949Box = 'A' | 'B' | 'C' | 'D' | 'E' | 'F';
 /** One realized disposal, before wash-sale / bucketing logic is applied. */
 export interface RealizedSaleInput {
   /** GnuCash GUID of the stock-account split that disposed of these shares. */
-  splitGuid?: string;
+  splitGuid: string;
   accountGuid: string;
   ticker: string;
   shares: number;          // shares sold (positive)
@@ -260,7 +260,6 @@ function washAdjustmentFor(
   washSales: WashSaleResult[],
 ): number {
   if (rawGain >= 0) return 0;
-  if (!sale.splitGuid) return 0;
   const matches = washSales.filter(ws => ws.splitGuid === sale.splitGuid);
   if (matches.length === 0) return 0;
   const disallowed = matches.reduce((sum, match) => sum + Math.abs(match.loss), 0);
@@ -330,6 +329,13 @@ export function buildCapitalGainsReport(
   year: number,
 ): CapitalGainsReport {
   const rows = sales.map(s => buildForm8949Row(s, washSales));
+  const saleGuids = new Set(sales.map(sale => sale.splitGuid));
+  const unmatchedWashWarnings = washSales
+    .filter(washSale => !saleGuids.has(washSale.splitGuid))
+    .map(washSale =>
+      `Wash-sale adjustment for ${washSale.ticker} ($${Math.abs(washSale.loss).toFixed(2)}) ` +
+      'was not applied because its disposal split is not reported on Form 8949; review this transaction.',
+    );
 
   const buckets: Form8949Bucket[] = BUCKET_ORDER.map(def => ({
     ...def,
@@ -358,7 +364,7 @@ export function buildCapitalGainsReport(
     net: shortTerm.gain + longTerm.gain,
   };
 
-  const warnings = flagSuspectRows(rows);
+  const warnings = [...unmatchedWashWarnings, ...flagSuspectRows(rows)];
 
   return { year, rows, buckets, scheduleD, warnings };
 }

@@ -257,13 +257,26 @@ describe('wash-sale adjustment', () => {
     expect(row.gain).toBe(500);
   });
 
-  it('does not match a wash sale on a different day / ticker', () => {
+  it('does not match a different disposal split', () => {
     const row = buildForm8949Row(
       sale({ splitGuid: 'other-split', ticker: 'MSFT', dateAcquired: '2024-01-02', dateSold: '2024-06-01', proceeds: 800, costBasis: 1000 }),
       washSales,
     );
     expect(row.code).toBe('');
     expect(row.gain).toBe(-200);
+  });
+
+  it('warns when a wash-sale disposal split is absent from Form 8949 sales', () => {
+    const report = buildCapitalGainsReport(
+      [sale({ splitGuid: 'reported-sale', dateAcquired: '2024-01-02', dateSold: '2024-06-01', proceeds: 800, costBasis: 1000 })],
+      [{ ...washSales[0], splitGuid: 'unreported-sale', loss: -200 }],
+      2024,
+    );
+
+    expect(report.rows[0].adjustment).toBe(0);
+    expect(report.warnings).toContain(
+      'Wash-sale adjustment for AAPL ($200.00) was not applied because its disposal split is not reported on Form 8949; review this transaction.',
+    );
   });
 
   it('attributes same-day sales to their own disposal splits without duplicating the adjustment', () => {
