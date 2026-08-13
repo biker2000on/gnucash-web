@@ -29,8 +29,10 @@ export async function GET(request: NextRequest) {
         // Build cache key from book guid + metric + date params
         const bookGuid = roleResult.bookGuid;
         const dateRange = `${startDate.toISOString().split('T')[0]}-${endDate.toISOString().split('T')[0]}`;
-        // v3: payload now carries valuation coverage alongside the totals.
-        const cacheKey = `cache:${bookGuid}:user:${roleResult.user.id}:kpis:v3:${dateRange}`;
+        // Bump on EVERY payload-shape change: a stale entry that lacks a
+        // disclosure field reads as "nothing to disclose" for the whole TTL.
+        // v3 added coverage; v4 added changeCoverage.
+        const cacheKey = `cache:${bookGuid}:user:${roleResult.user.id}:kpis:v4:${dateRange}`;
 
         // Check cache first
         const cached = await cacheGet(cacheKey);

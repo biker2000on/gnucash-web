@@ -199,13 +199,96 @@ describe('generateBudgetBalanceSheet with an unconvertible balance', () => {
     expect(report).not.toBeNull();
     expect(report!.totals.assets.actual).toBeCloseTo(0, 2);
     expect(report!.totals.equity.actual).toBeCloseTo(1000, 2);
-    // The check row is non-zero purely because of the missing rate, so the
-    // payload must carry the coverage that tells the UI not to show it.
+    // The residual exists only because of the missing rate, so the payload
+    // must not offer it as a check at all.
+    expect(report!.totals.check).toBeNull();
+    expect(report!.rawCheckDiagnostic).toBeDefined();
     expect(report!.valuationCoverage).toEqual({
       complete: false,
       unvaluedAccountCount: 1,
       gaps: [EUR_GAP],
     });
+  });
+
+  it('does not let a budgeted flow cancel an unvalued actual balance', async () => {
+    mockOwnershipFindUnique.mockResolvedValue({ book_guid: 'book' });
+    mockBudgetsFindUnique.mockResolvedValue({
+      guid: 'budget',
+      name: 'Plan',
+      num_periods: 2,
+      recurrences: [{
+        recurrence_period_type: 'month',
+        recurrence_mult: 1,
+        recurrence_period_start: new Date('2026-06-01T00:00:00.000Z'),
+      }],
+      // A -100 EUR budget in period 1, which the period-0 report never shows.
+      amounts: [{
+        account_guid: 'checking-eur',
+        period_num: 1,
+        amount_num: -100n,
+        amount_denom: 1n,
+        account: { account_type: 'BANK' },
+      }],
+    });
+    mockAccountsFindMany
+      .mockResolvedValueOnce([acct('checking-eur', 'Euro Checking', 'BANK', 'eur')])
+      .mockResolvedValueOnce([]);
+    // EUR 100 opening balance, unconvertible.
+    mockSplitsFindMany.mockResolvedValue([
+      {
+        account_guid: 'checking-eur',
+        quantity_num: 100n,
+        quantity_denom: 1n,
+        transaction: { post_date: new Date('2026-01-15T00:00:00.000Z') },
+      },
+    ]);
+    mockBuildContext.mockResolvedValue(unconvertibleEurContext());
+
+    const report = await generateBudgetBalanceSheet(
+      'book', ['checking-eur'], 'budget', 0,
+    );
+
+    // Netting opening +100 against the period-1 budgeted -100 would report
+    // quantity 0 and call this statement fully valued. It is not: period 0
+    // shows an EUR balance that could not be converted.
+    expect(report!.valuationCoverage.complete).toBe(false);
+    expect(report!.valuationCoverage.unvaluedAccountCount).toBe(1);
+    expect(report!.totals.check).toBeNull();
+  });
+
+  it('ignores budget periods after the selected one when judging coverage', async () => {
+    mockOwnershipFindUnique.mockResolvedValue({ book_guid: 'book' });
+    mockBudgetsFindUnique.mockResolvedValue({
+      guid: 'budget',
+      name: 'Plan',
+      num_periods: 2,
+      recurrences: [{
+        recurrence_period_type: 'month',
+        recurrence_mult: 1,
+        recurrence_period_start: new Date('2026-06-01T00:00:00.000Z'),
+      }],
+      // The only EUR activity is budgeted for period 1; period 0 is empty.
+      amounts: [{
+        account_guid: 'checking-eur',
+        period_num: 1,
+        amount_num: 100n,
+        amount_denom: 1n,
+        account: { account_type: 'BANK' },
+      }],
+    });
+    mockAccountsFindMany
+      .mockResolvedValueOnce([acct('checking-eur', 'Euro Checking', 'BANK', 'eur')])
+      .mockResolvedValueOnce([]);
+    mockSplitsFindMany.mockResolvedValue([]);
+    mockBuildContext.mockResolvedValue(unconvertibleEurContext());
+
+    const report = await generateBudgetBalanceSheet(
+      'book', ['checking-eur'], 'budget', 0,
+    );
+
+    // Nothing unvalued is displayed in period 0, so the check stands.
+    expect(report!.valuationCoverage.complete).toBe(true);
+    expect(report!.totals.check).not.toBeNull();
   });
 
   it('is unchanged for a fully valued budget', async () => {
@@ -223,7 +306,8 @@ describe('generateBudgetBalanceSheet with an unconvertible balance', () => {
       'book', ['checking-eur', 'equity'], 'budget', 0,
     );
 
-    expect(report!.totals.check.actual).toBeCloseTo(0, 2);
+    expect(report!.totals.check?.actual).toBeCloseTo(0, 2);
+    expect(report!.rawCheckDiagnostic).toBeUndefined();
     expect(report!.valuationCoverage).toEqual({
       complete: true,
       unvaluedAccountCount: 0,

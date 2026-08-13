@@ -253,7 +253,10 @@ export default function KPIGrid({ data, loading }: KPIGridProps) {
         : undefined;
     // When the two dates could not value the same holdings, the difference
     // between them is an artifact of the missing data, not a gain or loss.
-    const changeComparable = changeCoverage?.comparable ?? true;
+    // An ABSENT field means unknown, and unknown fails safe to "not shown": a
+    // payload predating this check (a stale cache entry, a missed key bump)
+    // then withholds the number rather than fabricating one.
+    const changeComparable = changeCoverage?.comparable ?? false;
     // The banner covers the level totals and the change alike: a gap at only the
     // START date leaves end coverage complete, and that is exactly the case
     // where an uncaveated change would be most misleading.
@@ -262,6 +265,7 @@ export default function KPIGrid({ data, loading }: KPIGridProps) {
         : changeCoverage && !changeCoverage.complete
             ? changeCoverage
             : undefined;
+    const showBanner = bannerCoverage !== undefined || !changeComparable;
 
     const cards: KPICardProps[] = [
         {
@@ -323,22 +327,24 @@ export default function KPIGrid({ data, loading }: KPIGridProps) {
 
     return (
         <>
-            {bannerCoverage && (
+            {showBanner && (
                 <div
                     role="alert"
                     className="bg-warning/10 border border-warning/30 rounded-lg px-4 py-3 mb-4 text-sm text-warning"
                 >
                     <div className="font-medium">
-                        These totals are incomplete
+                        {bannerCoverage
+                            ? 'These totals are incomplete'
+                            : 'Net worth change is not available'}
                     </div>
-                    {bannerCoverage.gaps.length > 0 && (
+                    {bannerCoverage && bannerCoverage.gaps.length > 0 && (
                         <ul className="mt-1.5 space-y-1 text-xs">
                             {bannerCoverage.gaps.map(gap => (
                                 <li key={gap.commodityGuid}>{gap.message}</li>
                             ))}
                         </ul>
                     )}
-                    {bannerCoverage.gaps.length === 0 && (
+                    {bannerCoverage && bannerCoverage.gaps.length === 0 && (
                         <p className="mt-1.5 text-xs">
                             {bannerCoverage.unvaluedAccountCount} account balance(s) could not be
                             converted to the report currency and are excluded.
@@ -346,8 +352,9 @@ export default function KPIGrid({ data, loading }: KPIGridProps) {
                     )}
                     {!changeComparable && (
                         <p className="mt-1.5 text-xs">
-                            The start and end dates could not value the same holdings, so the
-                            net worth change and percentage are not shown.
+                            {changeCoverage
+                                ? 'The start and end dates could not value the same holdings, so the net worth change and percentage are not shown.'
+                                : 'The net worth change could not be checked against both dates, so it is not shown. Reload to recompute.'}
                         </p>
                     )}
                 </div>

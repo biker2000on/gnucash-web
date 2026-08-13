@@ -39,7 +39,7 @@ function generateBalanceSheetCSV(data: BudgetBalanceSheetData): string {
         rows.push('');
     }
     rows.push(line('', 'Liabilities + Equity', data.totals.liabilitiesAndEquity));
-    if (data.valuationCoverage.complete) {
+    if (data.totals.check) {
         rows.push(line('', 'Check (Assets − L−E)', data.totals.check));
     } else {
         // The exported file outlives this screen, so the caveat travels with it.
@@ -293,7 +293,7 @@ export default function BudgetBalanceSheetPage() {
                                 Check: Assets − (Liabilities + Equity). Non-zero when the book carries unclosed
                                 pre-budget earnings — same caveat as the regular balance sheet.
                             </span>
-                            {reportData.valuationCoverage.complete ? (
+                            {reportData.totals.check ? (
                                 <span className="text-xs font-mono text-foreground-muted" style={TNUM}>
                                     Budgeted {formatCurrency(reportData.totals.check.budgeted, currency)}
                                     {' '}· Actual {formatCurrency(reportData.totals.check.actual, currency)}

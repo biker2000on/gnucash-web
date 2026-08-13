@@ -44,12 +44,14 @@ export interface ValuationCoverage {
 }
 
 /**
- * Materiality policy for coverage reporting: quantities at or below this are
- * treated as an empty account rather than a hidden holding. Summing split
- * fractions leaves float dust well under this bound, so the threshold exists to
- * keep closed accounts out of the warning list -- NOT to hide small holdings.
- * Any real position, including a single unit of the smallest-denominated
- * commodity GnuCash supports, is orders of magnitude larger and is disclosed.
+ * Materiality POLICY for coverage reporting: quantities at or below this are
+ * treated as an empty account rather than a hidden holding, so closed accounts
+ * stay out of the warning list.
+ *
+ * This is a floating-point comparison against balances accumulated as floats,
+ * not an exact-fraction test, and it is chosen rather than derived -- it is not
+ * a proof that every commodity denomination sorts correctly against it. An
+ * exact-fraction balance assertion is tracked separately.
  */
 export const UNVALUED_QUANTITY_EPSILON = 1e-9;
 
