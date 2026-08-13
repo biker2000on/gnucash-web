@@ -6,7 +6,7 @@
  */
 
 import { XMLParser } from 'fast-xml-parser';
-import { gunzipSync } from 'fflate';
+import { Gunzip } from 'fflate';
 import { parseSlotsContainer } from './slots';
 import { parseBusinessObjects } from './business';
 import type {
@@ -25,6 +25,39 @@ import type {
   GnuCashSchedXAction,
   GnuCashSxDeferredInstance,
 } from './types';
+
+// A 64 MiB XML file is ample for normal personal and small-business GnuCash
+// books while keeping an uploaded gzip file from expanding without bound.
+const MAX_DECOMPRESSED_XML_BYTES = 64 * 1024 * 1024;
+
+function decompressGzipWithinLimit(data: Uint8Array): Uint8Array {
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+
+  try {
+    const gunzip = new Gunzip((chunk) => {
+      totalBytes += chunk.length;
+      if (totalBytes > MAX_DECOMPRESSED_XML_BYTES) {
+        throw new Error('GnuCash XML exceeds the 64 MB decompressed size limit.');
+      }
+      chunks.push(chunk);
+    });
+    gunzip.push(data, true);
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('decompressed size limit')) {
+      throw error;
+    }
+    throw new Error('Unable to decompress the uploaded GnuCash gzip file.');
+  }
+
+  const decompressed = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    decompressed.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return decompressed;
+}
 
 /**
  * Ensure a value is always an array.
@@ -85,22 +118,13 @@ function parseCommodityRef(cmdtyObj: unknown): { space: string; id: string } | u
 export function parseGnuCashXml(data: Buffer | Uint8Array): GnuCashXmlData {
   let xmlString: string;
 
-  // Try to decompress gzip first
-  try {
-    const uint8 = data instanceof Uint8Array ? data : new Uint8Array(data);
-    // Check for gzip magic number (0x1f, 0x8b)
-    if (uint8.length >= 2 && uint8[0] === 0x1f && uint8[1] === 0x8b) {
-      const decompressed = gunzipSync(uint8);
-      xmlString = new TextDecoder('utf-8').decode(decompressed);
-    } else {
-      xmlString = new TextDecoder('utf-8').decode(uint8);
-    }
-  } catch {
-    // If gunzip fails, treat as raw XML
-    xmlString = new TextDecoder('utf-8').decode(
-      data instanceof Uint8Array ? data : new Uint8Array(data)
-    );
-  }
+  const uint8 = data instanceof Uint8Array ? data : new Uint8Array(data);
+  // Check for gzip magic number (0x1f, 0x8b). A malformed gzip input is an
+  // error; treating it as raw XML hides the cause and bypasses the guard.
+  const xmlBytes = uint8.length >= 2 && uint8[0] === 0x1f && uint8[1] === 0x8b
+    ? decompressGzipWithinLimit(uint8)
+    : uint8;
+  xmlString = new TextDecoder('utf-8').decode(xmlBytes);
 
   // Parse XML
   const parser = new XMLParser({

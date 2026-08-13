@@ -46,6 +46,11 @@ services:
       redis:
         condition: service_started
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     volumes:
       - receipts-data:/app/data/receipts
     healthcheck:
@@ -81,6 +86,11 @@ services:
       redis:
         condition: service_started
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     volumes:
       - receipts-data:/app/data/receipts
     healthcheck:
@@ -98,6 +108,11 @@ services:
       - redis-data:/data
     command: redis-server --appendonly yes
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   # ---- Optional: S3-compatible storage via MinIO ----
   # Enable with: docker compose --profile storage up -d
@@ -119,6 +134,11 @@ services:
       - minio-data:/data
     command: server /data --console-address ":9001"
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
   redis-data:

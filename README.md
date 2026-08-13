@@ -116,6 +116,11 @@ docker compose -f docker-compose.prod.yml up -d
 
 Includes PostgreSQL, Redis, app, worker, and Watchtower for auto-updates.
 
+`POSTGRES_PASSWORD` is required for the production Compose stack; generate a
+unique value before starting it. PostgreSQL is internal to the Compose network
+by default. Use a temporary Compose override bound to `127.0.0.1` if you need
+local database debugging.
+
 ### Standalone
 
 ```bash
