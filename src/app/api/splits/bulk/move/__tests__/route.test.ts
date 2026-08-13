@@ -31,19 +31,24 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const {
     prismaMock,
     requireRoleMock,
+    getAccountGuidsForBookMock,
     withPeriodLockCheckMock,
     assertNotLockedMock,
     cacheInvalidateFromMock,
     publishDataChangeMock,
 } = vi.hoisted(() => ({
     prismaMock: {
-        accounts: { findUnique: vi.fn() },
+        // findFirst is the book-scoped lookup the route uses; findUnique is
+        // the unscoped one it used to use, kept mocked so that reverting the
+        // fix produces a meaningful assertion failure rather than a TypeError.
+        accounts: { findFirst: vi.fn(), findUnique: vi.fn() },
         splits: { findMany: vi.fn(), updateMany: vi.fn() },
         transactions: { updateMany: vi.fn() },
         $transaction: vi.fn(),
         $queryRaw: vi.fn(),
     },
     requireRoleMock: vi.fn(),
+    getAccountGuidsForBookMock: vi.fn(),
     withPeriodLockCheckMock: vi.fn(),
     assertNotLockedMock: vi.fn(),
     cacheInvalidateFromMock: vi.fn(),
@@ -52,6 +57,9 @@ const {
 
 vi.mock('@/lib/prisma', () => ({ default: prismaMock }));
 vi.mock('@/lib/auth', () => ({ requireRole: requireRoleMock }));
+vi.mock('@/lib/book-scope', () => ({
+    getAccountGuidsForBook: getAccountGuidsForBookMock,
+}));
 vi.mock('@/lib/cache', () => ({ cacheInvalidateFrom: cacheInvalidateFromMock }));
 vi.mock('@/lib/data-events', () => ({ publishDataChange: publishDataChangeMock }));
 vi.mock('@/lib/services/period-lock.service', () => {
@@ -80,6 +88,11 @@ const TARGET_ACCOUNT = 'account0000000000000000000target';
 const COMMODITY = 'commodity00000000000000000000usd';
 const BOOK_GUID = 'book0000000000000000000000000001';
 const POST_DATE = new Date('2026-07-01T00:00:00.000Z');
+// Accounts of the caller's own book, and one belonging to a DIFFERENT book.
+const ACCOUNT_FROM = 'account00000000000000000000from';
+const BOOK_ACCOUNTS = [ACCOUNT_FROM, TARGET_ACCOUNT];
+const FOREIGN_ACCOUNT = 'account000000000000000000alien';
+const FOREIGN_SPLIT = 'split000000000000000000000alien';
 
 function moveRequest(body: Record<string, unknown>): Request {
     return new Request('http://localhost/api/splits/bulk/move', {
@@ -99,6 +112,11 @@ beforeEach(() => {
         user: { id: 1, username: 'editor' },
         role: 'edit',
         bookGuid: BOOK_GUID,
+    });
+    getAccountGuidsForBookMock.mockResolvedValue(BOOK_ACCOUNTS);
+    prismaMock.accounts.findFirst.mockResolvedValue({
+        guid: TARGET_ACCOUNT,
+        commodity_guid: COMMODITY,
     });
     prismaMock.accounts.findUnique.mockResolvedValue({
         guid: TARGET_ACCOUNT,
@@ -248,11 +266,13 @@ describe('POST /api/splits/bulk/move canonical lock order', () => {
         }));
 
         expect(response.status).toBe(200);
-        // Belt and braces: the protected states are in the predicate too, so
-        // the write can never land on a reconciled row even without the lock.
+        // Belt and braces: the protected states and the book scope are in the
+        // predicate too, so the write can never land on a reconciled row —
+        // nor on another book's row — even without the lock.
         expect(prismaMock.splits.updateMany).toHaveBeenCalledWith({
             where: {
                 guid: { in: [SPLIT_1] },
+                account_guid: { in: BOOK_ACCOUNTS },
                 reconcile_state: { notIn: ['y', 'f'] },
             },
             data: { account_guid: TARGET_ACCOUNT },
@@ -350,5 +370,267 @@ describe('POST /api/splits/bulk/move canonical lock order', () => {
         expect(response.status).toBe(400);
         expect(prismaMock.$transaction).not.toHaveBeenCalled();
         expect(prismaMock.splits.updateMany).not.toHaveBeenCalled();
+    });
+});
+
+/**
+ * BOOK SCOPING — the guids in the request body are attacker-controlled.
+ *
+ * These tests use a Prisma fake that HONOURS the `where` clause instead of
+ * returning a canned row list, because that is the only way they can fail when
+ * the fix is reverted: a mock that ignores `where` returns the foreign split
+ * either way and every assertion below would still pass against the
+ * vulnerable route. The fake also keeps `accounts.findUnique` (the unscoped
+ * lookup the vulnerable route used) working, so a reverted route reaches a
+ * 200 and the test fails on the status, not on a TypeError.
+ */
+interface FakeSplit {
+    guid: string;
+    tx_guid: string;
+    account_guid: string;
+    reconcile_state: string;
+}
+
+const ACCOUNT_COMMODITIES: Record<string, string> = {
+    [ACCOUNT_FROM]: COMMODITY,
+    [TARGET_ACCOUNT]: COMMODITY,
+    // Same commodity as the caller's book, so a currency mismatch can never
+    // stand in for the book check the test is actually asserting.
+    [FOREIGN_ACCOUNT]: COMMODITY,
+};
+
+function whereMatches(row: FakeSplit, where: any): boolean {
+    if (!where) return true;
+    if (where.guid?.in && !where.guid.in.includes(row.guid)) return false;
+    if (where.account_guid?.in && !where.account_guid.in.includes(row.account_guid)) return false;
+    if (where.reconcile_state?.in && !where.reconcile_state.in.includes(row.reconcile_state)) return false;
+    if (where.reconcile_state?.notIn && where.reconcile_state.notIn.includes(row.reconcile_state)) return false;
+    // assertNoReconciledSplits addresses splits via an OR of guid/tx_guid.
+    if (where.OR && !where.OR.some((clause: any) => whereMatches(row, clause))) return false;
+    if (where.tx_guid?.in && !where.tx_guid.in.includes(row.tx_guid)) return false;
+    return true;
+}
+
+/**
+ * Wire the prisma mock up to a mutable row store that respects `where`.
+ * `afterRead(callIndex, rows)` runs after each splits.findMany, so a test can
+ * simulate a split leaving the book between the pre-check and the locked read.
+ */
+function installBookAwareDb(
+    rows: FakeSplit[],
+    afterRead?: (callIndex: number, rows: FakeSplit[]) => void,
+) {
+    let readCount = 0;
+    prismaMock.splits.findMany.mockImplementation(async ({ where }: any) => {
+        const hit = rows.filter(r => whereMatches(r, where)).map(r => ({
+            ...r,
+            account: {
+                commodity_guid: ACCOUNT_COMMODITIES[r.account_guid],
+                name: `Account ${r.account_guid}`,
+            },
+            transaction: { post_date: POST_DATE },
+        }));
+        afterRead?.(readCount++, rows);
+        return hit;
+    });
+    prismaMock.splits.updateMany.mockImplementation(async ({ where, data }: any) => {
+        const hit = rows.filter(r => whereMatches(r, where));
+        for (const r of hit) r.account_guid = data.account_guid;
+        return { count: hit.length };
+    });
+    prismaMock.accounts.findFirst.mockImplementation(async ({ where }: any) => {
+        const guid = where?.guid?.equals;
+        const scope: string[] | undefined = where?.guid?.in;
+        if (!guid || !(guid in ACCOUNT_COMMODITIES)) return null;
+        if (scope && !scope.includes(guid)) return null;
+        return { guid, commodity_guid: ACCOUNT_COMMODITIES[guid] };
+    });
+    // The unscoped lookup the vulnerable route used — present so a reverted
+    // route still reaches a 200 and these tests fail on the assertion.
+    prismaMock.accounts.findUnique.mockImplementation(async ({ where }: any) => {
+        const guid = where?.guid;
+        if (!guid || !(guid in ACCOUNT_COMMODITIES)) return null;
+        return { guid, commodity_guid: ACCOUNT_COMMODITIES[guid] };
+    });
+    return rows;
+}
+
+function ownSplit(guid: string, tx = TX_A): FakeSplit {
+    return { guid, tx_guid: tx, account_guid: ACCOUNT_FROM, reconcile_state: 'n' };
+}
+
+function foreignSplit(): FakeSplit {
+    return { guid: FOREIGN_SPLIT, tx_guid: TX_B, account_guid: FOREIGN_ACCOUNT, reconcile_state: 'n' };
+}
+
+describe('POST /api/splits/bulk/move book scoping', () => {
+    it('moves a split that is inside the caller book', async () => {
+        const rows = installBookAwareDb([ownSplit(SPLIT_1)]);
+
+        const response = await POST(moveRequest({
+            splitGuids: [SPLIT_1],
+            targetAccountGuid: TARGET_ACCOUNT,
+        }));
+        const body = await response.json();
+
+        expect(response.status).toBe(200);
+        expect(body).toEqual({ success: true, updated: 1 });
+        expect(rows[0].account_guid).toBe(TARGET_ACCOUNT);
+        expect(getAccountGuidsForBookMock).toHaveBeenCalledWith(BOOK_GUID);
+        // Both the read and the WRITE carry the book constraint — the write
+        // predicate is what actually keeps another book's row unreachable.
+        expect(prismaMock.splits.updateMany).toHaveBeenCalledWith({
+            where: {
+                guid: { in: [SPLIT_1] },
+                account_guid: { in: BOOK_ACCOUNTS },
+                reconcile_state: { notIn: ['y', 'f'] },
+            },
+            data: { account_guid: TARGET_ACCOUNT },
+        });
+    });
+
+    it('404s a split belonging to ANOTHER book, moving nothing', async () => {
+        const rows = installBookAwareDb([foreignSplit()]);
+
+        const response = await POST(moveRequest({
+            splitGuids: [FOREIGN_SPLIT],
+            targetAccountGuid: TARGET_ACCOUNT,
+        }));
+        const body = await response.json();
+
+        expect(response.status).toBe(404);
+        expect(body.error).toBe('Some splits not found in this book');
+        // Rejected before the transaction ever opens; the row is untouched.
+        expect(prismaMock.$transaction).not.toHaveBeenCalled();
+        expect(prismaMock.splits.updateMany).not.toHaveBeenCalled();
+        expect(rows[0].account_guid).toBe(FOREIGN_ACCOUNT);
+        expect(publishDataChangeMock).not.toHaveBeenCalled();
+    });
+
+    it('404s a target account belonging to ANOTHER book, moving nothing', async () => {
+        const rows = installBookAwareDb([ownSplit(SPLIT_1)]);
+
+        const response = await POST(moveRequest({
+            splitGuids: [SPLIT_1],
+            targetAccountGuid: FOREIGN_ACCOUNT,
+        }));
+        const body = await response.json();
+
+        expect(response.status).toBe(404);
+        // Distinct from the split message, so the caller learns which end of
+        // the move was rejected — without learning whether the guid exists.
+        expect(body.error).toBe('Target account not found in this book');
+        expect(prismaMock.$transaction).not.toHaveBeenCalled();
+        expect(prismaMock.splits.updateMany).not.toHaveBeenCalled();
+        expect(rows[0].account_guid).toBe(ACCOUNT_FROM);
+    });
+
+    it('rejects a MIXED batch atomically — the in-book split does not move either', async () => {
+        const rows = installBookAwareDb([ownSplit(SPLIT_1), foreignSplit()]);
+
+        const response = await POST(moveRequest({
+            splitGuids: [SPLIT_1, FOREIGN_SPLIT],
+            targetAccountGuid: TARGET_ACCOUNT,
+        }));
+        const body = await response.json();
+
+        expect(response.status).toBe(404);
+        expect(body.error).toBe('Some splits not found in this book');
+        expect(prismaMock.splits.updateMany).not.toHaveBeenCalled();
+        expect(rows.map(r => r.account_guid)).toEqual([ACCOUNT_FROM, FOREIGN_ACCOUNT]);
+    });
+
+    it('404s when the book resolves to NO accounts, without relying on an empty IN', async () => {
+        const rows = installBookAwareDb([ownSplit(SPLIT_1)]);
+        getAccountGuidsForBookMock.mockResolvedValue([]);
+
+        const response = await POST(moveRequest({
+            splitGuids: [SPLIT_1],
+            targetAccountGuid: TARGET_ACCOUNT,
+        }));
+        const body = await response.json();
+
+        expect(response.status).toBe(404);
+        expect(body.error).toBe('Target account not found in this book');
+        // Fails closed before any query runs — the guarantee does not depend
+        // on how the ORM renders `in: []`.
+        expect(prismaMock.accounts.findFirst).not.toHaveBeenCalled();
+        expect(prismaMock.splits.findMany).not.toHaveBeenCalled();
+        expect(prismaMock.$transaction).not.toHaveBeenCalled();
+        expect(rows[0].account_guid).toBe(ACCOUNT_FROM);
+    });
+
+    it('does not treat a DUPLICATED guid in the body as a missing split', async () => {
+        const rows = installBookAwareDb([ownSplit(SPLIT_1), ownSplit(SPLIT_2, TX_B)]);
+
+        const response = await POST(moveRequest({
+            splitGuids: [SPLIT_1, SPLIT_1, SPLIT_2],
+            targetAccountGuid: TARGET_ACCOUNT,
+        }));
+        const body = await response.json();
+
+        // 3 guids requested, 2 distinct rows: the counts are compared after
+        // deduping, so this is a plain success, not a spurious 404/423.
+        expect(response.status).toBe(200);
+        expect(body).toEqual({ success: true, updated: 2 });
+        expect(prismaMock.splits.updateMany).toHaveBeenCalledWith({
+            where: {
+                guid: { in: [SPLIT_1, SPLIT_2] },
+                account_guid: { in: BOOK_ACCOUNTS },
+                reconcile_state: { notIn: ['y', 'f'] },
+            },
+            data: { account_guid: TARGET_ACCOUNT },
+        });
+        expect(rows.every(r => r.account_guid === TARGET_ACCOUNT)).toBe(true);
+    });
+
+    it('404s from INSIDE the transaction when a split leaves the book after the pre-check', async () => {
+        // The pre-transaction read sees an in-book split; by the time the
+        // parent lock is held and the authoritative read runs, the split has
+        // been re-parented into another book. The in-transaction guard — not
+        // the pre-check — is what must catch this.
+        const rows = installBookAwareDb([ownSplit(SPLIT_1)], (callIndex, live) => {
+            if (callIndex === 0) live[0].account_guid = FOREIGN_ACCOUNT;
+        });
+
+        const response = await POST(moveRequest({
+            splitGuids: [SPLIT_1],
+            targetAccountGuid: TARGET_ACCOUNT,
+        }));
+        const body = await response.json();
+
+        expect(response.status).toBe(404);
+        expect(body.error).toBe('Some splits not found in this book');
+        // We got past the pre-check and into the transaction...
+        expect(prismaMock.$transaction).toHaveBeenCalled();
+        expect(prismaMock.$queryRaw).toHaveBeenCalled();
+        // ...but nothing was written, and the enter_date bump never ran.
+        expect(prismaMock.splits.updateMany).not.toHaveBeenCalled();
+        expect(prismaMock.transactions.updateMany).not.toHaveBeenCalled();
+        expect(rows[0].account_guid).toBe(FOREIGN_ACCOUNT);
+    });
+
+    it('404s when only the WRITE predicate excludes an out-of-book row', async () => {
+        // Belt and braces: both reads see the split as in-book (stale), so the
+        // book constraint on the updateMany itself is the last line of
+        // defence. A short count with nothing reconciled must be a 404, never
+        // a quietly short "updated".
+        const rows = installBookAwareDb([ownSplit(SPLIT_1)], (callIndex, live) => {
+            // Move it out of book only after BOTH reads have been served.
+            if (callIndex === 1) live[0].account_guid = FOREIGN_ACCOUNT;
+        });
+
+        const response = await POST(moveRequest({
+            splitGuids: [SPLIT_1],
+            targetAccountGuid: TARGET_ACCOUNT,
+        }));
+        const body = await response.json();
+
+        expect(response.status).toBe(404);
+        expect(body.error).toBe('Some splits not found in this book');
+        expect(prismaMock.splits.updateMany).toHaveBeenCalled();
+        // The write matched nothing and the transaction rolled back.
+        expect(rows[0].account_guid).toBe(FOREIGN_ACCOUNT);
+        expect(prismaMock.transactions.updateMany).not.toHaveBeenCalled();
     });
 });

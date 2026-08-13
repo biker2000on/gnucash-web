@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { requireRole } from '@/lib/auth';
+import { getAccountGuidsForBook } from '@/lib/book-scope';
 import { cacheInvalidateFrom } from '@/lib/cache';
 import { publishDataChange } from '@/lib/data-events';
 import {
@@ -17,6 +18,27 @@ import {
     ReconciledSplitError,
     reconciledSplitResponse,
 } from '@/lib/services/reconciled-split.service';
+
+/**
+ * A guid in the request does not belong to the caller's book.
+ *
+ * Raised from inside the database transaction so the whole move rolls back
+ * (nothing is ever partially moved), and mapped to a 404 by the handler's
+ * catch. 404 — not 403 — is deliberate and matches the sibling bulk routes:
+ * a distinct "exists but is not yours" status would turn this endpoint into
+ * a cross-book guid-existence oracle.
+ */
+class OutOfBookError extends Error {
+    readonly code = 'OUT_OF_BOOK';
+
+    constructor(message: string) {
+        super(message);
+        this.name = 'OutOfBookError';
+    }
+}
+
+/** The single 404 body used for every out-of-book split, in or out of the tx. */
+const SPLITS_NOT_IN_BOOK = 'Some splits not found in this book';
 
 /**
  * @openapi
@@ -47,7 +69,7 @@ import {
  *       400:
  *         description: Invalid request or currency mismatch.
  *       404:
- *         description: Target account or splits not found.
+ *         description: Target account or splits not found in the caller's book.
  *       500:
  *         description: Server error.
  */
@@ -73,30 +95,61 @@ export async function POST(request: Request) {
             );
         }
 
-        // Verify target account exists
-        const targetAccount = await prisma.accounts.findUnique({
-            where: { guid: targetAccountGuid },
-            select: { guid: true, commodity_guid: true },
-        });
-        if (!targetAccount) {
+        // A repeated guid in the body is the same split asked for twice, not
+        // two rows: dedupe before every count comparison below, otherwise a
+        // duplicate produces a spurious "not found"/"reconciled" mismatch.
+        const uniqueSplitGuids: string[] = [...new Set<string>(splitGuids)];
+
+        // BOOK SCOPING. Both ends of this move — the target account and the
+        // account every split currently posts to — must live in the caller's
+        // book. Resolved by guid alone, an `edit` user on book A could re-book
+        // book B's splits into their own account (or push their own splits
+        // into book B), corrupting the balances of both ledgers.
+        const bookAccountGuids = await getAccountGuidsForBook(roleResult.bookGuid);
+        if (bookAccountGuids.length === 0) {
+            // Explicit, not incidental: an empty list must fail closed here
+            // rather than resting on Prisma rendering `in: []` as an
+            // always-false predicate — that is an ORM implementation detail,
+            // not something a security guarantee may depend on.
             return NextResponse.json(
-                { error: 'Target account not found' },
+                { error: 'Target account not found in this book' },
                 { status: 404 }
             );
         }
 
-        // Verify all splits exist and have the same commodity_guid as target
+        // Verify target account exists IN THIS BOOK. `equals` + `in` in one
+        // filter renders as `guid = $1 AND guid IN (...)`, so an out-of-book
+        // account is indistinguishable from a nonexistent one.
+        const targetAccount = await prisma.accounts.findFirst({
+            where: { guid: { equals: targetAccountGuid, in: bookAccountGuids } },
+            select: { guid: true, commodity_guid: true },
+        });
+        if (!targetAccount) {
+            return NextResponse.json(
+                { error: 'Target account not found in this book' },
+                { status: 404 }
+            );
+        }
+
+        // Verify all splits exist IN THIS BOOK and have the same
+        // commodity_guid as target. Out-of-book splits simply do not come
+        // back, so the count check below rejects the whole batch atomically —
+        // no partial move, and no oracle telling the caller whether the guid
+        // exists in someone else's book.
         const splits = await prisma.splits.findMany({
-            where: { guid: { in: splitGuids } },
+            where: {
+                guid: { in: uniqueSplitGuids },
+                account_guid: { in: bookAccountGuids },
+            },
             include: {
                 account: { select: { commodity_guid: true, name: true } },
                 transaction: { select: { post_date: true } },
             },
         });
 
-        if (splits.length !== splitGuids.length) {
+        if (splits.length !== uniqueSplitGuids.length) {
             return NextResponse.json(
-                { error: 'Some splits not found' },
+                { error: SPLITS_NOT_IN_BOOK },
                 { status: 404 }
             );
         }
@@ -147,7 +200,10 @@ export async function POST(request: Request) {
             await lockTransactionsForUpdate(parentTxGuids, tx);
 
             const freshSplits = await tx.splits.findMany({
-                where: { guid: { in: splitGuids } },
+                where: {
+                    guid: { in: uniqueSplitGuids },
+                    account_guid: { in: bookAccountGuids },
+                },
                 select: {
                     guid: true,
                     tx_guid: true,
@@ -157,6 +213,13 @@ export async function POST(request: Request) {
                     transaction: { select: { post_date: true } },
                 },
             });
+            // Authoritative book check: the read above is book-scoped, so a
+            // split that left this book between the pre-check and the lock
+            // simply does not come back. Refuse the whole batch — the
+            // transaction rolls back, so nothing moved.
+            if (freshSplits.length !== uniqueSplitGuids.length) {
+                throw new OutOfBookError(SPLITS_NOT_IN_BOOK);
+            }
             // Authoritative check: read under the parent lock, so a
             // concurrent reconcile cannot slip between it and the write.
             assertSplitsNotProtected('move these splits to another account', freshSplits);
@@ -166,24 +229,32 @@ export async function POST(request: Request) {
                 { bypassCache: true, client: tx },
             );
 
-            // Belt and braces: the protected states are also in the WHERE
-            // clause, so the write can never land on a reconciled row even if
-            // a future caller reaches this code without the lock.
+            // Belt and braces: the protected states AND the book scope are
+            // also in the WHERE clause, so the write can never land on a
+            // reconciled row, nor on another book's row, even if a future
+            // caller reaches this code without the lock or the pre-checks.
             const moved = await tx.splits.updateMany({
                 where: {
-                    guid: { in: splitGuids },
+                    guid: { in: uniqueSplitGuids },
+                    account_guid: { in: bookAccountGuids },
                     reconcile_state: { notIn: [...PROTECTED_RECONCILE_STATES] },
                 },
                 data: { account_guid: targetAccountGuid },
             });
-            if (moved.count !== splitGuids.length) {
-                // Fewer rows moved than asked for while holding the lock: the
-                // only predicate that can exclude one is the reconcile state.
+            if (moved.count !== uniqueSplitGuids.length) {
+                // Fewer rows moved than asked for while holding the lock: two
+                // predicates can exclude one — the reconcile state, or the
+                // book scope. Try the reconcile diagnosis first (it produces
+                // the actionable 423 naming the split)...
                 await assertNoReconciledSplits(
                     'move these splits to another account',
-                    { splitGuids },
+                    { splitGuids: uniqueSplitGuids },
                     { client: tx },
                 );
+                // ...and if no split was reconciled, the book predicate is
+                // what excluded it. Refuse rather than reporting a quietly
+                // short "updated" count; the transaction rolls back.
+                throw new OutOfBookError(SPLITS_NOT_IN_BOOK);
             }
 
             if (parentTxGuids.length > 0) {
@@ -223,6 +294,12 @@ export async function POST(request: Request) {
         }
         if (error instanceof ReconciledSplitError) {
             return reconciledSplitResponse(error);
+        }
+        if (error instanceof OutOfBookError) {
+            return NextResponse.json(
+                { error: error.message },
+                { status: 404 }
+            );
         }
         console.error('Failed to bulk move splits:', error);
         return NextResponse.json(
