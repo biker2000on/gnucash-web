@@ -32,14 +32,14 @@ jobs:
       - name: Generate Prisma client
         run: npx prisma generate
 
+      - name: Run typecheck
+        run: npm run typecheck
+
       - name: Verify documentation coverage
         run: npm run docs:check
 
       - name: Run unit and integration tests
         run: npm run test:run
-
-      - name: Run typecheck
-        run: npm run typecheck
 
       - name: Run lint
         run: npm run lint
