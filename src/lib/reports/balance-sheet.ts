@@ -1,5 +1,5 @@
 import prisma from '@/lib/prisma';
-import { buildAccountValuationContext } from '@/lib/account-valuation';
+import { buildAccountValuationContext, collectValuationCoverage } from '@/lib/account-valuation';
 import { ReportType, ReportData, ReportSection, ReportFilters, LineItem } from './types';
 import { buildHierarchy, resolveRootGuid, sumSplitsByAccount } from './utils';
 
@@ -66,20 +66,24 @@ export async function generateBalanceSheet(filters: ReportFilters): Promise<Repo
         { lte: endDate }
     );
 
-    const accountBalances = accounts.map(account => {
-        const quantity = balanceSums.get(account.guid)?.quantity ?? 0;
-
-        const balance = quantity * valuation.getMultiplier({
+    const valuedBalances = accounts.map(account => ({
+        account: {
             accountType: account.account_type,
             commodityGuid: account.commodity_guid,
             commodityNamespace: account.commodity?.namespace,
-        });
+        },
+        quantity: balanceSums.get(account.guid)?.quantity ?? 0,
+    }));
 
-        return {
-            ...account,
-            balance,
-        };
-    });
+    // An unconvertible balance drops to 0 on ONE side of the statement while
+    // whatever funded it stays valued on the other, so the identity below stops
+    // holding. Track that here and refuse to publish the check when it does.
+    const valuationCoverage = collectValuationCoverage(valuation, valuedBalances);
+
+    const accountBalances = accounts.map((account, index) => ({
+        ...account,
+        balance: valuedBalances[index].quantity * valuation.getMultiplier(valuedBalances[index].account),
+    }));
 
     // Separate by account type category (RECEIVABLE is an asset, PAYABLE a liability)
     const assetTypes = ['ASSET', 'BANK', 'CASH', 'STOCK', 'MUTUAL', 'RECEIVABLE'];
@@ -129,6 +133,12 @@ export async function generateBalanceSheet(filters: ReportFilters): Promise<Repo
         generatedAt: new Date().toISOString(),
         filters,
         sections,
-        grandTotal: totalAssets - totalLiabilities - totalEquity, // Should be 0 if balanced
+        // Should be 0 if balanced -- but only meaningful when every balance was
+        // valued. Withheld otherwise so a partially valued statement is never
+        // presented as passing (or failing) its own balance check.
+        grandTotal: valuationCoverage.complete
+            ? totalAssets - totalLiabilities - totalEquity
+            : undefined,
+        valuationCoverage,
     };
 }

@@ -28,6 +28,76 @@ export interface ValuationGap {
   message: string;
 }
 
+/**
+ * How much of a set of balances a total actually covers. `complete` is true for
+ * the ordinary fully-priced book; when it is false the total omits the listed
+ * commodities and must never be presented as a whole figure -- nor may any
+ * identity derived from it (a balance check, a period-over-period change) be
+ * presented as assessable.
+ */
+export interface ValuationCoverage {
+  complete: boolean;
+  /** Accounts with a material balance that contributed nothing to the total. */
+  unvaluedAccountCount: number;
+  /** The commodities behind those accounts, with user-facing explanations. */
+  gaps: ValuationGap[];
+}
+
+/**
+ * Materiality policy for coverage reporting: quantities at or below this are
+ * treated as an empty account rather than a hidden holding. Summing split
+ * fractions leaves float dust well under this bound, so the threshold exists to
+ * keep closed accounts out of the warning list -- NOT to hide small holdings.
+ * Any real position, including a single unit of the smallest-denominated
+ * commodity GnuCash supports, is orders of magnitude larger and is disclosed.
+ */
+export const UNVALUED_QUANTITY_EPSILON = 1e-9;
+
+/**
+ * Builds the coverage record for a set of valued balances. Only accounts
+ * carrying a material quantity count, so a closed account in a dead commodity
+ * does not raise a warning about a total it does not affect.
+ */
+export function collectValuationCoverage(
+  valuation: AccountValuationContext,
+  balances: Iterable<{ account: AccountValuationInput; quantity: number }>,
+): ValuationCoverage {
+  let unvaluedAccountCount = 0;
+  const unvaluedCommodityGuids = new Set<string>();
+
+  for (const { account, quantity } of balances) {
+    if (Math.abs(quantity) <= UNVALUED_QUANTITY_EPSILON) continue;
+    if (valuation.isConvertible?.(account) === false) {
+      unvaluedAccountCount++;
+      if (account.commodityGuid) unvaluedCommodityGuids.add(account.commodityGuid);
+    }
+  }
+
+  return {
+    complete: unvaluedAccountCount === 0,
+    unvaluedAccountCount,
+    gaps: (valuation.gaps ?? []).filter(gap => unvaluedCommodityGuids.has(gap.commodityGuid)),
+  };
+}
+
+/** Union of two coverage records, for a figure derived from both. */
+export function mergeValuationCoverage(
+  a: ValuationCoverage,
+  b: ValuationCoverage,
+): ValuationCoverage {
+  const gaps = [...a.gaps];
+  for (const gap of b.gaps) {
+    if (!gaps.some(existing => existing.commodityGuid === gap.commodityGuid)) {
+      gaps.push(gap);
+    }
+  }
+  return {
+    complete: a.complete && b.complete,
+    unvaluedAccountCount: Math.max(a.unvaluedAccountCount, b.unvaluedAccountCount),
+    gaps,
+  };
+}
+
 export interface AccountValuationContext {
   reportCurrencyGuid: string | null;
   reportCurrencyMnemonic: string;

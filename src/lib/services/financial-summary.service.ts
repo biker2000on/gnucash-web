@@ -17,25 +17,29 @@ import { getBaseCurrency, findExchangeRate } from '@/lib/currency';
 import type { Currency } from '@/lib/currency';
 import {
   buildAccountValuationContext,
+  collectValuationCoverage,
+  mergeValuationCoverage,
   type AccountValuationContext,
-  type ValuationGap,
+  type ValuationCoverage,
 } from '@/lib/account-valuation';
+
+export type { ValuationCoverage };
 
 const ASSET_TYPES = ['ASSET', 'BANK', 'CASH', 'RECEIVABLE'];
 const LIABILITY_TYPES = ['LIABILITY', 'CREDIT', 'PAYABLE'];
 const INVESTMENT_TYPES = ['STOCK', 'MUTUAL'];
 
 /**
- * How much of the book the accompanying total actually covers. `complete` is
- * true for the ordinary fully-priced book; when it is false the total is a
- * partial figure and must be presented with the gaps, never on its own.
+ * Coverage of a period-over-period change, which depends on BOTH endpoints.
+ * A gap at only one endpoint is worse than a partial total: the holding enters
+ * or leaves the valued set, so the change contains a swing that never happened.
  */
-export interface ValuationCoverage {
-  complete: boolean;
-  /** Accounts with a non-zero balance that contributed nothing to the total. */
-  unvaluedAccountCount: number;
-  /** The commodities behind those accounts, with user-facing explanations. */
-  gaps: ValuationGap[];
+export interface NetWorthChangeCoverage extends ValuationCoverage {
+  /**
+   * False when the endpoints exclude different commodities. The change and
+   * change-percent are then artifacts and must not be shown as gain or loss.
+   */
+  comparable: boolean;
 }
 
 export interface NetWorthResult {
@@ -51,6 +55,8 @@ export interface NetWorthSummary {
   end: NetWorthResult;
   change: number;
   changePercent: number;
+  /** Coverage of change/changePercent, folding in BOTH endpoints. */
+  changeCoverage: NetWorthChangeCoverage;
 }
 
 export interface IncomeExpenseSummary {
@@ -80,6 +86,8 @@ export interface FinancialSummary {
    * silently shrinking the headline figure.
    */
   coverage: ValuationCoverage;
+  /** Coverage of netWorthChange/netWorthChangePercent, across both endpoints. */
+  changeCoverage: NetWorthChangeCoverage;
 }
 
 /**
@@ -136,6 +144,7 @@ export class FinancialSummaryService {
       topExpenseAmount: round2(topCategory.amount),
       investmentValue: round2(netWorthSummary.end.investmentValue),
       coverage: netWorthSummary.end.coverage,
+      changeCoverage: netWorthSummary.changeCoverage,
     };
   }
 
@@ -201,8 +210,7 @@ export class FinancialSummaryService {
       let assetTotal = 0;
       let liabilityTotal = 0;
       let investmentValue = 0;
-      let unvaluedAccountCount = 0;
-      const unvaluedCommodityGuids = new Set<string>();
+      const valuedBalances: Array<{ account: typeof valuationInputs[number]; quantity: number }> = [];
       const quantityByAccount = new Map<string, number>();
 
       for (const split of splits) {
@@ -225,10 +233,7 @@ export class FinancialSummaryService {
         };
         // A balance we cannot price contributes 0 -- track it so the caller can
         // say the total is partial instead of showing a quietly shrunken figure.
-        if (Math.abs(quantity) > 1e-9 && valuation.isConvertible?.(valuationInput) === false) {
-          unvaluedAccountCount++;
-          if (account.commodity_guid) unvaluedCommodityGuids.add(account.commodity_guid);
-        }
+        valuedBalances.push({ account: valuationInput, quantity });
         const value = quantity * valuation.getMultiplier(valuationInput);
         if (ASSET_TYPES.includes(account.account_type)) {
           assetTotal += value;
@@ -244,13 +249,7 @@ export class FinancialSummaryService {
         liabilities: liabilityTotal,
         investmentValue,
         netWorth: assetTotal + investmentValue + liabilityTotal,
-        coverage: {
-          complete: unvaluedAccountCount === 0,
-          unvaluedAccountCount,
-          gaps: (valuation.gaps ?? []).filter(
-            gap => unvaluedCommodityGuids.has(gap.commodityGuid),
-          ),
-        },
+        coverage: collectValuationCoverage(valuation, valuedBalances),
       };
     }
 
@@ -261,11 +260,25 @@ export class FinancialSummaryService {
       ? (change / Math.abs(startNW.netWorth)) * 100
       : 0;
 
+    // The change spans both endpoints, so it inherits both sets of gaps. When
+    // the endpoints exclude DIFFERENT commodities the holding enters or leaves
+    // the valued set between them, and the resulting swing is an artifact of
+    // the missing data rather than a gain or loss.
+    const startGapKeys = startNW.coverage.gaps.map(gap => gap.commodityGuid).sort();
+    const endGapKeys = endNW.coverage.gaps.map(gap => gap.commodityGuid).sort();
+    const changeCoverage: NetWorthChangeCoverage = {
+      ...mergeValuationCoverage(startNW.coverage, endNW.coverage),
+      comparable:
+        startGapKeys.length === endGapKeys.length &&
+        startGapKeys.every((guid, index) => guid === endGapKeys[index]),
+    };
+
     return {
       start: startNW,
       end: endNW,
       change,
       changePercent,
+      changeCoverage,
     };
   }
 

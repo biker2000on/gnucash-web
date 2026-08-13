@@ -20,6 +20,10 @@ interface ValuationCoverage {
     gaps: ValuationGap[];
 }
 
+interface ValuationChangeCoverage extends ValuationCoverage {
+    comparable: boolean;
+}
+
 interface KPIData {
     netWorth: number;
     netWorthChange: number;
@@ -32,6 +36,7 @@ interface KPIData {
     investmentValue: number;
     /** Optional so a payload cached before coverage existed still renders. */
     coverage?: ValuationCoverage;
+    changeCoverage?: ValuationChangeCoverage;
     traces?: Partial<Record<'netWorth' | 'totalIncome' | 'totalExpenses' | 'savingsRate' | 'investmentValue', TraceReference>>;
 }
 
@@ -241,10 +246,22 @@ export default function KPIGrid({ data, loading }: KPIGridProps) {
     // A holding with no price and a currency with no exchange rate are both
     // left out of the totals entirely. Say so on the numbers they affect.
     const coverage = data.coverage;
+    const changeCoverage = data.changeCoverage;
     const unvaluedCount = coverage && !coverage.complete ? coverage.unvaluedAccountCount : 0;
     const partialCaveat = unvaluedCount > 0
         ? `Partial: excludes ${unvaluedCount} unvalued ${unvaluedCount === 1 ? 'account' : 'accounts'}`
         : undefined;
+    // When the two dates could not value the same holdings, the difference
+    // between them is an artifact of the missing data, not a gain or loss.
+    const changeComparable = changeCoverage?.comparable ?? true;
+    // The banner covers the level totals and the change alike: a gap at only the
+    // START date leaves end coverage complete, and that is exactly the case
+    // where an uncaveated change would be most misleading.
+    const bannerCoverage = coverage && !coverage.complete
+        ? coverage
+        : changeCoverage && !changeCoverage.complete
+            ? changeCoverage
+            : undefined;
 
     const cards: KPICardProps[] = [
         {
@@ -252,13 +269,17 @@ export default function KPIGrid({ data, loading }: KPIGridProps) {
             label: 'Net Worth',
             value: formatCurrency(data.netWorth),
             caveat: partialCaveat,
-            change: (
+            change: changeComparable ? (
                 <div className="flex items-center gap-2">
                     <ChangeIndicator value={data.netWorthChange} />
                     <span className="text-xs text-foreground-muted">
                         ({formatPercent(data.netWorthChangePercent)})
                     </span>
                 </div>
+            ) : (
+                <span className="text-xs font-medium text-warning">
+                    Change not available
+                </span>
             ),
             traceId: data.traces?.netWorth?.traceId,
             onExplain: setSelectedTraceId,
@@ -302,22 +323,31 @@ export default function KPIGrid({ data, loading }: KPIGridProps) {
 
     return (
         <>
-            {coverage && !coverage.complete && (
-                <div className="bg-warning/10 border border-warning/30 rounded-lg px-4 py-3 mb-4 text-sm text-warning">
+            {bannerCoverage && (
+                <div
+                    role="alert"
+                    className="bg-warning/10 border border-warning/30 rounded-lg px-4 py-3 mb-4 text-sm text-warning"
+                >
                     <div className="font-medium">
                         These totals are incomplete
                     </div>
-                    {coverage.gaps.length > 0 && (
+                    {bannerCoverage.gaps.length > 0 && (
                         <ul className="mt-1.5 space-y-1 text-xs">
-                            {coverage.gaps.map(gap => (
+                            {bannerCoverage.gaps.map(gap => (
                                 <li key={gap.commodityGuid}>{gap.message}</li>
                             ))}
                         </ul>
                     )}
-                    {coverage.gaps.length === 0 && (
+                    {bannerCoverage.gaps.length === 0 && (
                         <p className="mt-1.5 text-xs">
-                            {coverage.unvaluedAccountCount} account balance(s) could not be
+                            {bannerCoverage.unvaluedAccountCount} account balance(s) could not be
                             converted to the report currency and are excluded.
+                        </p>
+                    )}
+                    {!changeComparable && (
+                        <p className="mt-1.5 text-xs">
+                            The start and end dates could not value the same holdings, so the
+                            net worth change and percentage are not shown.
                         </p>
                     )}
                 </div>

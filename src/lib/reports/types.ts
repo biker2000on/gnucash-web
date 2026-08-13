@@ -2,6 +2,10 @@
  * Report Type Definitions
  */
 
+import type { ValuationCoverage } from '@/lib/account-valuation';
+
+export type { ValuationCoverage };
+
 export enum ReportType {
   BALANCE_SHEET = 'balance_sheet',
   INCOME_STATEMENT = 'income_statement',
@@ -194,8 +198,15 @@ export interface ReportData {
   generatedAt: string;
   filters: ReportFilters;
   sections: ReportSection[];
+  /**
+   * Omitted when valuationCoverage is incomplete: a balance check computed from
+   * partially valued sections is not a real check, and publishing the number
+   * would present an unbalanced statement as balanced.
+   */
   grandTotal?: number;
   previousGrandTotal?: number;
+  /** Present and incomplete when some balances could not be valued. */
+  valuationCoverage?: ValuationCoverage;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

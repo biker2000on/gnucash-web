@@ -126,6 +126,16 @@ export async function GET(request: NextRequest) {
         // excluded from the totals below, so every surface reporting those
         // totals has to say so rather than implying full coverage.
         const coverageWarnings = summary.coverage.gaps.map(gap => gap.message);
+        // The change spans two valuation dates, so it carries both endpoints'
+        // gaps -- and is not a gain or loss at all when they differ.
+        const changeCoverageWarnings = [
+            ...summary.changeCoverage.gaps
+                .map(gap => gap.message)
+                .filter(message => !coverageWarnings.includes(message)),
+            ...(summary.changeCoverage.comparable
+                ? []
+                : ['Net worth change is not comparable: the start and end dates could not value the same holdings.']),
+        ];
         const commonEvidence = [{
             kind: 'report_query' as const,
             id: `dashboard-kpis:${dateRange}`,
@@ -160,7 +170,7 @@ export async function GET(request: NextRequest) {
                     ...commonEvidence,
                     ...priceEvidence,
                 ],
-                warnings: [...coverageWarnings, ...priceWarnings],
+                warnings: [...coverageWarnings, ...changeCoverageWarnings, ...priceWarnings],
             }),
             totalIncome: createCalculationTrace({
                 namespace: 'dashboard-kpi',

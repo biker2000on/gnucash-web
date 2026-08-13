@@ -6,7 +6,11 @@ import {
     type BudgetRecurrence,
 } from '@/lib/budget-actuals';
 import { toDecimalNumber } from '@/lib/gnucash';
-import { buildAccountValuationContext } from '@/lib/account-valuation';
+import {
+    buildAccountValuationContext,
+    collectValuationCoverage,
+    type ValuationCoverage,
+} from '@/lib/account-valuation';
 import { isBudgetOwnedByBook } from '@/lib/budget-ownership';
 
 /**
@@ -362,9 +366,15 @@ export interface BudgetBalanceSheetData {
         liabilities: BalanceSheetPair;
         equity: BalanceSheetPair;
         liabilitiesAndEquity: BalanceSheetPair;
-        /** assets − (liabilities + equity); ≈0 when the book closes cleanly */
+        /**
+         * assets − (liabilities + equity); ≈0 when the book closes cleanly.
+         * Meaningless unless valuationCoverage.complete — an unvalued balance
+         * zeroes one side of the identity and not the other.
+         */
         check: BalanceSheetPair;
     };
+    /** Incomplete when some balances could not be valued; see `check`. */
+    valuationCoverage: ValuationCoverage;
 }
 
 export const BALANCE_SHEET_ASSET_TYPES = ['ASSET', 'BANK', 'CASH', 'STOCK', 'MUTUAL', 'RECEIVABLE'] as const;
@@ -914,6 +924,27 @@ export async function generateBudgetBalanceSheet(
         else actualExpense += raw;
     }
 
+    // Coverage over the raw (pre-multiplier) units each account carries, actual
+    // and budgeted alike. An unconvertible balance is multiplied by 0 on one
+    // side of the identity only, so the check row cannot be trusted when this
+    // comes back incomplete.
+    const valuationCoverage = collectValuationCoverage(
+        valuation,
+        accounts.map(account => {
+            const sum = (row: number[] | undefined) => (row ?? []).reduce((a, b) => a + b, 0);
+            return {
+                account: {
+                    accountType: account.account_type,
+                    commodityGuid: account.commodity_guid,
+                    commodityNamespace: account.commodity?.namespace,
+                },
+                quantity: (opening.get(account.guid) || 0)
+                    + sum(flows.get(account.guid))
+                    + sum(budgetedFlows.get(account.guid)),
+            };
+        }),
+    );
+
     const inputs: BalanceProjectionInput[] = accounts.map(account => {
         const multiplier = multiplierByGuid.get(account.guid) ?? 1;
         const budgeted = budgetedFlows.get(account.guid);
@@ -946,5 +977,6 @@ export async function generateBudgetBalanceSheet(
         periodIndex: clampedIndex,
         asOfDate: ranges[clampedIndex].end,
         ...sections,
+        valuationCoverage,
     };
 }
