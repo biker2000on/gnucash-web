@@ -100,6 +100,30 @@ Covers work landed since 0.23.2.0 (2026-07-29).
   adjustment for assets whose quantity and transaction-currency value differ
   (multi-currency holdings and books imported from GnuCash desktop). Reports
   produced before this release should be regenerated.
+- **Cost basis for shares transferred in from another account is now traced,
+  and where it genuinely cannot be established the app says so instead of
+  showing zero.** A transfer-in split carries no value of its own, so shares
+  moved between your own accounts previously entered the receiving account at
+  **$0 basis** under the average-cost method — which then contaminated the
+  reported basis of every other share in that pool, because averaging is
+  pooled. Basis is now carried through the transfer chain. Where the chain runs
+  dry — typically shares transferred in from an account outside this book —
+  those shares are excluded from the average and reported separately rather
+  than being silently valued at nothing.
+
+  Portfolio cost basis, the ledger's running cost-basis column, and the
+  dashboard figures derived from them will change for any book that has moved
+  holdings between accounts; previously-understated basis rises and the
+  corresponding overstated gain falls. **Form 8949 and the capital-gains report
+  were not affected** — they read the stored carried basis directly and never
+  used this path — so this does not imply anything about a filed return.
+
+  Two cases now report "coverage unknown" rather than a number: an account
+  holding a **short or oversold position**, where a cost basis for shares you
+  do not yet own has no honest value, and any request made with cost-basis
+  carry-over **switched off**, where the app has deliberately not traced
+  anything and so cannot claim the basis is complete. Previously both reported
+  full coverage, which was simply untrue.
 - **Brokerage commissions are now included in cost basis and proceeds — your
   previously-generated Form 8949 output overstated gains.** GnuCash records a
   commission as a separate expense split on the trade transaction, and the lot
