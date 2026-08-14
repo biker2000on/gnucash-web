@@ -113,6 +113,7 @@ export async function POST(request: Request) {
 
         // Claim the idempotency key BEFORE the write. The UNIQUE index picks
         // the winner, so a concurrent replay can never also reach the insert.
+        let claimAttempt: number | null = null;
         if (idempotencyKey) {
             const claim = await claimWebhookIdempotency(bookGuid, 'transaction', idempotencyKey);
             if (claim.status === 'replay') {
@@ -127,6 +128,18 @@ export async function POST(request: Request) {
                     { status: 409 }
                 );
             }
+            if (claim.status === 'terminal') {
+                return NextResponse.json(
+                    {
+                        error: 'This idempotency key exhausted its retry budget and needs operator attention',
+                        idempotencyState: claim.state,
+                        attempts: claim.attempts,
+                        detail: claim.detail,
+                    },
+                    { status: 409 }
+                );
+            }
+            claimAttempt = claim.attempt;
         }
 
         const cents = toCents(input.amount);
@@ -183,7 +196,7 @@ export async function POST(request: Request) {
             // The write failed, so the key must not stay burned — a genuine
             // retry has to be able to proceed.
             if (idempotencyKey) {
-                await releaseWebhookIdempotency(bookGuid, 'transaction', idempotencyKey);
+                await releaseWebhookIdempotency(bookGuid, 'transaction', idempotencyKey, claimAttempt!);
             }
             throw writeError;
         }
@@ -212,7 +225,7 @@ export async function POST(request: Request) {
             amount: input.amount,
         };
         if (idempotencyKey) {
-            await completeWebhookIdempotency(bookGuid, 'transaction', idempotencyKey, payload);
+            await completeWebhookIdempotency(bookGuid, 'transaction', idempotencyKey, claimAttempt!, payload);
         }
 
         return NextResponse.json(payload, { status: 201 });

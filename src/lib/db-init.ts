@@ -2110,9 +2110,30 @@ async function createExtensionTables() {
             endpoint VARCHAR(64) NOT NULL,
             idempotency_key VARCHAR(200) NOT NULL,
             result JSONB,
+            state VARCHAR(32) NOT NULL DEFAULT 'processing',
+            attempts INTEGER NOT NULL DEFAULT 1,
+            claim_started_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            detail TEXT,
             completed_at TIMESTAMP,
             created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
+
+        ALTER TABLE gnucash_web_webhook_idempotency
+          ADD COLUMN IF NOT EXISTS state VARCHAR(32) NOT NULL DEFAULT 'processing';
+        ALTER TABLE gnucash_web_webhook_idempotency
+          ADD COLUMN IF NOT EXISTS attempts INTEGER NOT NULL DEFAULT 1;
+        ALTER TABLE gnucash_web_webhook_idempotency
+          ADD COLUMN IF NOT EXISTS claim_started_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP;
+        ALTER TABLE gnucash_web_webhook_idempotency
+          ADD COLUMN IF NOT EXISTS detail TEXT;
+
+        UPDATE gnucash_web_webhook_idempotency
+        SET state = CASE WHEN result IS NOT NULL OR completed_at IS NOT NULL
+                         THEN 'completed' ELSE 'processing' END,
+            attempts = GREATEST(COALESCE(attempts, 1), 1),
+            claim_started_at = COALESCE(claim_started_at, created_at)
+        WHERE state IS NULL OR attempts IS NULL OR claim_started_at IS NULL
+           OR (state = 'processing' AND (result IS NOT NULL OR completed_at IS NOT NULL));
 
         CREATE UNIQUE INDEX IF NOT EXISTS uq_webhook_idempotency
             ON gnucash_web_webhook_idempotency (book_guid, endpoint, idempotency_key);
