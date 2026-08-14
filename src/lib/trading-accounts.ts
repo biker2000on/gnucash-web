@@ -124,10 +124,15 @@ export async function getOrCreateTradingAccount(
   commodityGuid: string,
   commodityMnemonic: string,
   commodityNamespace: string,
+  bookAccountGuids: Set<string>,
   tx?: Parameters<typeof prisma.$transaction>[0] extends (prisma: infer P) => unknown ? P : never
 ): Promise<string> {
   // Use provided transaction context or default prisma
   const db = tx || prisma;
+  const scopedGuids = [...bookAccountGuids];
+  if (scopedGuids.length === 0) {
+    throw new Error('Cannot create a trading account for an empty book scope');
+  }
 
   // Each check-then-create below is guarded by a per-(parent, name)
   // advisory lock with a re-check after acquiring it, so two concurrent
@@ -138,13 +143,20 @@ export async function getOrCreateTradingAccount(
 
   // 1. Find root Trading account or create it
   let tradingRoot = await db.accounts.findFirst({
-    where: { name: 'Trading', account_type: 'TRADING' },
+    where: {
+      name: 'Trading',
+      account_type: 'TRADING',
+      guid: { in: scopedGuids },
+    },
+    orderBy: { guid: 'asc' },
   });
 
   if (!tradingRoot) {
-    // Find the root account (account_type ROOT)
+    // Find this book's root account, never an arbitrary root from another
+    // book. The supplied scope came from the caller's session-derived book.
     const rootAccount = await db.accounts.findFirst({
-      where: { account_type: 'ROOT' },
+      where: { account_type: 'ROOT', guid: { in: scopedGuids } },
+      orderBy: { guid: 'asc' },
     });
 
     if (!rootAccount) {
@@ -154,7 +166,11 @@ export async function getOrCreateTradingAccount(
     const locked = await acquireNamedXactLock(db, accountNameLockKey(rootAccount.guid, 'Trading'));
     if (locked) {
       tradingRoot = await db.accounts.findFirst({
-        where: { name: 'Trading', account_type: 'TRADING' },
+        // Do not use the caller's cached account list here: this re-check
+        // specifically has to see a Trading root created after that list was
+        // populated by a prior save. rootAccount is already in scope.
+        where: { name: 'Trading', account_type: 'TRADING', parent_guid: rootAccount.guid },
+        orderBy: { guid: 'asc' },
       });
     }
 
@@ -181,12 +197,17 @@ export async function getOrCreateTradingAccount(
           placeholder: 1,
         },
       });
+      // The caller's scope was captured before this hierarchy existed. Keep
+      // it current so a later commodity in this same save can reuse this new
+      // Trading root and so the route's output assertion recognizes it.
+      bookAccountGuids.add(tradingRoot.guid);
     }
   }
 
   // 2. Find or create namespace group under Trading (CURRENCY, NYSE, NASDAQ, etc.)
   let namespaceGroup = await db.accounts.findFirst({
     where: { name: commodityNamespace, parent_guid: tradingRoot.guid },
+    orderBy: { guid: 'asc' },
   });
 
   if (!namespaceGroup) {
@@ -194,6 +215,7 @@ export async function getOrCreateTradingAccount(
     if (locked) {
       namespaceGroup = await db.accounts.findFirst({
         where: { name: commodityNamespace, parent_guid: tradingRoot.guid },
+        orderBy: { guid: 'asc' },
       });
     }
   }
@@ -212,11 +234,13 @@ export async function getOrCreateTradingAccount(
         placeholder: 1,
       },
     });
+    bookAccountGuids.add(namespaceGroup.guid);
   }
 
   // 3. Find or create specific commodity account (e.g., Trading:NYSE:VTI or Trading:CURRENCY:EUR)
   let commodityAccount = await db.accounts.findFirst({
     where: { name: commodityMnemonic, parent_guid: namespaceGroup.guid },
+    orderBy: { guid: 'asc' },
   });
 
   if (!commodityAccount) {
@@ -224,6 +248,7 @@ export async function getOrCreateTradingAccount(
     if (locked) {
       commodityAccount = await db.accounts.findFirst({
         where: { name: commodityMnemonic, parent_guid: namespaceGroup.guid },
+        orderBy: { guid: 'asc' },
       });
     }
   }
@@ -242,6 +267,7 @@ export async function getOrCreateTradingAccount(
         placeholder: 0,
       },
     });
+    bookAccountGuids.add(commodityAccount.guid);
   }
 
   return commodityAccount.guid;
@@ -360,7 +386,8 @@ export async function processMultiCurrencySplits(
     action?: string;
     reconcile_state?: 'n' | 'c' | 'y';
   }>,
-  tx: Parameters<typeof prisma.$transaction>[0] extends (prisma: infer P) => unknown ? P : never
+  tx: Parameters<typeof prisma.$transaction>[0] extends (prisma: infer P) => unknown ? P : never,
+  bookAccountGuids: Set<string>,
 ): Promise<{
   isMultiCurrency: boolean;
   allSplits: Array<{
@@ -421,7 +448,13 @@ export async function processMultiCurrencySplits(
   // Get or create trading accounts for each imbalanced commodity
   const tradingAccountGuids = new Map<string, string>();
   for (const [commodityGuid, { mnemonic, namespace }] of imbalances) {
-    const tradingGuid = await getOrCreateTradingAccount(commodityGuid, mnemonic, namespace, tx);
+    const tradingGuid = await getOrCreateTradingAccount(
+      commodityGuid,
+      mnemonic,
+      namespace,
+      bookAccountGuids,
+      tx,
+    );
     tradingAccountGuids.set(commodityGuid, tradingGuid);
   }
 

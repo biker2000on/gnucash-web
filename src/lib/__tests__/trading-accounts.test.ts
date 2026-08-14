@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // --- Prisma mock -----------------------------------------------------------
 
 const mockAccountsFindFirst = vi.fn();
+const mockAccountsFindMany = vi.fn();
 const mockAccountsCreate = vi.fn();
 const mockCommoditiesFindFirst = vi.fn();
 
@@ -10,6 +11,7 @@ vi.mock('@/lib/prisma', () => ({
   default: {
     accounts: {
       findFirst: (...args: unknown[]) => mockAccountsFindFirst(...args),
+      findMany: (...args: unknown[]) => mockAccountsFindMany(...args),
       create: (...args: unknown[]) => mockAccountsCreate(...args),
     },
     commodities: {
@@ -21,6 +23,7 @@ vi.mock('@/lib/prisma', () => ({
 
 import {
   getOrCreateTradingAccount,
+  processMultiCurrencySplits,
   generateTradingSplits,
   calculateImbalances,
   type CommodityImbalance,
@@ -34,6 +37,7 @@ interface FakeAccount {
   account_type?: string;
   parent_guid?: string | null;
   commodity_guid?: string | null;
+  commodity?: { mnemonic: string; namespace: string; fraction: number } | null;
 }
 
 /**
@@ -46,6 +50,8 @@ function setupStatefulMock(seedAccounts: FakeAccount[] = []) {
   mockAccountsFindFirst.mockImplementation(
     ({ where }: { where: Record<string, unknown> }) => {
       const match = accounts.find(a => {
+        const requestedGuids = (where.guid as { in?: string[] } | undefined)?.in;
+        if (requestedGuids && !requestedGuids.includes(a.guid)) return false;
         if (where.account_type !== undefined && a.account_type !== where.account_type) return false;
         if (where.name !== undefined && a.name !== where.name) return false;
         if (where.parent_guid !== undefined && a.parent_guid !== where.parent_guid) return false;
@@ -62,6 +68,15 @@ function setupStatefulMock(seedAccounts: FakeAccount[] = []) {
     },
   );
 
+  mockAccountsFindMany.mockImplementation(
+    ({ where }: { where: { guid?: { in?: string[] } } }) => {
+      const requestedGuids = where.guid?.in;
+      return Promise.resolve(requestedGuids
+        ? accounts.filter(account => requestedGuids.includes(account.guid))
+        : accounts);
+    },
+  );
+
   mockCommoditiesFindFirst.mockResolvedValue({ guid: 'usd-commodity-guid' });
 
   return accounts;
@@ -72,6 +87,7 @@ function setupStatefulMock(seedAccounts: FakeAccount[] = []) {
 describe('getOrCreateTradingAccount', () => {
   beforeEach(() => {
     mockAccountsFindFirst.mockReset();
+    mockAccountsFindMany.mockReset();
     mockAccountsCreate.mockReset();
     mockCommoditiesFindFirst.mockReset();
   });
@@ -81,7 +97,7 @@ describe('getOrCreateTradingAccount', () => {
       { guid: 'root-guid', name: 'Root Account', account_type: 'ROOT' },
     ]);
 
-    await getOrCreateTradingAccount('vti-commodity-guid', 'VTI', 'NYSE');
+    await getOrCreateTradingAccount('vti-commodity-guid', 'VTI', 'NYSE', new Set(['root-guid']));
 
     const tradingRoot = accounts.find(a => a.name === 'Trading');
     const nyseGroup = accounts.find(a => a.name === 'NYSE');
@@ -106,7 +122,7 @@ describe('getOrCreateTradingAccount', () => {
       { guid: 'root-guid', name: 'Root Account', account_type: 'ROOT' },
     ]);
 
-    await getOrCreateTradingAccount('usd-commodity-guid', 'USD', 'CURRENCY');
+    await getOrCreateTradingAccount('usd-commodity-guid', 'USD', 'CURRENCY', new Set(['root-guid']));
 
     expect(accounts.find(a => a.name === 'CURRENCY')).toBeDefined();
     const usdAccount = accounts.find(a => a.name === 'USD');
@@ -123,7 +139,9 @@ describe('getOrCreateTradingAccount', () => {
       { guid: 'vti-trading-guid', name: 'VTI', account_type: 'TRADING', parent_guid: 'nyse-guid' },
     ]);
 
-    const result = await getOrCreateTradingAccount('vti-commodity-guid', 'VTI', 'NYSE');
+    const result = await getOrCreateTradingAccount('vti-commodity-guid', 'VTI', 'NYSE', new Set([
+      'root-guid', 'trading-guid', 'nyse-guid', 'vti-trading-guid',
+    ]));
 
     expect(result).toBe('vti-trading-guid');
     expect(mockAccountsCreate).not.toHaveBeenCalled();
@@ -134,14 +152,93 @@ describe('getOrCreateTradingAccount', () => {
       { guid: 'root-guid', name: 'Root Account', account_type: 'ROOT' },
     ]);
 
-    await getOrCreateTradingAccount('usd-guid', 'USD', 'CURRENCY');
-    await getOrCreateTradingAccount('vti-guid', 'VTI', 'NYSE');
+    const scope = new Set(['root-guid']);
+    await getOrCreateTradingAccount('usd-guid', 'USD', 'CURRENCY', scope);
+    await getOrCreateTradingAccount('vti-guid', 'VTI', 'NYSE', scope);
 
     const namespaceGroups = accounts.filter(a =>
       a.parent_guid === accounts.find(t => t.name === 'Trading')?.guid,
     );
     const groupNames = namespaceGroups.map(g => g.name).sort();
     expect(groupNames).toEqual(['CURRENCY', 'NYSE']);
+  });
+
+  it('does not create another Trading root across sequential multi-currency saves with stale scopes', async () => {
+    const accounts = setupStatefulMock([
+      { guid: 'root-guid', name: 'Root Account', account_type: 'ROOT' },
+      {
+        guid: 'usd-account', name: 'Cash', parent_guid: 'root-guid', commodity_guid: 'usd',
+        commodity: { mnemonic: 'USD', namespace: 'CURRENCY', fraction: 100 },
+      },
+      {
+        guid: 'eur-account', name: 'Euro', parent_guid: 'root-guid', commodity_guid: 'eur',
+        commodity: { mnemonic: 'EUR', namespace: 'CURRENCY', fraction: 100 },
+      },
+    ]);
+    // A real transaction client takes the advisory lock, so the parent-keyed
+    // re-check runs. Each save gets a fresh Set copied from the same stale
+    // cached array, neither of which contains the first created Trading tree.
+    const tx = {
+      accounts: {
+        findFirst: mockAccountsFindFirst,
+        findMany: mockAccountsFindMany,
+        create: mockAccountsCreate,
+      },
+      commodities: { findFirst: mockCommoditiesFindFirst },
+      $queryRaw: vi.fn().mockResolvedValue([]),
+    };
+
+    const save = (staleScope: Set<string>) => processMultiCurrencySplits([
+      { account_guid: 'usd-account', value_num: -10000, value_denom: 100 },
+      { account_guid: 'eur-account', value_num: 10000, value_denom: 100, quantity_num: 8500, quantity_denom: 100 },
+    ], tx as never, staleScope);
+
+    await save(new Set(['root-guid', 'usd-account', 'eur-account']));
+    await save(new Set(['root-guid', 'usd-account', 'eur-account']));
+
+    expect(accounts.filter(account => account.name === 'Trading' && account.parent_guid === 'root-guid')).toHaveLength(1);
+  });
+});
+
+describe('processMultiCurrencySplits book scope', () => {
+  it('creates local Trading splits instead of posting into the only foreign Trading tree', async () => {
+    const foreignTradingLeaf = 'foreign-trading-eur';
+    const localScope = new Set(['root-book-b', 'book-b-usd', 'book-b-eur']);
+    const accounts = setupStatefulMock([
+      // Physical order deliberately puts book A's complete Trading hierarchy
+      // first — the vulnerable unscoped findFirst selected this tree.
+      { guid: 'root-book-a', name: 'Root A', account_type: 'ROOT' },
+      { guid: 'foreign-trading', name: 'Trading', account_type: 'TRADING', parent_guid: 'root-book-a' },
+      { guid: 'foreign-currency', name: 'CURRENCY', account_type: 'TRADING', parent_guid: 'foreign-trading' },
+      { guid: foreignTradingLeaf, name: 'EUR', account_type: 'TRADING', parent_guid: 'foreign-currency' },
+      { guid: 'root-book-b', name: 'Root B', account_type: 'ROOT' },
+      {
+        guid: 'book-b-usd', name: 'Cash', parent_guid: 'root-book-b',
+        commodity_guid: 'usd', commodity: { mnemonic: 'USD', namespace: 'CURRENCY', fraction: 100 },
+      },
+      {
+        guid: 'book-b-eur', name: 'Euro', parent_guid: 'root-book-b',
+        commodity_guid: 'eur', commodity: { mnemonic: 'EUR', namespace: 'CURRENCY', fraction: 100 },
+      },
+    ]);
+    const tx = {
+      accounts: {
+        findFirst: mockAccountsFindFirst,
+        findMany: mockAccountsFindMany,
+        create: mockAccountsCreate,
+      },
+      commodities: { findFirst: mockCommoditiesFindFirst },
+    };
+
+    const result = await processMultiCurrencySplits([
+      { account_guid: 'book-b-usd', value_num: -10000, value_denom: 100 },
+      { account_guid: 'book-b-eur', value_num: 10000, value_denom: 100, quantity_num: 8500, quantity_denom: 100 },
+    ], tx as never, localScope);
+
+    const tradingSplits = result.allSplits.slice(2);
+    expect(tradingSplits).toHaveLength(2);
+    expect(tradingSplits.map(split => split.account_guid)).not.toContain(foreignTradingLeaf);
+    expect(tradingSplits.every(split => localScope.has(split.account_guid))).toBe(true);
   });
 });
 
