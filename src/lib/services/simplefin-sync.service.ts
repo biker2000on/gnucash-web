@@ -7,6 +7,8 @@
 
 import prisma, { generateGuid } from '@/lib/prisma';
 import { tryWithDatabaseAdvisoryLock } from '@/lib/db';
+import { getAccountGuidsForBook } from '@/lib/book-scope';
+import { acquireBookLock, acquireNamedXactLock, accountNameLockKey } from '@/lib/book-lock';
 import { decryptAccessUrl, fetchAccountsChunked, SimpleFinTransaction, SimpleFinAccessRevokedError, SimpleFinHolding } from './simplefin.service';
 import { toNumDenom } from '@/lib/validation';
 import { buildSymbolSet, parseSymbol } from './simplefin-symbol-parser';
@@ -328,8 +330,11 @@ async function runSimpleFinSync(
   };
 
   // Get connection
-  const connection = await prisma.gnucash_web_simplefin_connections.findUnique({
-    where: { id: connectionId },
+  const connection = await prisma.gnucash_web_simplefin_connections.findFirst({
+    // The service is invoked by jobs as well as HTTP handlers. Bind the
+    // caller-supplied pair to the persisted connection before following its
+    // account mappings, rather than trusting connectionId alone.
+    where: { id: connectionId, book_guid: bookGuid },
     select: { id: true, user_id: true, access_url_encrypted: true, last_sync_at: true },
   });
 
@@ -339,6 +344,18 @@ async function runSimpleFinSync(
     result.errors.push({ account: 'connection', error: 'Connection not found' });
     return result;
   }
+
+  // This is the one reusable definition of membership used throughout the
+  // sync. Do not replace it with another parent-walk CTE: book-scope owns
+  // that logic (including its bounded traversal and cache invalidation).
+  const bookAccountGuids = await getAccountGuidsForBook(bookGuid);
+  if (bookAccountGuids.length === 0) {
+    result.status = 'failed';
+    result.fatal = true;
+    result.errors.push({ account: 'connection', error: 'No accounts found for this book' });
+    return result;
+  }
+  const bookAccountGuidSet = new Set(bookAccountGuids);
 
   await updateSimpleFinConnectionSyncStatus(connectionId, 'running');
 
@@ -368,9 +385,18 @@ async function runSimpleFinSync(
       is_investment: true,
     },
   });
-  const mappedAccounts = mappedAccountsRaw as Array<
+  const mappedAccounts = (mappedAccountsRaw as Array<
     Omit<(typeof mappedAccountsRaw)[number], 'gnucash_account_guid'> & { gnucash_account_guid: string }
-  >;
+  >).filter(mappedAccount => {
+    if (bookAccountGuidSet.has(mappedAccount.gnucash_account_guid)) return true;
+    // A stale/corrupt mapping must not turn into a cross-book split. It is
+    // named as a sync error and skipped, never silently redirected.
+    result.errors.push({
+      account: mappedAccount.simplefin_account_name || mappedAccount.simplefin_account_id,
+      error: 'Mapped GnuCash account not found in this book',
+    });
+    return false;
+  });
 
   if (mappedAccounts.length === 0) {
     await updateSimpleFinConnectionSyncStatus(connectionId, 'success');
@@ -474,7 +500,7 @@ async function runSimpleFinSync(
         const holdingsSymbolSet = buildSymbolSet(sfAccount.holdings);
         for (const [symbol, desc] of holdingsSymbolSet) {
           try {
-            await getOrCreateChildAccount(mappedAccount.gnucash_account_guid, symbol, desc, accountsCreated);
+            await getOrCreateChildAccount(mappedAccount.gnucash_account_guid, symbol, desc, bookGuid, bookAccountGuidSet, accountsCreated);
           } catch (err) {
             result.errors.push({
               account: mappedAccount.simplefin_account_name || mappedAccount.simplefin_account_id,
@@ -482,7 +508,7 @@ async function runSimpleFinSync(
             });
           }
         }
-        await getOrCreateCashChild(mappedAccount.gnucash_account_guid, accountsCreated);
+        await getOrCreateCashChild(mappedAccount.gnucash_account_guid, bookGuid, bookAccountGuidSet, accountsCreated);
         result.accountsProcessed++;
       }
       continue;
@@ -512,8 +538,10 @@ async function runSimpleFinSync(
       }
 
       // Get the GnuCash account's commodity/currency for the splits
-      const gnucashAccount = await prisma.accounts.findUnique({
-        where: { guid: mappedAccount.gnucash_account_guid },
+      const gnucashAccount = await prisma.accounts.findFirst({
+        where: {
+          guid: { equals: mappedAccount.gnucash_account_guid, in: bookAccountGuids },
+        },
         include: { commodity: true },
       });
 
@@ -543,7 +571,7 @@ async function runSimpleFinSync(
       // Pre-resolve Cash child guid for investment accounts (avoids repeated lookups)
       let cashChildGuid: string | undefined;
       if (mappedAccount.is_investment) {
-        cashChildGuid = await getOrCreateCashChild(mappedAccount.gnucash_account_guid, accountsCreated);
+        cashChildGuid = await getOrCreateCashChild(mappedAccount.gnucash_account_guid, bookGuid, bookAccountGuidSet, accountsCreated);
       }
 
       for (const sfTxn of sfAccount.transactions) {
@@ -588,6 +616,8 @@ async function runSimpleFinSync(
                 mappedAccount.gnucash_account_guid,
                 match.symbol,
                 holdingDesc,
+                bookGuid,
+                bookAccountGuidSet,
                 accountsCreated,
               );
               isSymbolMatched = true;
@@ -605,6 +635,7 @@ async function runSimpleFinSync(
               currencyGuid,
               currencyMnemonic,
               bookGuid,
+              bookAccountGuidSet,
               mappedAccount.gnucash_account_guid,
             );
             result.investmentTransactionsImported++;
@@ -615,7 +646,8 @@ async function runSimpleFinSync(
               mappedAccount.gnucash_account_guid,
               currencyGuid,
               currencyMnemonic,
-              bookGuid
+              bookGuid,
+              bookAccountGuidSet,
             );
           }
           result.transactionsImported++;
@@ -1144,7 +1176,8 @@ async function importTransaction(
   bankAccountGuid: string,
   currencyGuid: string,
   currencyMnemonic: string,
-  bookGuid: string
+  bookGuid: string,
+  bookAccountGuids: ReadonlySet<string>,
 ): Promise<void> {
   const amount = parseFloat(sfTxn.amount);
   if (isNaN(amount) || amount === 0) return;
@@ -1154,7 +1187,8 @@ async function importTransaction(
     bankAccountGuid,
     sfTxn.description || sfTxn.payee || '',
     currencyMnemonic,
-    bookGuid
+    bookGuid,
+    bookAccountGuids,
   );
   const destAccountGuid = guess.accountGuid;
 
@@ -1249,11 +1283,12 @@ async function guessCategory(
   bankAccountGuid: string,
   description: string,
   currencyMnemonic: string,
-  bookGuid: string
+  bookGuid: string,
+  bookAccountGuids: ReadonlySet<string>,
 ): Promise<CategoryGuess> {
   if (!description.trim()) {
     return {
-      accountGuid: await getOrCreateImbalanceAccount(currencyMnemonic, bookGuid),
+      accountGuid: await getOrCreateImbalanceAccount(currencyMnemonic, bookGuid, bookAccountGuids),
       confidence: 'low',
     };
   }
@@ -1262,8 +1297,11 @@ async function guessCategory(
   // Rule failures must never fail the import; fall through to history.
   try {
     const ruleAccountGuid = await applyRules(bookGuid, description);
-    if (ruleAccountGuid) {
+    if (ruleAccountGuid && bookAccountGuids.has(ruleAccountGuid)) {
       return { accountGuid: ruleAccountGuid, confidence: 'high' };
+    }
+    if (ruleAccountGuid) {
+      console.warn('Categorization rule resolved an account outside the synced book; falling back to history guess');
     }
   } catch (err) {
     console.warn('Categorization rules lookup failed, falling back to history guess:', err);
@@ -1281,6 +1319,7 @@ async function guessCategory(
     LEFT JOIN gnucash_web_transaction_meta m ON m.transaction_guid = t.guid
     WHERE LOWER(COALESCE(NULLIF(btrim(m.original_description), ''), t.description))
           LIKE LOWER(${`%${description.substring(0, 50)}%`})
+      AND s2.account_guid = ANY(${[...bookAccountGuids]})
     GROUP BY s2.account_guid
     ORDER BY cnt DESC
     LIMIT 1
@@ -1291,7 +1330,7 @@ async function guessCategory(
   }
 
   return {
-    accountGuid: await getOrCreateImbalanceAccount(currencyMnemonic, bookGuid),
+    accountGuid: await getOrCreateImbalanceAccount(currencyMnemonic, bookGuid, bookAccountGuids),
     confidence: 'low',
   };
 }
@@ -1299,20 +1338,12 @@ async function guessCategory(
 /**
  * Get or create the Imbalance-{currency} account.
  */
-async function getOrCreateImbalanceAccount(
+export async function getOrCreateImbalanceAccount(
   currencyMnemonic: string,
-  bookGuid: string
+  bookGuid: string,
+  bookAccountGuids: ReadonlySet<string>,
 ): Promise<string> {
   const imbalanceName = `Imbalance-${currencyMnemonic}`;
-
-  // Check if it already exists
-  const existing = await prisma.accounts.findFirst({
-    where: { name: imbalanceName },
-  });
-
-  if (existing) {
-    return existing.guid;
-  }
 
   // Get root account for this book
   const book = await prisma.books.findUnique({
@@ -1321,13 +1352,7 @@ async function getOrCreateImbalanceAccount(
   });
 
   if (!book) {
-    // Fallback: find any root account
-    const root = await prisma.accounts.findFirst({
-      where: { account_type: 'ROOT' },
-    });
-    if (!root) throw new Error('No root account found');
-
-    return root.guid;
+    throw new Error(`Book ${bookGuid} not found`);
   }
 
   // Get the currency commodity guid
@@ -1339,25 +1364,47 @@ async function getOrCreateImbalanceAccount(
     throw new Error(`Currency ${currencyMnemonic} not found`);
   }
 
-  // Create the Imbalance account
-  const guid = generateGuid();
-  await prisma.accounts.create({
-    data: {
-      guid,
-      name: imbalanceName,
-      account_type: 'BANK',
-      commodity_guid: currency.guid,
-      commodity_scu: 100,
-      non_std_scu: 0,
-      parent_guid: book.root_account_guid,
-      code: '',
-      description: 'Auto-created for unmatched SimpleFin imports',
-      hidden: 0,
-      placeholder: 0,
-    },
-  });
+  return prisma.$transaction(async tx => {
+    // Lock ordering is canonical: book first, then the narrower account-name
+    // key. The re-check happens under both locks, closing the check/create
+    // race even on legacy books where the sibling-name unique index was not
+    // installed because pre-existing duplicates were detected.
+    await acquireBookLock(tx, bookGuid, 'create SimpleFin Imbalance account');
+    await acquireNamedXactLock(tx, accountNameLockKey(book.root_account_guid, imbalanceName));
 
-  return guid;
+    const existing = await tx.accounts.findFirst({
+      // The initial book scope admits pre-existing Imbalance accounts at any
+      // depth. The direct-root clause also sees an account a concurrent sync
+      // just created after that scope snapshot was read.
+      where: {
+        name: imbalanceName,
+        OR: [
+          { guid: { in: [...bookAccountGuids] } },
+          { parent_guid: book.root_account_guid },
+        ],
+      },
+      select: { guid: true },
+    });
+    if (existing) return existing.guid;
+
+    const guid = generateGuid();
+    await tx.accounts.create({
+      data: {
+        guid,
+        name: imbalanceName,
+        account_type: 'BANK',
+        commodity_guid: currency.guid,
+        commodity_scu: 100,
+        non_std_scu: 0,
+        parent_guid: book.root_account_guid,
+        code: '',
+        description: 'Auto-created for unmatched SimpleFin imports',
+        hidden: 0,
+        placeholder: 0,
+      },
+    });
+    return guid;
+  });
 }
 
 /**
@@ -1368,8 +1415,13 @@ async function getOrCreateChildAccount(
   parentGuid: string,
   symbol: string,
   holdingDescription: string,
+  bookGuid: string,
+  bookAccountGuids: ReadonlySet<string>,
   created?: { count: number },
 ): Promise<string> {
+  if (!bookAccountGuids.has(parentGuid)) {
+    throw new Error(`Parent account ${parentGuid} is not in book ${bookGuid}`);
+  }
   // Look for existing child with a commodity matching this symbol
   const existingChildren = await prisma.$queryRaw<{
     guid: string;
@@ -1439,15 +1491,20 @@ async function getOrCreateChildAccount(
  */
 async function getOrCreateCashChild(
   parentGuid: string,
+  bookGuid: string,
+  bookAccountGuids: ReadonlySet<string>,
   created?: { count: number },
 ): Promise<string> {
+  if (!bookAccountGuids.has(parentGuid)) {
+    throw new Error(`Parent account ${parentGuid} is not in book ${bookGuid}`);
+  }
   const existing = await prisma.accounts.findFirst({
     where: { parent_guid: parentGuid, name: 'Cash' },
   });
   if (existing) return existing.guid;
 
-  const parent = await prisma.accounts.findUnique({
-    where: { guid: parentGuid },
+  const parent = await prisma.accounts.findFirst({
+    where: { guid: { equals: parentGuid, in: [...bookAccountGuids] } },
   });
   if (!parent) throw new Error(`Parent account ${parentGuid} not found`);
 
@@ -1508,6 +1565,7 @@ async function importInvestmentTransaction(
   currencyGuid: string,
   currencyMnemonic: string,
   bookGuid: string,
+  bookAccountGuids: ReadonlySet<string>,
   bankAccountGuid: string,
 ): Promise<void> {
   const amount = parseFloat(sfTxn.amount);
@@ -1525,7 +1583,8 @@ async function importInvestmentTransaction(
       bankAccountGuid,
       sfTxn.description || sfTxn.payee || '',
       currencyMnemonic,
-      bookGuid
+      bookGuid,
+      bookAccountGuids,
     );
     counterAccountGuid = guess.accountGuid;
     counterConfidence = guess.confidence;
