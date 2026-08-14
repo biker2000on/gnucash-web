@@ -13,6 +13,51 @@ import { cacheGet, cacheSet } from '@/lib/cache';
 
 type InvestmentTotals = Map<string, { shareBalance: number; costBasis: number }>;
 
+/** Thrown for a malformed filter value; caught in GET and answered as a 400. */
+class BadFilterError extends Error {}
+
+const DECIMAL_RE = /^[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?$/;
+
+/** A query param is absent only when it is missing or exactly empty. */
+const isAbsent = (raw: string | null): raw is null | '' => raw === null || raw === '';
+
+function nonNegativeIntParam(raw: string | null, fallback: number, name: string): number {
+    if (isAbsent(raw)) return fallback;
+    const trimmed = raw.trim();
+    if (!/^\d+$/.test(trimmed) || !Number.isSafeInteger(Number(trimmed))) {
+        throw new BadFilterError(`Invalid ${name}: "${raw}" is not a non-negative integer`);
+    }
+    return Number.parseInt(trimmed, 10);
+}
+
+/** Return exact decimal text for PostgreSQL's numeric comparison. */
+function numericParam(raw: string | null, name: string): string | null {
+    if (isAbsent(raw)) return null;
+    const trimmed = raw.trim();
+    if (!DECIMAL_RE.test(trimmed)) {
+        throw new BadFilterError(`Invalid ${name}: "${raw}" is not a number`);
+    }
+    return trimmed;
+}
+
+function dateParam(raw: string | null, name: string): Date | null {
+    if (isAbsent(raw)) return null;
+    const date = new Date(raw);
+    if (Number.isNaN(date.getTime())) {
+        throw new BadFilterError(`Invalid ${name}: "${raw}" is not a date`);
+    }
+    return date;
+}
+
+function listParam(raw: string | null, name: string): string[] {
+    if (isAbsent(raw)) return [];
+    const tokens = raw.split(',').map(token => token.trim());
+    if (tokens.some(token => token === '')) {
+        throw new BadFilterError(`Invalid ${name}: "${raw}" contains an empty value`);
+    }
+    return tokens;
+}
+
 /**
  * In-flight recomputes of the investment running totals, keyed by the same
  * cache key used for Redis.
@@ -77,16 +122,17 @@ export async function GET(
         if (roleResult instanceof NextResponse) return roleResult;
 
         const { searchParams } = new URL(request.url);
-        const limit = parseInt(searchParams.get('limit') || '100');
-        const offset = parseInt(searchParams.get('offset') || '0');
-        const startDate = searchParams.get('startDate');
-        const endDate = searchParams.get('endDate');
+        const limit = nonNegativeIntParam(searchParams.get('limit'), 100, 'limit');
+        const offset = nonNegativeIntParam(searchParams.get('offset'), 0, 'offset');
+        const startDate = dateParam(searchParams.get('startDate'), 'startDate');
+        const endDate = dateParam(searchParams.get('endDate'), 'endDate');
         const unreviewedOnly = searchParams.get('unreviewedOnly') === 'true';
         // '#tag' tokens in the search act as tag filters (AND semantics)
         const { text: search, tags: tagFilters } = parseSearchQuery(searchParams.get('search')?.trim() || '');
-        const minAmount = searchParams.get('minAmount') ? parseFloat(searchParams.get('minAmount')!) : null;
-        const maxAmount = searchParams.get('maxAmount') ? parseFloat(searchParams.get('maxAmount')!) : null;
-        const reconcileStates = searchParams.get('reconcileStates')?.split(',').filter(Boolean) || [];
+        const minAmount = numericParam(searchParams.get('minAmount'), 'minAmount');
+        const maxAmount = numericParam(searchParams.get('maxAmount'), 'maxAmount');
+        const reconcileStates = listParam(searchParams.get('reconcileStates'), 'reconcileStates')
+            .map(state => state.toLowerCase());
         const includeSubaccounts = searchParams.get('includeSubaccounts') === 'true';
         const costBasisCarryOver = searchParams.get('costBasisCarryOver') !== 'false'; // default true
         const costBasisMethod = (searchParams.get('costBasisMethod') || 'fifo') as CostBasisMethod;
@@ -122,21 +168,6 @@ export async function GET(
             targetAccountGuids = descendants.map(d => d.guid);
         }
 
-        // Build date filter for transactions
-        const dateFilter: Prisma.transactionsWhereInput = {};
-        if (startDate) {
-            dateFilter.post_date = {
-                ...(dateFilter.post_date as Prisma.DateTimeNullableFilter || {}),
-                gte: new Date(startDate),
-            };
-        }
-        if (endDate) {
-            dateFilter.post_date = {
-                ...(dateFilter.post_date as Prisma.DateTimeNullableFilter || {}),
-                lte: new Date(endDate),
-            };
-        }
-
         // Pre-fetch unreviewed GUIDs if filter is active
         let unreviewedGuids: string[] | undefined;
         if (unreviewedOnly) {
@@ -155,54 +186,12 @@ export async function GET(
             }
         }
 
-        // 1. Get the total balance of the account (considering date filter for filtered balance)
-        // For running balance, we need balance as of the end of the date range (or total if no filter)
-        let startingBalance = 0;
-
-        if (!unreviewedOnly) {
-            // Aggregate the balance in SQL instead of fetching every split row into JS
-            const totalBalanceRows = await prisma.$queryRaw<{ balance: number }[]>`
-                SELECT COALESCE(SUM(s.quantity_num::float8 / s.quantity_denom::float8), 0)::float8 AS balance
-                FROM splits s
-                JOIN transactions t ON t.guid = s.tx_guid
-                WHERE s.account_guid = ANY(${targetAccountGuids}::text[])
-                ${endDate ? Prisma.sql`AND t.post_date <= ${new Date(endDate)}` : Prisma.empty}
-            `;
-            const totalBalance = totalBalanceRows[0]?.balance ?? 0;
-
-            // 2. Get the sum of splits for transactions that are NEWER than the current batch (to calculate starting balance for the page)
-            startingBalance = totalBalance;
-            if (offset > 0) {
-                // Sum splits belonging to the `offset` newest transactions (before this page),
-                // using the same ordering/date filters as the page query below
-                const newerSumRows = await prisma.$queryRaw<{ newer_sum: number }[]>`
-                    SELECT COALESCE(SUM(s.quantity_num::float8 / s.quantity_denom::float8), 0)::float8 AS newer_sum
-                    FROM splits s
-                    WHERE s.account_guid = ANY(${targetAccountGuids}::text[])
-                      AND s.tx_guid IN (
-                        SELECT t.guid
-                        FROM transactions t
-                        WHERE EXISTS (
-                            SELECT 1 FROM splits s2
-                            WHERE s2.tx_guid = t.guid
-                              AND s2.account_guid = ANY(${targetAccountGuids}::text[])
-                        )
-                        ${startDate ? Prisma.sql`AND t.post_date >= ${new Date(startDate)}` : Prisma.empty}
-                        ${endDate ? Prisma.sql`AND t.post_date <= ${new Date(endDate)}` : Prisma.empty}
-                        ORDER BY t.post_date DESC, t.enter_date DESC
-                        LIMIT ${offset}
-                      )
-                `;
-                startingBalance = totalBalance - (newerSumRows[0]?.newer_sum ?? 0);
-            }
-        }
-
         // Compute per-row investment running totals (share balance & cost basis)
         let investmentRunningTotals: InvestmentTotals | null = null;
 
         if (isInvestmentAccount && !unreviewedOnly && !includeSubaccounts) {
-            const cacheStart = startDate?.slice(0, 10) || '0001-01-01';
-            const cacheEnd = endDate?.slice(0, 10) || '9999-12-31';
+            const cacheStart = startDate?.toISOString().slice(0, 10) || '0001-01-01';
+            const cacheEnd = endDate?.toISOString().slice(0, 10) || '9999-12-31';
             const totalsCacheKey =
                 `cache:${roleResult.bookGuid}:investment-ledger:${accountGuid}:` +
                 `${costBasisMethod}:${costBasisCarryOver ? 'carry' : 'local'}:` +
@@ -215,8 +204,8 @@ export async function GET(
                 // splits by tx, sibling accounts) instead of a 3-level nested
                 // include that dragged every column of every related row.
                 const dateWhere: Prisma.transactionsWhereInput = {};
-                if (startDate) dateWhere.post_date = { ...dateWhere.post_date as object, gte: new Date(startDate) };
-                if (endDate) dateWhere.post_date = { ...dateWhere.post_date as object, lte: new Date(endDate) };
+                if (startDate) dateWhere.post_date = { ...dateWhere.post_date as object, gte: startDate };
+                if (endDate) dateWhere.post_date = { ...dateWhere.post_date as object, lte: endDate };
 
                 const baseSplits = await prisma.splits.findMany({
                     where: {
@@ -349,8 +338,8 @@ export async function GET(
                     FROM splits s
                     JOIN transactions t ON t.guid = s.tx_guid
                     WHERE s.account_guid = ${accountGuid}
-                    ${endDate ? Prisma.sql`AND t.post_date <= ${new Date(endDate)}` : Prisma.empty}
-                    ${startDate ? Prisma.sql`AND t.post_date >= ${new Date(startDate)}` : Prisma.empty}
+                    ${endDate ? Prisma.sql`AND t.post_date <= ${endDate}` : Prisma.empty}
+                    ${startDate ? Prisma.sql`AND t.post_date >= ${startDate}` : Prisma.empty}
                     ORDER BY t.post_date ASC, t.enter_date ASC
                 `;
 
@@ -383,46 +372,90 @@ export async function GET(
             });
         }
 
-        // Build search filter
-        const searchFilter: Prisma.transactionsWhereInput = search ? {
-            OR: [
-                { description: { contains: search, mode: 'insensitive' } },
-                { num: { contains: search, mode: 'insensitive' } },
-                { splits: { some: { account: { name: { contains: search, mode: 'insensitive' } } } } },
-            ],
-        } : {};
+        // Every predicate is in this GUID query, before LIMIT/OFFSET. This keeps
+        // paging over matches (rather than a raw page subsequently shortened in
+        // JavaScript), while the hydration below still returns all splits.
+        const filters: Prisma.Sql[] = [Prisma.sql`EXISTS (
+            SELECT 1 FROM splits s
+            WHERE s.tx_guid = t.guid
+              AND s.account_guid = ANY(${targetAccountGuids}::text[])
+        )`];
+        if (startDate) filters.push(Prisma.sql`t.post_date >= ${startDate}`);
+        if (endDate) filters.push(Prisma.sql`t.post_date <= ${endDate}`);
+        if (unreviewedGuids) filters.push(Prisma.sql`t.guid = ANY(${unreviewedGuids}::text[])`);
+        if (search) {
+            const like = `%${search}%`;
+            filters.push(Prisma.sql`(
+                t.description ILIKE ${like}
+                OR t.num ILIKE ${like}
+                OR EXISTS (
+                    SELECT 1 FROM splits s
+                    JOIN accounts a ON a.guid = s.account_guid
+                    WHERE s.tx_guid = t.guid AND a.name ILIKE ${like}
+                )
+            )`);
+        }
+        for (const name of tagFilters) {
+            filters.push(Prisma.sql`(
+                EXISTS (
+                    SELECT 1 FROM gnucash_web_transaction_tags tt
+                    JOIN gnucash_web_tags g ON g.id = tt.tag_id
+                    WHERE tt.transaction_guid = t.guid AND g.name = ${name}
+                )
+                OR EXISTS (
+                    SELECT 1 FROM splits s
+                    JOIN gnucash_web_account_tags at2 ON at2.account_guid = s.account_guid
+                    JOIN gnucash_web_tags g ON g.id = at2.tag_id
+                    WHERE s.tx_guid = t.guid AND g.name = ${name}
+                )
+            )`);
+        }
 
-        // Tag filter: matches direct transaction tags or any split account's
-        // tags (account tags propagate); multiple tags AND together.
-        const tagFilter: Prisma.transactionsWhereInput = tagFilters.length > 0 ? {
-            AND: tagFilters.map(name => ({
-                OR: [
-                    { tags: { some: { tag: { name } } } },
-                    { splits: { some: { account: { tags: { some: { tag: { name } } } } } } },
-                ],
-            })),
-        } : {};
+        // Amount is the transaction's largest absolute split. Cross-multiply
+        // rather than divide: numeric division rounds repeating fractions.
+        if (minAmount !== null) {
+            filters.push(Prisma.sql`EXISTS (
+                SELECT 1 FROM splits s
+                WHERE s.tx_guid = t.guid
+                  AND s.value_denom <> 0
+                  AND abs(s.value_num::numeric) >= ${minAmount}::numeric * abs(s.value_denom::numeric)
+            )`);
+        }
+        if (maxAmount !== null) {
+            filters.push(Prisma.sql`NOT EXISTS (
+                SELECT 1 FROM splits s
+                WHERE s.tx_guid = t.guid
+                  AND s.value_denom <> 0
+                  AND abs(s.value_num::numeric) > ${maxAmount}::numeric * abs(s.value_denom::numeric)
+            )`);
+            if (minAmount === null) {
+                filters.push(Prisma.sql`EXISTS (
+                    SELECT 1 FROM splits s
+                    WHERE s.tx_guid = t.guid AND s.value_denom <> 0
+                )`);
+            }
+        }
+        if (reconcileStates.length > 0) {
+            filters.push(Prisma.sql`EXISTS (
+                SELECT 1 FROM splits s
+                WHERE s.tx_guid = t.guid
+                  AND lower(s.reconcile_state) = ANY(${reconcileStates}::text[])
+            )`);
+        }
 
-        // 3. Fetch transactions for this account with date filtering
-        const transactions = await prisma.transactions.findMany({
-            where: {
-                ...dateFilter,
-                ...searchFilter,
-                ...tagFilter,
-                ...(unreviewedGuids ? { guid: { in: unreviewedGuids } } : {}),
-                splits: {
-                    some: {
-                        account_guid: { in: targetAccountGuids },
-                    },
-                },
-            },
-            orderBy: [
-                { post_date: 'desc' },
-                { enter_date: 'desc' },
-            ],
-            take: limit,
-            skip: offset,
-            include: {
+        // `guid` makes offset paging a total order when dates tie.
+        const pageRows = await prisma.$queryRaw<{ guid: string }[]>`
+            SELECT t.guid
+            FROM transactions t
+            WHERE ${Prisma.join(filters, ' AND ')}
+            ORDER BY t.post_date DESC, t.enter_date DESC, t.guid ASC
+            LIMIT ${limit} OFFSET ${offset}
+        `;
+        const pageGuids = pageRows.map(row => row.guid);
+        const pageTransactions = pageGuids.length > 0
+            ? await prisma.transactions.findMany({
+                where: { guid: { in: pageGuids } },
+                include: {
                 splits: {
                     include: {
                         // Narrow to the only relation fields the response uses
@@ -437,8 +470,13 @@ export async function GET(
                         },
                     },
                 },
-            },
-        });
+                },
+            })
+            : [];
+        const transactionsByGuid = new Map(pageTransactions.map(tx => [tx.guid, tx]));
+        const transactions = pageGuids
+            .map(guid => transactionsByGuid.get(guid))
+            .filter((tx): tx is (typeof pageTransactions)[number] => tx !== undefined);
 
         if (transactions.length === 0) {
             if (isInvestmentAccount) {
@@ -487,8 +525,37 @@ export async function GET(
         )];
         const accountPathMap = await buildAccountPathMap(referencedAccountGuids);
 
-        // 5. Build the response with running balance
-        let currentRunningBalance = startingBalance;
+        // A filtered page must not pretend its visible rows form a running
+        // balance. Instead each row receives the actual account balance as of
+        // that transaction, calculated across the unfiltered account history.
+        const runningBalanceRows = !unreviewedOnly && pageGuids.length > 0
+            ? await prisma.$queryRaw<{ guid: string; running_balance: number }[]>`
+                WITH account_transaction_deltas AS (
+                    SELECT t.guid, t.post_date, t.enter_date,
+                        SUM(s.quantity_num::float8 / s.quantity_denom::float8) AS delta
+                    FROM transactions t
+                    JOIN splits s ON s.tx_guid = t.guid
+                    WHERE s.account_guid = ANY(${targetAccountGuids}::text[])
+                      ${endDate ? Prisma.sql`AND t.post_date <= ${endDate}` : Prisma.empty}
+                    GROUP BY t.guid, t.post_date, t.enter_date
+                ), balances AS (
+                    SELECT guid,
+                        SUM(delta) OVER (
+                            ORDER BY post_date ASC, enter_date ASC, guid DESC
+                            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+                        ) AS running_balance
+                    FROM account_transaction_deltas
+                )
+                SELECT guid, running_balance::float8 AS running_balance
+                FROM balances
+                WHERE guid = ANY(${pageGuids}::text[])
+            `
+            : [];
+        const runningBalanceByGuid = new Map(
+            runningBalanceRows.map(row => [row.guid, Number(row.running_balance)]),
+        );
+
+        // 5. Build the response with as-of account balances
         const result = transactions.map(tx => {
             // Enrich splits with computed decimals
             const enrichedSplits = tx.splits.map(split => ({
@@ -535,7 +602,7 @@ export async function GET(
                 receipt_count: receiptCountMap.get(tx.guid) ?? 0,
                 tags: tagMap.get(tx.guid) ?? [],
                 splits: enrichedSplits,
-                running_balance: unreviewedOnly ? '' : currentRunningBalance.toFixed(2),
+                running_balance: unreviewedOnly ? '' : (runningBalanceByGuid.get(tx.guid) ?? 0).toFixed(2),
                 account_split_value: splitValue.toFixed(2),
                 commodity_mnemonic: accountMnemonic,
                 account_split_guid: accountSplit?.guid || '',
@@ -559,31 +626,21 @@ export async function GET(
                 } : {}),
             };
 
-            if (!unreviewedOnly) currentRunningBalance -= splitValue;
             return row;
         });
 
-        // Post-fetch filtering: amount range and reconcile states
-        let filtered = result;
-        if (minAmount !== null) {
-            filtered = filtered.filter(tx => Math.abs(parseFloat(tx.account_split_value)) >= minAmount);
-        }
-        if (maxAmount !== null) {
-            filtered = filtered.filter(tx => Math.abs(parseFloat(tx.account_split_value)) <= maxAmount);
-        }
-        if (reconcileStates.length > 0) {
-            filtered = filtered.filter(tx => reconcileStates.includes(tx.account_split_reconcile_state));
-        }
-
         if (isInvestmentAccount) {
             return NextResponse.json(serializeBigInts({
-                transactions: filtered,
+                transactions: result,
                 is_investment: true,
             }));
         } else {
-            return NextResponse.json(serializeBigInts(filtered));
+            return NextResponse.json(serializeBigInts(result));
         }
     } catch (error) {
+        if (error instanceof BadFilterError) {
+            return NextResponse.json({ error: error.message }, { status: 400 });
+        }
         console.error('Error fetching account transactions:', error);
         return NextResponse.json({ error: 'Failed' }, { status: 500 });
     }
