@@ -579,10 +579,17 @@ export function generateScheduleDCSV(report: CapitalGainsReport): string {
  * extraction shared by the 8949 report and the tax estimator
  * (aggregateBookTaxData in src/lib/tax/book-income.ts), so the two surfaces
  * cannot drift on Schedule D numbers or on the exclusion rules.
+ *
+ * `feeWarnings`, when supplied, collects the trade-fee allocator's notices
+ * about charges it deliberately did NOT capitalize (unrecognized accounts,
+ * fees already claimed as a deduction, unattributable mixed tickets). The
+ * 8949 report surfaces them; callers that have nowhere to show them may omit
+ * the sink.
  */
 export async function loadRealizedSales(
   bookAccountGuids: string[],
   year: number,
+  feeWarnings?: string[],
 ): Promise<RealizedSaleInput[]> {
   // Imported lazily-ish at top would pull prisma into pure test imports; keep
   // the imports here local to the loader boundary.
@@ -630,14 +637,29 @@ export async function loadRealizedSales(
   // transactions, which the lot engine never loads; recover them once for
   // every transaction touching these lots so basis and proceeds are net of
   // fees (see @/lib/trade-fees).
+  //
+  // The SAME effective tax mappings used above decide eligibility: a fee whose
+  // account is mapped to a tax category is already deducted by the estimator
+  // (aggregateBookTaxData sums every split of a mapped account), so
+  // capitalizing it too would let one dollar reduce taxable income twice.
+  // Account paths drive fee-vs-not-a-fee classification — account_type alone
+  // would capitalize accrued bond interest and margin interest as basis.
   const { loadTradeFees } = await import('@/lib/trade-fees');
+  const { buildAccountPathMap } = await import('@/lib/reports/utils');
   const tradeTxGuids: string[] = [];
   for (const account of taxableAccounts) {
     for (const lot of lotsByAccount.get(account.guid) ?? []) {
       for (const split of lot.splits) tradeTxGuids.push(split.txGuid);
     }
   }
-  const fees = await loadTradeFees(tradeTxGuids);
+  const accountPaths = tradeTxGuids.length > 0
+    ? await buildAccountPathMap(bookAccountGuids)
+    : new Map<string, string>();
+  const { fees, warnings: tradeFeeWarnings } = await loadTradeFees(tradeTxGuids, {
+    effectiveTaxMappings: effectiveMappings,
+    accountPaths,
+  });
+  if (feeWarnings) feeWarnings.push(...tradeFeeWarnings);
 
   const sales: RealizedSaleInput[] = [];
   for (const account of taxableAccounts) {
@@ -667,10 +689,14 @@ export async function loadCapitalGainsReport(
   year: number,
 ): Promise<CapitalGainsReport & { generatedAt: string }> {
   const { detectWashSales } = await import('@/lib/lot-assignment');
+  const feeWarnings: string[] = [];
   const [sales, washSales] = await Promise.all([
-    loadRealizedSales(bookAccountGuids, year),
+    loadRealizedSales(bookAccountGuids, year, feeWarnings),
     detectWashSales(bookAccountGuids),
   ]);
   const report = buildCapitalGainsReport(sales, washSales, year);
+  // Fees the allocator refused to capitalize belong in front of the user
+  // BEFORE they file, not buried in a log.
+  report.warnings.push(...feeWarnings);
   return { ...report, generatedAt: new Date().toISOString() };
 }

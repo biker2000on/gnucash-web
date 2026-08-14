@@ -115,6 +115,8 @@ const ACCOUNTS: AccountRow[] = [
   { guid: 'taxable-stock', name: 'VTI', fullname: 'Assets:Taxable:VTI', account_type: 'STOCK', parent_guid: null },
   { guid: 'estpay', name: '1040-ES Payments', fullname: 'Expenses:Taxes:1040-ES Payments', account_type: 'EXPENSE', parent_guid: null },
   { guid: 'state-estpay', name: 'State Vouchers', fullname: 'Expenses:Taxes:State Vouchers', account_type: 'EXPENSE', parent_guid: null },
+  { guid: 'comm', name: 'Commissions', fullname: 'Expenses:Commissions', account_type: 'EXPENSE', parent_guid: null },
+  { guid: 'cash', name: 'Cash', fullname: 'Assets:Cash', account_type: 'BANK', parent_guid: null },
 ];
 
 let splitSeq = 0;
@@ -191,9 +193,16 @@ describe('aggregateBookTaxData', () => {
             .filter(a => guids.includes(a.guid) && (a.account_type === 'STOCK' || a.account_type === 'MUTUAL'))
             .map(a => ({ guid: a.guid, commodity: { mnemonic: a.name } }));
         }
+        // name/account_type ride along for buildAccountPathMap, which
+        // loadRealizedSales uses to classify fee accounts by path.
         return ACCOUNTS
           .filter(a => guids.includes(a.guid))
-          .map(a => ({ guid: a.guid, parent_guid: a.parent_guid }));
+          .map(a => ({
+            guid: a.guid,
+            name: a.name,
+            parent_guid: a.parent_guid,
+            account_type: a.account_type,
+          }));
       },
     );
 
@@ -404,6 +413,98 @@ describe('aggregateBookTaxData', () => {
     const state = result.categories.find(c => c.category === 'state_estimated_tax_payment');
     expect(fed?.total).toBe(4000);
     expect(state?.total).toBe(1200);
+  });
+
+  /* ---------------------------------------------------------------- */
+  /* A commission must lower taxable income EXACTLY ONCE.              */
+  /*                                                                   */
+  /* aggregateBookTaxData sums every split of a tax-mapped account into */
+  /* a deductible category AND consumes the fee-adjusted realized-sale  */
+  /* extraction. If a mapped commission were also capitalized into      */
+  /* basis, the same $100 would reduce taxable income twice — the       */
+  /* direction that gets a filer in trouble. These two tests pin both   */
+  /* configurations of the same dollar.                                 */
+  /* ---------------------------------------------------------------- */
+  describe('a commission reduces taxable income exactly once', () => {
+    const bigint = (v: number) => ({
+      value_num: BigInt(Math.round(v * 100)),
+      value_denom: 100n,
+      quantity_num: BigInt(Math.round(v * 100)),
+      quantity_denom: 100n,
+    });
+
+    /** Buy 10 @ $100 in 2023, sell all for $2000 in TAX_YEAR, $100 commission. */
+    const arrangeSaleWithCommission = () => {
+      mockGetAccountLots.mockImplementation(async (guid: string) => {
+        if (guid !== 'taxable-stock') return [];
+        return [lot({
+          splits: [
+            {
+              guid: 'split-buy', txGuid: 'tx-buy', postDate: '2023-02-10T12:00:00.000Z',
+              description: 'Buy', shares: 10, value: 1000, shareBalance: 10,
+            },
+            {
+              guid: 'split-sell', txGuid: 'tx-sell', postDate: `${TAX_YEAR}-06-15T12:00:00.000Z`,
+              description: 'Sell', shares: -10, value: -2000, shareBalance: 0,
+            },
+          ],
+        })];
+      });
+
+      const tx = { post_date: new Date(`${TAX_YEAR}-06-15T12:00:00.000Z`), description: 'Sell 10 VTI' };
+      mockPrisma.splits.findMany.mockResolvedValue([
+        {
+          guid: 'split-sell', tx_guid: 'tx-sell', account_guid: 'taxable-stock',
+          ...bigint(-2000), quantity_num: -1000n, quantity_denom: 100n,
+          account: { name: 'VTI', account_type: 'STOCK' }, transaction: tx,
+        },
+        {
+          guid: 'split-cash', tx_guid: 'tx-sell', account_guid: 'cash',
+          ...bigint(1900), account: { name: 'Cash', account_type: 'BANK' }, transaction: tx,
+        },
+        {
+          guid: 'split-comm', tx_guid: 'tx-sell', account_guid: 'comm',
+          ...bigint(100), account: { name: 'Commissions', account_type: 'EXPENSE' }, transaction: tx,
+        },
+      ]);
+
+      // The category-sum query reports the same $100 in the commission
+      // account; book-income only counts it when the account is mapped.
+      mockPrisma.$queryRaw.mockImplementation(
+        (strings: TemplateStringsArray) => {
+          const sql = strings.join('?');
+          if (sql.includes('FROM account_hierarchy')) return Promise.resolve(ACCOUNTS);
+          if (sql.includes('FROM splits')) return Promise.resolve([{ account_guid: 'comm', total: 100 }]);
+          return Promise.resolve([]);
+        },
+      );
+    };
+
+    it('DEDUCTS it and leaves the gain gross when the account is tax-mapped', async () => {
+      arrangeSaleWithCommission();
+      mockPrisma.gnucash_web_tax_mappings.findMany.mockResolvedValue([
+        { account_guid: 'comm', tax_category: 'business_expense' },
+      ]);
+
+      const result = await run();
+
+      // Deducted once, as an expense...
+      expect(result.categories.find(c => c.category === 'business_expense')?.total).toBe(100);
+      // ...and NOT a second time through a reduced capital gain.
+      expect(result.realizedGains.longTerm).toBe(1000);
+    });
+
+    it('CAPITALIZES it and takes no deduction when the account is unmapped', async () => {
+      arrangeSaleWithCommission();
+      mockPrisma.gnucash_web_tax_mappings.findMany.mockResolvedValue([]);
+
+      const result = await run();
+
+      // No deduction — the account feeds no tax category...
+      expect(result.categories.find(c => c.category === 'business_expense')).toBeUndefined();
+      // ...so the commission lands in the gain instead: 2000 - 100 - 1000.
+      expect(result.realizedGains.longTerm).toBe(900);
+    });
   });
   it('passes sheltered guids (retirement + excluded assets) to the category-sum guard', async () => {
     mockGetRetirementAccountGuids.mockResolvedValue(new Set(['ret-401k']));
