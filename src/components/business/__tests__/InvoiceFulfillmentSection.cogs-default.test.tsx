@@ -9,10 +9,9 @@
  * because a test that only asserted the initial state passed while the bug was
  * live.
  *
- * Returns are asserted to stay OPT-OUT: returnToStock reverses at the item's
- * current average cost rather than the original shipment's basis, so the engine
- * keeps it opt-in and the checkbox must not arm itself (see the engine's
- * shouldPostReturnCogs).
+ * Returns are asserted to stay OPT-OUT: returnToStock reverses at the
+ * fulfillment line's recorded shipment basis, while the product default stays
+ * opt-in and the checkbox must not arm itself (see shouldPostReturnCogs).
  */
 
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';

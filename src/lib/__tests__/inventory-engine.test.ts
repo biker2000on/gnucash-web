@@ -269,7 +269,10 @@ describe('invoice fulfillment COGS posting', () => {
     const splitsCreated: CreatedSplit[] = [];
     /** txn_guid stamped on each inserted movement (null = no ledger posting). */
     const movementTxnGuids: Array<string | null> = [];
+    /** Cost basis stamped on each inserted movement. */
+    const movementUnitCosts: Array<number | null> = [];
     let nextMovementId = 1;
+    let currentAvgCost = AVG_COST;
 
     const transaction = {
       $queryRaw: vi.fn().mockImplementation(async (_query: TemplateStringsArray, guid: string) => [
@@ -279,6 +282,7 @@ describe('invoice fulfillment COGS posting', () => {
         if (query.includes('INSERT INTO gnucash_web_inventory_movements')) {
           const txnGuid = (args[9] ?? null) as string | null;
           movementTxnGuids.push(txnGuid);
+          movementUnitCosts.push((args[4] ?? null) as number | null);
           return [{
             id: nextMovementId++,
             item_id: args[0],
@@ -295,7 +299,9 @@ describe('invoice fulfillment COGS posting', () => {
             created_at: new Date('2026-02-01T00:00:00Z'),
           }];
         }
-        if (query.includes('FROM gnucash_web_inventory_items')) return [fulfillmentItemRow];
+        if (query.includes('FROM gnucash_web_inventory_items')) {
+          return [{ ...fulfillmentItemRow, avg_cost: currentAvgCost }];
+        }
         if (query.includes('FROM gnucash_web_inventory_locations')) {
           return [{ id: 2, name: 'Main warehouse', active: true }];
         }
@@ -342,7 +348,13 @@ describe('invoice fulfillment COGS posting', () => {
       mockImplementation: (implementation: (callback: (tx: unknown) => Promise<unknown>) => Promise<unknown>) => void;
     };
     transactionRunner.mockImplementation(async callback => callback(transaction));
-    return { transaction, splitsCreated, movementTxnGuids };
+    return {
+      transaction,
+      splitsCreated,
+      movementTxnGuids,
+      movementUnitCosts,
+      setCurrentAvgCost: (value: number) => { currentAvgCost = value; },
+    };
   }
 
   const fulfillInput = (post?: boolean) => ({
@@ -444,17 +456,26 @@ describe('invoice fulfillment COGS posting', () => {
   });
 
   // -------------------------------------------------------------------------
-  // Returns are OPT-IN: the reversal uses the item's CURRENT average cost, not
-  // the basis the original shipment was relieved at, so defaulting it on would
-  // post a knowingly wrong entry whenever cost moved between ship and return.
+  // Returns remain OPT-IN, but reverse at the fulfillment line's recorded
+  // weighted shipment basis rather than the item's current moving average.
   // -------------------------------------------------------------------------
 
   /** Report 5 net-fulfilled units so a return is within bounds. */
-  function withFulfilledHistory(transaction: ReturnType<typeof createFulfillmentTransaction>['transaction']) {
+  function withFulfilledHistory(
+    transaction: ReturnType<typeof createFulfillmentTransaction>['transaction'],
+    { fulfilled = 5, shipmentQuantity = 5, totalCost = 20, missingCostCount = 0 } = {},
+  ) {
     const previous = transaction.$queryRawUnsafe as unknown as (query: string, ...args: unknown[]) => Promise<unknown>;
     (transaction as unknown as { $queryRawUnsafe: unknown }).$queryRawUnsafe = vi.fn().mockImplementation(
       async (query: string, ...args: unknown[]) => {
-        if (query.includes('GROUP BY entry_guid')) return [{ entry_guid: 'entry-guid', total: -5 }];
+        if (query.includes('GROUP BY entry_guid')) return [{ entry_guid: 'entry-guid', total: -fulfilled }];
+        if (query.includes('shipment_quantity')) {
+          return [{
+            shipment_quantity: shipmentQuantity,
+            total_cost: totalCost,
+            missing_cost_count: missingCostCount,
+          }];
+        }
         return previous(query, ...args);
       },
     );
@@ -485,6 +506,87 @@ describe('invoice fulfillment COGS posting', () => {
     expect(splitsCreated.find(s => s.account_guid === 'asset-account')?.value_num).toBe(EXPECTED_NUM);
     expect(splitsCreated.find(s => s.account_guid === 'cogs-account')?.value_num).toBe(-EXPECTED_NUM);
     expect(splitsCreated.reduce((sum, s) => sum + s.value_num, 0n)).toBe(0n);
+  });
+
+  it('nets the $10 shipment / $20 current-average return exactly to zero in COGS and inventory', async () => {
+    const { transaction, splitsCreated, movementUnitCosts, setCurrentAvgCost } = createFulfillmentTransaction();
+    setCurrentAvgCost(10);
+    withFulfilledHistory(transaction, { fulfilled: SHIP_QTY, shipmentQuantity: SHIP_QTY, totalCost: 30 });
+
+    await fulfillInvoiceLines(fulfillInput());
+    // Later receipts moved the current average, but not this fulfillment line's basis.
+    setCurrentAvgCost(20);
+    await returnToStock(fulfillInput(true));
+
+    expect(movementUnitCosts).toEqual([10, 10]);
+    expect(splitsCreated.filter(s => s.account_guid === 'cogs-account')
+      .reduce((sum, s) => sum + s.value_num, 0n)).toBe(0n);
+    expect(splitsCreated.filter(s => s.account_guid === 'asset-account')
+      .reduce((sum, s) => sum + s.value_num, 0n)).toBe(0n);
+  });
+
+  it('uses the line shipment weighted average for a partial return', async () => {
+    const { transaction, splitsCreated, movementUnitCosts } = createFulfillmentTransaction();
+    // Five units shipped at $10 and five at $20 => $15 weighted basis.
+    withFulfilledHistory(transaction, { fulfilled: 10, shipmentQuantity: 10, totalCost: 150 });
+
+    await returnToStock({ ...fulfillInput(true), allocations: [{
+      entryGuid: 'entry-guid', itemId: 1, quantity: 2, locationId: 2,
+    }] });
+
+    expect(movementUnitCosts).toEqual([15]);
+    expect(splitsCreated.find(s => s.account_guid === 'asset-account')?.value_num).toBe(3000n);
+    expect(splitsCreated.find(s => s.account_guid === 'cogs-account')?.value_num).toBe(-3000n);
+    // return_in is cost-bearing: re-entry at $15 moves the $4 running average.
+    expect(transaction.$executeRawUnsafe).toHaveBeenCalledWith(
+      expect.stringContaining('SET avg_cost'), 1, (100 * AVG_COST + 2 * 15) / 102,
+    );
+  });
+
+  it('preserves legacy data-only returns without shipment cost, but refuses their COGS reversal', async () => {
+    const { transaction, movementUnitCosts } = createFulfillmentTransaction();
+    withFulfilledHistory(transaction, { missingCostCount: 1, totalCost: 0 });
+
+    const legacyReturn = await returnToStock(fulfillInput(false));
+    expect(legacyReturn.movements[0].unitCost).toBe(AVG_COST);
+    expect(movementUnitCosts).toEqual([AVG_COST]);
+    expect(transaction.transactions.create).not.toHaveBeenCalled();
+
+    await expect(returnToStock(fulfillInput(true))).rejects.toThrow(
+      /Shipment cost is not recorded for WIDGET\. Resubmit with COGS posting turned off, or adjust COGS manually\./,
+    );
+    expect(transaction.transactions.create).not.toHaveBeenCalled();
+  });
+
+  it('does not leave a residual when three units share a $10 shipment total', async () => {
+    const { transaction, splitsCreated, movementUnitCosts, setCurrentAvgCost } = createFulfillmentTransaction();
+    const repeatingBasis = 10 / 3;
+    setCurrentAvgCost(repeatingBasis);
+    withFulfilledHistory(transaction, { fulfilled: 3, shipmentQuantity: 3, totalCost: 10 });
+    const threeUnitInput = {
+      ...fulfillInput(true),
+      allocations: [{ entryGuid: 'entry-guid', itemId: 1, quantity: 3, locationId: 2 }],
+    };
+
+    await fulfillInvoiceLines(threeUnitInput);
+    setCurrentAvgCost(20);
+    await returnToStock(threeUnitInput);
+
+    expect(movementUnitCosts).toEqual([repeatingBasis, repeatingBasis]);
+    expect(splitsCreated.filter(s => s.account_guid === 'cogs-account')
+      .reduce((sum, s) => sum + s.value_num, 0n)).toBe(0n);
+    expect(splitsCreated.filter(s => s.account_guid === 'asset-account')
+      .reduce((sum, s) => sum + s.value_num, 0n)).toBe(0n);
+  });
+
+  it('refuses a return that exceeds the line quantity still fulfilled', async () => {
+    const { transaction } = createFulfillmentTransaction();
+    withFulfilledHistory(transaction, { fulfilled: 2 });
+
+    await expect(returnToStock(fulfillInput(true))).rejects.toThrow(
+      /returning 3 exceeds the fulfilled quantity 2/,
+    );
+    expect(transaction.transactions.create).not.toHaveBeenCalled();
   });
 });
 
