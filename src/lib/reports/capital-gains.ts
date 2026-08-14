@@ -580,16 +580,25 @@ export function generateScheduleDCSV(report: CapitalGainsReport): string {
  * (aggregateBookTaxData in src/lib/tax/book-income.ts), so the two surfaces
  * cannot drift on Schedule D numbers or on the exclusion rules.
  *
- * `feeWarnings`, when supplied, collects the trade-fee allocator's notices
- * about charges it deliberately did NOT capitalize (unrecognized accounts,
- * fees already claimed as a deduction, unattributable mixed tickets). The
- * 8949 report surfaces them; callers that have nowhere to show them may omit
- * the sink.
+ * `sinks` collects the trade-fee allocator's two by-products, both optional:
+ *  - `feeWarnings`: notices about charges deliberately NOT capitalized
+ *    (unrecognized or ambiguous accounts, unattributable mixed tickets) and
+ *    about tax mappings neutralized on a fee account. The 8949 report shows
+ *    them; callers with nowhere to display them may omit the sink.
+ *  - `capitalizedFeeSplitGuids`: the expense splits whose value reached
+ *    basis. aggregateBookTaxData drops exactly these from its deduction
+ *    category sums, so a capitalized dollar is never also deducted, and a
+ *    dollar that was NOT capitalized is never withheld from a deduction.
  */
+export interface RealizedSalesSinks {
+  feeWarnings?: string[];
+  capitalizedFeeSplitGuids?: string[];
+}
+
 export async function loadRealizedSales(
   bookAccountGuids: string[],
   year: number,
-  feeWarnings?: string[],
+  sinks: RealizedSalesSinks = {},
 ): Promise<RealizedSaleInput[]> {
   // Imported lazily-ish at top would pull prisma into pure test imports; keep
   // the imports here local to the loader boundary.
@@ -638,12 +647,13 @@ export async function loadRealizedSales(
   // every transaction touching these lots so basis and proceeds are net of
   // fees (see @/lib/trade-fees).
   //
-  // The SAME effective tax mappings used above decide eligibility: a fee whose
-  // account is mapped to a tax category is already deducted by the estimator
-  // (aggregateBookTaxData sums every split of a mapped account), so
-  // capitalizing it too would let one dollar reduce taxable income twice.
-  // Account paths drive fee-vs-not-a-fee classification — account_type alone
-  // would capitalize accrued bond interest and margin interest as basis.
+  // A classified trade fee is capitalized unconditionally — it is a cost of
+  // the security, never a deduction — and the splits it consumed are reported
+  // back so the tax aggregation can drop exactly those from its deduction
+  // sums. The effective tax mappings are passed only so a mapping that this
+  // neutralizes gets reported. Account paths drive fee-vs-not-a-fee
+  // classification: account_type alone would capitalize accrued bond interest
+  // and margin interest as basis.
   const { loadTradeFees } = await import('@/lib/trade-fees');
   const { buildAccountPathMap } = await import('@/lib/reports/utils');
   const tradeTxGuids: string[] = [];
@@ -655,11 +665,13 @@ export async function loadRealizedSales(
   const accountPaths = tradeTxGuids.length > 0
     ? await buildAccountPathMap(bookAccountGuids)
     : new Map<string, string>();
-  const { fees, warnings: tradeFeeWarnings } = await loadTradeFees(tradeTxGuids, {
+  const allocation = await loadTradeFees(tradeTxGuids, {
     effectiveTaxMappings: effectiveMappings,
     accountPaths,
   });
-  if (feeWarnings) feeWarnings.push(...tradeFeeWarnings);
+  const fees = allocation.fees;
+  sinks.feeWarnings?.push(...allocation.warnings);
+  sinks.capitalizedFeeSplitGuids?.push(...allocation.capitalizedFeeSplitGuids);
 
   const sales: RealizedSaleInput[] = [];
   for (const account of taxableAccounts) {
@@ -691,7 +703,7 @@ export async function loadCapitalGainsReport(
   const { detectWashSales } = await import('@/lib/lot-assignment');
   const feeWarnings: string[] = [];
   const [sales, washSales] = await Promise.all([
-    loadRealizedSales(bookAccountGuids, year, feeWarnings),
+    loadRealizedSales(bookAccountGuids, year, { feeWarnings }),
     detectWashSales(bookAccountGuids),
   ]);
   const report = buildCapitalGainsReport(sales, washSales, year);

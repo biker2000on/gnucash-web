@@ -4,11 +4,14 @@
  *
  * The load-bearing behaviours here are the two that keep the
  * never-both/never-neither invariant honest:
- *  - a charge is only capitalized when its ACCOUNT PATH positively reads as a
+ *  - a charge is only ACTED ON when its account path positively reads as a
  *    trade fee (accrued bond interest, margin interest and withheld foreign
  *    tax must never become basis), and
- *  - a fee whose account is tax-mapped is left to the deduction it already
- *    feeds, never capitalized on top of it.
+ *  - a classified fee is then capitalized UNCONDITIONALLY, with the consumed
+ *    split reported for exclusion from the deduction side. The two sets are
+ *    the same set, so nothing is counted twice and nothing falls through —
+ *    including when the fee's account carries a tax mapping, which is
+ *    reported and neutralized rather than obeyed.
  * Plus: exact-to-the-cent apportionment, and the mixed/unvalued tickets whose
  * fees cannot be attributed at all.
  */
@@ -18,11 +21,9 @@ import {
     allocateTradeFees,
     apportionCents,
     classifyFeeAccount,
-    deductibleFeeAccounts,
+    taxMappedFeeAccounts,
     type FeeAllocationSplit,
 } from '@/lib/trade-fees';
-import { TAX_CATEGORY_TREATMENT } from '@/lib/tax/deduction-categories';
-import { TAX_CATEGORIES } from '@/lib/tax/types';
 
 const split = (over: Partial<FeeAllocationSplit> & { guid: string }): FeeAllocationSplit => ({
     txGuid: 'tx-1',
@@ -294,71 +295,113 @@ describe('allocateTradeFees — non-fee charges on a trade', () => {
 });
 
 /* ------------------------------------------------------------------ */
-/* B2 — never both: a tax-mapped fee is already a deduction            */
+/* Never both, never neither — unconditionally                         */
 /* ------------------------------------------------------------------ */
 
-describe('allocateTradeFees — fees already claimed as a deduction', () => {
+describe('allocateTradeFees — capitalize always, deduct never', () => {
     const trade = (): FeeAllocationSplit[] => [
         split({ guid: 'stock', accountType: 'STOCK', value: 1000, quantity: 10 }),
         split({ guid: 'cash', accountType: 'BANK', value: -1009.95, quantity: -1009.95 }),
         commission({ accountGuid: 'comm-acct' }),
     ];
 
-    it('does NOT capitalize a fee whose account is mapped to a tax category', () => {
-        const { fees, warnings } = allocateTradeFees(trade(), new Set(['comm-acct']));
-        expect(fees.size).toBe(0);
-        expect(warnings).toHaveLength(1);
-        expect(warnings[0]).toContain('already deducts it from taxable income');
+    it('capitalizes a classified fee and reports the split for exclusion', () => {
+        const { fees, capitalizedFeeSplitGuids, warnings } = allocateTradeFees(trade());
+        expect(fees.get('stock')).toBe(9.95);
+        expect(capitalizedFeeSplitGuids).toEqual(['comm']);
+        expect(warnings).toEqual([]);
     });
 
-    it('DOES capitalize the same fee when its account is not mapped', () => {
-        const { fees, warnings } = allocateTradeFees(trade(), new Set(['some-other-account']));
+    it('STILL capitalizes when the fee account is tax-mapped, and says so', () => {
+        // Deductibility is conditional (SALT caps, AGI floors, the standard
+        // deduction), so deferring to a mapping could leave the fee counted
+        // nowhere. A trade fee is a cost of the security, unconditionally.
+        const { fees, capitalizedFeeSplitGuids, warnings } =
+            allocateTradeFees(trade(), new Set(['comm-acct']));
         expect(fees.get('stock')).toBe(9.95);
-        expect(warnings).toEqual([]);
+        expect(capitalizedFeeSplitGuids).toEqual(['comm']);
+        expect(warnings).toHaveLength(1);
+        expect(warnings[0]).toContain('EXCLUDED from the tax category');
+    });
+
+    it('reports nothing for exclusion when the fee could not be attributed', () => {
+        // Classified, but an in-kind transfer: nothing reached basis, so
+        // nothing may be withheld from the deduction side either.
+        const { fees, capitalizedFeeSplitGuids, warnings } = allocateTradeFees([
+            split({ guid: 'out', accountType: 'STOCK', value: 0, quantity: -10 }),
+            split({ guid: 'in', accountType: 'STOCK', value: 0, quantity: 10 }),
+            commission({ guid: 'acat', accountPath: 'Expenses:Brokerage Fees', value: 75 }),
+        ]);
+        expect(fees.size).toBe(0);
+        expect(capitalizedFeeSplitGuids).toEqual([]);
+        expect(warnings).toHaveLength(1);
+    });
+
+    it('reports every eligible fee split of a multi-fee ticket', () => {
+        const { capitalizedFeeSplitGuids } = allocateTradeFees([
+            split({ guid: 'stock', accountType: 'STOCK', value: -5000, quantity: -50 }),
+            commission({ guid: 'commission', value: 6.95 }),
+            commission({ guid: 'sec-fee', accountPath: 'Expenses:Trading:SEC Fee', value: 0.13 }),
+        ]);
+        expect(capitalizedFeeSplitGuids.sort()).toEqual(['commission', 'sec-fee']);
     });
 });
 
 /* ------------------------------------------------------------------ */
-/* Which mappings actually suppress capitalization                     */
+/* Conservatism: unclassified charges are untouched on BOTH sides      */
 /* ------------------------------------------------------------------ */
 
-describe('deductibleFeeAccounts', () => {
-    const mapped = (category: string) => deductibleFeeAccounts(new Map([['comm', category]]));
+describe('allocateTradeFees — conservatism for unclassified charges', () => {
+    const tradeWith = (accountPath: string) => allocateTradeFees([
+        split({ guid: 'stock', accountType: 'STOCK', value: 1000, quantity: 10 }),
+        split({ guid: 'cash', accountType: 'BANK', value: -1012, quantity: -1012 }),
+        commission({ guid: 'charge', accountPath, value: 12 }),
+    ], new Set(['comm-acct']));
 
-    it('suppresses only categories that really lower taxable income', () => {
-        expect(mapped('business_expense').has('comm')).toBe(true);
-        expect(mapped('other_deduction').has('comm')).toBe(true);
-        expect(mapped('charitable_donation').has('comm')).toBe(true);
-        // State taxes paid are a payment AND a Schedule A deduction.
-        expect(mapped('state_estimated_tax_payment').has('comm')).toBe(true);
+    it('leaves an AMBIGUOUS charge in neither basis nor the exclusion set', () => {
+        // Excluding it would be a real subtraction from a deduction input, so
+        // a misfire would UNDER-deduct. Only confident classifications act.
+        const { fees, capitalizedFeeSplitGuids } = tradeWith('Expenses:Fees:Transaction Tax');
+        expect(fees.size).toBe(0);
+        expect(capitalizedFeeSplitGuids).toEqual([]);
     });
 
-    it('does NOT suppress payment, informational, income or excluded mappings', () => {
-        // These buy no deduction, so refusing to capitalize would leave the
-        // fee counted nowhere — the original H2 omission, returning.
-        expect(mapped('estimated_tax_payment').has('comm')).toBe(false);
-        expect(mapped('federal_withholding').has('comm')).toBe(false);
-        expect(mapped('education_529_contribution').has('comm')).toBe(false);
-        expect(mapped('esa_contribution').has('comm')).toBe(false);
-        expect(mapped('roth_ira_contribution').has('comm')).toBe(false);
-        expect(mapped('fica_medicare').has('comm')).toBe(false);
-        expect(mapped('interest_income').has('comm')).toBe(false);
-        expect(mapped('exclude').has('comm')).toBe(false);
+    it('leaves a NOT-FEE charge in neither basis nor the exclusion set', () => {
+        const { fees, capitalizedFeeSplitGuids, warnings } =
+            tradeWith('Expenses:Investments:Accrued Interest');
+        expect(fees.size).toBe(0);
+        expect(capitalizedFeeSplitGuids).toEqual([]);
+        expect(warnings).toEqual([]);
     });
 
-    it('treats an unmapped account and an unknown category as not deducting', () => {
-        expect(deductibleFeeAccounts(undefined).size).toBe(0);
-        expect(mapped('some_future_category').has('comm')).toBe(false);
+    it('leaves an UNRECOGNIZED charge in neither basis nor the exclusion set', () => {
+        const { fees, capitalizedFeeSplitGuids } = tradeWith('Expenses:Investment Expenses');
+        expect(fees.size).toBe(0);
+        expect(capitalizedFeeSplitGuids).toEqual([]);
     });
+});
 
-    it('states a treatment for EVERY tax category (a new one must not default)', () => {
-        // TAX_CATEGORY_TREATMENT is a total Record over TaxCategory, so this
-        // is really a compile-time guarantee; the runtime check catches a
-        // category added to the list without a treatment row.
-        for (const category of TAX_CATEGORIES) {
-            expect(TAX_CATEGORY_TREATMENT[category]).toBeDefined();
+/* ------------------------------------------------------------------ */
+/* Which mappings are merely REPORTED (never decisive)                 */
+/* ------------------------------------------------------------------ */
+
+describe('taxMappedFeeAccounts', () => {
+    const mapped = (category: string) => taxMappedFeeAccounts(new Map([['comm', category]]));
+
+    it('collects every real mapping, whatever its tax treatment', () => {
+        // No treatment table any more: capitalization does not depend on the
+        // category, so none of these distinctions can change an outcome.
+        for (const category of [
+            'business_expense', 'other_deduction', 'state_withholding',
+            'estimated_tax_payment', 'education_529_contribution', 'interest_income',
+        ]) {
+            expect(mapped(category).has('comm')).toBe(true);
         }
-        expect(Object.keys(TAX_CATEGORY_TREATMENT)).toHaveLength(TAX_CATEGORIES.length);
+    });
+
+    it('ignores exclude and the absent map (nothing is being overridden)', () => {
+        expect(mapped('exclude').has('comm')).toBe(false);
+        expect(taxMappedFeeAccounts(undefined).size).toBe(0);
     });
 });
 

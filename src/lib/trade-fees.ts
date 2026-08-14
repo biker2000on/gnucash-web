@@ -12,10 +12,25 @@
  * amount realized. Both push the reported gain DOWN.
  *
  * ── THE INVARIANT ─────────────────────────────────────────────────────────
- * A charge is treated EITHER as a deductible expense OR as capitalized into
- * basis — never both, never neither. Counting it twice understates taxable
- * income, which is worse than the overstatement this module exists to fix.
- * Two rules enforce it:
+ * A securities trade fee is ALWAYS capitalized into basis and NEVER deducted.
+ * Not a heuristic — that is the treatment: a commission is a cost of
+ * acquiring or disposing of the security under the basis rules, and
+ * investment expenses are not deductible as miscellaneous itemized deductions
+ * in the years this app models.
+ *
+ * The rule is UNCONDITIONAL on purpose. An earlier design tried to defer to
+ * an existing deduction whenever the fee's account was tax-mapped, but
+ * deductibility is conditional in ways this module cannot see: SALT is
+ * capped, medical has an AGI floor, charitable has a floor, itemized
+ * deductions only apply when they beat the standard deduction, and the
+ * contribution categories use the book total only as a fallback behind the
+ * retirement classifier. A commission mapped to state_withholding for a filer
+ * taking the standard deduction was therefore deducted NOWHERE and
+ * capitalized nowhere either. The capital-gains path has no filing status, no
+ * AGI, no itemization election and no classifier state, so it can never
+ * decide that locally — and it no longer tries.
+ *
+ * Two rules give the invariant its teeth:
  *
  *   1. CLASSIFY, don't assume. "It posts to an EXPENSE account on a trade" is
  *      NOT enough to call something a commission. Accrued interest on a bond
@@ -24,25 +39,21 @@
  *      charge are likewise not basis. Only accounts whose path positively
  *      reads as a commission/fee — and whose path does not read as interest,
  *      tax or another non-fee charge — are capitalized. Anything unrecognized
- *      is LEFT OUT and reported as a warning: omitting a fee is the smaller,
- *      already-shipped error; capitalizing accrued interest is a new one.
+ *      or ambiguous is LEFT EXACTLY AS IT IS TODAY (neither capitalized nor
+ *      withheld from any deduction) and reported as a warning.
  *
- *   2. DEFER TO AN EXPLICIT DEDUCTION — but only to a REAL one. If the fee's
- *      account (or an ancestor) is mapped to a category that actually LOWERS
- *      taxable income, the estimator is already claiming that split as a
- *      deduction (aggregateBookTaxData in @/lib/tax/book-income sums every
- *      split of a mapped account), so capitalizing it too would let one dollar
- *      reduce taxable income twice. Those fees are NOT capitalized, and a
- *      warning says so rather than leaving the user to wonder why their basis
- *      did not move.
+ *   2. WHAT IS CAPITALIZED IS EXCLUDED FROM THE DEDUCTION SIDE, and only
+ *      that. capitalizedFeeSplitGuids reports precisely the expense splits
+ *      whose value reached a security split's basis; aggregateBookTaxData
+ *      (@/lib/tax/book-income) drops exactly those GUIDs from its category
+ *      sums. Because the two sets are the SAME set by construction, a dollar
+ *      cannot be counted twice (capitalized and deducted) or zero times
+ *      (excluded from deductions but never capitalized) — including in books
+ *      with no lot assignment, where nothing is capitalized and so nothing is
+ *      excluded.
  *
- *      "Mapped to anything but 'exclude'" is NOT that test, and using it would
- *      re-open the very omission this module fixes: a commission mapped to a
- *      PAYMENT category (1040-ES vouchers, federal withholding) or an
- *      INFORMATIONAL one (529/ESA, FICA, education) buys no deduction, so
- *      refusing to capitalize it would leave the fee counted NOWHERE. The
- *      predicate is reducesTaxableIncome (@/lib/tax/deduction-categories),
- *      derived from what buildFederalInputsFromBookData actually consumes.
+ * A tax mapping on a classified fee account is now a user data error that
+ * this module neutralizes rather than obeys, so it is reported.
  *
  * ── MECHANICS ─────────────────────────────────────────────────────────────
  *  - MULTIPLE FEES: every eligible expense split of the ticket sums, so
@@ -72,7 +83,6 @@
  */
 
 import { toDecimalNumber } from './gnucash';
-import { reducesTaxableIncome } from './tax/deduction-categories';
 
 /** Fee amount allocated to a security split, keyed by that split's GUID. */
 export type TradeFeeBySplit = ReadonlyMap<string, number>;
@@ -103,9 +113,18 @@ export interface TradeFeeAllocation {
     /** Security-split GUID -> fee capitalized into / netted against it. */
     fees: Map<string, number>;
     /**
-     * Charges deliberately NOT applied to basis or proceeds, each explaining
-     * why. Surfaced on the capital-gains report so a skipped fee is visible
-     * rather than silent.
+     * GUIDs of the EXPENSE splits whose value actually reached a security
+     * split's basis above. The tax aggregation excludes exactly these from
+     * its deduction category sums — same set, so never both and never
+     * neither. A fee that was classified but could not be attributed (mixed
+     * ticket, unvalued ticket, no security leg) is NOT here: nothing was
+     * capitalized, so nothing may be withheld from the deduction side.
+     */
+    capitalizedFeeSplitGuids: string[];
+    /**
+     * Charges deliberately NOT applied to basis or proceeds, plus tax
+     * mappings that were neutralized, each explaining why. Surfaced on the
+     * capital-gains report so a skipped fee is visible rather than silent.
      */
     warnings: string[];
 }
@@ -214,16 +233,16 @@ function txLabel(splits: FeeAllocationSplit[]): string {
 }
 
 /**
- * Allocate each transaction's eligible fees across that transaction's
+ * Allocate each transaction's classified fees across that transaction's
  * security splits. PURE.
  *
- * `deductibleAccounts` names accounts the tax estimator already deducts (see
- * the invariant at the top of this file); fees posting there are reported and
- * NOT capitalized.
+ * `taxMappedAccounts` names fee accounts carrying a tax-category mapping. It
+ * does NOT change the outcome — a classified trade fee is capitalized either
+ * way — it only triggers the warning that the mapping is being neutralized.
  */
 export function allocateTradeFees(
     splits: FeeAllocationSplit[],
-    deductibleAccounts: ReadonlySet<string> = new Set(),
+    taxMappedAccounts: ReadonlySet<string> = new Set(),
 ): TradeFeeAllocation {
     const byTx = new Map<string, FeeAllocationSplit[]>();
     for (const split of splits) {
@@ -233,6 +252,7 @@ export function allocateTradeFees(
     }
 
     const fees = new Map<string, number>();
+    const capitalizedFeeSplitGuids: string[] = [];
     const warnings = new Set<string>();
     // Every refusal in this module relies on its warning to avoid being a
     // silent under-report, so the cap must not silently swallow the overflow
@@ -253,7 +273,7 @@ export function allocateTradeFees(
         );
         if (expenses.length === 0) continue;
 
-        // Rule 1 (classify) + rule 2 (defer to an explicit deduction).
+        // Rule 1: only confidently-classified fees are acted on at all.
         const eligible: FeeAllocationSplit[] = [];
         for (const expense of expenses) {
             const kind = classifyFeeAccount(expense.accountPath);
@@ -276,14 +296,17 @@ export function allocateTradeFees(
                 );
                 continue;
             }
-            if (deductibleAccounts.has(expense.accountGuid)) {
+            if (taxMappedAccounts.has(expense.accountGuid)) {
+                // Capitalized anyway — a trade fee is a cost of the security,
+                // never a deduction — but the mapping is a data error, and
+                // the split is being held out of the tax categories it feeds.
                 warn(
                     `${txLabel(txSplits)}: the $${Math.abs(expense.value).toFixed(2)} fee in `
-                    + `"${expense.accountPath}" is mapped to a tax category that already deducts `
-                    + 'it from taxable income, so it was NOT also added to cost basis. Remove the '
-                    + 'tax mapping if you would rather capitalize it.',
+                    + `"${expense.accountPath}" was added to cost basis, and this split is `
+                    + 'therefore EXCLUDED from the tax category its account is mapped to — a '
+                    + 'trade commission is part of the security\'s cost, not a deduction. Remap '
+                    + 'the account, or split the non-fee charges out of it.',
                 );
-                continue;
             }
             eligible.push(expense);
         }
@@ -332,6 +355,10 @@ export function allocateTradeFees(
             if (cents[i] === 0) return;
             fees.set(split.guid, (fees.get(split.guid) ?? 0) + cents[i] / 100);
         });
+        // Recorded ONLY here, past every guard: these are the splits whose
+        // value actually landed in basis, and therefore exactly the splits
+        // the deduction side must drop.
+        for (const expense of eligible) capitalizedFeeSplitGuids.push(expense.guid);
     }
 
     const reported = [...warnings];
@@ -342,7 +369,7 @@ export function allocateTradeFees(
             + 'to see the rest.',
         );
     }
-    return { fees, warnings: reported };
+    return { fees, capitalizedFeeSplitGuids, warnings: reported };
 }
 
 /** Chunk size for the tx_guid IN list; keeps the query planner and the
@@ -350,29 +377,28 @@ export function allocateTradeFees(
 const TX_CHUNK = 500;
 
 /**
- * Accounts whose mapping means the estimator ALREADY deducts their splits
- * from taxable income, so their fees must not also be capitalized. PURE.
+ * Accounts carrying a tax-category mapping that the estimator would act on.
+ * Used ONLY to warn that such a mapping is being neutralized on a trade fee —
+ * never to decide whether to capitalize. PURE.
  *
- * Payment, income, informational and 'exclude' mappings are deliberately NOT
- * here: none of them lower taxable income, so a fee posted to such an account
- * still needs its basis adjustment or it would be counted nowhere at all.
+ * 'exclude' is left out because it asks the estimator to ignore the account
+ * anyway, so nothing is being overridden and there is nothing to report.
  */
-export function deductibleFeeAccounts(
+export function taxMappedFeeAccounts(
     effectiveTaxMappings: ReadonlyMap<string, string> | undefined,
 ): Set<string> {
-    const deductible = new Set<string>();
+    const mapped = new Set<string>();
     for (const [guid, category] of effectiveTaxMappings ?? []) {
-        if (reducesTaxableIncome(category)) deductible.add(guid);
+        if (category && category !== 'exclude') mapped.add(guid);
     }
-    return deductible;
+    return mapped;
 }
 
 export interface LoadTradeFeesOptions {
     /**
      * Effective account -> tax-category map (already expanded to descendants,
-     * exactly as the estimator resolves it). Only mappings that actually
-     * reduce taxable income suppress capitalization — see
-     * deductibleFeeAccounts and the invariant at the top of this file.
+     * exactly as the estimator resolves it). Purely advisory: it selects
+     * which neutralized mappings get reported, not what gets capitalized.
      */
     effectiveTaxMappings?: ReadonlyMap<string, string>;
     /** Account GUID -> full path, for classification and warning text. */
@@ -388,12 +414,12 @@ export async function loadTradeFees(
     options: LoadTradeFeesOptions = {},
 ): Promise<TradeFeeAllocation> {
     const unique = [...new Set(txGuids)].filter(Boolean);
-    if (unique.length === 0) return { fees: new Map(), warnings: [] };
+    if (unique.length === 0) return { fees: new Map(), capitalizedFeeSplitGuids: [], warnings: [] };
 
     const prisma = (await import('./prisma')).default;
     const { effectiveTaxMappings, accountPaths } = options;
 
-    const deductibleAccounts = deductibleFeeAccounts(effectiveTaxMappings);
+    const mappedFeeAccounts = taxMappedFeeAccounts(effectiveTaxMappings);
 
     const rows: FeeAllocationSplit[] = [];
     for (let offset = 0; offset < unique.length; offset += TX_CHUNK) {
@@ -429,5 +455,5 @@ export async function loadTradeFees(
         }
     }
 
-    return allocateTradeFees(rows, deductibleAccounts);
+    return allocateTradeFees(rows, mappedFeeAccounts);
 }

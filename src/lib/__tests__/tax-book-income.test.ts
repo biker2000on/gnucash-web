@@ -45,7 +45,8 @@ import { getRetirementAccountGuids } from '@/lib/reports/contribution-classifier
 import { generateContributionSummary } from '@/lib/reports/contribution-summary';
 import { getAccountLots, getLotsForAccounts, type LotSummary, type LotSplit } from '@/lib/lots';
 import { aggregateBookTaxData, expandMappingsToDescendants } from '@/lib/tax/book-income';
-import type { TaxCategory } from '@/lib/tax/types';
+import { buildFederalInputsFromBookData } from '@/lib/tax/estimator-inputs';
+import type { TaxCategory, TaxYear } from '@/lib/tax/types';
 
 const mockPrisma = prisma as unknown as {
   gnucash_web_tax_mappings: { findMany: Mock };
@@ -416,14 +417,15 @@ describe('aggregateBookTaxData', () => {
   });
 
   /* ---------------------------------------------------------------- */
-  /* A commission must lower taxable income EXACTLY ONCE.              */
+  /* A commission lowers taxable income EXACTLY ONCE, UNCONDITIONALLY. */
   /*                                                                   */
-  /* aggregateBookTaxData sums every split of a tax-mapped account into */
-  /* a deductible category AND consumes the fee-adjusted realized-sale  */
-  /* extraction. If a mapped commission were also capitalized into      */
-  /* basis, the same $100 would reduce taxable income twice — the       */
-  /* direction that gets a filer in trouble. These two tests pin both   */
-  /* configurations of the same dollar.                                 */
+  /* A trade fee is a cost of the security, never a deduction, so it   */
+  /* is always capitalized into basis and the split that produced it   */
+  /* is always held out of the deduction category sums. The outcome    */
+  /* must not depend on the account's tax mapping — deductibility is   */
+  /* conditional (SALT caps, AGI floors, the standard-deduction        */
+  /* election), and a design that deferred to a mapping left the fee   */
+  /* counted NOWHERE whenever the condition did not hold.              */
   /* ---------------------------------------------------------------- */
   describe('a commission reduces taxable income exactly once', () => {
     const bigint = (v: number) => ({
@@ -468,73 +470,99 @@ describe('aggregateBookTaxData', () => {
         },
       ]);
 
-      // The category-sum query reports the same $100 in the commission
-      // account; book-income only counts it when the account is mapped.
+      // Stand in for the real category-sum query, INCLUDING its exclusion of
+      // capitalized trade-fee splits: the $100 commission is reported unless
+      // 'split-comm' arrives in the excluded-GUID parameter.
       mockPrisma.$queryRaw.mockImplementation(
-        (strings: TemplateStringsArray) => {
+        (strings: TemplateStringsArray, ...values: unknown[]) => {
           const sql = strings.join('?');
           if (sql.includes('FROM account_hierarchy')) return Promise.resolve(ACCOUNTS);
-          if (sql.includes('FROM splits')) return Promise.resolve([{ account_guid: 'comm', total: 100 }]);
+          if (sql.includes('FROM splits')) {
+            const passed = new Set(values.filter(Array.isArray).flat() as string[]);
+            return Promise.resolve(
+              passed.has('split-comm') ? [] : [{ account_guid: 'comm', total: 100 }],
+            );
+          }
           return Promise.resolve([]);
         },
       );
     };
 
-    it('DEDUCTS it and leaves the gain gross when the account is tax-mapped', async () => {
-      arrangeSaleWithCommission();
-      mockPrisma.gnucash_web_tax_mappings.findMany.mockResolvedValue([
-        { account_guid: 'comm', tax_category: 'business_expense' },
-      ]);
+    /** Every category total that lowers taxable income, summed. */
+    const deductionTotal = (result: Awaited<ReturnType<typeof run>>) =>
+      result.categories
+        .filter(c => [
+          'business_expense', 'other_deduction', 'charitable_donation', 'medical_expense',
+          'mortgage_interest', 'property_tax', 'state_local_tax_paid',
+          'state_withholding', 'state_estimated_tax_payment',
+        ].includes(c.category))
+        .reduce((sum, c) => sum + c.total, 0);
 
-      const result = await run();
-
-      // Deducted once, as an expense...
-      expect(result.categories.find(c => c.category === 'business_expense')?.total).toBe(100);
-      // ...and NOT a second time through a reduced capital gain.
-      expect(result.realizedGains.longTerm).toBe(1000);
-    });
-
-    it('CAPITALIZES it and takes no deduction when the account is unmapped', async () => {
-      arrangeSaleWithCommission();
-      mockPrisma.gnucash_web_tax_mappings.findMany.mockResolvedValue([]);
-
-      const result = await run();
-
-      // No deduction — the account feeds no tax category...
-      expect(result.categories.find(c => c.category === 'business_expense')).toBeUndefined();
-      // ...so the commission lands in the gain instead: 2000 - 100 - 1000.
-      expect(result.realizedGains.longTerm).toBe(900);
-    });
-
-    // A mapping that is NOT a deduction must still leave the fee capitalized.
-    // Refusing on "mapped to anything but exclude" would count these dollars
-    // NOWHERE — the original H2 omission, back for these configurations.
-    const NON_DEDUCTING: Array<[string, string]> = [
-      ['exclude', 'excluded from every tax computation'],
-      ['estimated_tax_payment', 'a tax PAYMENT, credited against tax owed, never a deduction'],
-      ['education_529_contribution', 'informational — 529 contributions carry no federal deduction'],
+    // The outcome is IDENTICAL in all four: capitalized once, deducted never.
+    const MAPPINGS: Array<[string, string]> = [
+      ['(unmapped)', ''],
+      ['business_expense', 'business_expense'],
+      // The reviewer's counterexample: SALT is capped and only reached when
+      // the filer itemizes, so deferring to this mapping could deduct nothing.
+      ['state_withholding', 'state_withholding'],
+      ['exclude', 'exclude'],
     ];
 
-    for (const [category, why] of NON_DEDUCTING) {
-      it(`CAPITALIZES it when mapped to ${category} (${why})`, async () => {
+    for (const [label, category] of MAPPINGS) {
+      it(`capitalizes it and takes no deduction — mapped to ${label}`, async () => {
         arrangeSaleWithCommission();
-        mockPrisma.gnucash_web_tax_mappings.findMany.mockResolvedValue([
-          { account_guid: 'comm', tax_category: category },
-        ]);
+        mockPrisma.gnucash_web_tax_mappings.findMany.mockResolvedValue(
+          category ? [{ account_guid: 'comm', tax_category: category }] : [],
+        );
 
         const result = await run();
 
-        // Taxable income falls by the $100 exactly once — through basis.
+        // Counted once, through basis: 2000 - 100 fee - 1000 cost.
         expect(result.realizedGains.longTerm).toBe(900);
-        // And never through a deduction: no deducting category picks it up.
-        const deducting = result.categories.filter(c =>
-          ['business_expense', 'other_deduction', 'charitable_donation', 'medical_expense']
-            .includes(c.category),
-        );
-        expect(deducting).toEqual([]);
+        // And never a second time as a deduction, whatever the mapping.
+        expect(deductionTotal(result)).toBe(0);
       });
     }
+
+    it('keeps the fee out of the deduction INPUTS a standard-deduction filer builds', async () => {
+      // The counterexample end to end: state_withholding feeds SALT, which a
+      // standard-deduction filer never claims. If the $100 reached
+      // stateLocalTaxesPaid it would be deducted nowhere AND capitalized
+      // nowhere. Assert on the built inputs, not just the category totals.
+      arrangeSaleWithCommission();
+      mockPrisma.gnucash_web_tax_mappings.findMany.mockResolvedValue([
+        { account_guid: 'comm', tax_category: 'state_withholding' },
+      ]);
+
+      const result = await run();
+      const inputs = buildFederalInputsFromBookData(result, TAX_YEAR as TaxYear, 'single');
+
+      expect(inputs.stateLocalTaxesPaid).toBe(0);
+      expect(inputs.longTermCapitalGains).toBe(900);
+    });
+
+    it('still deducts a NON-fee expense in the same account tree', async () => {
+      // The exclusion is by SPLIT guid, not by account: an ordinary expense
+      // split that was never capitalized keeps its deduction.
+      arrangeSaleWithCommission();
+      mockPrisma.gnucash_web_tax_mappings.findMany.mockResolvedValue([
+        { account_guid: 'estpay', tax_category: 'business_expense' },
+      ]);
+      mockPrisma.$queryRaw.mockImplementation(
+        (strings: TemplateStringsArray) => {
+          const sql = strings.join('?');
+          if (sql.includes('FROM account_hierarchy')) return Promise.resolve(ACCOUNTS);
+          if (sql.includes('FROM splits')) return Promise.resolve([{ account_guid: 'estpay', total: 250 }]);
+          return Promise.resolve([]);
+        },
+      );
+
+      const result = await run();
+      expect(result.categories.find(c => c.category === 'business_expense')?.total).toBe(250);
+      expect(result.realizedGains.longTerm).toBe(900);
+    });
   });
+
   it('passes sheltered guids (retirement + excluded assets) to the category-sum guard', async () => {
     mockGetRetirementAccountGuids.mockResolvedValue(new Set(['ret-401k']));
     let capturedSql: string | null = null;
