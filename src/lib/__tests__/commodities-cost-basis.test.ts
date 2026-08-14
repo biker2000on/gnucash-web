@@ -115,14 +115,19 @@ describe('getAccountHoldings — cost-basis coverage', () => {
 
     expect(h.shares).toBeCloseTo(200, 6);
     expect(h.costBasis).toBeCloseTo(3_500, 6);          // $1,000 bought + $2,500 traced
-    expect(h.costBasisCoveredShares).toBeCloseTo(150, 6); // 100 bought + 50 traced
-    expect(h.costBasisUncoveredShares).toBeCloseTo(50, 6);
+    // Narrowing is forced before any share count can be read: there is no
+    // `uncoveredShares` to reach on a `complete` or `unknown` coverage, so no
+    // consumer can Number()-coerce a missing one into "0 uncovered".
+    expect(h.costBasisCoverage.status).toBe('partial');
+    if (h.costBasisCoverage.status !== 'partial') throw new Error('expected partial coverage');
+    expect(h.costBasisCoverage.coveredShares).toBeCloseTo(150, 6); // 100 bought + 50 traced
+    expect(h.costBasisCoverage.uncoveredShares).toBeCloseTo(50, 6);
     // The honest per-share basis is over the COVERED shares ($23.33), not over
     // all 200 shares ($17.50), which is what absorbing the uncovered shares
     // into the pool would report.
-    expect(h.costBasis / h.costBasisCoveredShares).toBeCloseTo(23.3333333, 5);
-    expect(h.costBasisWarnings).toHaveLength(1);
-    expect(h.costBasisWarnings[0]).toContain('no traceable cost basis');
+    expect(h.costBasis / h.costBasisCoverage.coveredShares).toBeCloseTo(23.3333333, 5);
+    expect(h.costBasisCoverage.warnings).toHaveLength(1);
+    expect(h.costBasisCoverage.warnings[0]).toContain('no traceable cost basis');
   });
 
   it('a sale consumes covered and uncovered shares pro rata', async () => {
@@ -131,10 +136,11 @@ describe('getAccountHoldings — cost-basis coverage', () => {
 
     expect(h.shares).toBeCloseTo(100, 6);
     // 100 of 200 shares sold: 75 covered (150/200) and 25 uncovered.
-    expect(h.costBasisCoveredShares).toBeCloseTo(75, 6);
-    expect(h.costBasisUncoveredShares).toBeCloseTo(25, 6);
+    if (h.costBasisCoverage.status !== 'partial') throw new Error('expected partial coverage');
+    expect(h.costBasisCoverage.coveredShares).toBeCloseTo(75, 6);
+    expect(h.costBasisCoverage.uncoveredShares).toBeCloseTo(25, 6);
     expect(h.costBasis).toBeCloseTo(1_750, 6);
-    expect(h.costBasis / h.costBasisCoveredShares).toBeCloseTo(23.3333333, 5);
+    expect(h.costBasis / h.costBasisCoverage.coveredShares).toBeCloseTo(23.3333333, 5);
   });
 
   it('a fully traceable holding reports no uncovered shares', async () => {
@@ -149,19 +155,37 @@ describe('getAccountHoldings — cost-basis coverage', () => {
 
     const h = await getAccountHoldings(ACCT, undefined, { enabled: true, method: 'fifo' });
     expect(h.costBasis).toBeCloseTo(6_000, 6);
-    expect(h.costBasisCoveredShares).toBeCloseTo(200, 6);
-    expect(h.costBasisUncoveredShares).toBeCloseTo(0, 6);
-    expect(h.costBasisWarnings).toEqual([]);
+    // Complete: the basis describes all 200 shares, so there is no uncovered
+    // count to carry and no caveat for a consumer to render.
+    expect(h.costBasisCoverage).toEqual({ status: 'complete', coveredShares: 200 });
   });
 
-  it('without carry-over tracing every share is covered by its own split value', async () => {
+  it('without carry-over tracing coverage is UNKNOWN, not complete', async () => {
     mockSplitsFindMany.mockResolvedValue([
       buy({ guid: 'buy-1', postDate: '2020-01-01', shares: 100, value: 1_000 }),
     ]);
     const h = await getAccountHoldings(ACCT);
+
+    // The basis this path can compute is still reported in full.
     expect(h.costBasis).toBeCloseTo(1_000, 6);
-    expect(h.costBasisCoveredShares).toBeCloseTo(100, 6);
-    expect(h.costBasisUncoveredShares).toBe(0);
     expect(mockTraceCostBasis).not.toHaveBeenCalled();
+    // But it does no transfer-in detection at all, so an in-kind transfer would
+    // enter at its $0 split value: claiming "100 covered, 0 uncovered" would
+    // assert a completeness this branch never established. The ledger route
+    // declines the same claim for the same toggle.
+    expect(h.costBasisCoverage.status).toBe('unknown');
+  });
+
+  it('an oversell reports coverage as UNKNOWN rather than "0 uncovered"', async () => {
+    // Buy 100, sell 150. The pool clamps at zero shares and cannot describe a
+    // short position, so it can no longer say anything true about coverage.
+    mockSplitsFindMany.mockResolvedValue([
+      buy({ guid: 'buy-1', postDate: '2020-01-01', shares: 100, value: 1_000 }),
+      sell({ guid: 'sell-1', postDate: '2024-01-01', shares: 150, proceeds: 12_000 }),
+    ]);
+    const h = await getAccountHoldings(ACCT, undefined, { enabled: true, method: 'fifo' });
+
+    expect(h.shares).toBeCloseTo(-50, 6); // the share balance stays honest
+    expect(h.costBasisCoverage.status).toBe('unknown');
   });
 });

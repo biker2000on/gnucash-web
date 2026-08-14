@@ -1,6 +1,11 @@
 import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
-import { getAccountHoldings, type CostBasisOptions } from '@/lib/commodities';
+import {
+  getAccountHoldings,
+  combineCoverage,
+  type CostBasisOptions,
+  type CostBasisCoverage,
+} from '@/lib/commodities';
 import { getBookAccountGuids } from '@/lib/book-scope';
 import { getCachedMetadata, getPortfolioSectorExposure } from '@/lib/commodity-metadata';
 import type { SectorExposure } from '@/lib/commodity-metadata';
@@ -33,6 +38,8 @@ interface ConsolidatedHolding {
   fullname: string;
   totalShares: number;
   totalCostBasis: number;
+  /** Coverage of `totalCostBasis`, pooled across the accounts below. */
+  totalCostBasisCoverage: CostBasisCoverage;
   totalMarketValue: number;
   totalGainLoss: number;
   totalGainLossPercent: number;
@@ -44,6 +51,7 @@ interface ConsolidatedHolding {
     accountPath: string;
     shares: number;
     costBasis: number;
+    costBasisCoverage: CostBasisCoverage;
     marketValue: number;
     gainLoss: number;
     gainLossPercent: number;
@@ -54,6 +62,8 @@ interface PortfolioResponse {
   summary: {
     totalValue: number;
     totalCostBasis: number;
+    /** Coverage of `totalCostBasis` across every holding in the portfolio. */
+    totalCostBasisCoverage: CostBasisCoverage;
     totalGainLoss: number;
     totalGainLossPercent: number;
   };
@@ -66,6 +76,12 @@ interface PortfolioResponse {
     fullname: string;
     shares: number;
     costBasis: number;
+    /**
+     * What `costBasis` (and therefore `gainLoss`) actually describes. Travels
+     * with every basis in this response so no consumer can render one as a
+     * complete figure without first narrowing on it.
+     */
+    costBasisCoverage: CostBasisCoverage;
     marketValue: number;
     gainLoss: number;
     gainLossPercent: number;
@@ -189,6 +205,7 @@ export async function GET(request: Request) {
         fullname: account.commodity?.fullname || '',
         shares: holdings.shares,
         costBasis: holdings.costBasis,
+        costBasisCoverage: holdings.costBasisCoverage,
         marketValue: holdings.marketValue,
         gainLoss: holdings.gainLoss,
         gainLossPercent: holdings.gainLossPercent,
@@ -203,17 +220,21 @@ export async function GET(request: Request) {
     // Filter out fully closed positions (zero shares AND zero market value)
     const holdings = allHoldings.filter(h => Math.abs(h.shares) >= 0.0001 || Math.abs(h.marketValue) >= 0.01);
 
-    // Calculate portfolio summary
+    // Calculate portfolio summary. The totals sum per-holding numbers that are
+    // each honest about their own coverage, so the total carries the pooled
+    // coverage rather than presenting itself as a complete portfolio basis.
     const summary = holdings.reduce(
       (acc, holding) => ({
         totalValue: acc.totalValue + holding.marketValue,
         totalCostBasis: acc.totalCostBasis + holding.costBasis,
+        totalCostBasisCoverage: acc.totalCostBasisCoverage,
         totalGainLoss: acc.totalGainLoss + holding.gainLoss,
         totalGainLossPercent: 0, // Calculated after
       }),
       {
         totalValue: 0,
         totalCostBasis: 0,
+        totalCostBasisCoverage: combineCoverage(holdings.map(h => h.costBasisCoverage)),
         totalGainLoss: 0,
         totalGainLossPercent: 0,
       }
@@ -383,7 +404,12 @@ export async function GET(request: Request) {
       const totalShares = group.reduce((s, h) => s + h.shares, 0);
       const totalCostBasis = group.reduce((s, h) => s + h.costBasis, 0);
       const totalMarketValue = group.reduce((s, h) => s + h.marketValue, 0);
-      const totalGainLoss = totalMarketValue - totalCostBasis;
+      const totalCostBasisCoverage = combineCoverage(group.map(h => h.costBasisCoverage));
+      // Sum the per-account gains rather than recomputing
+      // `totalMarketValue - totalCostBasis`: each account's gain is already
+      // restricted to the shares its basis covers, and that subtraction would
+      // put the uncovered shares' full market value back into the total.
+      const totalGainLoss = group.reduce((s, h) => s + h.gainLoss, 0);
       const totalGainLossPercent = totalCostBasis !== 0
         ? (totalGainLoss / Math.abs(totalCostBasis)) * 100
         : 0;
@@ -397,6 +423,7 @@ export async function GET(request: Request) {
         fullname: first.fullname,
         totalShares: Math.round(totalShares * 10000) / 10000,
         totalCostBasis: Math.round(totalCostBasis * 100) / 100,
+        totalCostBasisCoverage,
         totalMarketValue: Math.round(totalMarketValue * 100) / 100,
         totalGainLoss: Math.round(totalGainLoss * 100) / 100,
         totalGainLossPercent: Math.round(totalGainLossPercent * 100) / 100,
@@ -408,6 +435,7 @@ export async function GET(request: Request) {
           accountPath: h.accountPath,
           shares: h.shares,
           costBasis: h.costBasis,
+          costBasisCoverage: h.costBasisCoverage,
           marketValue: h.marketValue,
           gainLoss: h.gainLoss,
           gainLossPercent: h.gainLossPercent,

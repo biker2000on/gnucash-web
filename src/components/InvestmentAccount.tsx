@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { formatCurrency } from '@/lib/format';
+import { CostBasisCoverageMark } from '@/components/investments/CostBasisCoverageMark';
+import type { CostBasisCoverage } from '@/lib/commodities';
 import { useToast } from '@/contexts/ToastContext';
 import { InvestmentTransactionForm } from './InvestmentTransactionForm';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceArea, AreaChart, Area, ReferenceLine } from 'recharts';
@@ -34,8 +36,11 @@ interface ValuationData {
     };
     holdings?: {
         shares: number;
+        /** Basis of the shares `costBasisCoverage` describes, not always all of them. */
         costBasis: number;
+        costBasisCoverage: CostBasisCoverage;
         marketValue: number;
+        /** Gain of the covered shares; see `costBasisCoverage`. */
         gainLoss: number;
         gainLossPercent: number;
         latestPrice: PriceData | null;
@@ -424,6 +429,8 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
                         <div className="text-xs text-foreground-muted uppercase tracking-wider">Cost Basis</div>
                         <div className="text-lg sm:text-xl font-mono font-semibold text-foreground mt-1">
                             {formatCurrency(Math.abs(holdings.costBasis), 'USD')}
+                            {/* Names the shares this basis (and the Gain/Loss beside it) leaves out. */}
+                            <CostBasisCoverageMark coverage={holdings.costBasisCoverage} />
                         </div>
                     </div>
                     <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-4 overflow-hidden">

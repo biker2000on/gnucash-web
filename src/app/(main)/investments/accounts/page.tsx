@@ -64,6 +64,9 @@ export default function AccountsPage() {
         symbol: 'CASH',
         shares: 0,
         costBasis: selectedCashAccount.cashBalance,
+        // A cash balance is its own basis: nothing is traced, nothing is
+        // missing, so this row carries no coverage caveat.
+        costBasisCoverage: { status: 'complete' as const, coveredShares: 0 },
         marketValue: selectedCashAccount.cashBalance,
         gainLoss: 0,
         gainLossPercent: 0,

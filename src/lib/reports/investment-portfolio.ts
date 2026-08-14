@@ -7,7 +7,12 @@
 
 import prisma from '@/lib/prisma';
 import { Prisma } from '@prisma/client';
-import { calculateMarketValue, calculateGainLoss, calculateGainLossPercent } from '@/lib/commodities';
+import {
+    calculateMarketValue,
+    calculateGainLoss,
+    calculateGainLossPercent,
+    UNTRACED_BASIS_COVERAGE,
+} from '@/lib/commodities';
 import { getBaseCurrency } from '@/lib/currency';
 import { ReportType, ReportFilters, InvestmentPortfolioData, PortfolioHolding } from './types';
 import { sumSplitsByAccount, toDecimal } from './utils';
@@ -109,7 +114,15 @@ export async function generateInvestmentPortfolio(
 
         const effectiveShares = isZeroShares ? 0 : shares;
         const marketValue = isZeroShares ? 0 : calculateMarketValue(effectiveShares, latestPrice);
-        const gain = calculateGainLoss(marketValue, costBasis);
+        // This report sums raw split values with no transfer tracing, so it
+        // cannot say how much of the position that basis covers. Stating that
+        // explicitly leaves the numbers exactly as they were.
+        const gain = calculateGainLoss({
+            shares: effectiveShares,
+            pricePerShare: latestPrice,
+            costBasis,
+            coverage: UNTRACED_BASIS_COVERAGE,
+        });
         const gainPercent = calculateGainLossPercent(gain, costBasis);
 
         return {

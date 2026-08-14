@@ -2,7 +2,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { requireRole } from '@/lib/auth';
 import { getBookAccountGuids } from '@/lib/book-scope';
-import { getAccountHoldings, type CostBasisOptions } from '@/lib/commodities';
+import {
+    getAccountHoldings,
+    combineCoverage,
+    type CostBasisOptions,
+    type CostBasisCoverage,
+} from '@/lib/commodities';
 import { createCostBasisCache, type CostBasisMethod } from '@/lib/cost-basis';
 import {
     loadDividendPayments,
@@ -56,7 +61,13 @@ export async function GET(request: NextRequest) {
         });
 
         // Aggregate holdings per commodity across all investment accounts.
+        //
+        // Coverage is aggregated with the basis it belongs to. Yield-on-cost
+        // divides income by that basis, so a partial basis (shares transferred
+        // in whose origin is not in this book) would otherwise report an
+        // overstated yield with nothing said about it.
         const byCommodity = new Map<string, SecurityValuation>();
+        const coverageParts = new Map<string, CostBasisCoverage[]>();
         await Promise.all(
             stockAccounts.map(async (account) => {
                 const commodityGuid = account.commodity_guid;
@@ -64,6 +75,10 @@ export async function GET(request: NextRequest) {
                 const holdings = await getAccountHoldings(account.guid, undefined, costBasisOptions);
                 if (Math.abs(holdings.shares) < 0.0001 && Math.abs(holdings.marketValue) < 0.01) return;
                 const ticker = account.commodity?.mnemonic || '???';
+                coverageParts.set(commodityGuid, [
+                    ...(coverageParts.get(commodityGuid) ?? []),
+                    holdings.costBasisCoverage,
+                ]);
                 const existing = byCommodity.get(commodityGuid);
                 if (existing) {
                     existing.costBasis += holdings.costBasis;
@@ -74,10 +89,14 @@ export async function GET(request: NextRequest) {
                         ticker,
                         costBasis: holdings.costBasis,
                         marketValue: holdings.marketValue,
+                        costBasisCoverage: { status: 'complete', coveredShares: 0 },
                     });
                 }
             }),
         );
+        for (const [commodityGuid, valuation] of byCommodity) {
+            valuation.costBasisCoverage = combineCoverage(coverageParts.get(commodityGuid) ?? []);
+        }
 
         // Key valuations by both commodity GUID and ticker so ticker-only
         // (cash-dividend) securities can still resolve a valuation.

@@ -18,6 +18,7 @@
  */
 
 import prisma from '@/lib/prisma';
+import { coveredShareFraction, type CostBasisCoverage } from '@/lib/commodities';
 import { toDecimalNumber } from '@/lib/gnucash';
 
 /* ------------------------------------------------------------------ */
@@ -51,8 +52,10 @@ export interface DividendPayment {
 export interface SecurityValuation {
     commodityGuid: string;
     ticker: string;
+    /** Basis of the shares `costBasisCoverage` describes, not always all of them. */
     costBasis: number;
     marketValue: number;
+    costBasisCoverage: CostBasisCoverage;
 }
 
 /** Per-security dividend rollup with yields (when valuation is available). */
@@ -75,11 +78,22 @@ export interface PerSecurityDividend {
      * (cash-only dividends resolved by description).
      */
     accountGuid: string | null;
-    /** Trailing-12mo dividends / cost basis * 100, or null when unknown */
+    /**
+     * Trailing-12mo dividends / cost basis * 100, or null when unknown.
+     *
+     * Under partial coverage both sides describe the covered shares only (see
+     * `costBasisCoverage`) — dividing the WHOLE position's income by a partial
+     * basis would overstate the yield twice over.
+     */
     yieldOnCost: number | null;
     /** Trailing-12mo dividends / current market value * 100, or null */
     currentYield: number | null;
     costBasis: number | null;
+    /**
+     * What `costBasis` and `yieldOnCost` describe; null when no valuation was
+     * available at all. Render the caveat with the numbers.
+     */
+    costBasisCoverage: CostBasisCoverage | null;
     marketValue: number | null;
 }
 
@@ -270,6 +284,15 @@ export function perSecurityDividends(
             : null;
         const costBasis = valuation ? valuation.costBasis : null;
         const marketValue = valuation ? valuation.marketValue : null;
+        const costBasisCoverage = valuation ? valuation.costBasisCoverage : null;
+        // Yield-on-cost is income over basis. When the basis covers only part
+        // of the position, the income is restricted to the same part — shares
+        // pay dividends per share, so the covered slice earned that fraction of
+        // it. Dividing full income by a partial basis inflates the numerator's
+        // scope and shrinks the denominator at the same time.
+        const coveredIncome = costBasisCoverage
+            ? ttmIncome * coveredShareFraction(costBasisCoverage)
+            : ttmIncome;
 
         result.push({
             ticker: first.ticker,
@@ -281,9 +304,10 @@ export function perSecurityDividends(
             lastPaymentDate: last ? isoDate(last.date) : null,
             lastPaymentAmount: last ? last.amount : null,
             accountGuid: lastWithAccount?.investmentAccountGuid ?? null,
-            yieldOnCost: costBasis != null ? computeYieldOnCost(ttmIncome, costBasis) : null,
+            yieldOnCost: costBasis != null ? computeYieldOnCost(coveredIncome, costBasis) : null,
             currentYield: marketValue != null ? computeCurrentYield(ttmIncome, marketValue) : null,
             costBasis,
+            costBasisCoverage,
             marketValue,
         });
     }

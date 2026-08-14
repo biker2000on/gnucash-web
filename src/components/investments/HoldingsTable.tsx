@@ -5,10 +5,28 @@ import { useRouter } from 'next/navigation';
 import { formatCurrency } from '@/lib/format';
 import { useIsMobile } from '@/lib/hooks/useIsMobile';
 import { MobileCard } from '@/components/ui/MobileCard';
+import { CostBasisCoverageMark } from '@/components/investments/CostBasisCoverageMark';
+import type { CostBasisCoverage } from '@/lib/commodities';
 
 function stripRoot(path: string): string {
   const idx = path.indexOf(':');
   return idx >= 0 ? path.slice(idx + 1) : path;
+}
+
+/**
+ * A cost basis and the coverage that says what it describes, rendered together.
+ *
+ * Every basis in this table goes through here. `costBasisCoverage` is required
+ * rather than optional so a new caller cannot omit it and silently print a
+ * partial basis as a complete one — the failure this component exists to stop.
+ */
+function CostBasis({ value, coverage }: { value: number; coverage: CostBasisCoverage }) {
+  return (
+    <>
+      {formatCurrency(value)}
+      <CostBasisCoverageMark coverage={coverage} />
+    </>
+  );
 }
 
 interface Holding {
@@ -17,7 +35,9 @@ interface Holding {
   accountPath?: string;
   symbol: string;
   shares: number;
+  /** Basis of the shares `costBasisCoverage` describes; `gainLoss` matches it. */
   costBasis: number;
+  costBasisCoverage: CostBasisCoverage;
   marketValue: number;
   gainLoss: number;
   gainLossPercent: number;
@@ -31,6 +51,7 @@ interface ConsolidatedHolding {
   fullname: string;
   totalShares: number;
   totalCostBasis: number;
+  totalCostBasisCoverage: CostBasisCoverage;
   totalMarketValue: number;
   totalGainLoss: number;
   totalGainLossPercent: number;
@@ -42,6 +63,7 @@ interface ConsolidatedHolding {
     accountPath: string;
     shares: number;
     costBasis: number;
+    costBasisCoverage: CostBasisCoverage;
     marketValue: number;
     gainLoss: number;
     gainLossPercent: number;
@@ -188,7 +210,7 @@ export function HoldingsTable({ holdings, consolidatedHoldings }: HoldingsTableP
                       { label: 'Shares', value: holding.totalShares.toLocaleString(undefined, { maximumFractionDigits: 4 }) },
                       { label: 'Price', value: formatCurrency(holding.latestPrice) },
                       { label: 'Market Value', value: formatCurrency(holding.totalMarketValue) },
-                      { label: 'Cost Basis', value: formatCurrency(holding.totalCostBasis) },
+                      { label: 'Cost Basis', value: <CostBasis value={holding.totalCostBasis} coverage={holding.totalCostBasisCoverage} /> },
                       { label: 'Gain/Loss', value: <span className={holding.totalGainLoss >= 0 ? 'text-positive' : 'text-error'}>{formatCurrency(holding.totalGainLoss)}</span> },
                       { label: 'Gain %', value: <span className={holding.totalGainLossPercent >= 0 ? 'text-positive' : 'text-error'}>{holding.totalGainLossPercent >= 0 ? '+' : ''}{holding.totalGainLossPercent.toFixed(2)}%</span> },
                     ]}
@@ -203,7 +225,7 @@ export function HoldingsTable({ holdings, consolidatedHoldings }: HoldingsTableP
                         { label: 'Account', value: stripRoot(account.accountPath) },
                         { label: 'Shares', value: account.shares.toLocaleString(undefined, { maximumFractionDigits: 4 }) },
                         { label: 'Market Value', value: formatCurrency(account.marketValue) },
-                        { label: 'Cost Basis', value: formatCurrency(account.costBasis) },
+                        { label: 'Cost Basis', value: <CostBasis value={account.costBasis} coverage={account.costBasisCoverage} /> },
                         { label: 'Gain/Loss', value: <span className={account.gainLoss >= 0 ? 'text-positive/70' : 'text-error/70'}>{formatCurrency(account.gainLoss)}</span> },
                         { label: 'Gain %', value: <span className={account.gainLossPercent >= 0 ? 'text-positive/70' : 'text-error/70'}>{account.gainLossPercent >= 0 ? '+' : ''}{account.gainLossPercent.toFixed(2)}%</span> },
                       ]}
@@ -290,7 +312,7 @@ export function HoldingsTable({ holdings, consolidatedHoldings }: HoldingsTableP
                 { label: 'Full Name', value: holding.accountName },
                 { label: 'Shares', value: holding.isCash ? 'Cash' : holding.shares.toLocaleString(undefined, { maximumFractionDigits: 4 }) },
                 { label: 'Market Value', value: formatCurrency(holding.marketValue) },
-                { label: 'Cost Basis', value: formatCurrency(holding.costBasis) },
+                { label: 'Cost Basis', value: <CostBasis value={holding.costBasis} coverage={holding.costBasisCoverage} /> },
                 { label: 'Gain/Loss', value: <span className={holding.gainLoss >= 0 ? 'text-positive' : 'text-error'}>{formatCurrency(holding.gainLoss)}</span> },
                 { label: 'Gain %', value: <span className={holding.gainLossPercent >= 0 ? 'text-positive' : 'text-error'}>{holding.gainLossPercent >= 0 ? '+' : ''}{holding.gainLossPercent.toFixed(2)}%</span> },
               ]}
@@ -324,7 +346,9 @@ export function HoldingsTable({ holdings, consolidatedHoldings }: HoldingsTableP
                   <td className="px-4 py-3 text-foreground-secondary">
                     {holding.isCash ? '\u2014' : holding.shares.toLocaleString(undefined, { maximumFractionDigits: 4 })}
                   </td>
-                  <td className="px-4 py-3 text-foreground-secondary">{formatCurrency(holding.costBasis)}</td>
+                  <td className="px-4 py-3 text-foreground-secondary">
+                    <CostBasis value={holding.costBasis} coverage={holding.costBasisCoverage} />
+                  </td>
                   <td className="px-4 py-3 text-foreground-secondary">{formatCurrency(holding.marketValue)}</td>
                   <td className={`px-4 py-3 ${holding.gainLoss >= 0 ? 'text-positive' : 'text-error'}`}>
                     {formatCurrency(holding.gainLoss)}
@@ -384,7 +408,9 @@ function ConsolidatedRow({
         <td className="px-4 py-3 text-foreground-secondary">
           {holding.totalShares.toLocaleString(undefined, { maximumFractionDigits: 4 })}
         </td>
-        <td className="px-4 py-3 text-foreground-secondary">{formatCurrency(holding.totalCostBasis)}</td>
+        <td className="px-4 py-3 text-foreground-secondary">
+          <CostBasis value={holding.totalCostBasis} coverage={holding.totalCostBasisCoverage} />
+        </td>
         <td className="px-4 py-3 text-foreground-secondary">{formatCurrency(holding.totalMarketValue)}</td>
         <td className={`px-4 py-3 ${holding.totalGainLoss >= 0 ? 'text-positive' : 'text-error'}`}>
           {formatCurrency(holding.totalGainLoss)}
@@ -408,7 +434,9 @@ function ConsolidatedRow({
           <td className="px-4 py-2 text-sm text-foreground-muted">
             {account.shares.toLocaleString(undefined, { maximumFractionDigits: 4 })}
           </td>
-          <td className="px-4 py-2 text-sm text-foreground-muted">{formatCurrency(account.costBasis)}</td>
+          <td className="px-4 py-2 text-sm text-foreground-muted">
+            <CostBasis value={account.costBasis} coverage={account.costBasisCoverage} />
+          </td>
           <td className="px-4 py-2 text-sm text-foreground-muted">{formatCurrency(account.marketValue)}</td>
           <td className={`px-4 py-2 text-sm ${account.gainLoss >= 0 ? 'text-positive/70' : 'text-error/70'}`}>
             {formatCurrency(account.gainLoss)}
