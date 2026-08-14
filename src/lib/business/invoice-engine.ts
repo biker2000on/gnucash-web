@@ -23,6 +23,14 @@
  *             'date-posted'     (type 10 gdate) = post date
  *   - invoices row updated: date_posted, post_txn, post_acc, post_lot.
  *
+ * UNPOST reverses; it does not delete (see unpostInvoice). The posting
+ * transaction, its splits and its lot all survive, a second transaction with
+ * equal and opposite splits cancels them, and the invoice row's posting fields
+ * are cleared so it reads as a draft again. This diverges from desktop
+ * gncInvoiceUnpost, which destroys the transaction: destroying it takes the
+ * audit trail with it, silently restates a closed period, and can delete a
+ * split that was reconciled against a statement.
+ *
  * Payments (see gncOwnerApplyPayment): one transaction, DEBIT deposit account
  * / CREDIT A/R for a customer payment (flipped for vendors); each A/R–A/P
  * split is assigned into the paid invoice's lot. A lot whose split values sum
@@ -50,7 +58,6 @@ import {
   getBookGuidForAccount,
   getBookGuidForRoot,
 } from '@/lib/services/period-lock.service';
-import { assertNoReconciledSplits } from '@/lib/services/reconciled-split.service';
 import {
   recordEntityOwnership,
   isEntityOwnedByBook,
@@ -99,6 +106,17 @@ const PRICE_DENOM = 1000000;
 const DISCOUNT_DENOM = 100;
 
 const TXN_READONLY_REASON = 'Generated from an invoice. Try unposting the invoice.';
+
+// Audit slots written by unpostInvoice. These are OUR namespace, not GnuCash's:
+// the native 'gncInvoice' frame means "this object IS invoice X's live posting",
+// which stops being true the moment the invoice is unposted. GnuCash preserves
+// unknown KVP untouched, so the trail survives an export/import round trip.
+/** On the reversing txn: guid of the posting transaction it reverses. */
+const SLOT_REVERSES_TXN = 'gncweb-reverses-txn';
+/** On the reversed posting txn: guid of the transaction that reversed it. */
+const SLOT_REVERSED_BY_TXN = 'gncweb-reversed-by-txn';
+/** On both: guid of the invoice whose posting was unposted. */
+const SLOT_UNPOSTED_INVOICE = 'gncweb-unposted-invoice-guid';
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -466,6 +484,33 @@ async function writeGuidFrameSlot(
   await db.slots.create({
     data: { obj_guid: frameGuid, name: `${frameName}/${key}`, slot_type: SLOT_GUID, guid_val: guidVal },
   });
+}
+
+/** Write (or overwrite) a flat string slot on an object. */
+async function writeStringSlot(
+  db: PrismaTx,
+  objGuid: string,
+  name: string,
+  value: string,
+): Promise<void> {
+  await db.slots.deleteMany({ where: { obj_guid: objGuid, name } });
+  await db.slots.create({
+    data: { obj_guid: objGuid, name, slot_type: SLOT_STRING, string_val: value },
+  });
+}
+
+/**
+ * Delete ONE named frame slot (and its children) from an object, leaving the
+ * object's other slots alone.
+ */
+async function deleteFrameSlot(db: PrismaTx, objGuid: string, frameName: string): Promise<void> {
+  const rows = await db.slots.findMany({ where: { obj_guid: objGuid, name: frameName } });
+  for (const r of rows) {
+    if (r.slot_type === SLOT_FRAME && r.guid_val) {
+      await deleteSlotsRecursive(db, r.guid_val);
+    }
+  }
+  await db.slots.deleteMany({ where: { obj_guid: objGuid, name: frameName } });
 }
 
 /** Delete an object's slots, descending into frame children (guid_val). */
@@ -1216,6 +1261,191 @@ export async function postInvoice(
   return result!;
 }
 
+/** Greatest common divisor of two BigInts; never returns 0. */
+function bigintGcd(a: bigint, b: bigint): bigint {
+  let x = a < 0n ? -a : a;
+  let y = b < 0n ? -b : b;
+  while (y !== 0n) {
+    const t = x % y;
+    x = y;
+    y = t;
+  }
+  return x === 0n ? 1n : x;
+}
+
+/**
+ * Exact sum of split values as a reduced fraction. Split denominators are not
+ * always the currency fraction, so this sums as rationals rather than through
+ * a float — a transaction that balances must sum to exactly 0/1.
+ */
+function sumSplitValues(
+  splits: readonly { value_num: bigint; value_denom: bigint }[],
+): { num: bigint; denom: bigint } {
+  let num = 0n;
+  let denom = 1n;
+  for (const s of splits) {
+    num = num * s.value_denom + s.value_num * denom;
+    denom = denom * s.value_denom;
+    const g = bigintGcd(num, denom);
+    num /= g;
+    denom /= g;
+  }
+  return { num, denom };
+}
+
+/** A posting split, in the shape the reversal copies from. */
+type PostingSplitRow = {
+  guid: string;
+  account_guid: string;
+  action: string;
+  value_num: bigint;
+  value_denom: bigint;
+  quantity_num: bigint;
+  quantity_denom: bigint;
+  lot_guid: string | null;
+};
+
+/**
+ * Refuse to reverse a posting that is no longer the one we wrote.
+ *
+ * A reversal is only sound when the transaction it mirrors is intact: every
+ * split it negates must be a split this engine posted, and the A/R–A/P leg
+ * must still be the one carrying the invoice's lot. Where the old delete-based
+ * unpost destroyed whatever it found, this fails loudly and names the fix —
+ * there is no fallback to delete, because a delete is exactly the outcome that
+ * makes the tampering unrecoverable.
+ */
+function assertReversiblePosting(
+  invoice: { id: string; post_txn: string | null; post_acc: string | null; post_lot: string | null },
+  postingTxn: { guid: string } | null,
+  splits: readonly PostingSplitRow[],
+): void {
+  const txGuid = invoice.post_txn;
+  if (!postingTxn) {
+    throw new InvoiceStateError(
+      `Cannot unpost invoice ${invoice.id}: its posting transaction ${txGuid} no longer exists,`
+      + ' so there is nothing to reverse. The invoice\'s post_txn link is dangling —'
+      + ' repair the book before unposting.',
+    );
+  }
+  if (splits.length === 0) {
+    throw new InvoiceStateError(
+      `Cannot unpost invoice ${invoice.id}: posting transaction ${txGuid} has no splits left,`
+      + ' so a reversal would post nothing. The posting has been altered since it was written —'
+      + ' repair the book before unposting.',
+    );
+  }
+  if (splits.some((s) => s.value_denom === 0n || s.quantity_denom === 0n)) {
+    throw new InvoiceStateError(
+      `Cannot unpost invoice ${invoice.id}: posting transaction ${txGuid} has a split with a zero`
+      + ' denominator, which cannot be negated. Repair the split before unposting.',
+    );
+  }
+
+  const sum = sumSplitValues(splits);
+  if (sum.num !== 0n) {
+    throw new InvoiceStateError(
+      `Cannot unpost invoice ${invoice.id}: posting transaction ${txGuid} does not balance`
+      + ` (its splits sum to ${sum.num}/${sum.denom}, not zero). It has been edited since it was`
+      + ' posted; reversing an unbalanced transaction would write a second unbalanced one.'
+      + ' Correct the transaction so it balances, then unpost.',
+    );
+  }
+
+  // The A/R–A/P leg is what ties the posting to the invoice. If it was moved
+  // to another account — or split in two, or stripped of its lot — a reversal
+  // can no longer be matched to the invoice's lot.
+  if (invoice.post_lot) {
+    const lotSplits = splits.filter((s) => s.lot_guid === invoice.post_lot);
+    if (lotSplits.length !== 1) {
+      throw new InvoiceStateError(
+        `Cannot unpost invoice ${invoice.id}: expected exactly one split of posting transaction`
+        + ` ${txGuid} to carry lot ${invoice.post_lot}, found ${lotSplits.length}.`
+        + ' The posting has been edited since it was written — restore its receivable/payable'
+        + ' split before unposting.',
+      );
+    }
+    if (invoice.post_acc && lotSplits[0].account_guid !== invoice.post_acc) {
+      throw new InvoiceStateError(
+        `Cannot unpost invoice ${invoice.id}: the receivable/payable split of posting transaction`
+        + ` ${txGuid} has moved from account ${invoice.post_acc} to ${lotSplits[0].account_guid}.`
+        + ' Move it back before unposting.',
+      );
+    }
+  }
+}
+
+/**
+ * Post date for the reversing transaction: TODAY, or the original post date
+ * when that is still in the future.
+ *
+ * Today is the choice, for three reasons:
+ *
+ *  1. Period integrity. A reversal dated back to the original posting silently
+ *     rewrites a period that may already be closed, reported or filed. Dating
+ *     it today is the standard correcting-entry treatment: the period keeps
+ *     the numbers it was signed off with, and the correction shows up in the
+ *     period the correction was actually made.
+ *  2. It follows the only reversing-entry precedent in this codebase.
+ *     `maybePostReturn` (inventory-engine.ts) dates the reversing COGS entry
+ *     of a return at the RETURN's date, not at the shipment's, for the same
+ *     reason.
+ *  3. It composes with the period lock instead of fighting it. The old
+ *     delete-based unpost had to check the ORIGINAL post date against
+ *     `assertNotLocked`, so unposting anything in a closed period was simply
+ *     impossible. A reversal touches only today, so a locked prior period no
+ *     longer blocks the correction — and the lock still does its job, because
+ *     nothing dated inside it is written.
+ *
+ * The one refinement: an invoice may be posted with a FUTURE date. A reversal
+ * dated before the posting it reverses is nonsense on a running balance, so
+ * the reversal never precedes its original.
+ */
+function reversalPostDate(originalPostDate: Date | null, now: Date): Date {
+  const today = new Date(now.toISOString().slice(0, 10) + 'T12:00:00Z');
+  if (originalPostDate && originalPostDate.getTime() > today.getTime()) return originalPostDate;
+  return today;
+}
+
+/**
+ * Unpost by REVERSING, never by deleting.
+ *
+ * Double-entry books do not un-happen a posting: the posting transaction and
+ * its splits stay exactly as written, and a second transaction with equal and
+ * opposite splits cancels them. Every affected account nets to zero, the audit
+ * trail survives, and a split someone had reconciled against a statement keeps
+ * both its amount and its reconciled state.
+ *
+ * What changes, per object:
+ *   - posting txn: untouched financially. Its `gncInvoice` frame slot (the
+ *     native "this IS invoice X's posting" pointer) is removed, because the
+ *     invoice is about to say it has no posting and GnuCash desktop would
+ *     otherwise offer to edit an invoice that no longer claims this
+ *     transaction. The same link is kept in readable form in
+ *     'gncweb-unposted-invoice-guid' / 'gncweb-reversed-by-txn', and
+ *     'trans-read-only' is re-worded (it used to advise unposting an invoice
+ *     that by then is already unposted).
+ *   - reversal txn: negated copy of every split, same accounts, same lot on
+ *     the receivable/payable leg, reconcile_state 'n'.
+ *   - lot: KEPT (the original split still references it — the FK forbids
+ *     deleting it) and closed, since posting + reversal sum to zero. Its
+ *     `gncInvoice` slot goes, so exactly one lot ever claims the invoice.
+ *   - invoice row: date_posted/post_txn/post_acc/post_lot cleared, so it reads
+ *     as a draft and can be edited, deleted or re-posted. Re-posting writes a
+ *     fresh transaction and lot; it cannot double-count, because the previous
+ *     pair already nets to zero.
+ *
+ * NO reconciled-split guard here, deliberately. `assertNoReconciledSplits`
+ * exists to stop five mutations — changing a split's amount or account,
+ * changing its parent's post date, deleting a split, deleting a transaction —
+ * and this path performs none of them. It only INSERTs new, unreconciled
+ * splits in a new transaction. A reconciled split keeps its value, its
+ * account, its parent post date and its 'y'/'f' state, so the balance the
+ * statement was agreed against is unchanged. The delete-based version DID need
+ * the guard (it deleted reconciled splits outright) and had it; reversing
+ * removes the reason for it, and keeping it would only block a legitimate
+ * correction on a book whose A/R has been reconciled.
+ */
 export async function unpostInvoice(bookGuid: string, guid: string): Promise<void> {
   await prisma.$transaction(async (tx) => {
     await assertInvoiceInBook(tx, bookGuid, guid);
@@ -1223,24 +1453,13 @@ export async function unpostInvoice(bookGuid: string, guid: string): Promise<voi
     // Mirror of the postInvoice lock: serialize unpost against a concurrent
     // post/unpost/payment of the same invoice so the state checks below run
     // against committed state (a double unpost gets 'Invoice is not posted'
-    // instead of a failed delete).
+    // instead of a second reversal).
     await tx.$queryRaw`SELECT guid FROM invoices WHERE guid = ${guid} FOR UPDATE`;
 
     const invoice = await tx.invoices.findUnique({ where: { guid } });
     if (!invoice) throw new InvoiceNotFoundError(`Invoice not found: ${guid}`);
     if (!invoice.post_txn) throw new InvoiceStateError('Invoice is not posted');
-
-    // Period lock: unposting deletes the posting transaction
-    if (invoice.post_acc) {
-      const lockBookGuid = await getBookGuidForAccount(invoice.post_acc);
-      if (lockBookGuid) {
-        const postingTxn = await tx.transactions.findUnique({
-          where: { guid: invoice.post_txn },
-          select: { post_date: true },
-        });
-        await assertNotLocked(lockBookGuid, [postingTxn?.post_date]);
-      }
-    }
+    const postTxnGuid = invoice.post_txn;
 
     // Refuse when payments are attached to the lot
     if (invoice.post_lot) {
@@ -1248,7 +1467,7 @@ export async function unpostInvoice(bookGuid: string, guid: string): Promise<voi
         where: { lot_guid: invoice.post_lot },
         select: { guid: true, tx_guid: true },
       });
-      const foreign = lotSplits.filter((s: { tx_guid: string }) => s.tx_guid !== invoice.post_txn);
+      const foreign = lotSplits.filter((s: { tx_guid: string }) => s.tx_guid !== postTxnGuid);
       if (foreign.length > 0) {
         throw new InvoiceStateError(
           'Cannot unpost: payments are applied to this invoice. Remove the payment transactions first.',
@@ -1256,28 +1475,90 @@ export async function unpostInvoice(bookGuid: string, guid: string): Promise<voi
       }
     }
 
-    // Reconciled/frozen splits on the posting transaction are agreed against
-    // a statement — unposting would delete them out from under it.
-    await assertNoReconciledSplits('unpost this invoice', {
-      txGuids: [invoice.post_txn],
-    }, { client: tx });
-
-    // Delete the posting transaction, its splits, and all their slots
-    const splits = await tx.splits.findMany({
-      where: { tx_guid: invoice.post_txn },
-      select: { guid: true },
+    const postingTxn = await tx.transactions.findUnique({ where: { guid: postTxnGuid } });
+    const postingSplits: PostingSplitRow[] = await tx.splits.findMany({
+      where: { tx_guid: postTxnGuid },
+      select: {
+        guid: true,
+        account_guid: true,
+        action: true,
+        value_num: true,
+        value_denom: true,
+        quantity_num: true,
+        quantity_denom: true,
+        lot_guid: true,
+      },
     });
-    for (const s of splits) {
-      await deleteSlotsRecursive(tx, s.guid);
-    }
-    await tx.splits.deleteMany({ where: { tx_guid: invoice.post_txn } });
-    await deleteSlotsRecursive(tx, invoice.post_txn);
-    await tx.transactions.delete({ where: { guid: invoice.post_txn } });
+    assertReversiblePosting(invoice, postingTxn, postingSplits);
 
-    // Delete the lot and its slots
+    const now = new Date();
+    const reversalDate = reversalPostDate(postingTxn!.post_date, now);
+
+    // Period lock: the reversal is the only dated row this writes. The
+    // original posting is left alone, so its own (possibly locked) period is
+    // not consulted — see reversalPostDate.
+    if (invoice.post_acc) {
+      const lockBookGuid = await getBookGuidForAccount(invoice.post_acc);
+      if (lockBookGuid) await assertNotLocked(lockBookGuid, [reversalDate]);
+    }
+
+    // The reversing transaction: equal and opposite, same accounts, same lot.
+    const reversalGuid = generateGuid();
+    await tx.transactions.create({
+      data: {
+        guid: reversalGuid,
+        currency_guid: postingTxn!.currency_guid,
+        num: postingTxn!.num,
+        post_date: reversalDate,
+        enter_date: now,
+        description: `Unpost reversal — ${postingTxn!.description || `invoice ${invoice.id}`}`,
+      },
+    });
+    const reversalMemo = `Reverses invoice ${invoice.id} posted ${toIsoDate(postingTxn!.post_date) ?? 'undated'}`;
+    for (const s of postingSplits) {
+      await tx.splits.create({
+        data: {
+          guid: generateGuid(),
+          tx_guid: reversalGuid,
+          account_guid: s.account_guid,
+          memo: reversalMemo,
+          action: s.action,
+          reconcile_state: 'n',
+          reconcile_date: null,
+          value_num: -s.value_num,
+          value_denom: s.value_denom,
+          quantity_num: -s.quantity_num,
+          quantity_denom: s.quantity_denom,
+          lot_guid: s.lot_guid,
+        },
+      });
+    }
+    await writeStringSlot(tx, reversalGuid, SLOT_REVERSES_TXN, postTxnGuid);
+    await writeStringSlot(tx, reversalGuid, SLOT_UNPOSTED_INVOICE, guid);
+    await writeStringSlot(
+      tx,
+      reversalGuid,
+      'trans-read-only',
+      `Reverses the posting of invoice ${invoice.id}. Deleting it would leave that posting standing alone.`,
+    );
+
+    // Retire the original's native invoice linkage, keeping the history in a
+    // form nothing will mistake for a live posting.
+    await deleteFrameSlot(tx, postTxnGuid, 'gncInvoice');
+    await writeStringSlot(tx, postTxnGuid, SLOT_UNPOSTED_INVOICE, guid);
+    await writeStringSlot(tx, postTxnGuid, SLOT_REVERSED_BY_TXN, reversalGuid);
+    await writeStringSlot(
+      tx,
+      postTxnGuid,
+      'trans-read-only',
+      `Reversed when invoice ${invoice.id} was unposted. Kept for the audit trail.`,
+    );
+
+    // The lot survives (the original split references it) and is closed:
+    // posting + reversal sum to zero.
     if (invoice.post_lot) {
-      await deleteSlotsRecursive(tx, invoice.post_lot);
-      await tx.lots.delete({ where: { guid: invoice.post_lot } });
+      await deleteFrameSlot(tx, invoice.post_lot, 'gncInvoice');
+      await tx.lots.update({ where: { guid: invoice.post_lot }, data: { is_closed: 1 } });
     }
 
     await tx.invoices.update({
