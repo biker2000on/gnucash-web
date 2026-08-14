@@ -106,7 +106,7 @@ export function QuickAccountSwitcher({ isOpen, onClose }: QuickAccountSwitcherPr
             value={query}
             onChange={e => setQuery(e.target.value)}
             placeholder="Search accounts..."
-            className="flex-1 bg-transparent text-foreground placeholder:text-foreground-muted outline-none text-sm"
+            className="flex-1 bg-transparent text-foreground placeholder:text-foreground-muted text-sm"
           />
           <kbd className="hidden sm:inline-flex text-xs text-foreground-muted bg-surface-hover px-1.5 py-0.5 rounded border border-border">
             esc
