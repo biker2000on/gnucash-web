@@ -230,6 +230,32 @@ Covers work landed since 0.23.2.0 (2026-07-29).
 
 ### Fixed
 
+- **Portfolio and holdings screens no longer present an incomplete cost basis
+  as a complete one.** When some shares in an account arrived by transfer and
+  their original cost could not be traced, the cost basis shown covered only
+  the shares it could account for — but it was labelled plainly "Cost Basis",
+  and gain, gain %, and yield-on-cost were computed from it as though it
+  covered the whole position. The reported gain was overstated by whatever
+  basis was missing. Affected the holdings table, the portfolio summary cards,
+  the dividends view, and the Investment Portfolio report. Each of those now
+  states what the basis covers, in visible text rather than a tooltip: a
+  partially covered position reads "Covered Gain" with the share counts, and a
+  position whose basis could not be verified at all reads "Gain (basis
+  unverified)". **Yield-on-cost is now withheld rather than estimated** when
+  coverage is partial — income is received on every share, so scaling a
+  trailing-twelve-month yield to the currently covered fraction assumes those
+  shares were held and paid dividends in the same ratio for the whole year,
+  which a mid-year transfer, sale, purchase, or reinvestment breaks. Coverage
+  is now part of the holdings data type itself, so a screen cannot display a
+  basis or a gain without also saying what it covers.
+- **Transaction saves are now checked for balance exactly rather than within a
+  tolerance.** The server accepted a set of splits whose amounts differed by up
+  to a tenth of a cent, so a genuine half-cent imbalance could be written to
+  the ledger. Balance is now verified with exact whole-number arithmetic on the
+  underlying fractions, matching how the multi-currency path already worked.
+  Settlement imports, which previously tolerated a one-cent mismatch and wrote
+  the unbalanced result, now report the affected row in the import preview
+  instead of importing it.
 - **Ledger search and filters no longer hide matching transactions.** The
   amount and reconciliation-state filters were applied *after* a page of
   results had already been fetched, so searching for a $500 transaction simply
