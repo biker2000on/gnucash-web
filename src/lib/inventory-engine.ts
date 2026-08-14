@@ -27,8 +27,10 @@
  *   record it on the movement's unit_cost, and post COGS at that cost.
  *   items.avg_cost is STILL maintained for display ("avg cost (info)").
  *   Switching an item's method affects FUTURE consumption only.
- *   returnToStock still re-enters at avgCost (creates an avg-cost layer for
- *   FIFO items) — a documented approximation.
+ *   returnToStock re-enters at the weighted-average cost of the shipments for
+ *   its invoice entry and item. For FIFO this is recorded as a new, newest
+ *   layer; restoring the original historical layer position would require a
+ *   shipment allocation reference, which fulfillment allocations do not have.
  *
  * ─────────────────────────────────────────────────────────────────────────
  * LEDGER POSTINGS (per-operation `post` flag)
@@ -41,10 +43,9 @@
  *   opt-in with `post: true`, because they need a caller-supplied offset
  *   account or move cost between asset accounts only.
  *
- *   returnToStock is the EXCEPTION and stays opt-in: it reverses at the item's
- *   CURRENT average cost rather than the basis the original shipment was
- *   relieved at, so defaulting it on would post a knowingly wrong reversal
- *   whenever cost moved between ship and return. See shouldPostReturnCogs.
+ *   returnToStock stays opt-in pending a product decision, but its reversal
+ *   uses the weighted-average basis of this line's recorded shipments. See
+ *   shouldPostReturnCogs.
  *
  *   receive  → DEBIT item.asset_account_guid / CREDIT offsetAccountGuid
  *              (caller-supplied, e.g. A/P or checking), amount = qty*unitCost.
@@ -52,8 +53,8 @@
  *   ship     → DEBIT item.cogs_account_guid / CREDIT item.asset_account_guid,
  *              amount = qty*avgCost (COGS recognition). DEFAULT-ON.
  *   return   → DEBIT item.asset_account_guid / CREDIT item.cogs_account_guid,
- *              amount = qty*avgCost (reverses COGS). OPT-IN (wrong basis —
- *              see above).
+ *              amount = qty*line shipment weighted-average cost (reverses
+ *              COGS). OPT-IN pending a product-default decision.
  *   assemble → transfer txn moving consumed cost from each component's asset
  *              account into the output item's asset account; splits for
  *              components whose asset account equals the output's (or is
@@ -1077,31 +1078,14 @@ async function maybePostCogs(
 }
 
 /**
- * Whether a RETURN should post its reversing entry.
- *
- * OPT-IN (`post: true`), deliberately NOT matching shouldPostCogs.
- *
- * The reversal below is computed at the item's CURRENT average cost, not at the
- * cost the original shipment was relieved at, and nothing links a return to the
- * shipment it reverses. Ship 1 unit at a $10 average, let later receipts move
- * the average to $20, then return that unit: the reversal posts inventory +$20 /
- * COGS -$20 against an original -$10 / +$10, leaving a permanent $10 residual in
- * both accounts. FIFO items are affected too — the shipment consumes at its
- * layer-derived cost while the return still re-enters at the average.
- *
- * Neither default is universally less wrong. Skipping the reversal leaves COGS
- * overstated by C and inventory understated by C; posting at the current
- * average A leaves a residual of |C - A|. Posting is the better of the two
- * whenever A < 2C, the worse one above that, and a wash at exactly 2C. Opt-in is
- * therefore the CONSERVATIVE choice — a bounded, familiar error the user has
- * always had, rather than a silently-introduced one — not a categorically
- * smaller one. It stands until the return cost basis is resolved, which needs
- * an allocation rule for partial returns spanning several shipments. The
- * ship/fulfill default in shouldPostCogs is unaffected: shipments do consume at
- * the correct effective cost.
+ * Whether a RETURN should post its reversing entry. The product default remains
+ * opt-in for now; change this one constant to make correctly-basised returns
+ * post unless the caller explicitly opts out.
  */
+const DEFAULT_POST_RETURN_COGS = false;
+
 function shouldPostReturnCogs(post: boolean | undefined): boolean {
-  return post === true;
+  return post ?? DEFAULT_POST_RETURN_COGS;
 }
 
 /** Reverse-COGS posting for returns (debit asset, credit COGS). */
@@ -1113,6 +1097,7 @@ async function maybePostReturn(
   date: string,
   post: boolean | undefined,
   reference: string | null | undefined,
+  unitCost: number,
 ): Promise<string | null> {
   if (!shouldPostReturnCogs(post)) return null;
   if (!item.cogsAccountGuid || !item.assetAccountGuid) {
@@ -1122,7 +1107,7 @@ async function maybePostReturn(
   }
   await assertPostableAccount(tx, item.cogsAccountGuid, 'COGS', bookGuid);
   await assertPostableAccount(tx, item.assetAccountGuid, 'Asset', bookGuid);
-  const amount = positiveQty * item.avgCost;
+  const amount = positiveQty * unitCost;
   return writeLedgerTxn(tx, {
     date,
     description: `Inventory return: ${item.sku} × ${positiveQty}`,
@@ -1519,6 +1504,45 @@ async function getFulfilledByEntry(
   return map;
 }
 
+/**
+ * The determinate return basis for one fulfillment line: the weighted average
+ * of every recorded shipment for this invoice entry and item. Ship movements
+ * record their effective cost specifically so this can be reconstructed
+ * without adding a shipment reference to FulfillmentAllocation.
+ */
+async function getShipmentWeightedUnitCost(
+  tx: PrismaTx,
+  invoiceGuid: string,
+  entryGuid: string,
+  itemId: number,
+): Promise<number> {
+  const rows = await tx.$queryRawUnsafe<Array<{
+    shipment_quantity: unknown;
+    total_cost: unknown;
+    missing_cost_count: unknown;
+  }>>(
+    `SELECT COALESCE(SUM(-quantity), 0) AS shipment_quantity,
+            SUM((-quantity) * unit_cost) AS total_cost,
+            COUNT(*) FILTER (WHERE unit_cost IS NULL) AS missing_cost_count
+     FROM gnucash_web_inventory_movements
+     WHERE invoice_guid = $1 AND entry_guid = $2 AND item_id = $3
+       AND movement_type = 'ship'`,
+    invoiceGuid,
+    entryGuid,
+    itemId,
+  );
+  const row = rows[0];
+  const shipmentQuantity = Number(row?.shipment_quantity ?? 0);
+  const totalCost = row?.total_cost == null ? NaN : Number(row.total_cost);
+  const missingCostCount = Number(row?.missing_cost_count ?? 0);
+  if (shipmentQuantity <= EPSILON || missingCostCount > 0 || !Number.isFinite(totalCost)) {
+    throw new InventoryValidationError(
+      `Entry ${entryGuid}: cannot return item ${itemId} because its shipment cost was not recorded`,
+    );
+  }
+  return totalCost / shipmentQuantity;
+}
+
 export interface FulfillInput {
   bookGuid: string;
   invoiceGuid: string;
@@ -1529,9 +1553,8 @@ export interface FulfillInput {
    * Requires cogsAccountGuid + assetAccountGuid on every allocated item.
    *
    * fulfillInvoiceLines: DEFAULTS TO TRUE — pass `false` to opt out.
-   * returnToStock:       OPT-IN, pass `true` — the reversal uses the current
-   *                      average rather than the original shipment's basis
-   *                      (see shouldPostReturnCogs).
+   * returnToStock:       OPT-IN, pass `true` — the reversal uses the
+   *                      fulfillment line's recorded shipment basis.
    */
   post?: boolean;
 }
@@ -1618,7 +1641,6 @@ export async function fulfillInvoiceLines(input: FulfillInput): Promise<FulfillR
     const movements: InventoryMovement[] = [];
     for (const a of input.allocations) {
       const item = items.get(a.itemId)!;
-      const isFifo = item.valuationMethod === 'fifo';
       // Computed inside the loop so sequential FIFO consumptions of the same
       // item see each other's just-inserted movements.
       const effectiveCost = await consumptionUnitCost(tx, item, a.quantity);
@@ -1631,7 +1653,9 @@ export async function fulfillInvoiceLines(input: FulfillInput): Promise<FulfillR
           locationId: a.locationId,
           movementType: 'ship',
           quantity: -a.quantity,
-          unitCost: isFifo ? effectiveCost : null,
+          // Every shipment records its effective cost. Returns reconstruct the
+          // fulfillment line's weighted shipment basis from this column.
+          unitCost: effectiveCost,
           movementDate: date,
           reference,
           invoiceGuid: input.invoiceGuid,
@@ -1647,11 +1671,15 @@ export async function fulfillInvoiceLines(input: FulfillInput): Promise<FulfillR
 
 /**
  * Return previously fulfilled invoice lines to stock: creates 'return_in'
- * movements (positive quantity, unit cost = the item's current average cost,
- * which leaves the average unchanged) linked via invoice_guid + entry_guid,
- * with an OPT-IN reversing-COGS posting (debit asset / credit COGS) written
- * only when the caller passes `post: true` — see shouldPostReturnCogs for why
- * this one does not follow fulfillment's post-by-default.
+ * movements (positive quantity, unit cost = the fulfillment line's weighted
+ * shipment cost) linked via invoice_guid + entry_guid, with an OPT-IN
+ * reversing-COGS posting (debit asset / credit COGS) written only when the
+ * caller passes `post: true`.
+ *
+ * Because return_in is cost-bearing, re-entry at shipment basis updates the
+ * running average when that differs from the current average. For FIFO it is
+ * necessarily a new, newest layer: restoring original layer position requires
+ * a shipment reference that FulfillmentAllocation does not carry.
  * Rejects returns exceeding the net fulfilled quantity per entry.
  */
 export async function returnToStock(input: FulfillInput): Promise<FulfillResult> {
@@ -1671,14 +1699,25 @@ export async function returnToStock(input: FulfillInput): Promise<FulfillResult>
     const movements: InventoryMovement[] = [];
     for (const a of input.allocations) {
       const item = items.get(a.itemId)!;
-      const txnGuid = await maybePostReturn(tx, item, input.bookGuid, a.quantity, date, input.post, reference);
+      const unitCost = await getShipmentWeightedUnitCost(
+        tx, input.invoiceGuid, a.entryGuid, item.id,
+      );
+      const txnGuid = await maybePostReturn(
+        tx, item, input.bookGuid, a.quantity, date, input.post, reference, unitCost,
+      );
+      const onHandTotal = await getOnHand(tx, item.id);
+      const newAvg = applyMovementToAvgCost(item.avgCost, onHandTotal, 'return_in', a.quantity, unitCost);
+      if (newAvg !== item.avgCost) {
+        await updateItemAvgCost(tx, item.id, newAvg);
+        item.avgCost = newAvg;
+      }
       movements.push(
         await insertMovement(tx, {
           itemId: item.id,
           locationId: a.locationId,
           movementType: 'return_in',
           quantity: a.quantity,
-          unitCost: item.avgCost,
+          unitCost,
           movementDate: date,
           reference,
           invoiceGuid: input.invoiceGuid,
