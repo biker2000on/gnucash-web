@@ -34,22 +34,44 @@ function nonNegativeIntParam(raw: string | null, fallback: number): number {
     return parsed;
 }
 
+/** Thrown for a malformed filter value; caught in GET and answered as a 400. */
+class BadFilterError extends Error {}
+
+const DECIMAL_RE = /^[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?$/;
+
 /**
  * Parse an amount-bound query param into a decimal STRING for a `::numeric`
  * cast in SQL. Returned as text (not a JS number) so the bound reaches
- * PostgreSQL as an exact decimal rather than a binary float. Returns null for
- * absent or non-numeric input, which drops the bound rather than erroring the
- * query.
+ * PostgreSQL as an exact decimal rather than a binary float.
+ *
+ * A present-but-unparseable bound is REJECTED, never dropped. Dropping it would
+ * turn a filter the user asked for into no filter at all, so a typo would answer
+ * with the whole ledger instead of the nothing it used to return.
  */
-function numericParam(raw: string | null): string | null {
+function numericParam(raw: string | null, name: string): string | null {
     if (raw === null || raw.trim() === '') return null;
     const trimmed = raw.trim();
-    // A well-formed decimal is handed to PostgreSQL verbatim, so a bound like
-    // 0.005 is compared exactly and not through a float64 round-trip.
-    if (/^[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?$/.test(trimmed)) return trimmed;
-    // Anything else keeps the old lenient parseFloat behaviour ("12abc" -> 12).
-    const parsed = Number.parseFloat(trimmed);
-    return Number.isFinite(parsed) ? String(parsed) : null;
+    if (!DECIMAL_RE.test(trimmed)) {
+        throw new BadFilterError(`Invalid ${name}: "${raw}" is not a number`);
+    }
+    return trimmed;
+}
+
+/**
+ * Split a comma-separated filter param into tokens, rejecting empty ones.
+ *
+ * An empty token is malformed input, and the one thing it must not do is widen
+ * the result: `accountTypes=,` used to match nothing (it searched for the
+ * account type ""), so silently dropping the blank tokens would leave no
+ * predicate at all and return every transaction in the book.
+ */
+function listParam(raw: string | null, name: string): string[] {
+    if (raw === null || raw === '') return [];
+    const tokens = raw.split(',').map(t => t.trim());
+    if (tokens.some(t => t === '')) {
+        throw new BadFilterError(`Invalid ${name}: "${raw}" contains an empty value`);
+    }
+    return tokens;
 }
 
 /**
@@ -97,16 +119,16 @@ function numericParam(raw: string | null): string | null {
  *         schema:
  *           type: number
  *         description: >
- *           Minimum absolute split amount. A transaction matches when at least
- *           one of its splits has |value| within [minAmount, maxAmount]; both
- *           bounds are tested against the SAME split.
+ *           Minimum transaction amount, where a transaction's amount is the
+ *           largest absolute value among its splits (the transaction's amount
+ *           for an ordinary two-split transaction).
  *       - in: query
  *         name: maxAmount
  *         schema:
  *           type: number
  *         description: >
- *           Maximum absolute split amount. See minAmount — both bounds apply to
- *           the same split.
+ *           Maximum transaction amount, measured the same way as minAmount: a
+ *           transaction is excluded when ANY of its splits exceeds this bound.
  *       - in: query
  *         name: reconcileStates
  *         schema:
@@ -121,6 +143,11 @@ function numericParam(raw: string | null): string | null {
  *               type: array
  *               items:
  *                 $ref: '#/components/schemas/Transaction'
+ *       400:
+ *         description: >
+ *           A filter value is malformed — a non-numeric minAmount/maxAmount, or
+ *           an empty entry in accountTypes/reconcileStates. Rejected rather than
+ *           ignored, so a malformed filter can never widen the result set.
  */
 export async function GET(request: Request) {
     try {
@@ -158,9 +185,7 @@ export async function GET(request: Request) {
         // Book scoping, merged with the account-type filter when present (a
         // transaction qualifies via a single split that is both in-book and of a
         // requested type — same semantics as the previous Prisma `splits.some`).
-        const types = accountTypes
-            ? accountTypes.split(',').map(t => t.trim().toUpperCase()).filter(Boolean)
-            : [];
+        const types = listParam(accountTypes, 'accountTypes').map(t => t.toUpperCase());
         filters.push(types.length > 0
             ? Prisma.sql`EXISTS (
                 SELECT 1 FROM splits s
@@ -216,40 +241,64 @@ export async function GET(request: Request) {
             )`);
         }
 
-        // Amount range. GnuCash stores each split value as a num/denom fraction
-        // whose denominator is NOT always a power of ten, so the comparison is
-        // done as an exact rational in PostgreSQL `numeric` — never in float and
-        // never by string-padding the numerator (see src/lib/reports/utils.ts,
-        // which uses the same `::numeric / NULLIF(denom, 0)::numeric` idiom).
-        // The bounds are passed as text and cast to numeric so no binary float
-        // ever touches the comparison.
+        // Amount range.
         //
-        // SEMANTICS: absolute value of a SINGLE split, and both bounds are
-        // tested against that same split — i.e. "this transaction has a line
-        // between $min and $max". Split-level (not transaction-total) because
-        // the journal renders every split of every row, so a per-split match is
-        // exactly what the user sees on screen.
-        const minVal = numericParam(minAmount);
-        const maxVal = numericParam(maxAmount);
-        if (minVal !== null || maxVal !== null) {
-            const bounds: Prisma.Sql[] = [];
-            if (minVal !== null) {
-                bounds.push(Prisma.sql`abs(s.value_num::numeric / NULLIF(s.value_denom, 0)::numeric) >= ${minVal}::numeric`);
-            }
-            if (maxVal !== null) {
-                bounds.push(Prisma.sql`abs(s.value_num::numeric / NULLIF(s.value_denom, 0)::numeric) <= ${maxVal}::numeric`);
-            }
+        // SEMANTICS: the transaction's magnitude is the LARGEST absolute value
+        // among its splits, which for an ordinary two-split transaction is the
+        // transaction's amount — what the "Amount Range" control in
+        // src/components/filters/AmountFilter.tsx promises. Absolute, never
+        // signed. The cost is that a per-line search ("which transaction has a
+        // $12 fee line?") is no longer expressible here: a $3,000 paycheque is
+        // excluded by maxAmount=100 even though it contains a $12 split.
+        //
+        // The bounds never divide. GnuCash stores split values as num/denom
+        // fractions whose denominator is NOT always a power of ten, and
+        // `numeric / numeric` in PostgreSQL rounds the quotient to a finite
+        // scale, so a thirds-style fraction would compare wrong at the boundary.
+        // Cross-multiplying is exact, since `numeric * numeric` is exact:
+        //
+        //     |value| >= bound   <=>   |value_num| >= bound * |value_denom|
+        //     |value| <= bound   <=>   |value_num| <= bound * |value_denom|
+        //
+        // abs() on the denominator keeps a negative denominator from flipping
+        // the inequality, and `value_denom <> 0` keeps an undefined split out of
+        // the comparison instead of erroring or matching everything. Bounds are
+        // bound as decimal text and cast to ::numeric, so no binary float
+        // touches the comparison.
+        //
+        // "largest split >= min" is "some split reaches the floor"; "largest
+        // split <= max" is "no split breaks the ceiling".
+        const minVal = numericParam(minAmount, 'minAmount');
+        const maxVal = numericParam(maxAmount, 'maxAmount');
+        if (minVal !== null) {
             filters.push(Prisma.sql`EXISTS (
                 SELECT 1 FROM splits s
-                WHERE s.tx_guid = t.guid AND ${Prisma.join(bounds, ' AND ')}
+                WHERE s.tx_guid = t.guid
+                  AND s.value_denom <> 0
+                  AND abs(s.value_num)::numeric >= ${minVal}::numeric * abs(s.value_denom)::numeric
             )`);
+        }
+        if (maxVal !== null) {
+            filters.push(Prisma.sql`NOT EXISTS (
+                SELECT 1 FROM splits s
+                WHERE s.tx_guid = t.guid
+                  AND s.value_denom <> 0
+                  AND abs(s.value_num)::numeric > ${maxVal}::numeric * abs(s.value_denom)::numeric
+            )`);
+            if (minVal === null) {
+                // A ceiling alone would otherwise admit a transaction with no
+                // comparable split at all (every denominator zero), which has no
+                // "largest split" to bound.
+                filters.push(Prisma.sql`EXISTS (
+                    SELECT 1 FROM splits s
+                    WHERE s.tx_guid = t.guid AND s.value_denom <> 0
+                )`);
+            }
         }
 
         // Reconcile state: transaction matches when any split is in one of the
         // requested states.
-        const states = reconcileStates
-            ? reconcileStates.split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
-            : [];
+        const states = listParam(reconcileStates, 'reconcileStates').map(s => s.toLowerCase());
         if (states.length > 0) {
             filters.push(Prisma.sql`EXISTS (
                 SELECT 1 FROM splits s
@@ -348,6 +397,9 @@ export async function GET(request: Request) {
 
         return NextResponse.json(serializeBigInts(result));
     } catch (error) {
+        if (error instanceof BadFilterError) {
+            return NextResponse.json({ error: error.message }, { status: 400 });
+        }
         console.error('Error fetching transactions:', error);
         return NextResponse.json({ error: 'Failed to fetch transactions' }, { status: 500 });
     }
