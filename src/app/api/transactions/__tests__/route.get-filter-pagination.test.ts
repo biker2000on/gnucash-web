@@ -52,6 +52,11 @@ vi.mock('@/lib/prisma', () => ({
 }));
 vi.mock('@/lib/auth', () => ({ requireRole: requireRoleMock }));
 vi.mock('@/lib/book-scope', () => ({
+    // The route module already imports getAccountGuidsForBook (POST scopes with
+    // it); only GET, which still uses the session-derived variant, is exercised
+    // here. Delegating keeps one source of scope, so if GET is migrated too the
+    // accounts these tests set up stay in-book instead of 404-ing.
+    getAccountGuidsForBook: vi.fn(() => getBookAccountGuidsMock()),
     getBookAccountGuids: getBookAccountGuidsMock,
     getActiveBookGuid: vi.fn(),
 }));

@@ -58,6 +58,10 @@ const {
 vi.mock('@/lib/prisma', () => ({ default: prismaMock }));
 vi.mock('@/lib/auth', () => ({ requireRole: requireRoleMock }));
 vi.mock('@/lib/book-scope', () => ({
+    // PATCH here still scopes with the session-derived getBookAccountGuids while
+    // its single-transaction siblings have moved to the caller's-book variant.
+    // Delegating means that migration cannot silently 404 these fixtures.
+    getAccountGuidsForBook: vi.fn(() => getBookAccountGuidsMock()),
     getBookAccountGuids: getBookAccountGuidsMock,
     getActiveBookGuid: getActiveBookGuidMock,
 }));
