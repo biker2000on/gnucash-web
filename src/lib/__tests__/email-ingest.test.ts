@@ -444,6 +444,55 @@ describe('email-ingest', () => {
   // -------------------------------------------------------------------------
   // Poller with a fake IMAP client (imapflow never touched)
   // -------------------------------------------------------------------------
+  // -------------------------------------------------------------------------
+  // Legacy-state migration (lazy DDL)
+  // -------------------------------------------------------------------------
+  describe('ensureEmailIngestTables', () => {
+    /**
+     * The module memoizes its DDL promise, so a fresh module instance is the
+     * only way to observe the statement it actually issues. The prisma mock is
+     * hoisted, so the re-imported copy still talks to the same fake.
+     */
+    async function captureSchemaDdl(): Promise<string> {
+      vi.resetModules();
+      db.$executeRawUnsafe.mockClear();
+      db.$executeRawUnsafe.mockResolvedValue(0);
+      const mod = await import('../email-ingest');
+      await mod.ensureEmailIngestTables();
+      return db.$executeRawUnsafe.mock.calls.map((c: unknown[]) => c[0] as string).join('\n');
+    }
+
+    it('converts legacy retry_requested rows into terminal failures', async () => {
+      const ddl = await captureSchemaDdl();
+
+      // An earlier build of this branch had a user-initiated 'retry_requested'
+      // state. Under the current code such a row is treated as finished, is
+      // absent from the attention list, and nothing can re-arm it — an
+      // invisible tombstone, the exact bug this module exists to kill. The
+      // lazy DDL migrates it to the terminal state so it surfaces instead.
+      expect(ddl).toContain('UPDATE gnucash_web_ingest_messages');
+      expect(ddl).toMatch(/SET outcome = 'failed_permanent'/);
+      expect(ddl).toMatch(/WHERE outcome = 'retry_requested'/);
+      // The reason survives the migration rather than being overwritten.
+      expect(ddl).toContain('COALESCE(NULLIF(detail');
+      expect(ddl).toContain('manual retry is no longer supported');
+      // Runs under the same advisory lock as the rest of the schema block, so
+      // concurrent workers serialize instead of racing.
+      expect(ddl).toContain("pg_advisory_xact_lock(hashtext('gnucash_web_email_ingest_schema'))");
+    });
+
+    it('is idempotent — the migration matches nothing once applied', async () => {
+      const ddl = await captureSchemaDdl();
+      // Self-healing by construction: the predicate is the state it removes, so
+      // a second run (or an install that never had the state) is a no-op.
+      const setsOutcome = /SET outcome = '(\w+)'/.exec(ddl)?.[1];
+      const wherePredicate = /WHERE outcome = '(\w+)'/.exec(ddl)?.[1];
+      expect(setsOutcome).toBe('failed_permanent');
+      expect(wherePredicate).toBe('retry_requested');
+      expect(setsOutcome).not.toBe(wherePredicate);
+    });
+  });
+
   describe('pollEmailIngest', () => {
     const ENV = { INGEST_IMAP_HOST: 'imap.example.com', INGEST_IMAP_USER: 'u', INGEST_IMAP_PASS: 'p' };
     const savedEnv: Record<string, string | undefined> = {};
@@ -481,6 +530,7 @@ describe('email-ingest', () => {
               message_key: k,
               outcome: 'ingested',
               attempts: 1,
+              stalled: false,
             })),
           );
         }
@@ -635,16 +685,16 @@ describe('email-ingest', () => {
             ingested_count: 0,
             category: r.outcome === failed ? 'failed' : 'stalled',
           }));
-          // COUNT(*) OVER (PARTITION BY category) is computed BEFORE the LIMIT.
-          const totals = withCategory.reduce<Record<string, number>>((acc, r) => {
-            acc[r.category] = (acc[r.category] ?? 0) + 1;
-            return acc;
-          }, {});
+          // COUNT(*) FILTER (...) OVER () — unpartitioned, computed over the
+          // WHOLE scoped set BEFORE the LIMIT, so each total is carried on
+          // every returned row regardless of which categories survive the page.
+          const failedTotal = withCategory.filter(r => r.category === 'failed').length;
+          const stalledTotal = withCategory.filter(r => r.category === 'stalled').length;
           return Promise.resolve(
             withCategory
               .sort((a, b) => b.processed_at.getTime() - a.processed_at.getTime())
               .slice(0, limit)
-              .map(r => ({ ...r, category_total: totals[r.category] })),
+              .map(r => ({ ...r, failed_total: failedTotal, stalled_total: stalledTotal })),
           );
         }
 
@@ -652,17 +702,27 @@ describe('email-ingest', () => {
           return Promise.resolve(options.senders ?? []);
         }
 
-        // getIngestMessageStates: finished rows only.
+        // getIngestMessageStates: settled rows — finished OR stalled claims.
         if (sql.includes('SELECT message_key, outcome, attempts')) {
           const keys = values[0] as string[];
           const maxAttempts = values[1] as number;
+          const staleMinutes = values[2] as number;
           return Promise.resolve(
             rows
-              .filter(r =>
-                keys.includes(r.message_key)
-                && r.outcome !== 'processing'
-                && !(r.outcome === 'error' && r.attempts < maxAttempts))
-              .map(r => ({ message_key: r.message_key, outcome: r.outcome, attempts: r.attempts })),
+              .filter(r => {
+                if (!keys.includes(r.message_key)) return false;
+                if (r.outcome === 'processing') {
+                  return r.attempts >= maxAttempts
+                    && r.processed_at < minutesAgo(staleMinutes);
+                }
+                return !(r.outcome === 'error' && r.attempts < maxAttempts);
+              })
+              .map(r => ({
+                message_key: r.message_key,
+                outcome: r.outcome,
+                attempts: r.attempts,
+                stalled: r.outcome === 'processing',
+              })),
           );
         }
 
@@ -908,9 +968,17 @@ describe('email-ingest', () => {
       expect(claimSql).toContain("? * INTERVAL '1 minute'");
       expect(claimSql).toMatch(/attempts < \?/);
 
-      const selectSql = queries.find(q =>
-        q.includes('SELECT message_key, outcome, attempts FROM gnucash_web_ingest_messages'));
+      const selectSql = queries.find(q => q.includes("(outcome = 'processing') AS stalled"));
       expect(selectSql).toContain("outcome <> 'processing'");
+
+      // The fake mirrors this predicate, so pin the emitted SQL: the states
+      // query must ALSO return exhausted stalled claims. Without that branch
+      // the poller never learns about them, leaves them unflagged, and every
+      // ordinary poll is handed them again forever.
+      const normalizedSelect = selectSql!.replace(/\s+/g, ' ');
+      expect(normalizedSelect).toMatch(
+        /outcome = 'processing' AND attempts >= \? AND processed_at < \(NOW\(\) - \? \* INTERVAL '1 minute'\)/,
+      );
     });
 
     /**
@@ -1344,17 +1412,28 @@ describe('email-ingest', () => {
           }],
         });
 
-        const { client } = makeFakeClient([envelopeFor(61, 'crashloop@x')], attachmentsFor(61));
-        const result = await pollEmailIngest(async () => client);
+        const first = makeFakeClient([envelopeFor(61, 'crashloop@x')], attachmentsFor(61));
+        const result = await pollEmailIngest(async () => first.client);
 
         // Not replayed a fourth time — the attempt bound refuses the claim.
         expect(intakeReceiptMock).not.toHaveBeenCalled();
-        expect(client.fetchAttachments).not.toHaveBeenCalled();
+        expect(first.client.fetchAttachments).not.toHaveBeenCalled();
         expect(result).toMatchObject({ ingested: 0, skipped: 1 });
 
-        // And deliberately NOT transitioned: an overdue claim is not proof its
-        // worker died, so the poller must never terminate work that may be
-        // live. It stays `processing` and is surfaced by listIngestAttention.
+        // Deliberately NOT transitioned: an overdue claim is not proof its
+        // worker died, and a write here would race that worker's own final
+        // write. The row stays exactly as it was, and listIngestAttention
+        // reports it as `stalled`.
+        expect(rows[0]).toMatchObject({ outcome: 'processing', attempts: INGEST_MAX_ATTEMPTS });
+        expect(rows[0].detail).toBeUndefined();
+
+        // But the MAILBOX flag is settled, so the message is not handed back on
+        // every poll from now until the end of time. Same shape as the
+        // terminal-failure case: the next poll does no work for it at all.
+        expect(first.seen).toEqual([61]);
+        const second = makeFakeClient([], {});
+        const secondResult = await pollEmailIngest(async () => second.client);
+        expect(secondResult).toMatchObject({ checked: 0, skipped: 0, errors: 0 });
         expect(rows[0]).toMatchObject({ outcome: 'processing', attempts: INGEST_MAX_ATTEMPTS });
       });
 
@@ -1456,6 +1535,37 @@ describe('email-ingest', () => {
           expect(attention.failedTotal).toBe(1);
         });
 
+        it('reports a category the LIMIT excluded entirely', async () => {
+          // The newest rows are all `failed` and will fill the page; the only
+          // `stalled` row is older and cannot survive the LIMIT. A
+          // PARTITION BY category window would report stalledTotal = 0 here.
+          primeStatefulDb({
+            senders: [senderRow],
+            messages: [
+              ...Array.from({ length: 3 }, (_, i) => ({
+                ...failedRow(`recent-${i}@x`),
+                processed_at: minutesAgo(5 + i),
+              })),
+              {
+                message_key: 'old-stall@x',
+                from_email: 'alice@example.com',
+                subject: 'Older stalled claim',
+                outcome: 'processing',
+                processed_at: minutesAgo(INGEST_CLAIM_STALE_MINUTES + 600),
+                attempts: INGEST_MAX_ATTEMPTS,
+              },
+            ],
+          });
+
+          const attention = await listIngestAttention(OWNER_ID, 3);
+          expect(attention.items).toHaveLength(3);
+          expect(attention.items.every(i => i.category === 'failed')).toBe(true);
+          // The stalled row is off the page but MUST still be counted.
+          expect(attention.failedTotal).toBe(3);
+          expect(attention.stalledTotal).toBe(1);
+          expect(attention.truncated).toBe(true);
+        });
+
         /**
          * As with the claim predicate, the stateful fake MIRRORS this query's
          * scoping and staleness rules rather than executing them, so the
@@ -1481,8 +1591,16 @@ describe('email-ingest', () => {
           expect(normalized).toMatch(
             /outcome = 'processing' AND attempts >= \? AND processed_at < \(NOW\(\) - \? \* INTERVAL '1 minute'\)/,
           );
-          // Totals come from a window function evaluated BEFORE the LIMIT.
-          expect(normalized).toContain('COUNT(*) OVER (PARTITION BY category)');
+          // Totals come from UNPARTITIONED windows evaluated BEFORE the LIMIT.
+          // Partitioning by category would report zero for whichever category
+          // the truncated page happened to exclude.
+          expect(normalized).toContain(
+            "COUNT(*) FILTER (WHERE category = 'failed') OVER ()",
+          );
+          expect(normalized).toContain(
+            "COUNT(*) FILTER (WHERE category = 'stalled') OVER ()",
+          );
+          expect(normalized).not.toContain('PARTITION BY category');
 
           const call = db.$queryRaw.mock.calls.find(
             (c: unknown[]) => (c[0] as TemplateStringsArray).join('?').includes('WITH scoped AS'));

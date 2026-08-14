@@ -518,6 +518,22 @@ export function ensureEmailIngestTables(): Promise<void> {
             ON gnucash_web_ingest_messages(message_key);
           CREATE INDEX IF NOT EXISTS idx_ingest_messages_processed
             ON gnucash_web_ingest_messages(processed_at DESC);
+
+          -- Migration: an earlier build of this module had a user-initiated
+          -- 'retry_requested' state, since removed. Any row left in it would be
+          -- an invisible tombstone under the current code — treated as finished
+          -- by getIngestMessageStates, absent from the attention list, and with
+          -- nothing left to re-arm it. Convert such rows to the terminal state
+          -- so they surface as failures the operator can actually see and act
+          -- on. Idempotent and self-healing: once converted there is nothing
+          -- left to match, and installs that never ran that build match nothing
+          -- in the first place.
+          UPDATE gnucash_web_ingest_messages
+          SET outcome = 'failed_permanent',
+              detail = COALESCE(NULLIF(detail, ''), 'Manual retry was requested')
+                       || ' — manual retry is no longer supported; '
+                       || 'forward the email again to re-ingest it'
+          WHERE outcome = 'retry_requested';
         END $$;
       `);
     })();
@@ -695,36 +711,63 @@ export function retryBackoffMinutes(attempts: number): number {
 export interface IngestMessageState {
   outcome: string;
   attempts: number;
+  /**
+   * True for a `processing` row whose worker never came back AND whose retry
+   * budget is spent. Nothing will ever claim it again, so the poller must stop
+   * being handed it — but its row is a READ-ONLY record surfaced by
+   * `listIngestAttention`, so the poller settles the mailbox flag only.
+   */
+  stalled: boolean;
 }
 
 /**
  * Current state of the given dedupe keys, for the poller's skip decisions.
  *
- * A key is absent when it has never been seen. "Finished" is decided by the
- * caller via `isFinishedIngestState`, because the two finished cases need
- * different mailbox handling: a completed message is marked seen, while a
- * `failed_permanent` one is deliberately left UNREAD so the user's manual
- * retry has something to re-fetch.
+ * A key is absent when it has never been seen, or when it is still live work.
+ * A key is PRESENT when nothing further will ever happen to it automatically —
+ * either it finished (success, skip, terminal failure) or it is a stalled
+ * claim. Both cases mean the same thing to the poller: settle the mailbox flag
+ * and move on.
  *
  * An in-flight 'processing' claim is arbitrated by `claimIngestMessage`, which
  * returns null while the claim is live and steals it once it is older than
- * INGEST_CLAIM_STALE_MINUTES. An 'error' row with attempts left is likewise
- * reclaimable rather than finished.
+ * INGEST_CLAIM_STALE_MINUTES. An 'error' row with attempts left, and a
+ * `processing` row that is still fresh or still has budget, are reclaimable
+ * rather than finished and are deliberately absent from this map — marking a
+ * live claim seen would take the message out of the poller's reach.
  */
 export async function getIngestMessageStates(
   keys: string[],
 ): Promise<Map<string, IngestMessageState>> {
   if (keys.length === 0) return new Map();
   await ensureEmailIngestTables();
-  const rows = await prisma.$queryRaw<Array<{ message_key: string; outcome: string; attempts: number }>>`
-    SELECT message_key, outcome, attempts FROM gnucash_web_ingest_messages
+  const rows = await prisma.$queryRaw<
+    Array<{ message_key: string; outcome: string; attempts: number; stalled: boolean }>
+  >`
+    SELECT message_key, outcome, attempts,
+           (outcome = 'processing') AS stalled
+    FROM gnucash_web_ingest_messages
     WHERE message_key = ANY(${keys}::text[])
-      AND outcome <> 'processing'
-      AND NOT (
-        outcome = 'error'
-        AND attempts < ${INGEST_MAX_ATTEMPTS}
+      AND (
+        (
+          outcome <> 'processing'
+          AND NOT (
+            outcome = 'error'
+            AND attempts < ${INGEST_MAX_ATTEMPTS}
+          )
+        ) OR (
+          -- Exhausted, abandoned claim: no longer claimable, so the poller
+          -- should stop being offered it. Reported, never rewritten.
+          outcome = 'processing'
+          AND attempts >= ${INGEST_MAX_ATTEMPTS}
+          AND processed_at
+              < (NOW() - ${INGEST_CLAIM_STALE_MINUTES} * INTERVAL '1 minute')::timestamp
+        )
       )`;
-  return new Map(rows.map(r => [r.message_key, { outcome: r.outcome, attempts: r.attempts ?? 0 }]));
+  return new Map(rows.map(r => [
+    r.message_key,
+    { outcome: r.outcome, attempts: r.attempts ?? 0, stalled: r.stalled === true },
+  ]));
 }
 
 export async function recordProcessedMessage(input: {
@@ -850,11 +893,13 @@ export interface IngestAttentionList {
  *
  * STALLED rows are REPORTED, never rewritten. A `processing` row past the
  * stale window with its budget spent is not proof its worker died — a slow
- * intake looks identical — so transitioning it here would risk terminating
- * live work and could let a second worker ingest concurrently. Since
- * `claimIngestMessage` already refuses to reclaim it (the attempt bound), the
- * only real problem was that it sat invisible; surfacing it solves that
- * outright with zero risk to a healthy worker.
+ * intake looks identical — and rewriting the row would race that worker's own
+ * final write, so a slow-but-healthy ingest could be recorded as failed.
+ * `claimIngestMessage` already refuses to reclaim such a row, so the only real
+ * problem was that it sat invisible. Surfacing it fixes that with no write at
+ * all. (The poller does flag the message seen, but that is an IMAP flag only:
+ * it neither deletes the message nor stops a live worker, which addresses it
+ * by UID.)
  *
  * SCOPING is derived from the sender allowlist — the same derivation the
  * poller uses to route the mail in the first place — because
@@ -883,7 +928,9 @@ export async function listIngestAttention(
     return { items: [], failedTotal: 0, stalledTotal: 0, truncated: false };
   }
 
-  const rows = await prisma.$queryRaw<Array<MessageRow & { category: string; category_total: number }>>`
+  const rows = await prisma.$queryRaw<
+    Array<MessageRow & { category: string; failed_total: number; stalled_total: number }>
+  >`
     WITH scoped AS (
       SELECT id, message_key, from_email, subject, outcome, detail, ingested_count,
              attempts, processed_at,
@@ -902,15 +949,20 @@ export async function listIngestAttention(
           )
         )
     )
-    SELECT *, COUNT(*) OVER (PARTITION BY category)::int AS category_total
+    SELECT *,
+           COUNT(*) FILTER (WHERE category = 'failed') OVER ()::int  AS failed_total,
+           COUNT(*) FILTER (WHERE category = 'stalled') OVER ()::int AS stalled_total
     FROM scoped
     ORDER BY processed_at DESC, id DESC
     LIMIT ${limit}`;
 
-  const totalFor = (category: string) =>
-    rows.find(r => r.category === category)?.category_total ?? 0;
-  const failedTotal = totalFor('failed');
-  const stalledTotal = totalFor('stalled');
+  // Both counts are unpartitioned windows over the WHOLE `scoped` set, so they
+  // are correct even when the LIMIT returns rows from only one category. A
+  // PARTITION BY category window would have reported zero for any category the
+  // truncated page happened to exclude — understating the backlog, which is the
+  // same silent-undercount bug this module exists to prevent.
+  const failedTotal = rows[0]?.failed_total ?? 0;
+  const stalledTotal = rows[0]?.stalled_total ?? 0;
 
   return {
     items: rows.map(row => ({
@@ -1240,7 +1292,8 @@ async function ingestOneAttachment(
  * reclaim honours `attempts < INGEST_MAX_ATTEMPTS`, so a crash loop can
  * duplicate at most INGEST_MAX_ATTEMPTS times and then stops. The exhausted
  * claim is then reported as `stalled` by `listIngestAttention` — reported, not
- * rewritten, because an overdue claim is not proof its worker died.
+ * rewritten, because an overdue claim is not proof its worker died and a write
+ * here would race that worker's own final write.
  *
  * A partial success is reported as `ingested` with the failed attachment named
  * in `detail` and a `warning` notification, so the gap is visible even though
@@ -1329,13 +1382,24 @@ async function pollEmailIngestPass(
       let attempt = 0;
 
       try {
-        // Idempotency: skip anything already finished (or repeated in-batch).
-        // In-flight and reclaimable rows are not reported as finished — the
-        // claim below decides those.
-        const finished = states.get(key);
-        if (finished || seenThisRun.has(key)) {
-          // Every finished message — success, skip, OR terminal failure — is
-          // flagged seen so an ordinary poll never selects it again.
+        // Idempotency: skip anything already settled (or repeated in-batch).
+        // Live and reclaimable rows are absent from `states` — the claim below
+        // decides those.
+        const settled = states.get(key);
+        if (settled || seenThisRun.has(key)) {
+          if (settled?.stalled) {
+            // An exhausted, abandoned claim. NO DB WRITE: the row stays exactly
+            // as it is, a read-only `stalled` record in the attention list. All
+            // that happens here is the mailbox flag, so ordinary polls stop
+            // being handed a message nothing will ever pick up again.
+            console.warn(
+              `[email-ingest] Stalled claim for ${key} (uid ${envelope.uid}) after ` +
+              `${settled.attempts} attempts — see Settings → Email ingest`,
+            );
+          }
+          // Every settled message — success, skip, terminal failure, or a
+          // stalled claim — is flagged seen so an ordinary poll never selects
+          // it again.
           await markSeenQuietly(client, envelope.uid);
           result.skipped++;
           continue;
