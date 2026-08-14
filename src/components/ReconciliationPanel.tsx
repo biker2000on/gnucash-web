@@ -7,6 +7,8 @@ import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 import { toLocalDateString } from '@/lib/datePresets';
 
 interface ReconciliationPanelProps {
+    accountGuid: string;
+    commodityScu?: number;
     accountCurrency: string;
     isInvestment?: boolean;
     sharePrecision?: number;
@@ -24,6 +26,8 @@ interface ReconciliationPanelProps {
 
 export function ReconciliationPanel({
     accountCurrency,
+    accountGuid,
+    commodityScu,
     isInvestment = false,
     sharePrecision = 4,
     currentBalance,
@@ -76,9 +80,39 @@ export function ReconciliationPanel({
         }
     }, [isReconciling, simpleFinBalance, isInvestment]);
 
-    const handleFinish = useCallback(async () => {
+    const minorUnitScale = commodityScu && commodityScu > 0 ? Math.round(Math.log10(commodityScu)) : 2;
+    const toMinorUnits = (value: string | number): bigint | null => {
+        const raw = String(value).trim();
+        if (!/^-?\d+(?:\.\d+)?$/.test(raw)) return null;
+        const negative = raw.startsWith('-');
+        const [whole, fraction = ''] = (negative ? raw.slice(1) : raw).split('.');
+        if (fraction.length > minorUnitScale) return null;
+        const magnitude = BigInt(whole) * (10n ** BigInt(minorUnitScale))
+            + BigInt((fraction + '0'.repeat(minorUnitScale)).slice(0, minorUnitScale));
+        return negative ? -magnitude : magnitude;
+    };
+    // Compare integer minor units only. The server independently recomputes this
+    // from signed split quantity numerators/denominators before it writes.
+    const statementMinorUnits = toMinorUnits(statementBalance);
+    const currentMinorUnits = toMinorUnits(currentBalance.toFixed(minorUnitScale));
+    const selectedMinorUnits = toMinorUnits(selectedBalance.toFixed(minorUnitScale));
+    const hasStatementBalance = statementMinorUnits !== null;
+    const differenceMinorUnits = hasStatementBalance && currentMinorUnits !== null && selectedMinorUnits !== null
+        ? statementMinorUnits - currentMinorUnits - selectedMinorUnits
+        : null;
+
+    const handleFinish = useCallback(async (recordDiscrepancy = false) => {
         if (selectedSplits.size === 0) {
             setError('No transactions selected for reconciliation');
+            return;
+        }
+
+        if (!hasStatementBalance || differenceMinorUnits === null) {
+            setError('Enter a valid statement balance before finishing reconciliation.');
+            return;
+        }
+        if (!recordDiscrepancy && differenceMinorUnits !== 0n) {
+            setError('The difference must be exactly zero before finishing. Review the selected transactions or explicitly record the discrepancy.');
             return;
         }
 
@@ -86,18 +120,21 @@ export function ReconciliationPanel({
         setError(null);
 
         try {
-            const res = await fetch('/api/splits/bulk/reconcile', {
+            const res = await fetch(`/api/accounts/${accountGuid}/reconcile`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    splits: Array.from(selectedSplits),
-                    reconcile_state: 'y',
-                    reconcile_date: statementDate,
+                    splitGuids: Array.from(selectedSplits),
+                    statementDate,
+                    endingBalance: statementBalance,
+                    commodityScu,
+                    createAdjustment: recordDiscrepancy,
                 }),
             });
 
             if (!res.ok) {
-                throw new Error('Failed to reconcile transactions');
+                const body = await res.json().catch(() => null) as { error?: string } | null;
+                throw new Error(body?.error || 'Failed to reconcile transactions');
             }
 
             onReconcileComplete?.();
@@ -107,7 +144,7 @@ export function ReconciliationPanel({
         } finally {
             setSaving(false);
         }
-    }, [selectedSplits, statementDate, onReconcileComplete, onCancelReconcile]);
+    }, [accountGuid, commodityScu, differenceMinorUnits, hasStatementBalance, selectedSplits, statementBalance, statementDate, onReconcileComplete, onCancelReconcile]);
 
     // Drag state
     const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
@@ -138,17 +175,13 @@ export function ReconciliationPanel({
         dragRef.current = null;
     }, []);
 
-    const parsedStatementBalance = parseFloat(statementBalance) || 0;
-    // Reconciliation math: previously-reconciled (current) + newly-selected = statement balance
-    const difference = parsedStatementBalance - (currentBalance + selectedBalance);
-
     const displayAmount = (n: number) => {
         if (isInvestment) {
             return `${n.toFixed(sharePrecision)} ${accountCurrency}`;
         }
         return formatCurrency(n.toFixed(2), accountCurrency);
     };
-    const balanceTolerance = isInvestment ? Math.pow(10, -(sharePrecision + 1)) : 0.01;
+    const isExactlyBalanced = differenceMinorUnits === 0n;
 
     if (!isReconciling) {
         return (
@@ -193,17 +226,18 @@ export function ReconciliationPanel({
             </div>
 
             {error && (
-                <div className="bg-negative/10 border border-negative/30 rounded-lg px-3 py-1.5 text-xs text-negative">
+                <div role="alert" className="bg-negative/10 border border-negative/30 rounded-lg px-3 py-1.5 text-xs text-negative">
                     {error}
                 </div>
             )}
 
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
-                    <label className="block text-xs text-foreground-secondary uppercase tracking-wider mb-1">
+                    <label htmlFor="reconciliation-statement-date" className="block text-xs text-foreground-secondary uppercase tracking-wider mb-1">
                         Statement Date
                     </label>
                     <input
+                        id="reconciliation-statement-date"
                         type="text"
                         value={statementDateDisplay}
                         onChange={(e) => setStatementDateDisplay(e.target.value)}
@@ -222,12 +256,13 @@ export function ReconciliationPanel({
                     />
                 </div>
                 <div>
-                    <label className="block text-xs text-foreground-secondary uppercase tracking-wider mb-1">
+                    <label htmlFor="reconciliation-statement-balance" className="block text-xs text-foreground-secondary uppercase tracking-wider mb-1">
                         {isInvestment ? 'Share Balance' : 'Statement Balance'}
                     </label>
                     <input
+                        id="reconciliation-statement-balance"
                         type="number"
-                        step={isInvestment ? String(Math.pow(10, -sharePrecision)) : '0.01'}
+                        step={String(1 / (commodityScu && commodityScu > 0 ? commodityScu : 100))}
                         value={statementBalance}
                         onChange={(e) => {
                             statementBalanceTouched.current = true;
@@ -265,8 +300,8 @@ export function ReconciliationPanel({
                     <div className="text-foreground-muted text-[10px] uppercase tracking-wider mb-0.5">
                         Difference
                     </div>
-                    <div className={`font-mono text-xs ${Math.abs(difference) < balanceTolerance ? 'text-positive' : 'text-warning'}`}>
-                        {displayAmount(difference)}
+                    <div className={`font-mono text-xs ${isExactlyBalanced ? 'text-positive' : 'text-warning'}`}>
+                        {differenceMinorUnits === null ? '—' : displayAmount(Number(differenceMinorUnits) / (commodityScu && commodityScu > 0 ? commodityScu : 100))}
                     </div>
                 </div>
             </div>
@@ -289,8 +324,8 @@ export function ReconciliationPanel({
                 </div>
 
                 <button
-                    onClick={handleFinish}
-                    disabled={saving || selectedSplits.size === 0}
+                    onClick={() => handleFinish()}
+                    disabled={saving || selectedSplits.size === 0 || !hasStatementBalance || !isExactlyBalanced}
                     className="px-3 py-1.5 text-xs bg-primary hover:bg-primary-hover disabled:bg-primary/50 disabled:cursor-not-allowed text-primary-foreground rounded-lg transition-colors flex items-center gap-1.5"
                 >
                     {saving ? (
@@ -308,6 +343,28 @@ export function ReconciliationPanel({
                     )}
                 </button>
             </div>
+            {!hasStatementBalance && (
+                <p aria-live="polite" className="text-xs text-warning">
+                    Enter the statement ending balance to calculate the difference.
+                </p>
+            )}
+            {hasStatementBalance && !isExactlyBalanced && selectedSplits.size > 0 && !isInvestment && (
+                <div className="border-t border-border pt-3 space-y-2">
+                    <p aria-live="polite" className="text-xs text-warning">
+                        Difference must be exactly zero to finish. Create an adjusting transaction to Imbalance to finish this reconciliation.
+                    </p>
+                    <button
+                        onClick={() => handleFinish(true)}
+                        disabled={saving}
+                        className="px-3 py-1.5 text-xs bg-warning text-background rounded-lg transition-colors"
+                    >
+                        Create adjustment and finish
+                    </button>
+                </div>
+            )}
+            {hasStatementBalance && !isExactlyBalanced && selectedSplits.size > 0 && isInvestment && (
+                <p aria-live="polite" className="text-xs text-warning">Share adjustments must be entered manually.</p>
+            )}
         </div>
     );
 }

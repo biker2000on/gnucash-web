@@ -2448,6 +2448,8 @@ export default function AccountLedger({
                     {/* Reconcile button in toolbar; panel floats separately */}
                     {!isReconciling && (
                         <ReconciliationPanel
+                            accountGuid={accountGuid}
+                            commodityScu={commodityScu}
                             accountCurrency={accountCurrency}
                             isInvestment={isInvestmentAccount}
                             sharePrecision={sharePrecision}
@@ -3611,6 +3613,8 @@ export default function AccountLedger({
         {/* Floating reconciliation panel - outside overflow-clip container */}
         {isReconciling && (
             <ReconciliationPanel
+                accountGuid={accountGuid}
+                commodityScu={commodityScu}
                 accountCurrency={accountCurrency}
                 isInvestment={isInvestmentAccount}
                 sharePrecision={sharePrecision}

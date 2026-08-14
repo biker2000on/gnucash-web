@@ -6,9 +6,8 @@ import Link from 'next/link';
 import { useToast } from '@/contexts/ToastContext';
 import { notifyActionCenterUpdated } from '@/lib/financial-actions/client-events';
 import {
-    computeDifferenceCents,
+    computeDifferenceUnits,
     toggleCandidateSelection,
-    toCents,
     type ReconcileCandidate,
     type ReconcileWorkspace,
 } from '@/lib/reconcile-shared';
@@ -22,11 +21,10 @@ function todayIsoDate(): string {
 }
 
 /** Parse the ending-balance input; null when empty/invalid. */
-function parseEndingBalance(raw: string): number | null {
+function parseEndingBalance(raw: string): string | null {
     const cleaned = raw.replace(/[$,\s]/g, '');
     if (cleaned === '' || cleaned === '-') return null;
-    const value = Number(cleaned);
-    return Number.isFinite(value) ? value : null;
+    return /^-?\d+(?:\.\d+)?$/.test(cleaned) ? cleaned : null;
 }
 
 function ReconcilePageContent() {
@@ -240,22 +238,17 @@ function ReconcilePageContent() {
             .map((c) => c.amount);
     }, [workspace, selected]);
 
-    const selectedTotalCents = useMemo(
-        () => selectedAmounts.reduce((sum, a) => sum + toCents(a), 0),
-        [selectedAmounts],
-    );
-
     const differenceCents =
         workspace && endingBalance !== null
-            ? computeDifferenceCents(endingBalance, workspace.reconciledBalance, selectedAmounts)
+            ? computeDifferenceUnits(endingBalance, workspace.reconciledBalance, selectedAmounts, workspace.account.commodityScu)
             : null;
 
     const canFinish =
         !loading && !submitting && workspace !== null &&
-        endingBalance !== null && differenceCents === 0;
+        endingBalance !== null && differenceCents === 0n;
 
     const handleFinish = useCallback(async () => {
-        if (!workspace || endingBalance === null || differenceCents !== 0) return;
+        if (!workspace || endingBalance === null || differenceCents !== 0n) return;
         setSubmitting(true);
         try {
             const activeSessionId = sessionId.current ?? await sessionStart.current;
@@ -398,9 +391,9 @@ function ReconcilePageContent() {
                 <div className="sticky top-[69px] z-20 -mx-1 bg-background/95 px-1 py-2 backdrop-blur-sm">
                     <ReconcileSummary
                         reconciledBalance={workspace.reconciledBalance}
-                        selectedTotal={selectedTotalCents / 100}
-                        endingBalance={endingBalance}
-                        differenceCents={differenceCents}
+                        selectedTotal={selectedAmounts.reduce((sum, amount) => sum + amount, 0)}
+                        endingBalance={endingBalance === null ? null : Number(endingBalance)}
+                        differenceCents={differenceCents === null ? null : Number(differenceCents)}
                         currency={currency}
                         lastReconcileDate={workspace.lastReconcileDate}
                     />
