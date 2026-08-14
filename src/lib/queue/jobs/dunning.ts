@@ -5,7 +5,8 @@ import type { Job } from 'bullmq';
  *
  * For every book with dunning enabled (gnucash_web_dunning_settings.enabled):
  *   - load posted, unpaid CUSTOMER invoices (book-scoped via post_acc)
- *   - compute days overdue from date_posted + billterm duedays
+ *   - compute days overdue from the posted transaction due-date slot (or the
+ *     explicitly marked post-date fallback for legacy transactions)
  *   - pick the next dunning level per invoice (highest crossed schedule
  *     threshold not yet logged — see nextDunningLevel in dunning.ts)
  *   - skip invoices in gnucash_web_dunning_optout or without a customer email
@@ -38,7 +39,7 @@ export async function handleDunning(job: Job): Promise<DunningRunResult> {
     renderDunningTemplate,
     daysOverdue,
   } = await import('@/lib/business/dunning');
-  const { loadOpenInvoices, computeDueDate, amountDueFromLotBalance } = await import(
+  const { loadOpenInvoices, resolveAgingDueDate, amountDueFromLotBalance } = await import(
     '@/lib/business/business-reports'
   );
   const { findOrCreateInvoiceShare } = await import('@/lib/business/invoice-shares.service');
@@ -109,9 +110,8 @@ export async function handleDunning(job: Job): Promise<DunningRunResult> {
       for (const inv of openInvoices) {
         result.invoicesConsidered++;
         try {
-          const posted = inv.datePosted ? new Date(inv.datePosted) : null;
-          if (!posted) continue;
-          const dueDate = computeDueDate(posted, inv.dueDays);
+          const { dueDate } = resolveAgingDueDate(inv);
+          if (!dueDate) continue;
           const overdue = daysOverdue(dueDate, now);
           if (overdue <= 0) continue;
 

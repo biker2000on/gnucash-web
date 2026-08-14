@@ -45,6 +45,9 @@ function AgingPageInner() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [expanded, setExpanded] = useState<Set<string>>(new Set());
+    const hasInferredDueDates = report?.owners.some((owner) =>
+        owner.invoices.some((invoice) => invoice.dueDateInferred),
+    ) ?? false;
 
     // Escape collapses expanded owner rows. GlobalShortcuts owns the Escape
     // key registration and broadcasts 'exit-edit-mode' when nothing modal is
@@ -92,7 +95,7 @@ function AgingPageInner() {
         <div className="space-y-6">
             <PageHeader
                 title={side === 'ar' ? 'Receivables Aging' : 'Payables Aging'}
-                subtitle={`Open ${side === 'ar' ? 'customer invoices' : 'vendor bills'} bucketed by days past due (due date from billing terms, else the post date).`}
+                subtitle={`Open ${side === 'ar' ? 'customer invoices' : 'vendor bills'} bucketed by days past their stored transaction due date.`}
                 actions={
                     <div className="flex rounded-lg border border-border p-0.5">
                         {(['ar', 'ap'] as const).map((s) => (
@@ -139,6 +142,11 @@ function AgingPageInner() {
                         </div>
                     ) : (
                         <div className="bg-background-secondary/30 backdrop-blur-xl border border-border rounded-xl overflow-hidden">
+                            {hasInferredDueDates && (
+                                <p id="inferred-due-date-note" className="border-b border-border px-4 py-2 text-xs text-foreground-secondary">
+                                    † Due date inferred from the posting date because this transaction has no stored due date.
+                                </p>
+                            )}
                             <div className="overflow-x-auto">
                                 <table className="w-full min-w-[720px] text-sm">
                                     <thead>
@@ -201,6 +209,9 @@ function AgingPageInner() {
                                                                     </Link>
                                                                     <span className="ml-3 font-mono text-xs text-foreground-muted" style={TNUM}>
                                                                         posted {invoice.datePosted ?? '—'} · due {invoice.dueDate ?? '—'}
+                                                                        {invoice.dueDateInferred && (
+                                                                            <span aria-describedby="inferred-due-date-note"> †</span>
+                                                                        )}
                                                                         {invoice.daysPastDue > 0 && (
                                                                             <span className="text-negative">
                                                                                 {' '}· {invoice.daysPastDue}d overdue

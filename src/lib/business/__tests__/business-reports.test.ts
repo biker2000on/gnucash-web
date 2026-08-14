@@ -15,7 +15,6 @@ import { describe, it, expect } from 'vitest';
 import {
     addDays,
     wholeDaysBetween,
-    computeDueDate,
     bucketForDaysPastDue,
     amountDueFromLotBalance,
     buildAgingReport,
@@ -91,23 +90,6 @@ describe('amountDueFromLotBalance', () => {
     it('credit notes read as negative amounts due on both sides', () => {
         expect(amountDueFromLotBalance(-50, 'ar')).toBe(-50); // AR credit note
         expect(amountDueFromLotBalance(50, 'ap')).toBe(-50); // AP credit note
-    });
-});
-
-/* ------------------------------------------------------------------ */
-/* Due dates                                                            */
-/* ------------------------------------------------------------------ */
-
-describe('computeDueDate', () => {
-    const posted = new Date('2026-06-01T00:00:00.000Z');
-
-    it('adds billterms duedays to the post date', () => {
-        expect(computeDueDate(posted, 30).toISOString().slice(0, 10)).toBe('2026-07-01');
-    });
-
-    it('falls back to the post date when there are no terms', () => {
-        expect(computeDueDate(posted, null).toISOString()).toBe(posted.toISOString());
-        expect(computeDueDate(posted, undefined).toISOString()).toBe(posted.toISOString());
     });
 });
 

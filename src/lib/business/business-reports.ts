@@ -28,6 +28,7 @@
  */
 
 import prisma from '@/lib/prisma';
+import { SLOT_TYPE } from '@/lib/gnucash-xml/slots';
 
 /* ------------------------------------------------------------------ */
 /* Shared types                                                         */
@@ -68,15 +69,6 @@ export function addDays(date: Date, days: number): Date {
 /** Whole days of (a - b), floored. Positive when `a` is after `b`. */
 export function wholeDaysBetween(a: Date, b: Date): number {
     return Math.floor((a.getTime() - b.getTime()) / DAY_MS);
-}
-
-/**
- * Due date per GnuCash billterms: date_posted + duedays.
- * No terms (or proximo terms without duedays) fall back to the post date.
- */
-export function computeDueDate(datePosted: Date, dueDays: number | null | undefined): Date {
-    if (dueDays == null || !Number.isFinite(dueDays)) return datePosted;
-    return addDays(datePosted, dueDays);
 }
 
 /**
@@ -142,6 +134,21 @@ export interface AgingInvoice {
     currency: string;
 }
 
+/**
+ * Resolve the due date used by aging and dunning from its posted value.
+ * Legacy transactions without `trans-date-due` deliberately fall back to the
+ * post date, and tell the caller that the date was inferred.
+ */
+export function resolveAgingDueDate(
+    row: Pick<RawOpenInvoiceRow, 'datePosted' | 'dueDate'>,
+): { dueDate: Date | null; dueDateInferred: boolean } {
+    const storedDueDate = row.dueDate ? new Date(row.dueDate) : null;
+    if (storedDueDate) return { dueDate: storedDueDate, dueDateInferred: false };
+
+    const posted = row.datePosted ? new Date(row.datePosted) : null;
+    return { dueDate: posted, dueDateInferred: !!posted };
+}
+
 export interface AgingOwnerRow {
     ownerGuid: string;
     ownerName: string;
@@ -175,14 +182,7 @@ export function buildAgingReport(
     for (const row of rows) {
         const amountDue = amountDueFromLotBalance(row.lotBalance, side);
         const posted = row.datePosted ? new Date(row.datePosted) : null;
-        // `trans-date-due` is the due date resolved and written at posting.
-        // Do not recalculate from current bill terms: terms can differ from
-        // what was in force when the transaction was posted.
-        const storedDueDate = row.dueDate ? new Date(row.dueDate) : null;
-        // Legacy transactions without the slot deliberately use the post date
-        // (not post date + terms) and expose that inference to consumers.
-        const dueDate = storedDueDate ?? posted;
-        const dueDateInferred = !storedDueDate && !!posted;
+        const { dueDate, dueDateInferred } = resolveAgingDueDate(row);
         const daysPastDue = dueDate ? wholeDaysBetween(asOf, dueDate) : 0;
         const bucket = bucketForDaysPastDue(daysPastDue);
 
@@ -244,8 +244,8 @@ export function sumDueWithin(
     const cutoff = addDays(asOf, days).getTime();
     let sum = 0;
     for (const row of rows) {
-        const posted = row.datePosted ? new Date(row.datePosted) : null;
-        const due = row.dueDate ? new Date(row.dueDate) : (posted ?? asOf);
+        const { dueDate } = resolveAgingDueDate(row);
+        const due = dueDate ?? asOf;
         if (due.getTime() <= cutoff) {
             sum += amountDueFromLotBalance(row.lotBalance, side);
         }
@@ -649,7 +649,15 @@ export async function loadOpenInvoices(
             inv.guid,
             inv.id,
             inv.date_posted,
-            due_slot.timespec_val AS due_date,
+            (
+                SELECT sl.timespec_val
+                FROM slots sl
+                WHERE sl.obj_guid = inv.post_txn
+                  AND sl.name = 'trans-date-due'
+                  AND sl.slot_type = ${SLOT_TYPE.TIMESPEC}
+                ORDER BY sl.id DESC
+                LIMIT 1
+            ) AS due_date,
             inv.eff_owner_guid AS owner_guid,
             COALESCE(cu.name, ve.name) AS owner_name,
             c.mnemonic AS currency,
@@ -657,14 +665,10 @@ export async function loadOpenInvoices(
         FROM inv
         LEFT JOIN customers cu ON inv.eff_owner_type = ${OWNER_TYPE_CUSTOMER} AND cu.guid = inv.eff_owner_guid
         LEFT JOIN vendors ve ON inv.eff_owner_type = ${OWNER_TYPE_VENDOR} AND ve.guid = inv.eff_owner_guid
-        LEFT JOIN slots due_slot
-          ON due_slot.obj_guid = inv.post_txn
-         AND due_slot.name = 'trans-date-due'
-         AND due_slot.slot_type = 6
         LEFT JOIN commodities c ON c.guid = inv.currency
         LEFT JOIN splits s ON s.lot_guid = inv.post_lot
         WHERE inv.eff_owner_type = ${ownerType}
-        GROUP BY inv.guid, inv.id, inv.date_posted, due_slot.timespec_val, inv.eff_owner_guid, cu.name, ve.name, c.mnemonic
+        GROUP BY inv.guid, inv.id, inv.date_posted, inv.eff_owner_guid, cu.name, ve.name, c.mnemonic
         HAVING ABS(COALESCE(SUM(s.value_num::numeric / NULLIF(s.value_denom, 0)::numeric), 0)) > ${PAID_TOLERANCE}
     `;
 

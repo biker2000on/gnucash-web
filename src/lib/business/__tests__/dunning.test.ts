@@ -20,6 +20,7 @@ import {
   renderDunningTemplate,
   DEFAULT_DUNNING_SCHEDULE,
 } from '../dunning';
+import { resolveAgingDueDate } from '../business-reports';
 
 describe('parseDunningSchedule', () => {
   it('sorts and dedupes valid day lists', () => {
@@ -56,6 +57,22 @@ describe('daysOverdue', () => {
     expect(daysOverdue(due, new Date(due.getTime() + 1 * day))).toBe(1);
     expect(daysOverdue(due, new Date(due.getTime() + 7 * day))).toBe(7);
     expect(daysOverdue(due, new Date(due.getTime() + 7.9 * day))).toBe(7);
+  });
+});
+
+describe('dunning due-date source', () => {
+  it('uses the stored transaction due date for overdue escalation, not bill terms', () => {
+    // The invoice was posted on June 1. Even if a current Net-30 term would
+    // imply July 1, the due date persisted at posting was May 1.
+    const { dueDate, dueDateInferred } = resolveAgingDueDate({
+      datePosted: '2026-06-01T00:00:00.000Z',
+      dueDate: '2026-05-01T00:00:00.000Z',
+    });
+    const overdue = daysOverdue(dueDate!, new Date('2026-07-08T00:00:00.000Z'));
+
+    expect(dueDateInferred).toBe(false);
+    expect(overdue).toBe(68);
+    expect(nextDunningLevel([7, 14, 30], overdue, [])).toBe(30);
   });
 });
 
