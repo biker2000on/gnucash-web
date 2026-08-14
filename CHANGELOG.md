@@ -252,6 +252,20 @@ Covers work landed since 0.23.2.0 (2026-07-29).
 
 ### Fixed
 
+- **AR/AP aging can now be tied back to the balance sheet.** The aging report
+  gains a per-control-account reconciliation showing the control account's
+  balance, the aged total, and any unreconciled residual between them.
+  Previously there was no way to check the aging report against the receivable
+  or payable balance it was supposed to describe. Both sides of that comparison
+  are computed the same way — same as-of date, same currency valuation, same
+  account set, hidden accounts excluded — so a non-zero residual now means real
+  unreconciled activity rather than an artefact of two different derivations.
+  Where a receivable's currency cannot be converted, the account is reported
+  with an explicit valuation gap instead of being silently valued at parity.
+  **Invoices dated after the as-of date no longer appear in aging**, because a
+  receivable that is not yet on the balance sheet cannot be past due against
+  it; they reappear once their date arrives.
+
 - **Portfolio and holdings screens no longer present an incomplete cost basis
   as a complete one.** When some shares in an account arrived by transfer and
   their original cost could not be traced, the cost basis shown covered only
