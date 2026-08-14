@@ -1358,6 +1358,16 @@ export async function detectWashSales(
         toDecimalNumber(o.quantity_num, o.quantity_denom) < 0,
       );
     };
+    /** Transfer-out: shares leaving for the user's own other account — NOT a disposition. */
+    const isTransferOutSplit = (s: WashSplit): boolean => {
+      const siblings = s.transaction?.splits ?? [];
+      return siblings.some(o =>
+        o.account_guid !== s.account_guid &&
+        o.account?.commodity_guid === commodityGuid &&
+        o.account?.account_type !== 'TRADING' &&
+        toDecimalNumber(o.quantity_num, o.quantity_denom) > 0,
+      );
+    };
 
     // Identify sells and buys. Transfer-ins are excluded from BOTH the
     // replacement-share candidates and the loss heuristic: moving shares
@@ -1366,6 +1376,17 @@ export async function detectWashSales(
       toDecimalNumber(s.quantity_num, s.quantity_denom) > 0 &&
       !isTransferInSplit(s)
     );
+
+    // A transfer-out can share a lot with actual sales. Excluding its split
+    // from only the final allocation is insufficient: its $0 proceeds would
+    // still make the lot-level calculation fabricate a loss. Keep the same
+    // transfer identification used by the scrubber and omit those splits from
+    // both the calculation and the wash-sale candidate set.
+    const transferOutSplitGuids = new Set(allSplits
+      .filter(s =>
+        toDecimalNumber(s.quantity_num, s.quantity_denom) < 0 && isTransferOutSplit(s)
+      )
+      .map(s => s.guid));
 
     // For sells, determine if they were at a loss using lot data or heuristic
     const sells: Array<typeof allSplits[0] & { realizedLoss: number }> = [];
@@ -1393,6 +1414,7 @@ export async function detectWashSales(
     for (const s of allSplits) {
       const qty = toDecimalNumber(s.quantity_num, s.quantity_denom);
       if (qty >= 0) continue; // Not a sell
+      if (transferOutSplitGuids.has(s.guid)) continue;
 
       const val = toDecimalNumber(s.value_num, s.value_denom);
 
@@ -1402,12 +1424,14 @@ export async function detectWashSales(
       if (s.lot_guid) {
         const lot = lotMap.get(s.lot_guid);
         if (lot) {
-          const lotSplits = lot.splits.map(ls => ({
-            shares: toDecimalNumber(ls.quantity_num, ls.quantity_denom),
-            value: toDecimalNumber(ls.value_num, ls.value_denom),
-          }));
-          const totalQty = lot.splits.reduce(
-            (sum, ls) => sum + toDecimalNumber(ls.quantity_num, ls.quantity_denom), 0
+          const lotSplits = lot.splits
+            .filter(ls => !transferOutSplitGuids.has(ls.guid))
+            .map(ls => ({
+              shares: toDecimalNumber(ls.quantity_num, ls.quantity_denom),
+              value: toDecimalNumber(ls.value_num, ls.value_denom),
+            }));
+          const totalQty = lotSplits.reduce(
+            (sum, ls) => sum + ls.shares, 0
           );
           const isClosed = Math.abs(totalQty) < 0.0001;
           const realizedGain = computeRealizedGain(
