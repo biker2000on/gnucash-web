@@ -78,6 +78,7 @@ interface FinalizeBody {
     splitGuids?: string[];
     sessionId?: string | null;
     interactionDelta?: number;
+    allowDiscrepancy?: boolean;
 }
 
 /**
@@ -87,8 +88,8 @@ interface FinalizeBody {
  * Body: { statementDate: 'YYYY-MM-DD', endingBalance: number, splitGuids: string[] }
  *
  * The difference is recomputed server-side from the database; when it is not
- * exactly 0.00 the request fails 409 with the recomputed difference. On
- * success the selected splits are set reconcile_state='y' with
+ * exactly 0.00 the request fails 409 with the recomputed difference unless
+ * the caller explicitly records that discrepancy. On success the selected splits are set reconcile_state='y' with
  * reconcile_date = statement date (same semantics as the statement-upload
  * reconcile flow) inside one DB transaction.
  */
@@ -129,6 +130,12 @@ export async function POST(
                 { status: 400 },
             );
         }
+        if (body.allowDiscrepancy !== undefined && typeof body.allowDiscrepancy !== 'boolean') {
+            return NextResponse.json(
+                { error: 'allowDiscrepancy must be a boolean when provided' },
+                { status: 400 },
+            );
+        }
         if (
             body.sessionId !== undefined &&
             body.sessionId !== null &&
@@ -165,6 +172,7 @@ export async function POST(
                 sessionId: body.sessionId,
                 interactionDelta: body.interactionDelta,
             },
+            body.allowDiscrepancy === true,
         );
         void cacheInvalidateAllForBook(roleResult.bookGuid);
         void publishDataChange(roleResult.bookGuid, 'reconciliation', { guid, action: 'update' });

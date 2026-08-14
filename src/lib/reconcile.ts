@@ -220,6 +220,7 @@ export async function finalizeReconciliation(
     splitGuids: string[],
     tx?: ReconcileTx,
     completion?: ReconciliationCompletion,
+    allowDiscrepancy = false,
 ): Promise<FinalizeReconcileResult> {
     const uniqueGuids = [...new Set(splitGuids)];
 
@@ -326,7 +327,7 @@ export async function finalizeReconciliation(
         const { reconciledCents } = await summarizeReconciled(db, accountGuid);
 
         const differenceCents = toCents(endingBalance) - (reconciledCents + selectedCents);
-        if (differenceCents !== 0) {
+        if (differenceCents !== 0 && !allowDiscrepancy) {
             const difference = differenceCents / 100;
             throw new ManualReconcileError(
                 `Cannot finalize: difference is ${difference.toFixed(2)}, must be 0.00 ` +
@@ -371,7 +372,8 @@ export async function finalizeReconciliation(
                        SET status = 'completed',
                            completed_at = NOW(),
                            interaction_count = interaction_count + ${interactionDelta},
-                           ending_difference = 0
+                           ending_difference = ${differenceCents / 100},
+                           metadata = metadata || jsonb_build_object('statementEndingBalance', ${endingBalance})
                      WHERE id = ${completion.sessionId}
                        AND book_guid = ${completion.bookGuid}
                        AND account_guid = ${accountGuid}
@@ -384,7 +386,8 @@ export async function finalizeReconciliation(
                        SET status = 'completed',
                            completed_at = NOW(),
                            interaction_count = interaction_count + ${interactionDelta},
-                           ending_difference = 0
+                           ending_difference = ${differenceCents / 100},
+                           metadata = metadata || jsonb_build_object('statementEndingBalance', ${endingBalance})
                      WHERE id = (
                          SELECT id
                            FROM gnucash_web_reconciliation_sessions
@@ -402,12 +405,13 @@ export async function finalizeReconciliation(
                 await db.$executeRaw`
                     INSERT INTO gnucash_web_reconciliation_sessions (
                         id, book_guid, account_guid, user_id, statement_date,
-                        status, interaction_count, completed_at, ending_difference
+                        status, interaction_count, completed_at, ending_difference, metadata
                     )
                     VALUES (
                         ${randomUUID()}, ${completion.bookGuid}, ${accountGuid},
                         ${completion.userId}, ${statementDate}, 'completed',
-                        ${interactionDelta}, NOW(), 0
+                        ${interactionDelta}, NOW(), ${differenceCents / 100},
+                        jsonb_build_object('statementEndingBalance', ${endingBalance})
                     )
                 `;
             }

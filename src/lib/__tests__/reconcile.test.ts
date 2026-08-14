@@ -337,6 +337,30 @@ describe('finalizeReconciliation', () => {
         expect(mockPrisma.splits.updateMany).not.toHaveBeenCalled();
     });
 
+    it('permits only the explicit discrepancy escape hatch and records the entered statement balance', async () => {
+        mockFinalize([selectedSplit(SPLIT_1, 5000)], 10000);
+        mockPrisma.splits.updateMany.mockResolvedValue({ count: 1 });
+        mockPrisma.$executeRaw.mockResolvedValue(0);
+
+        await expect(
+            finalizeReconciliation(
+                ACCOUNT,
+                STATEMENT_DATE,
+                175,
+                [SPLIT_1],
+                undefined,
+                { bookGuid: 'book0000000000000000000000000001', userId: 42 },
+                true,
+            ),
+        ).resolves.toMatchObject({ reconciledSplits: 1, endingBalance: 175 });
+
+        expect(mockPrisma.splits.updateMany).toHaveBeenCalledOnce();
+        const sessionSql = mockPrisma.$executeRaw.mock.calls.map(sqlText).join('\n');
+        expect(sessionSql).toContain("statementEndingBalance");
+        expect(sessionSql).toContain('ending_difference');
+        expect(mockPrisma.$executeRaw.mock.calls.some((call: unknown[]) => call.includes(175))).toBe(true);
+    });
+
     it('sets exactly the requested splits to y with the statement date', async () => {
         // reconciled 100.00 + selected (42.00 − 15.50) = 126.50 = ending
         mockFinalize(

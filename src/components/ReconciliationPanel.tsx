@@ -7,6 +7,7 @@ import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 import { toLocalDateString } from '@/lib/datePresets';
 
 interface ReconciliationPanelProps {
+    accountGuid: string;
     accountCurrency: string;
     isInvestment?: boolean;
     sharePrecision?: number;
@@ -24,6 +25,7 @@ interface ReconciliationPanelProps {
 
 export function ReconciliationPanel({
     accountCurrency,
+    accountGuid,
     isInvestment = false,
     sharePrecision = 4,
     currentBalance,
@@ -47,6 +49,7 @@ export function ReconciliationPanel({
     );
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [confirmDiscrepancy, setConfirmDiscrepancy] = useState(false);
     const statementBalanceTouched = useRef(false);
     const simpleFinDefaultApplied = useRef(false);
     const wasReconciling = useRef(false);
@@ -76,9 +79,35 @@ export function ReconciliationPanel({
         }
     }, [isReconciling, simpleFinBalance, isInvestment]);
 
-    const handleFinish = useCallback(async () => {
+    const minorUnitScale = isInvestment ? sharePrecision : 2;
+    const toMinorUnits = (value: string | number): bigint | null => {
+        const raw = String(value).trim();
+        if (!/^-?\d+(?:\.\d+)?$/.test(raw)) return null;
+        const negative = raw.startsWith('-');
+        const [whole, fraction = ''] = (negative ? raw.slice(1) : raw).split('.');
+        if (fraction.length > minorUnitScale) return null;
+        const magnitude = BigInt(whole) * (10n ** BigInt(minorUnitScale))
+            + BigInt((fraction + '0'.repeat(minorUnitScale)).slice(0, minorUnitScale));
+        return negative ? -magnitude : magnitude;
+    };
+    // Compare integer minor units only. The server independently recomputes this
+    // from signed split quantity numerators/denominators before it writes.
+    const statementMinorUnits = toMinorUnits(statementBalance);
+    const currentMinorUnits = toMinorUnits(currentBalance.toFixed(minorUnitScale));
+    const selectedMinorUnits = toMinorUnits(selectedBalance.toFixed(minorUnitScale));
+    const differenceMinorUnits = statementMinorUnits === null || currentMinorUnits === null || selectedMinorUnits === null
+        ? 1n
+        : statementMinorUnits - currentMinorUnits - selectedMinorUnits;
+    const difference = Number(differenceMinorUnits) / (10 ** minorUnitScale);
+
+    const handleFinish = useCallback(async (recordDiscrepancy = false) => {
         if (selectedSplits.size === 0) {
             setError('No transactions selected for reconciliation');
+            return;
+        }
+
+        if (!recordDiscrepancy && differenceMinorUnits !== 0n) {
+            setError('The difference must be exactly zero before finishing. Review the selected transactions or explicitly record the discrepancy.');
             return;
         }
 
@@ -86,18 +115,20 @@ export function ReconciliationPanel({
         setError(null);
 
         try {
-            const res = await fetch('/api/splits/bulk/reconcile', {
+            const res = await fetch(`/api/accounts/${accountGuid}/reconcile`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    splits: Array.from(selectedSplits),
-                    reconcile_state: 'y',
-                    reconcile_date: statementDate,
+                    splitGuids: Array.from(selectedSplits),
+                    statementDate,
+                    endingBalance: Number(statementBalance),
+                    allowDiscrepancy: recordDiscrepancy,
                 }),
             });
 
             if (!res.ok) {
-                throw new Error('Failed to reconcile transactions');
+                const body = await res.json().catch(() => null) as { error?: string } | null;
+                throw new Error(body?.error || 'Failed to reconcile transactions');
             }
 
             onReconcileComplete?.();
@@ -107,7 +138,7 @@ export function ReconciliationPanel({
         } finally {
             setSaving(false);
         }
-    }, [selectedSplits, statementDate, onReconcileComplete, onCancelReconcile]);
+    }, [accountGuid, differenceMinorUnits, selectedSplits, statementBalance, statementDate, onReconcileComplete, onCancelReconcile]);
 
     // Drag state
     const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
@@ -138,17 +169,13 @@ export function ReconciliationPanel({
         dragRef.current = null;
     }, []);
 
-    const parsedStatementBalance = parseFloat(statementBalance) || 0;
-    // Reconciliation math: previously-reconciled (current) + newly-selected = statement balance
-    const difference = parsedStatementBalance - (currentBalance + selectedBalance);
-
     const displayAmount = (n: number) => {
         if (isInvestment) {
             return `${n.toFixed(sharePrecision)} ${accountCurrency}`;
         }
         return formatCurrency(n.toFixed(2), accountCurrency);
     };
-    const balanceTolerance = isInvestment ? Math.pow(10, -(sharePrecision + 1)) : 0.01;
+    const isExactlyBalanced = differenceMinorUnits === 0n;
 
     if (!isReconciling) {
         return (
@@ -193,17 +220,18 @@ export function ReconciliationPanel({
             </div>
 
             {error && (
-                <div className="bg-negative/10 border border-negative/30 rounded-lg px-3 py-1.5 text-xs text-negative">
+                <div role="alert" className="bg-negative/10 border border-negative/30 rounded-lg px-3 py-1.5 text-xs text-negative">
                     {error}
                 </div>
             )}
 
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
-                    <label className="block text-xs text-foreground-secondary uppercase tracking-wider mb-1">
+                    <label htmlFor="reconciliation-statement-date" className="block text-xs text-foreground-secondary uppercase tracking-wider mb-1">
                         Statement Date
                     </label>
                     <input
+                        id="reconciliation-statement-date"
                         type="text"
                         value={statementDateDisplay}
                         onChange={(e) => setStatementDateDisplay(e.target.value)}
@@ -222,10 +250,11 @@ export function ReconciliationPanel({
                     />
                 </div>
                 <div>
-                    <label className="block text-xs text-foreground-secondary uppercase tracking-wider mb-1">
+                    <label htmlFor="reconciliation-statement-balance" className="block text-xs text-foreground-secondary uppercase tracking-wider mb-1">
                         {isInvestment ? 'Share Balance' : 'Statement Balance'}
                     </label>
                     <input
+                        id="reconciliation-statement-balance"
                         type="number"
                         step={isInvestment ? String(Math.pow(10, -sharePrecision)) : '0.01'}
                         value={statementBalance}
@@ -265,7 +294,7 @@ export function ReconciliationPanel({
                     <div className="text-foreground-muted text-[10px] uppercase tracking-wider mb-0.5">
                         Difference
                     </div>
-                    <div className={`font-mono text-xs ${Math.abs(difference) < balanceTolerance ? 'text-positive' : 'text-warning'}`}>
+                    <div className={`font-mono text-xs ${isExactlyBalanced ? 'text-positive' : 'text-warning'}`}>
                         {displayAmount(difference)}
                     </div>
                 </div>
@@ -289,8 +318,8 @@ export function ReconciliationPanel({
                 </div>
 
                 <button
-                    onClick={handleFinish}
-                    disabled={saving || selectedSplits.size === 0}
+                    onClick={() => handleFinish()}
+                    disabled={saving || selectedSplits.size === 0 || !isExactlyBalanced}
                     className="px-3 py-1.5 text-xs bg-primary hover:bg-primary-hover disabled:bg-primary/50 disabled:cursor-not-allowed text-primary-foreground rounded-lg transition-colors flex items-center gap-1.5"
                 >
                     {saving ? (
@@ -308,6 +337,39 @@ export function ReconciliationPanel({
                     )}
                 </button>
             </div>
+            {!isExactlyBalanced && selectedSplits.size > 0 && (
+                <div className="border-t border-border pt-3 space-y-2">
+                    <p role="alert" className="text-xs text-warning">
+                        Difference must be exactly zero to finish. If this statement cannot be corrected, you can finish only by explicitly recording the discrepancy.
+                    </p>
+                    {!confirmDiscrepancy ? (
+                        <button
+                            onClick={() => setConfirmDiscrepancy(true)}
+                            disabled={saving}
+                            className="text-xs text-warning hover:text-foreground transition-colors"
+                        >
+                            Record discrepancy and finish…
+                        </button>
+                    ) : (
+                        <div className="flex items-center gap-2">
+                            <button
+                                onClick={() => handleFinish(true)}
+                                disabled={saving}
+                                className="px-3 py-1.5 text-xs bg-warning text-background rounded-lg transition-colors"
+                            >
+                                Confirm finish with recorded discrepancy
+                            </button>
+                            <button
+                                onClick={() => setConfirmDiscrepancy(false)}
+                                disabled={saving}
+                                className="text-xs text-foreground-secondary hover:text-foreground transition-colors"
+                            >
+                                Cancel
+                            </button>
+                        </div>
+                    )}
+                </div>
+            )}
         </div>
     );
 }
