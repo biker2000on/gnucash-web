@@ -100,6 +100,35 @@ Covers work landed since 0.23.2.0 (2026-07-29).
   adjustment for assets whose quantity and transaction-currency value differ
   (multi-currency holdings and books imported from GnuCash desktop). Reports
   produced before this release should be regenerated.
+- **Brokerage commissions are now included in cost basis and proceeds — your
+  previously-generated Form 8949 output overstated gains.** GnuCash records a
+  commission as a separate expense split on the trade transaction, and the lot
+  engine only ever looked at the security account's own splits, so the fee was
+  structurally invisible to every basis calculation. Buy commissions are now
+  added to basis and sell commissions netted off proceeds, so reported gains
+  fall (or losses grow) by roughly the round-trip commission per lot. **If you
+  filed from a capital-gains report produced by this app, it very likely
+  overstated your gain, meaning you overpaid.** Re-run prior-year reports and
+  compare before deciding whether an amended return is worthwhile.
+
+  A trade fee is now **always** capitalized into basis and **never** taken as a
+  deduction, which is the correct treatment and does not depend on your filing
+  situation. If you had mapped a commission account to a deductible tax
+  category, you were previously getting both — the deduction *and*, after the
+  first fix, the basis adjustment. That is now impossible: the fees added to
+  basis are excluded from the tax estimator's deduction inputs, by construction.
+  For most books total taxable income is unchanged (a deduction is removed and
+  an equal amount comes off the capital gain), but your tax *liability* can
+  still move, because ordinary income, capital-gain rates, self-employment tax,
+  QBI and deduction caps all interact differently — and if that deduction was
+  previously capped or unused, your taxable income now **falls**. Affected
+  accounts are named in a warning on the capital-gains report.
+
+  Charges the classifier cannot confidently identify as trade fees — including
+  anything reading as interest or tax, such as accrued bond interest — are left
+  exactly as they are today and reported as a warning rather than guessed at.
+  Nothing is capitalized on a ticket where the fee cannot be attributed to a
+  specific security.
 - **Moving shares between your own accounts no longer books a loss.** An in-kind
   transfer out of a lot was treated as a disposal at zero proceeds, so the full
   cost of the transferred shares was reported as a realized loss even though
