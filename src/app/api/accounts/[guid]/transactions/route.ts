@@ -272,8 +272,14 @@ export async function GET(
         if (isInvestmentAccount && !unreviewedOnly && !includeSubaccounts) {
             const cacheStart = startDate?.toISOString().slice(0, 10) || '0001-01-01';
             const cacheEnd = endDate?.toISOString().slice(0, 10) || '9999-12-31';
+            // `investment-ledger-v2` retires entries written before
+            // costBasisUncoveredShares existed. Those cached payloads report no
+            // uncovered shares at all, which a reader takes as "fully covered"
+            // — the exact false claim this field was added to stop, served for
+            // up to a full TTL after deploy. Bump this metric name whenever the
+            // shape of InvestmentRunningTotal changes.
             const totalsCacheKey =
-                `cache:${roleResult.bookGuid}:investment-ledger:${accountGuid}:` +
+                `cache:${roleResult.bookGuid}:investment-ledger-v2:${accountGuid}:` +
                 `${costBasisMethod}:${costBasisCarryOver ? 'carry' : 'local'}:` +
                 `${cacheStart}-${cacheEnd}`;
             const accountCommodityGuid = account?.commodity_guid || '';
