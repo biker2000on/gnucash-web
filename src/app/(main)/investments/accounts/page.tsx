@@ -10,7 +10,7 @@ import { PortfolioSummaryCards } from '@/components/investments/PortfolioSummary
 import ExpandableChart from '@/components/charts/ExpandableChart';
 import { calculateMoneyWeightedReturn, calculateTimeWeightedReturn } from '@/lib/investment-performance';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { totalHoldings } from '@/lib/commodities';
+import { totalHoldings } from '@/lib/holdings-coverage';
 
 type AllocationTab = 'holdings' | 'cashPct' | 'sector';
 

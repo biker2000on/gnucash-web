@@ -19,167 +19,39 @@ import {
     type CostBasisCache,
 } from './cost-basis';
 import { qtyEpsilonForScu } from './lot-scrub';
+import {
+    calculateGainLoss,
+    calculateGainLossPercent,
+    combineCoverage,
+    sameCoverageStatement,
+    totalHoldings,
+    type CostBasisCoverage,
+    type GainInput,
+    type HoldingsData,
+    type HoldingsTotals,
+    type HoldingTotalsInput,
+    type PriceData,
+} from './holdings-coverage';
 
-export interface PriceData {
-    guid: string;
-    date: Date;
-    value: number;
-    source: string | null;
-}
+export {
+    calculateGainLoss,
+    calculateGainLossPercent,
+    combineCoverage,
+    sameCoverageStatement,
+    totalHoldings,
+    type CostBasisCoverage,
+    type GainInput,
+    type HoldingsData,
+    type HoldingsTotals,
+    type HoldingTotalsInput,
+    type PriceData,
+} from './holdings-coverage';
 
-/**
- * How much of a holding the reported cost basis actually describes.
- *
- * Tri-state, mirroring the investment ledger route
- * (`src/app/api/accounts/[guid]/transactions/route.ts`): a covered-share count
- * when coverage is known and complete, that count plus an uncovered count when
- * it is partial, and neither when coverage cannot be determined at all.
- *
- * It is a DISCRIMINATED UNION rather than an `uncoveredShares: number | null`
- * field on purpose. A null passes through `Number(null) === 0` and reads as
- * "every share has a basis" — the exact false claim this type exists to
- * prevent. `uncoveredShares` lives only on the `partial` member, so no consumer
- * can reach (or accidentally arithmetic its way past) it without first
- * narrowing on `status`.
- */
-export type CostBasisCoverage =
-    | { status: 'complete'; coveredShares: number }
-    | { status: 'partial'; coveredShares: number; uncoveredShares: number; warnings: string[] }
-    | { status: 'unknown'; reason: string };
-
-/**
- * Coverage of a basis summed straight from split values with no transfer
- * tracing. GnuCash records an in-kind transfer-in at a $0 split value, and this
- * path does no transfer-in detection at all, so the sum may be missing real
- * cost by an amount nobody has measured. Claiming full coverage here would
- * assert a completeness the branch never established; the ledger route declines
- * the same claim for the same reason.
- */
 export const UNTRACED_BASIS_COVERAGE: CostBasisCoverage = {
     status: 'unknown',
     reason: 'Cost basis carry-over is off, so shares transferred in enter at their $0 split value and the basis may be incomplete.',
 };
 
-/**
- * Fold per-account coverage into one statement for an aggregate (a commodity
- * held in several accounts, a portfolio total).
- *
- * One unknown makes the whole total unknown: a sum that mixes a measured basis
- * with one of unmeasured completeness cannot itself claim completeness. One
- * partial makes the total partial, carrying the summed uncovered shares so the
- * caveat can still name them.
- */
-export function combineCoverage(parts: CostBasisCoverage[]): CostBasisCoverage {
-    if (parts.length === 0) return { status: 'complete', coveredShares: 0 };
-
-    let coveredShares = 0;
-    let uncoveredShares = 0;
-    const warnings: string[] = [];
-    for (const part of parts) {
-        if (part.status === 'unknown') return part;
-        coveredShares += part.coveredShares;
-        if (part.status === 'partial') {
-            uncoveredShares += part.uncoveredShares;
-            for (const warning of part.warnings) {
-                if (!warnings.includes(warning)) warnings.push(warning);
-            }
-        }
-    }
-
-    return uncoveredShares > 0
-        ? { status: 'partial', coveredShares, uncoveredShares, warnings }
-        : { status: 'complete', coveredShares };
-}
-
-/** The per-holding numbers a total is built from. */
-/**
- * Do two coverages make the SAME statement?
- *
- * Not `a.status === b.status`: two partial coverages can both be "partial"
- * while saying entirely different things — "150 of 200 shares" and "10 of 900
- * shares" are not interchangeable, and a surface that discloses one aggregate
- * statement on behalf of rows matched only on the discriminant tag silently
- * misdescribes every row whose counts differ.
- *
- * `complete` carries nothing to state, so two completes always agree.
- */
-export function sameCoverageStatement(a: CostBasisCoverage, b: CostBasisCoverage): boolean {
-    if (a.status !== b.status) return false;
-    if (a.status === 'partial' && b.status === 'partial') {
-        return a.coveredShares === b.coveredShares && a.uncoveredShares === b.uncoveredShares;
-    }
-    if (a.status === 'unknown' && b.status === 'unknown') {
-        return a.reason === b.reason;
-    }
-    return true; // complete + complete
-}
-
-export interface HoldingTotalsInput {
-    costBasis: number;
-    costBasisCoverage: CostBasisCoverage;
-    marketValue: number;
-    /** Already restricted to the shares its own coverage describes. */
-    gainLoss: number;
-}
-
-export interface HoldingsTotals {
-    totalValue: number;
-    totalCostBasis: number;
-    totalCostBasisCoverage: CostBasisCoverage;
-    totalGainLoss: number;
-    totalGainLossPercent: number;
-}
-
-/**
- * Total a set of holdings without undoing their coverage.
- *
- * `totalGainLoss` SUMS the per-holding gains. Recomputing it as
- * `totalValue - totalCostBasis` is the defect in aggregate form: each holding's
- * gain is already restricted to the shares its basis covers, and that
- * subtraction puts every uncovered share's full market value straight back in
- * — so a total would disagree with the sum of the rows displayed beneath it.
- */
-export function totalHoldings(holdings: HoldingTotalsInput[]): HoldingsTotals {
-    let totalValue = 0;
-    let totalCostBasis = 0;
-    let totalGainLoss = 0;
-    for (const holding of holdings) {
-        totalValue += holding.marketValue;
-        totalCostBasis += holding.costBasis;
-        totalGainLoss += holding.gainLoss;
-    }
-    return {
-        totalValue,
-        totalCostBasis,
-        totalCostBasisCoverage: combineCoverage(holdings.map(h => h.costBasisCoverage)),
-        totalGainLoss,
-        totalGainLossPercent: calculateGainLossPercent(totalGainLoss, totalCostBasis),
-    };
-}
-
-export interface HoldingsData {
-    shares: number;
-    /**
-     * Cost basis of the shares `costBasisCoverage` describes — NOT necessarily
-     * of `shares`. When coverage is `partial`, some holdings have no
-     * establishable basis (in-kind transfers whose origin is not in this book);
-     * `gainLoss` below is therefore the gain of the COVERED shares only. Never
-     * present this number without its coverage.
-     */
-    costBasis: number;
-    costBasisCoverage: CostBasisCoverage;
-    /** Market value of the whole position — every share, covered or not. */
-    marketValue: number;
-    /**
-     * Unrealized gain of the shares the basis covers (see `calculateGainLoss`).
-     * Under `partial` coverage this is deliberately NOT `marketValue -
-     * costBasis`, which would subtract the basis of some shares from the market
-     * value of all of them.
-     */
-    gainLoss: number;
-    gainLossPercent: number;
-    latestPrice: PriceData | null;
-}
 
 /**
  * Get the latest price for a commodity in a given currency
@@ -292,55 +164,6 @@ export function calculateCostBasis(
  */
 export function calculateMarketValue(shares: number, pricePerShare: number): number {
     return shares * pricePerShare;
-}
-
-/** A position, its price, and the coverage of the basis being compared against. */
-export interface GainInput {
-    /** Every share held, covered or not. */
-    shares: number;
-    pricePerShare: number;
-    /** Basis of the shares `coverage` describes. */
-    costBasis: number;
-    coverage: CostBasisCoverage;
-}
-
-/**
- * Unrealized gain of the shares the cost basis actually covers.
- *
- * The coverage argument is required rather than optional because the naive
- * `marketValue - costBasis` is wrong precisely when nobody remembered to check:
- * under partial coverage it subtracts the basis of SOME shares from the market
- * value of ALL of them, overstating the gain by the full market value of every
- * uncovered share (a $0-basis share reads as pure profit).
- *
- * So the market value is restricted to the same shares the basis describes:
- *
- *  - `complete` — every share is covered; unchanged from a plain
- *    `marketValue - costBasis`.
- *  - `partial` — `coveredShares x price - costBasis`. Both sides now describe
- *    the same shares, which is a statement that is exactly true, rather than a
- *    blank cell (the uncovered shares' own gain is unknowable, not zero) or an
- *    inflated one. Callers must surface the uncovered count alongside it.
- *  - `unknown` — the full position, because there is no covered subset to
- *    restrict to. The number is the best available and may be overstated by
- *    whatever basis is missing, so callers must render it with the caveat.
- */
-export function calculateGainLoss({ shares, pricePerShare, costBasis, coverage }: GainInput): number {
-    const valuedShares = coverage.status === 'partial' ? coverage.coveredShares : shares;
-    return calculateMarketValue(valuedShares, pricePerShare) - costBasis;
-}
-
-/**
- * Gain as a percentage of the basis it was computed against.
- *
- * Pass a `gainLoss` from `calculateGainLoss` and the same `costBasis`: both
- * then describe the same shares, so the ratio is that slice's actual return.
- * Feeding it a whole-position gain against a partial basis inflates numerator
- * and shrinks denominator at once.
- */
-export function calculateGainLossPercent(gainLoss: number, costBasis: number): number {
-    if (costBasis === 0) return 0;
-    return (gainLoss / Math.abs(costBasis)) * 100;
 }
 
 /**
