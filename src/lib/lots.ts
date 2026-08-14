@@ -165,6 +165,14 @@ export async function getLotsForAccounts(accountGuids: string[]): Promise<Map<st
                         select: {
                             post_date: true,
                             description: true,
+                            splits: {
+                                select: {
+                                    account_guid: true,
+                                    quantity_num: true,
+                                    quantity_denom: true,
+                                    account: { select: { commodity_guid: true, account_type: true } },
+                                },
+                            },
                         },
                     },
                 },
@@ -188,23 +196,6 @@ export async function getLotsForAccounts(accountGuids: string[]): Promise<Map<st
     });
     const slotValue = new Map(
         metadataSlots.map(slot => [`${slot.obj_guid}:${slot.name}`, slot.string_val]),
-    );
-
-    // Transfer destinations point back to their source lot using the metadata
-    // written by the scrubber.  Read that existing linkage in reverse so a
-    // source lot closed solely by a transfer-out does not look like it sold its
-    // shares for $0 and therefore realized its entire basis as a loss.
-    const transferDestinationSlots = await prisma.slots.findMany({
-        where: {
-            name: 'source_lot_guid',
-            string_val: { in: lotGuids },
-        },
-        select: { string_val: true },
-    });
-    const transferOutSourceLotGuids = new Set(
-        transferDestinationSlots
-            .map(slot => slot.string_val)
-            .filter((guid): guid is string => Boolean(guid)),
     );
 
     const accountRows = await prisma.accounts.findMany({
@@ -238,6 +229,22 @@ export async function getLotsForAccounts(accountGuids: string[]): Promise<Map<st
         const latestPrice = commodityGuid
             ? (latestPriceByCommodity.get(commodityGuid) ?? null)
             : null;
+        // Same-commodity shares sent to another non-TRADING account are an
+        // in-kind transfer, not a disposition. This is the transfer evidence
+        // used by the scrubber and wash-sale detector; value alone is not
+        // enough because a zero-value write-off is a real loss.
+        const transferOutSplitGuids = new Set(lot.splits
+            .filter(split => {
+                const shares = toDecimalNumber(split.quantity_num, split.quantity_denom);
+                if (shares >= -0.0001) return false;
+                return (split.transaction?.splits ?? []).some(sibling =>
+                    sibling.account_guid !== accountGuid &&
+                    sibling.account?.commodity_guid === commodityGuid &&
+                    sibling.account?.account_type !== 'TRADING' &&
+                    toDecimalNumber(sibling.quantity_num, sibling.quantity_denom) > 0,
+                );
+            })
+            .map(split => split.guid));
 
         // Total shares = sum of all split quantities
         const computedShares = lotSplits.reduce((sum, s) => sum + s.shares, 0);
@@ -257,14 +264,14 @@ export async function getLotsForAccounts(accountGuids: string[]): Promise<Map<st
             .filter(s => s.shares > 0)
             .reduce((sum, s) => sum + Math.abs(s.value), 0) + carriedBasis;
 
-        // A lot closed by a transfer-out is not a disposition. Its basis and
-        // acquisition date travel to the destination lot through the existing
-        // source_lot_guid / carried_basis / acquisition_date linkage.
-        // Realized gain: proceeds - basis for actual dispositions, excluding
-        // zero-quantity gains offsets (see computeRealizedGain).
-        const realizedGain = isClosed && transferOutSourceLotGuids.has(lot.guid)
-            ? 0
-            : computeRealizedGain(lotSplits, isClosed, carriedBasis);
+        // Exclude transfer-outs, split by split, before computing gain. A
+        // transfer can coexist with an actual sale in the same lot; suppressing
+        // the entire lot would erase that real disposition. The remaining
+        // shares are deliberately treated as open for the pro-rata basis math.
+        const taxableLotSplits = lotSplits.filter(split => !transferOutSplitGuids.has(split.guid));
+        const taxableShares = taxableLotSplits.reduce((sum, split) => sum + split.shares, 0);
+        const taxableLotIsClosed = Math.abs(taxableShares) < 0.0001;
+        const realizedGain = computeRealizedGain(taxableLotSplits, taxableLotIsClosed, carriedBasis);
 
         // Unrealized gain: (currentPrice * remaining shares) - cost basis of remaining shares
         let unrealizedGain: number | null = null;
