@@ -20,6 +20,9 @@ interface IngestLogEntry {
     outcome: string;
     detail: string | null;
     ingestedCount: number;
+    attempts: number;
+    /** Terminal failure the user can re-arm. */
+    retriable: boolean;
     processedAt: string;
 }
 
@@ -51,6 +54,15 @@ function outcomeBadge(outcome: string): { color: string; label: string } {
             return { color: 'bg-foreground-muted', label: 'Sender not allowed' };
         case 'no_attachments':
             return { color: 'bg-foreground-muted', label: 'No attachments' };
+        case 'processing':
+            return { color: 'bg-foreground-muted', label: 'In progress' };
+        case 'error':
+            // Transient failure — an automatic retry is still pending.
+            return { color: 'bg-warning', label: 'Retrying' };
+        case 'retry_requested':
+            return { color: 'bg-warning', label: 'Retry queued' };
+        case 'failed_permanent':
+            return { color: 'bg-error', label: 'Failed' };
         default:
             return { color: 'bg-error', label: 'Error' };
     }
@@ -158,6 +170,25 @@ export function EmailIngestSection() {
             error(e instanceof Error ? e.message : 'Poll failed');
         } finally {
             setPolling(false);
+        }
+    };
+
+    const retryEntry = async (entry: IngestLogEntry) => {
+        setBusy(true);
+        try {
+            const res = await fetch('/api/settings/email-ingest', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'retry', id: entry.id }),
+            });
+            const data = await res.json().catch(() => null);
+            if (!res.ok) throw new Error(data?.error || 'Retry failed');
+            success('Queued for another attempt on the next mailbox poll');
+            void load();
+        } catch (e) {
+            error(e instanceof Error ? e.message : 'Retry failed');
+        } finally {
+            setBusy(false);
         }
     };
 
@@ -301,13 +332,24 @@ export function EmailIngestSection() {
                                                 {entry.subject || '(no subject)'}
                                                 <span className="text-foreground-muted"> — {entry.fromEmail ?? 'unknown sender'}</span>
                                             </div>
-                                            <div className="text-xs text-foreground-muted truncate">
+                                            <div className="text-xs text-foreground-muted truncate" title={entry.detail ?? undefined}>
                                                 {badge.label}
+                                                {entry.attempts > 0 && ` · attempt ${entry.attempts}`}
                                                 {entry.ingestedCount > 0 && ` · ${entry.ingestedCount} document${entry.ingestedCount === 1 ? '' : 's'}`}
                                                 {' · '}{new Date(entry.processedAt).toLocaleString()}
                                                 {entry.detail && ` · ${entry.detail}`}
                                             </div>
                                         </div>
+                                        {entry.retriable && (
+                                            <button
+                                                type="button"
+                                                onClick={() => void retryEntry(entry)}
+                                                disabled={busy}
+                                                className="text-xs text-primary hover:underline disabled:opacity-50 shrink-0 mt-0.5"
+                                            >
+                                                Retry
+                                            </button>
+                                        )}
                                     </li>
                                 );
                             })}

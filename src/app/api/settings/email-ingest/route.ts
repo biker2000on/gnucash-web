@@ -8,6 +8,7 @@ import {
   INGEST_KINDS,
   listIngestLog,
   listIngestSenders,
+  requestIngestRetry,
   type IngestDefaultKind,
   type IngestLogEntry,
   type IngestSender,
@@ -32,6 +33,8 @@ function serializeLogEntry(entry: IngestLogEntry) {
     outcome: entry.outcome,
     detail: entry.detail,
     ingestedCount: entry.ingestedCount,
+    attempts: entry.attempts,
+    retriable: entry.retriable,
     processedAt: entry.processedAt.toISOString(),
   };
 }
@@ -68,6 +71,8 @@ export async function GET() {
  * POST /api/settings/email-ingest
  * - `{ action: 'poll' }` — poll the mailbox now (enqueued; inline if Redis
  *   is unavailable).
+ * - `{ action: 'retry', id }` — re-arm a terminally failed ingest-log entry so
+ *   the next poll reprocesses it (the message was deliberately left unread).
  * - `{ email, defaultKind?, bookGuid? }` — add a sender to the allowlist,
  *   owned by the current user and (by default) the active book.
  */
@@ -97,6 +102,23 @@ export async function POST(request: NextRequest) {
       const { pollEmailIngest } = await import('@/lib/email-ingest');
       const result = await pollEmailIngest();
       return NextResponse.json({ enqueued: false, result });
+    }
+
+    if (body.action === 'retry') {
+      const id = typeof body.id === 'number' ? body.id : parseInt(String(body.id ?? ''), 10);
+      if (!Number.isFinite(id)) {
+        return NextResponse.json({ error: 'A log entry id is required' }, { status: 400 });
+      }
+      const rearmed = await requestIngestRetry(id);
+      if (!rearmed) {
+        return NextResponse.json(
+          { error: 'That entry is not in a retriable state' },
+          { status: 409 },
+        );
+      }
+      // Kick a poll so the retry happens now rather than on the next tick.
+      const jobId = await enqueueJob('poll-email-ingest');
+      return NextResponse.json({ retried: true, enqueued: jobId !== null });
     }
 
     const email = typeof body.email === 'string' ? body.email.trim() : '';
