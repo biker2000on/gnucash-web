@@ -17,8 +17,10 @@
  *     NEGATIVE and payments are POSITIVE — an unpaid bill has a NEGATIVE lot
  *     balance, and `amountDue(ap) = -balance`. Credit notes flip signs
  *     naturally and show up as negative amounts due.
- *   - Due date = date_posted + billterms.duedays (via invoices.terms →
- *     billterms.guid), falling back to date_posted when no terms are set.
+ *   - Due date = the posting transaction's `trans-date-due` timespec slot.
+ *     This is the value the posting engine resolved and persisted at post
+ *     time. Legacy rows without that slot fall back to date_posted and are
+ *     marked as inferred in the report output.
  *
  * Structure mirrors `src/lib/data-health.ts`: per-report SQL loaders plus
  * PURE aggregation logic (exported, unit-tested in
@@ -26,6 +28,7 @@
  */
 
 import prisma from '@/lib/prisma';
+import { SLOT_TYPE } from '@/lib/gnucash-xml/slots';
 
 /* ------------------------------------------------------------------ */
 /* Shared types                                                         */
@@ -66,15 +69,6 @@ export function addDays(date: Date, days: number): Date {
 /** Whole days of (a - b), floored. Positive when `a` is after `b`. */
 export function wholeDaysBetween(a: Date, b: Date): number {
     return Math.floor((a.getTime() - b.getTime()) / DAY_MS);
-}
-
-/**
- * Due date per GnuCash billterms: date_posted + duedays.
- * No terms (or proximo terms without duedays) fall back to the post date.
- */
-export function computeDueDate(datePosted: Date, dueDays: number | null | undefined): Date {
-    if (dueDays == null || !Number.isFinite(dueDays)) return datePosted;
-    return addDays(datePosted, dueDays);
 }
 
 /**
@@ -120,8 +114,8 @@ export interface RawOpenInvoiceRow {
     ownerGuid: string;
     ownerName: string;
     datePosted: Date | string | null;
-    /** billterms.duedays for the invoice's terms; null when no terms. */
-    dueDays: number | null;
+    /** `trans-date-due` (timespec) on the posted transaction; null when absent. */
+    dueDate: Date | string | null;
     /** Raw lot balance: sum of the post_lot's split values (sign-aware). */
     lotBalance: number;
     currency: string;
@@ -132,10 +126,27 @@ export interface AgingInvoice {
     id: string;
     datePosted: string | null;
     dueDate: string | null;
+    /** True when legacy data lacked `trans-date-due` and datePosted was used. */
+    dueDateInferred: boolean;
     daysPastDue: number;
     amountDue: number;
     bucket: AgingBucketKey;
     currency: string;
+}
+
+/**
+ * Resolve the due date used by aging and dunning from its posted value.
+ * Legacy transactions without `trans-date-due` deliberately fall back to the
+ * post date, and tell the caller that the date was inferred.
+ */
+export function resolveAgingDueDate(
+    row: Pick<RawOpenInvoiceRow, 'datePosted' | 'dueDate'>,
+): { dueDate: Date | null; dueDateInferred: boolean } {
+    const storedDueDate = row.dueDate ? new Date(row.dueDate) : null;
+    if (storedDueDate) return { dueDate: storedDueDate, dueDateInferred: false };
+
+    const posted = row.datePosted ? new Date(row.datePosted) : null;
+    return { dueDate: posted, dueDateInferred: !!posted };
 }
 
 export interface AgingOwnerRow {
@@ -171,7 +182,7 @@ export function buildAgingReport(
     for (const row of rows) {
         const amountDue = amountDueFromLotBalance(row.lotBalance, side);
         const posted = row.datePosted ? new Date(row.datePosted) : null;
-        const dueDate = posted ? computeDueDate(posted, row.dueDays) : null;
+        const { dueDate, dueDateInferred } = resolveAgingDueDate(row);
         const daysPastDue = dueDate ? wholeDaysBetween(asOf, dueDate) : 0;
         const bucket = bucketForDaysPastDue(daysPastDue);
 
@@ -197,6 +208,7 @@ export function buildAgingReport(
             id: row.id,
             datePosted: posted ? posted.toISOString().slice(0, 10) : null,
             dueDate: dueDate ? dueDate.toISOString().slice(0, 10) : null,
+            dueDateInferred,
             daysPastDue,
             amountDue: round2(amountDue),
             bucket,
@@ -232,8 +244,8 @@ export function sumDueWithin(
     const cutoff = addDays(asOf, days).getTime();
     let sum = 0;
     for (const row of rows) {
-        const posted = row.datePosted ? new Date(row.datePosted) : null;
-        const due = posted ? computeDueDate(posted, row.dueDays) : asOf;
+        const { dueDate } = resolveAgingDueDate(row);
+        const due = dueDate ?? asOf;
         if (due.getTime() <= cutoff) {
             sum += amountDueFromLotBalance(row.lotBalance, side);
         }
@@ -603,7 +615,7 @@ interface OpenInvoiceDbRow {
     guid: string;
     id: string;
     date_posted: Date | null;
-    duedays: number | null;
+    due_date: Date | null;
     owner_guid: string | null;
     owner_name: string | null;
     currency: string | null;
@@ -624,7 +636,16 @@ export async function loadOpenInvoices(
     const rows = await prisma.$queryRaw<OpenInvoiceDbRow[]>`
         WITH inv AS (
             SELECT
-                i.guid, i.id, i.date_posted, i.currency, i.terms, i.post_lot,
+                i.guid, i.id, i.date_posted, i.currency, i.post_txn, i.post_lot,
+                (
+                    SELECT sl.timespec_val
+                    FROM slots sl
+                    WHERE sl.obj_guid = i.post_txn
+                      AND sl.name = 'trans-date-due'
+                      AND sl.slot_type = ${SLOT_TYPE.TIMESPEC}
+                    ORDER BY sl.id DESC
+                    LIMIT 1
+                ) AS due_date,
                 CASE WHEN i.owner_type = ${OWNER_TYPE_JOB} THEN j.owner_type ELSE i.owner_type END AS eff_owner_type,
                 CASE WHEN i.owner_type = ${OWNER_TYPE_JOB} THEN j.owner_guid ELSE i.owner_guid END AS eff_owner_guid
             FROM invoices i
@@ -637,7 +658,7 @@ export async function loadOpenInvoices(
             inv.guid,
             inv.id,
             inv.date_posted,
-            bt.duedays,
+            inv.due_date,
             inv.eff_owner_guid AS owner_guid,
             COALESCE(cu.name, ve.name) AS owner_name,
             c.mnemonic AS currency,
@@ -645,11 +666,10 @@ export async function loadOpenInvoices(
         FROM inv
         LEFT JOIN customers cu ON inv.eff_owner_type = ${OWNER_TYPE_CUSTOMER} AND cu.guid = inv.eff_owner_guid
         LEFT JOIN vendors ve ON inv.eff_owner_type = ${OWNER_TYPE_VENDOR} AND ve.guid = inv.eff_owner_guid
-        LEFT JOIN billterms bt ON bt.guid = inv.terms
         LEFT JOIN commodities c ON c.guid = inv.currency
         LEFT JOIN splits s ON s.lot_guid = inv.post_lot
         WHERE inv.eff_owner_type = ${ownerType}
-        GROUP BY inv.guid, inv.id, inv.date_posted, bt.duedays, inv.eff_owner_guid, cu.name, ve.name, c.mnemonic
+        GROUP BY inv.guid, inv.id, inv.date_posted, inv.due_date, inv.eff_owner_guid, cu.name, ve.name, c.mnemonic
         HAVING ABS(COALESCE(SUM(s.value_num::numeric / NULLIF(s.value_denom, 0)::numeric), 0)) > ${PAID_TOLERANCE}
     `;
 
@@ -659,7 +679,7 @@ export async function loadOpenInvoices(
         ownerGuid: r.owner_guid ?? '(none)',
         ownerName: r.owner_name ?? '(unknown)',
         datePosted: r.date_posted,
-        dueDays: r.duedays,
+        dueDate: r.due_date,
         lotBalance: r.lot_balance,
         currency: r.currency ?? 'USD',
     }));
