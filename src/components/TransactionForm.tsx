@@ -12,7 +12,6 @@ import { useToast } from '@/contexts/ToastContext';
 import { useAccounts } from '@/lib/hooks/useAccounts';
 import { evaluateMathExpression, containsMathExpression } from '@/lib/math-eval';
 import { parseAmountStrict } from '@/lib/parse-amount';
-import { BALANCE_TOLERANCE } from '@/lib/validation';
 import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 import { formatDateForDisplay, parseDateInput } from '@/lib/date-format';
 import { toLocalDateString } from '@/lib/datePresets';
@@ -471,7 +470,7 @@ export function TransactionForm({
         // — otherwise an FX-rounding artefact would push a correct transaction
         // out of balance. The adjustment itself uses the raw difference, which
         // is what actually has to reach zero before rounding.
-        if (Math.abs(submittedDifference) <= BALANCE_TOLERANCE) return;
+        if (submittedDifference === 0) return;
 
         setFormData(prev => {
             const newSplits = [...prev.splits];
@@ -673,11 +672,10 @@ export function TransactionForm({
             }
 
             // Only meaningful once every amount parses. Checks the ROUNDED
-            // values the API will receive against the same tolerance the server
-            // applies, so the form neither accepts an imbalance the API rejects
-            // (a 0.005 gap used to pass here and fail there) nor rejects an
-            // FX-rounding artefact the API would have accepted.
-            if (invalidAmountSplits.length === 0 && missingRateAccounts.length === 0 && Math.abs(submittedDifference) > BALANCE_TOLERANCE) {
+            // integer value units the API will receive. The server applies the
+            // same exact rational balance rule, so the form cannot accept an
+            // imbalance that the write path rejects.
+            if (invalidAmountSplits.length === 0 && missingRateAccounts.length === 0 && submittedDifference !== 0) {
                 errors.push(`Transaction is unbalanced by ${submittedDifference.toFixed(2)}. Debits must equal credits.`);
                 fieldErrors.splits = 'Unbalanced';
             }
@@ -1198,7 +1196,7 @@ export function TransactionForm({
                             {totalCredit.toFixed(2)}
                         </div>
                         <div className="col-span-3 text-right">
-                            {Math.abs(submittedDifference) > BALANCE_TOLERANCE ? (
+                            {submittedDifference !== 0 ? (
                                 <span className="text-warning">
                                     Difference: {submittedDifference.toFixed(2)}
                                 </span>
@@ -1214,7 +1212,7 @@ export function TransactionForm({
                             <span className="text-negative">Cr: {totalCredit.toFixed(2)}</span>
                         </div>
                         <div>
-                            {Math.abs(submittedDifference) > BALANCE_TOLERANCE ? (
+                            {submittedDifference !== 0 ? (
                                 <span className="text-warning">
                                     Diff: {submittedDifference.toFixed(2)}
                                 </span>

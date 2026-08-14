@@ -1,16 +1,10 @@
 /**
- * BALANCE_TOLERANCE — the single double-entry balance tolerance shared by the
- * two server-side create paths.
- *
- * `validation.ts` previously carried a comment claiming "1 cent / 100 = 0.01"
- * next to a `> 0.001` test, and `transaction.service.ts` repeated the same bare
- * literal. These tests pin the value, its rationale, and the fact that both
- * paths now agree.
+ * Exact rational balance validation shared by the two server-side write paths.
  */
 import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { BALANCE_TOLERANCE, validateTransaction } from '@/lib/validation';
+import { assertBalanced, validateTransaction } from '@/lib/validation';
 
 vi.mock('@/lib/prisma', () => ({
     default: { $transaction: vi.fn(), transactions: {}, splits: {} },
@@ -39,14 +33,9 @@ function txWithImbalance(cents: number) {
     };
 }
 
-describe('BALANCE_TOLERANCE', () => {
-    it('is a tenth of a cent — tight enough to catch a one-cent error', () => {
-        expect(BALANCE_TOLERANCE).toBe(0.001);
-        expect(BALANCE_TOLERANCE).toBeLessThan(0.01);
-    });
-
-    it('absorbs the floating-point residue of an exactly-balanced split set', () => {
-        // 1/3 + 1/3 + 1/3 - 1 is exactly zero in rationals but not in doubles.
+describe('assertBalanced', () => {
+    it('accepts non-decimal denominators without floating-point conversion', () => {
+        // 1/3 + 1/3 + 1/3 - 1 is exactly zero in rationals.
         const thirds = validateTransaction({
             currency_guid: CURRENCY,
             post_date: '2026-07-15',
@@ -60,6 +49,14 @@ describe('BALANCE_TOLERANCE', () => {
         });
         expect(thirds.errors.filter(e => e.message.includes('sum to zero'))).toHaveLength(0);
     });
+
+    it('rejects the sub-cent imbalance the former 0.001 float tolerance accepted', () => {
+        // 1/2000 = $0.0005: Math.abs(0.0005) <= 0.001 used to pass.
+        expect(() => assertBalanced([
+            { value_num: 1, value_denom: 2000 },
+            { value_num: 0, value_denom: 1 },
+        ])).toThrow('1/2000');
+    });
 });
 
 describe('validateTransaction (API route path)', () => {
@@ -71,6 +68,20 @@ describe('validateTransaction (API route path)', () => {
         const result = validateTransaction(txWithImbalance(1));
         expect(result.valid).toBe(false);
         expect(result.errors.some(e => e.message.includes('Splits must sum to zero'))).toBe(true);
+    });
+
+    it('rejects the former float-tolerance case', () => {
+        const result = validateTransaction({
+            currency_guid: CURRENCY,
+            post_date: '2026-07-15',
+            description: 'Sub-cent imbalance',
+            splits: [
+                { account_guid: ACCOUNT_A, value_num: 1, value_denom: 2000 },
+                { account_guid: ACCOUNT_B, value_num: 0, value_denom: 1 },
+            ],
+        });
+        expect(result.valid).toBe(false);
+        expect(result.errors.some(e => e.message.includes('1/2000'))).toBe(true);
     });
 });
 
@@ -88,20 +99,31 @@ describe('TransactionService.create (service path)', () => {
             ],
         })).rejects.toThrow('must sum to zero');
     });
+
+    it('rejects the former float-tolerance case', async () => {
+        const { TransactionService } = await import('@/lib/services/transaction.service');
+        await expect(TransactionService.create({
+            currency_guid: CURRENCY,
+            post_date: new Date('2026-07-15'),
+            description: 'Sub-cent imbalance',
+            num: '',
+            splits: [
+                { account_guid: ACCOUNT_A, value_num: 1, value_denom: 2000, memo: '', action: '', reconcile_state: 'n' },
+                { account_guid: ACCOUNT_B, value_num: 0, value_denom: 1, memo: '', action: '', reconcile_state: 'n' },
+            ],
+        })).rejects.toThrow('1/2000');
+    });
 });
 
 describe('single source of truth', () => {
-    it('both server paths reference the constant instead of a bare literal', () => {
+    it('both server paths call the shared exact helper', () => {
         const validation = readFileSync(join(SRC, 'lib/validation.ts'), 'utf8');
         const service = readFileSync(join(SRC, 'lib/services/transaction.service.ts'), 'utf8');
 
-        expect(validation).toMatch(/Math\.abs\(sum\) > BALANCE_TOLERANCE/);
-        expect(service).toMatch(/Math\.abs\(total\) > BALANCE_TOLERANCE/);
-        expect(service).toMatch(/import \{ BALANCE_TOLERANCE \} from '@\/lib\/validation'/);
-
-        // The old misleading "1 cent / 100 = 0.01" comment is gone, and neither
-        // file re-declares the threshold as a literal.
-        expect(validation).not.toContain('1 cent / 100');
-        expect(service).not.toContain('> 0.001');
+        expect(validation).toContain('assertBalanced(tx.splits)');
+        expect(service).toMatch(/import \{ assertBalanced \} from '@\/lib\/validation'/);
+        expect(service).toContain('assertBalanced(data.splits)');
+        expect(validation).not.toContain('BALANCE_TOLERANCE');
+        expect(service).not.toContain('BALANCE_TOLERANCE');
     });
 });

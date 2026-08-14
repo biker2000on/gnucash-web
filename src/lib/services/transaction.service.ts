@@ -12,7 +12,7 @@ import prisma from '@/lib/prisma';
 import { generateGuid, toDecimal } from '@/lib/gnucash';
 import { recordImpliedPrices } from '@/lib/services/implied-price.service';
 import { assertAccountNotLocked } from '@/lib/services/period-lock.service';
-import { BALANCE_TOLERANCE } from '@/lib/validation';
+import { assertBalanced } from '@/lib/validation';
 import {
   assertNoReconciledSplits,
   assertSplitsNotProtected,
@@ -48,20 +48,6 @@ export type CreateTransactionInput = z.infer<typeof CreateTransactionSchema>;
 export type UpdateTransactionInput = z.infer<typeof UpdateTransactionSchema>;
 
 /**
- * Validates that splits sum to zero (double-entry accounting)
- */
-function validateSplitsBalance(splits: SplitInput[]): void {
-  const total = splits.reduce((sum, split) => {
-    const value = split.value_num / split.value_denom;
-    return sum + value;
-  }, 0);
-  // Allow only for floating-point representation error — see BALANCE_TOLERANCE.
-  if (Math.abs(total) > BALANCE_TOLERANCE) {
-    throw new Error(`Transaction splits must sum to zero. Current sum: ${total.toFixed(2)}`);
-  }
-}
-
-/**
  * Service class for transaction operations
  */
 export class TransactionService {
@@ -73,7 +59,7 @@ export class TransactionService {
     const data = CreateTransactionSchema.parse(input);
 
     // Validate double-entry
-    validateSplitsBalance(data.splits);
+    assertBalanced(data.splits);
 
     // Period lock (book resolved from the first split's account)
     await assertAccountNotLocked(data.splits[0].account_guid, [data.post_date]);
@@ -147,7 +133,7 @@ export class TransactionService {
     const data = UpdateTransactionSchema.parse(input);
 
     // Validate double-entry
-    validateSplitsBalance(data.splits);
+    assertBalanced(data.splits);
 
     // Check transaction exists
     const existing = await prisma.transactions.findUnique({
