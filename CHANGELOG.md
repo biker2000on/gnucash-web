@@ -30,6 +30,16 @@ Covers work landed since 0.23.2.0 (2026-07-29).
   ever sends its highest crossed level, so a first contact could otherwise have
   been a final notice. Those invoices still appear in aging; they simply are
   not dunned. Backfilling due dates on historical postings is planned.
+- **Invoice pages now agree with the aging report, and never show customers a
+  due date we guessed.** The invoice detail page, the payments page, the
+  printed invoice, and the public share link all derived their due date and
+  OVERDUE badge from the vendor's *current* terms, so they could contradict
+  aging for the same invoice. They now read the stored due date. Where an
+  invoice was posted before its due date was recorded, customer-facing
+  surfaces — the share page and the printed invoice — **omit the due date and
+  the OVERDUE badge entirely** rather than assert a deadline that was inferred;
+  internal pages continue to show the inferred date with its **†** marker.
+  Those invoices are not dunned either, so the two behaviors agree.
 - **Reconciliation can no longer be completed while out of balance.** Finishing
   requires the difference to be exactly zero in the account's own commodity
   units — previously the difference was calculated and then ignored, so an
@@ -59,8 +69,14 @@ Covers work landed since 0.23.2.0 (2026-07-29).
   landing, not a new error. Historical fulfilments are not rewritten; correcting
   them needs manual journal entries. **Items lacking both a COGS account and an
   inventory asset account now fail fulfilment with a clear error naming them**,
-  where they previously succeeded silently. Returns remain opt-in, because the
-  reversal uses the current average cost rather than the original shipment cost.
+  where they previously succeeded silently. **Returns that post their reversal
+  now reverse at the original shipment's weighted cost**, not the item's current
+  average cost. Previously a unit shipped at $10 and returned after the average
+  moved to $20 reversed at $20, leaving a permanent $10 residual in both cost of
+  goods sold and inventory that no later transaction ever cleared. Returns
+  remain opt-in. Returning stock against a fulfilment recorded before this
+  release still works, but posting its COGS reversal is refused for
+  average-cost items, because no shipment cost was stored at the time.
 - **Totals no longer include holdings we cannot value, and say so.** A security
   with no available price was previously counted as zero and an account in a
   currency with no exchange rate was counted as if one unit equalled one
@@ -84,6 +100,17 @@ Covers work landed since 0.23.2.0 (2026-07-29).
   adjustment for assets whose quantity and transaction-currency value differ
   (multi-currency holdings and books imported from GnuCash desktop). Reports
   produced before this release should be regenerated.
+- **Moving shares between your own accounts no longer books a loss.** An in-kind
+  transfer out of a lot was treated as a disposal at zero proceeds, so the full
+  cost of the transferred shares was reported as a realized loss even though
+  nothing was sold and the shares never left your ownership. Realized gain and
+  loss totals, the Investment Lots report, and wash-sale detection all change
+  for any book that has transferred holdings between accounts — fabricated
+  losses disappear, and wash-sale rows that were matched against them go with
+  them. A genuine worthless-security write-off is still reported as the real
+  loss it is; only same-commodity moves between your own accounts are exempt.
+  Form 8949 output was **not** affected, because the tax export already skipped
+  these zero-value entries.
 
 ### Added
 
@@ -121,6 +148,17 @@ Covers work landed since 0.23.2.0 (2026-07-29).
   (`?minAmount=abc`, a blank list entry, a bad page size or date) are now
   rejected with a clear error instead of being silently ignored — previously
   ignoring them returned the *entire* ledger.
+- **The per-account ledger's filters had the same defect, and one of them was
+  badly wrong.** Its amount and reconciliation filters were also applied after
+  paging, and both matched against *any* line in the transaction rather than
+  the account's own. Because the offsetting side of a bank transaction is
+  essentially never reconciled, "Not Reconciled" matched almost every row on a
+  chequing ledger — including fully reconciled ones — on the same screen that
+  hosts the reconcile workflow. Both filters are now evaluated in the database
+  against the account's own splits, so they agree with the Reconciled and
+  Amount columns beside them. The running balance is still calculated across
+  the account's full history rather than the filtered subset, so it remains a
+  true balance as of each row.
 - **Failed inbound email is no longer discarded silently.** A message that
   could not be processed was marked as read and recorded as retryable at the
   same time, so it could never be listed again and never retried — an inbound
