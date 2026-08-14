@@ -57,14 +57,21 @@ type RawSplit = {
     quantity_num: bigint; quantity_denom: bigint; value_num: bigint; value_denom: bigint;
 };
 
-/** Stock-side split in the ledger account plus its counter-leg. */
+/** 1e-8 share precision, for commodities held at commodity_scu = 1e8. */
+const frac8 = (n: number) => ({ num: BigInt(Math.round(n * 1e8)), denom: 100_000_000n });
+
+/**
+ * Stock-side split in the ledger account plus its counter-leg. `precise`
+ * switches share quantities to 1e-8 denominators (dollar values stay at 1e-4).
+ */
 function pair(o: {
     guid: string; txGuid: string; shares: number; value: number;
-    counterAccount: string; counterShares: number;
+    counterAccount: string; counterShares: number; precise?: boolean;
 }): { own: RawSplit; counter: RawSplit } {
-    const q = frac(o.shares);
+    const qty = o.precise ? frac8 : frac;
+    const q = qty(o.shares);
     const v = frac(o.value);
-    const cq = frac(o.counterShares);
+    const cq = qty(o.counterShares);
     const cv = frac(-o.value);
     return {
         own: {
@@ -276,6 +283,66 @@ describe('investment ledger running cost basis — coverage', () => {
         expect(rows[SELL_TX].cost_basis_uncovered_shares).toBeNull();
         // The share balance and basis this path does compute are unchanged.
         expect(Number(rows[XFER_TX].share_balance)).toBeCloseTo(200, 6);
+    });
+
+    /**
+     * Point the ledger at a commodity held to 1e-8 (crypto precision) and feed
+     * it `rows` as the account's history.
+     */
+    function highPrecisionAccount(rows: Array<{ own: RawSplit; counter: RawSplit }>) {
+        prismaMock.accounts.findUnique.mockResolvedValue({
+            guid: ACCOUNT, commodity_guid: AAPL, commodity_scu: 100_000_000,
+            commodity: { guid: AAPL, mnemonic: 'BTC', namespace: 'CRYPTO' },
+        });
+        prismaMock.splits.findMany.mockImplementation((args: { where: Record<string, unknown> }) => {
+            if (typeof args.where.account_guid === 'string') {
+                return Promise.resolve(rows.map(s => ({
+                    ...s.own,
+                    transaction: { post_date: POST_DATE[s.own.tx_guid], enter_date: POST_DATE[s.own.tx_guid] },
+                })));
+            }
+            return Promise.resolve(rows.flatMap(s => [s.own, s.counter]));
+        });
+    }
+
+    it('a one-unit oversell at commodity_scu 1e8 reports coverage as UNAVAILABLE', async () => {
+        // Buy 1, sell 1.00000001 — a legitimate oversell of a single smallest
+        // unit. A flat 0.0001 tolerance reads that as agreement and claims 0
+        // uncovered shares for a NEGATIVE position; the scu-aware epsilon is
+        // 0.5 / 1e8, so the divergence is seen.
+        highPrecisionAccount([
+            pair({ guid: 'buy', txGuid: BUY_TX, shares: 1, value: 50_000, counterAccount: CASH, counterShares: -50_000, precise: true }),
+            pair({ guid: 'sell', txGuid: SELL_TX, shares: -1.00000001, value: -60_000, counterAccount: CASH, counterShares: 60_000, precise: true }),
+        ]);
+
+        const rows = await ledger();
+        expect(Number(rows[SELL_TX].share_balance)).toBeLessThan(0);
+        expect(Number(rows[SELL_TX].share_balance)).toBeCloseTo(-1e-8, 12);
+        expect(rows[SELL_TX].cost_basis_uncovered_shares).toBeNull();
+    });
+
+    it('an ordinary long position at commodity_scu 1e8 still reports a coverage number', async () => {
+        // The inverse failure: a tolerance so tight that float drift in the
+        // pool's pro-rata arithmetic degrades good data to "unknown".
+        partiallyCoveredTransfer();
+        highPrecisionAccount([
+            pair({ guid: 'buy', txGuid: BUY_TX, shares: 1, value: 1_000, counterAccount: CASH, counterShares: -1_000, precise: true }),
+            pair({ guid: 'xfer', txGuid: XFER_TX, shares: 1, value: 0, counterAccount: OTHER_BROKERAGE, counterShares: -1, precise: true }),
+            pair({ guid: 'sell', txGuid: SELL_TX, shares: -1, value: -3_000, counterAccount: CASH, counterShares: 3_000, precise: true }),
+        ]);
+        // 1 covered bought + a transfer of 1 that traces 0.5 covered / 0.5 not.
+        traceCostBasisMock.mockResolvedValue({
+            coveredShares: 0.5, uncoveredShares: 0.5, basisOfCoveredShares: 25,
+            perShareCost: 50, method: 'fifo',
+        });
+
+        const rows = await ledger();
+        // Selling 1 of 2 pooled shares removes covered/uncovered pro rata:
+        // 0.75 covered and 0.25 uncovered remain, and the pool still agrees
+        // with the raw balance, so coverage stays reportable.
+        expect(Number(rows[SELL_TX].share_balance)).toBeCloseTo(1, 12);
+        expect(rows[SELL_TX].cost_basis_uncovered_shares).not.toBeNull();
+        expect(Number(rows[SELL_TX].cost_basis_uncovered_shares)).toBeCloseTo(0.25, 9);
     });
 
     it('the running totals replay full history, NOT the ledger filter', async () => {

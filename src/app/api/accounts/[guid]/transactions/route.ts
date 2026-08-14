@@ -16,6 +16,7 @@ import {
     removeSharesFromPool,
     type CostBasisMethod,
 } from '@/lib/cost-basis';
+import { qtyEpsilonForScu } from '@/lib/lot-scrub';
 import { parseSearchQuery } from '@/lib/tags';
 import { getTagsForTransactions } from '@/lib/services/tag.service';
 import { readTransactionNotes } from '@/lib/transaction-notes';
@@ -54,14 +55,6 @@ type InvestmentRunningTotal = {
 };
 
 type InvestmentTotals = Map<string, InvestmentRunningTotal>;
-
-/**
- * Share-count tolerance for comparing the pool's share count against the raw
- * running balance. Matches the epsilon the lot code uses; the pool's pro-rata
- * arithmetic accumulates float drift that a tighter bound would misread as a
- * short position.
- */
-const COVERAGE_EPS = 0.0001;
 
 /**
  * Serialize the uncovered-share count for the response: a decimal string when
@@ -376,6 +369,12 @@ export async function GET(
                 const pool = createCostBasisPool();
                 const totals: InvestmentTotals = new Map();
                 const costBasisCache = createCostBasisCache();
+                // Same commodity-aware share tolerance the lot engine uses
+                // (qtyEpsilonForScu, which falls back to 0.0001 on a missing or
+                // zero scu on its own). Deliberately reused rather than
+                // re-derived: a fourth copy of this rule is how tolerances
+                // drift apart.
+                const coverageEps = qtyEpsilonForScu(account?.commodity_scu);
 
                 // Preload lot splits for every transfer-in that carries a lot,
                 // in ONE query, so traceCostBasis skips its per-lot lookup
@@ -419,8 +418,14 @@ export async function GET(
                     // as-is; coverage becomes unknown rather than a "0
                     // uncovered" claim that would hand consumers a negative
                     // `shareBalance - uncovered` denominator.
+                    //
+                    // The tolerance is COMMODITY-AWARE. A flat 0.0001 is only
+                    // right for coarse-scu stocks: at crypto's 1e8 precision an
+                    // account can legitimately oversell by 1e-8, which a flat
+                    // bound reads as agreement and reports as "0 uncovered" for
+                    // a negative position.
                     const poolShares = pool.coveredShares + pool.uncoveredShares;
-                    const coverageIsKnowable = Math.abs(runShares - poolShares) < COVERAGE_EPS;
+                    const coverageIsKnowable = Math.abs(runShares - poolShares) < coverageEps;
                     totals.set(split.tx_guid, {
                         shareBalance: runShares,
                         costBasis: pool.basisOfCoveredShares,
