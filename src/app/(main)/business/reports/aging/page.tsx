@@ -272,6 +272,16 @@ function AgingPageInner() {
                                 Compares the balance-sheet control account with the open invoice lots above.
                             </p>
                         </div>
+                        {report.reconciliation.valuationGaps.length > 0 && (
+                            <div className="border-b border-warning/30 bg-warning/10 px-4 py-3 text-sm text-foreground-secondary">
+                                <p className="font-medium text-warning">Some control-account balances cannot be valued.</p>
+                                <ul className="mt-1 list-disc pl-4 text-xs">
+                                    {report.reconciliation.valuationGaps.map((gap) => (
+                                        <li key={`${gap.commodityGuid}-${gap.reason}`}>{gap.message}</li>
+                                    ))}
+                                </ul>
+                            </div>
+                        )}
                         <div className="overflow-x-auto">
                             <table className="w-full min-w-[620px] text-sm">
                                 <thead>

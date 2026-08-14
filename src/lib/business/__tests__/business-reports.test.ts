@@ -269,11 +269,23 @@ describe('buildAgingControlAccountRows', () => {
         const rows = buildAgingControlAccountRows(
             [visibleAr],
             new Map([['ar-visible', { quantity: 125 }]]),
-            new Map([['ar-visible', 100]]),
+            new Map([['ar-visible', 125]]),
             () => 0.8,
         );
 
         expect(rows[0]).toMatchObject({ controlBalance: 100, agedLotBalance: 100 });
+    });
+
+    it('retains an unpriceable commodity as an explicit valuation gap instead of a false reconciliation', () => {
+        const report = buildAgingReport([], 'ar', ASOF, [], [{
+            commodityGuid: 'gbp',
+            label: 'GBP',
+            reason: 'missing-exchange-rate',
+            message: 'GBP excluded: no exchange rate to USD as of 2026-07-08.',
+        }]);
+
+        expect(report.reconciliation.valuationGaps).toHaveLength(1);
+        expect(report.reconciliation.valuationGaps[0].label).toBe('GBP');
     });
 });
 
