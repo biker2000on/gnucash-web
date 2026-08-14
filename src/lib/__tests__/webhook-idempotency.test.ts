@@ -19,6 +19,7 @@ import {
   completeWebhookIdempotency,
   listWebhookIdempotencyAttention,
   readIdempotencyKey,
+  rearmWebhookIdempotency,
   releaseWebhookIdempotency,
   validateIdempotencyKey,
   IDEMPOTENCY_KEY_MAX_LENGTH,
@@ -189,9 +190,29 @@ describe('claim lifecycle', () => {
     expect(sql).toContain('attempts =');
   });
 
+  it('logs a completion rejected because a newer attempt owns the claim', async () => {
+    mocks.executeRaw.mockResolvedValue(0);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    await expect(completeWebhookIdempotency('book-1', 'transaction', 'k1', 1, {}))
+      .resolves.toBe(false);
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('Rejected stale webhook completion'));
+    error.mockRestore();
+  });
+
+  it('re-arms only an incomplete terminal record and resets its bounded budget once', async () => {
+    mocks.executeRaw.mockResolvedValue(1);
+    await expect(rearmWebhookIdempotency('book-1', 'transaction', 'poison-k', 42))
+      .resolves.toBe(true);
+    const sql = String(mocks.executeRaw.mock.calls[0][0]);
+    expect(sql).toContain("SET state = 'failed', attempts = 0");
+    expect(sql).toContain('result IS NULL');
+    expect(sql).toContain("state IN ('failed_permanent', 'processing')");
+    expect(sql).toContain('NOW()');
+  });
+
   it('never throws out of complete/release — the ledger write already succeeded', async () => {
     mocks.executeRaw.mockRejectedValue(new Error('connection reset'));
-    await expect(completeWebhookIdempotency('b', 'transaction', 'k', 1, {})).resolves.toBeUndefined();
+    await expect(completeWebhookIdempotency('b', 'transaction', 'k', 1, {})).resolves.toBe(false);
     await expect(releaseWebhookIdempotency('b', 'transaction', 'k', 1)).resolves.toBeUndefined();
   });
 });

@@ -2118,22 +2118,34 @@ async function createExtensionTables() {
             created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
 
-        ALTER TABLE gnucash_web_webhook_idempotency
-          ADD COLUMN IF NOT EXISTS state VARCHAR(32) NOT NULL DEFAULT 'processing';
-        ALTER TABLE gnucash_web_webhook_idempotency
-          ADD COLUMN IF NOT EXISTS attempts INTEGER NOT NULL DEFAULT 1;
-        ALTER TABLE gnucash_web_webhook_idempotency
-          ADD COLUMN IF NOT EXISTS claim_started_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP;
-        ALTER TABLE gnucash_web_webhook_idempotency
-          ADD COLUMN IF NOT EXISTS detail TEXT;
+        -- Avoid steady-state ALTER locks: PostgreSQL locks before an
+        -- IF NOT EXISTS ALTER can discover that the column is present.
+        DO $$
+        BEGIN
+          PERFORM pg_advisory_xact_lock(hashtext('gnucash_web_webhook_idempotency_schema'));
+          IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = current_schema()
+              AND table_name = 'gnucash_web_webhook_idempotency'
+              AND column_name = 'state'
+          ) THEN
+            ALTER TABLE gnucash_web_webhook_idempotency
+              ADD COLUMN state VARCHAR(32) NOT NULL DEFAULT 'processing';
+            ALTER TABLE gnucash_web_webhook_idempotency
+              ADD COLUMN attempts INTEGER NOT NULL DEFAULT 1;
+            ALTER TABLE gnucash_web_webhook_idempotency
+              ADD COLUMN claim_started_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP;
+            ALTER TABLE gnucash_web_webhook_idempotency
+              ADD COLUMN detail TEXT;
 
-        UPDATE gnucash_web_webhook_idempotency
-        SET state = CASE WHEN result IS NOT NULL OR completed_at IS NOT NULL
-                         THEN 'completed' ELSE 'processing' END,
-            attempts = GREATEST(COALESCE(attempts, 1), 1),
-            claim_started_at = COALESCE(claim_started_at, created_at)
-        WHERE state IS NULL OR attempts IS NULL OR claim_started_at IS NULL
-           OR (state = 'processing' AND (result IS NOT NULL OR completed_at IS NOT NULL));
+            -- Upgrade only the pre-attempt schema; no cold-start table scan.
+            UPDATE gnucash_web_webhook_idempotency
+            SET state = CASE WHEN result IS NOT NULL OR completed_at IS NOT NULL
+                             THEN 'completed' ELSE 'processing' END,
+                attempts = 1,
+                claim_started_at = created_at;
+          END IF;
+        END $$;
 
         CREATE UNIQUE INDEX IF NOT EXISTS uq_webhook_idempotency
             ON gnucash_web_webhook_idempotency (book_guid, endpoint, idempotency_key);

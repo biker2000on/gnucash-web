@@ -8,10 +8,10 @@
  * payment. The write itself was atomic; nothing made it idempotent.
  *
  * The guarantee here is enforced by the DATABASE, not by an application
- * check: the claim is an `INSERT ... ON CONFLICT DO NOTHING` against a UNIQUE
- * index (created in db-init.ts), exactly like the `uq_transactions_autofund_num`
+ * check: the claim is an `INSERT ... ON CONFLICT` against a UNIQUE index
+ * (created in db-init.ts), exactly like the `uq_transactions_autofund_num`
  * dedupe key used by the funding sweep. Two concurrent replays cannot both win
- * the claim, so the second is rejected by Postgres rather than by a racy SELECT.
+ * the claim, so Postgres serializes them rather than a racy application SELECT.
  *
  * Lifecycle:
  *   claim  -> 'claimed'                    caller proceeds with the write
@@ -40,6 +40,16 @@ export const WEBHOOK_MAX_ATTEMPTS = 3;
 
 /** Endpoints get their own key namespace so unrelated callers cannot collide. */
 export type WebhookEndpoint = 'transaction' | 'membership-payment';
+
+type WebhookIdempotencyExecutor = Pick<typeof prisma, '$executeRaw' | '$queryRaw'>;
+
+/** The claim was superseded before its worker entered the write transaction. */
+export class WebhookClaimSupersededError extends Error {
+  constructor() {
+    super('Webhook idempotency claim was superseded by a newer attempt');
+    this.name = 'WebhookClaimSupersededError';
+  }
+}
 
 let ensurePromise: Promise<void> | null = null;
 
@@ -71,24 +81,31 @@ export function ensureWebhookIdempotencyTable(): Promise<void> {
             created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
           );
 
-          ALTER TABLE gnucash_web_webhook_idempotency
-            ADD COLUMN IF NOT EXISTS state VARCHAR(32) NOT NULL DEFAULT 'processing';
-          ALTER TABLE gnucash_web_webhook_idempotency
-            ADD COLUMN IF NOT EXISTS attempts INTEGER NOT NULL DEFAULT 1;
-          ALTER TABLE gnucash_web_webhook_idempotency
-            ADD COLUMN IF NOT EXISTS claim_started_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP;
-          ALTER TABLE gnucash_web_webhook_idempotency
-            ADD COLUMN IF NOT EXISTS detail TEXT;
+          -- ADD COLUMN IF NOT EXISTS still takes ACCESS EXCLUSIVE before it
+          -- discovers an existing column. Probe first, under the advisory
+          -- lock, so steady-state cold starts run no ALTER or table-wide DML.
+          IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = current_schema()
+              AND table_name = 'gnucash_web_webhook_idempotency'
+              AND column_name = 'state'
+          ) THEN
+            ALTER TABLE gnucash_web_webhook_idempotency
+              ADD COLUMN state VARCHAR(32) NOT NULL DEFAULT 'processing';
+            ALTER TABLE gnucash_web_webhook_idempotency
+              ADD COLUMN attempts INTEGER NOT NULL DEFAULT 1;
+            ALTER TABLE gnucash_web_webhook_idempotency
+              ADD COLUMN claim_started_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP;
+            ALTER TABLE gnucash_web_webhook_idempotency
+              ADD COLUMN detail TEXT;
 
-          -- Existing completed rows remain completed; old in-flight rows get
-          -- a conservative first-attempt timestamp from their original claim.
-          UPDATE gnucash_web_webhook_idempotency
-          SET state = CASE WHEN result IS NOT NULL OR completed_at IS NOT NULL
-                           THEN 'completed' ELSE 'processing' END,
-              attempts = GREATEST(COALESCE(attempts, 1), 1),
-              claim_started_at = COALESCE(claim_started_at, created_at)
-          WHERE state IS NULL OR attempts IS NULL OR claim_started_at IS NULL
-             OR (state = 'processing' AND (result IS NOT NULL OR completed_at IS NOT NULL));
+            -- This runs only when upgrading the pre-attempt schema.
+            UPDATE gnucash_web_webhook_idempotency
+            SET state = CASE WHEN result IS NOT NULL OR completed_at IS NOT NULL
+                             THEN 'completed' ELSE 'processing' END,
+                attempts = 1,
+                claim_started_at = created_at;
+          END IF;
 
           CREATE UNIQUE INDEX IF NOT EXISTS uq_webhook_idempotency
             ON gnucash_web_webhook_idempotency (book_guid, endpoint, idempotency_key);
@@ -159,10 +176,11 @@ export async function claimWebhookIdempotency(
   bookGuid: string,
   endpoint: WebhookEndpoint,
   key: string,
+  executor: WebhookIdempotencyExecutor = prisma,
 ): Promise<WebhookClaim> {
   await ensureWebhookIdempotencyTable();
 
-  const claimed = await prisma.$queryRaw<Array<{ attempts: number }>>`
+  const claimed = await executor.$queryRaw<Array<{ attempts: number }>>`
     INSERT INTO gnucash_web_webhook_idempotency
       (book_guid, endpoint, idempotency_key, state, attempts, claim_started_at)
     VALUES (${bookGuid}, ${endpoint}, ${key}, 'processing', 1, NOW())
@@ -185,10 +203,14 @@ export async function claimWebhookIdempotency(
   `;
   if (claimed.length > 0) return { status: 'claimed', attempt: claimed[0].attempts ?? 1 };
 
-  const existing = await prisma.$queryRaw<Array<{
-    result: unknown; state: string; attempts: number; claim_started_at: Date; detail: string | null;
+  const existing = await executor.$queryRaw<Array<{
+    result: unknown; state: string; attempts: number; detail: string | null; terminal_stalled: boolean;
   }>>`
-    SELECT result, state, attempts, claim_started_at, detail
+    SELECT result, state, attempts, detail,
+           (state = 'processing' AND attempts >= ${WEBHOOK_MAX_ATTEMPTS}
+            AND claim_started_at
+                < (NOW() - ${WEBHOOK_CLAIM_STALE_MINUTES} * INTERVAL '1 minute')::timestamp)
+             AS terminal_stalled
     FROM gnucash_web_webhook_idempotency
     WHERE book_guid = ${bookGuid} AND endpoint = ${endpoint} AND idempotency_key = ${key}
     LIMIT 1
@@ -197,10 +219,7 @@ export async function claimWebhookIdempotency(
   if (row?.result !== null && row?.result !== undefined) {
     return { status: 'replay', result: row.result };
   }
-  const stale = row?.state === 'processing'
-    && (row.claim_started_at?.getTime?.() ?? 0)
-      < Date.now() - WEBHOOK_CLAIM_STALE_MINUTES * 60_000;
-  if (row && (row.state === 'failed_permanent' || (stale && row.attempts >= WEBHOOK_MAX_ATTEMPTS))) {
+  if (row && (row.state === 'failed_permanent' || row.terminal_stalled === true)) {
     return {
       status: 'terminal',
       state: row.state === 'failed_permanent' ? 'failed_permanent' : 'stalled',
@@ -218,20 +237,47 @@ export async function completeWebhookIdempotency(
   key: string,
   attempt: number,
   result: unknown,
-): Promise<void> {
+  executor: Pick<typeof prisma, '$executeRaw'> = prisma,
+): Promise<boolean> {
   try {
-    await prisma.$executeRaw`
+    const updated = await executor.$executeRaw`
       UPDATE gnucash_web_webhook_idempotency
       SET result = ${JSON.stringify(result)}::jsonb, state = 'completed',
           completed_at = NOW(), detail = NULL
       WHERE book_guid = ${bookGuid} AND endpoint = ${endpoint} AND idempotency_key = ${key}
         AND result IS NULL AND state = 'processing' AND attempts = ${attempt}
     `;
+    if (updated !== 1) {
+      console.error(
+        `Rejected stale webhook completion for ${endpoint}/${key}: attempt ${attempt} no longer owns the claim`,
+      );
+      return false;
+    }
+    return true;
   } catch (error) {
-    // The write already succeeded; failing to record the response only costs a
-    // replay the ability to return it (it still gets a 409, never a duplicate).
     console.error(`Failed to record idempotent result for ${endpoint}/${key}:`, error);
+    return false;
   }
+}
+
+/**
+ * Lock the claim in the same transaction as the downstream write. Either this
+ * worker owns the current attempt through completion, or it does no work.
+ */
+export async function lockWebhookIdempotencyAttempt(
+  bookGuid: string,
+  endpoint: WebhookEndpoint,
+  key: string,
+  attempt: number,
+  executor: Pick<typeof prisma, '$queryRaw'>,
+): Promise<void> {
+  const rows = await executor.$queryRaw<Array<{ id: number }>>`
+    SELECT id FROM gnucash_web_webhook_idempotency
+    WHERE book_guid = ${bookGuid} AND endpoint = ${endpoint} AND idempotency_key = ${key}
+      AND result IS NULL AND state = 'processing' AND attempts = ${attempt}
+    FOR UPDATE
+  `;
+  if (rows.length !== 1) throw new WebhookClaimSupersededError();
 }
 
 /**
@@ -244,9 +290,10 @@ export async function releaseWebhookIdempotency(
   endpoint: WebhookEndpoint,
   key: string,
   attempt: number,
+  executor: Pick<typeof prisma, '$executeRaw'> = prisma,
 ): Promise<void> {
   try {
-    await prisma.$executeRaw`
+    await executor.$executeRaw`
       UPDATE gnucash_web_webhook_idempotency
       SET state = CASE WHEN attempts >= ${WEBHOOK_MAX_ATTEMPTS}
                          THEN 'failed_permanent' ELSE 'failed' END,
@@ -261,6 +308,36 @@ export async function releaseWebhookIdempotency(
   } catch (error) {
     console.error(`Failed to release idempotency claim for ${endpoint}/${key}:`, error);
   }
+}
+
+/**
+ * A deliberate, operator-triggered reset for a terminal record. It only
+ * re-arms terminal work, resets the bounded automatic budget once, and never
+ * touches a completed result.
+ */
+export async function rearmWebhookIdempotency(
+  bookGuid: string,
+  endpoint: WebhookEndpoint,
+  key: string,
+  userId: number,
+): Promise<boolean> {
+  await ensureWebhookIdempotencyTable();
+  const updated = await prisma.$executeRaw`
+    UPDATE gnucash_web_webhook_idempotency
+    SET state = 'failed', attempts = 0, claim_started_at = NOW(), completed_at = NULL,
+        detail = 'Re-armed by user ' || ${String(userId)} || ' at ' ||
+                 TO_CHAR(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
+    WHERE book_guid = ${bookGuid} AND endpoint = ${endpoint} AND idempotency_key = ${key}
+      AND result IS NULL
+      AND state IN ('failed_permanent', 'processing')
+      AND (
+        state = 'failed_permanent'
+        OR (attempts >= ${WEBHOOK_MAX_ATTEMPTS}
+            AND claim_started_at
+                < (NOW() - ${WEBHOOK_CLAIM_STALE_MINUTES} * INTERVAL '1 minute')::timestamp)
+      )
+  `;
+  return updated === 1;
 }
 
 export interface WebhookIdempotencyAttentionEntry {
