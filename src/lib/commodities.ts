@@ -44,11 +44,18 @@ export type {
     PriceData,
 } from './holdings-coverage';
 
+/**
+ * Coverage of a basis summed straight from split values with no transfer
+ * tracing. GnuCash records an in-kind transfer-in at a $0 split value, and this
+ * path does no transfer-in detection at all, so the sum may be missing real
+ * cost by an amount nobody has measured. Claiming full coverage here would
+ * assert a completeness the branch never established; the ledger route declines
+ * the same claim for the same reason.
+ */
 export const UNTRACED_BASIS_COVERAGE: CostBasisCoverage = {
     status: 'unknown',
     reason: 'Cost basis carry-over is off, so shares transferred in enter at their $0 split value and the basis may be incomplete.',
 };
-
 
 /**
  * Get the latest price for a commodity in a given currency
