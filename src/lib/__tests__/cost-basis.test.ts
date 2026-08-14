@@ -17,7 +17,7 @@ vi.mock('../prisma', () => ({
   },
 }));
 
-import { traceCostBasis, createCostBasisCache, isTransferIn, type CostBasisMethod } from '../cost-basis';
+import { traceCostBasis, createCostBasisCache, isTransferIn, MAX_TRACE_DEPTH, type CostBasisMethod } from '../cost-basis';
 
 // --- Fixture builders -------------------------------------------------------
 
@@ -176,14 +176,14 @@ describe('traceCostBasis — lot consumption order', () => {
 
   it('FIFO sells the 2020 lot, leaving the $50 shares ($5,000)', async () => {
     const r = await trace('fifo', history(), 100);
-    expect(r.totalCost).toBeCloseTo(5_000, 6);
+    expect(r.basisOfCoveredShares).toBeCloseTo(5_000, 6);
     expect(r.perShareCost).toBeCloseTo(50, 6);
     expect(r.method).toBe('fifo');
   });
 
   it('LIFO sells the 2023 lot, leaving the $10 shares ($1,000)', async () => {
     const r = await trace('lifo', history(), 100);
-    expect(r.totalCost).toBeCloseTo(1_000, 6);
+    expect(r.basisOfCoveredShares).toBeCloseTo(1_000, 6);
     expect(r.perShareCost).toBeCloseTo(10, 6);
     expect(r.method).toBe('lifo');
   });
@@ -191,14 +191,14 @@ describe('traceCostBasis — lot consumption order', () => {
   it('FIFO and LIFO disagree — the regression was LIFO silently returning the FIFO answer', async () => {
     const fifo = await trace('fifo', history(), 100);
     const lifo = await trace('lifo', history(), 100);
-    expect(lifo.totalCost).not.toBeCloseTo(fifo.totalCost, 2);
+    expect(lifo.basisOfCoveredShares).not.toBeCloseTo(fifo.basisOfCoveredShares, 2);
   });
 
   it('average blends both lots ($30/share)', async () => {
     const r = await trace('average', history(), 100);
     // 200 shares / $6,000 -> $30 avg; selling 100 leaves $3,000 of basis.
     expect(r.perShareCost).toBeCloseTo(30, 6);
-    expect(r.totalCost).toBeCloseTo(3_000, 6);
+    expect(r.basisOfCoveredShares).toBeCloseTo(3_000, 6);
     expect(r.method).toBe('average');
   });
 
@@ -214,30 +214,30 @@ describe('traceCostBasis — partial sale spanning two lots', () => {
 
   it('FIFO leaves 50 shares of the $50 lot ($2,500)', async () => {
     const r = await trace('fifo', history(), 50);
-    expect(r.totalCost).toBeCloseTo(2_500, 6);
+    expect(r.basisOfCoveredShares).toBeCloseTo(2_500, 6);
     expect(r.perShareCost).toBeCloseTo(50, 6);
   });
 
   it('LIFO leaves 50 shares of the $10 lot ($500)', async () => {
     const r = await trace('lifo', history(), 50);
-    expect(r.totalCost).toBeCloseTo(500, 6);
+    expect(r.basisOfCoveredShares).toBeCloseTo(500, 6);
     expect(r.perShareCost).toBeCloseTo(10, 6);
   });
 
   it('average leaves 50 shares at the $30 blended cost ($1,500)', async () => {
     const r = await trace('average', history(), 50);
-    expect(r.totalCost).toBeCloseTo(1_500, 6);
+    expect(r.basisOfCoveredShares).toBeCloseTo(1_500, 6);
   });
 });
 
 describe('traceCostBasis — no sales', () => {
   it('FIFO takes the oldest shares and LIFO the newest', async () => {
     const history = () => [BUY_2020(), BUY_2023()];
-    expect((await trace('fifo', history(), 100)).totalCost).toBeCloseTo(1_000, 6);
-    expect((await trace('lifo', history(), 100)).totalCost).toBeCloseTo(5_000, 6);
+    expect((await trace('fifo', history(), 100)).basisOfCoveredShares).toBeCloseTo(1_000, 6);
+    expect((await trace('lifo', history(), 100)).basisOfCoveredShares).toBeCloseTo(5_000, 6);
     // Taking everything is method-independent.
-    expect((await trace('fifo', history(), 200)).totalCost).toBeCloseTo(6_000, 6);
-    expect((await trace('lifo', history(), 200)).totalCost).toBeCloseTo(6_000, 6);
+    expect((await trace('fifo', history(), 200)).basisOfCoveredShares).toBeCloseTo(6_000, 6);
+    expect((await trace('lifo', history(), 200)).basisOfCoveredShares).toBeCloseTo(6_000, 6);
   });
 
   it('returns zero basis when no traceable source exists', async () => {
@@ -247,7 +247,7 @@ describe('traceCostBasis — no sales', () => {
     mockSplitsFindUnique.mockResolvedValue(row);
     mockSplitsFindMany.mockResolvedValue([]);
     const r = await traceCostBasis('split-transfer-in', 'fifo', AAPL, 100, createCostBasisCache());
-    expect(r.totalCost).toBe(0);
+    expect(r.basisOfCoveredShares).toBe(0);
     expect(r.perShareCost).toBe(0);
   });
 });
@@ -382,6 +382,15 @@ function register(account: string, rows: Row[]) {
   for (const row of rows) byGuid.set(row.guid, row);
 }
 
+/**
+ * A warning naming the 2021 transfer exists and carries `reason`. Warnings
+ * accumulate up the chain (the leaf explains why, the parent says where), so
+ * assert on presence rather than on a single message.
+ */
+function namesShares(warnings: string[] | undefined, reason: string): boolean {
+  return (warnings ?? []).some(w => w.includes(reason) && w.includes('2021-01-01'));
+}
+
 /** The DEST-side leg of the SRC -> DEST transfer every scenario below traces. */
 function srcToDest(shares: number) {
   const t = transfer({
@@ -417,18 +426,18 @@ describe('traceCostBasis — transferred-in shares carry their basis (H4)', () =
     // ($1,000 carried + $5,000 bought) / 200 shares = $30/share.
     // Admitting the transferred 100 at their $0 split value gives $25/share.
     expect(r.perShareCost).toBeCloseTo(30, 6);
-    expect(r.totalCost).toBeCloseTo(6_000, 6);
-    expect(r.unknownBasisShares).toBeUndefined();
+    expect(r.basisOfCoveredShares).toBeCloseTo(6_000, 6);
+    expect(r.uncoveredShares).toBeCloseTo(0, 6);
     expect(r.warnings).toBeUndefined();
   });
 
   it('FIFO and LIFO already traced the transfer — they did not share the $0 defect', async () => {
     chainedTransferBook();
     const fifo = await traceCostBasis('split-transfer-in', 'fifo', AAPL, 100, createCostBasisCache());
-    expect(fifo.totalCost).toBeCloseTo(1_000, 6); // the 2021 transferred parcel, at carried basis
+    expect(fifo.basisOfCoveredShares).toBeCloseTo(1_000, 6); // the 2021 transferred parcel, at carried basis
     chainedTransferBook();
     const lifo = await traceCostBasis('split-transfer-in', 'lifo', AAPL, 100, createCostBasisCache());
-    expect(lifo.totalCost).toBeCloseTo(5_000, 6); // the 2023 purchase
+    expect(lifo.basisOfCoveredShares).toBeCloseTo(5_000, 6); // the 2023 purchase
   });
 
   /**
@@ -450,7 +459,7 @@ describe('traceCostBasis — transferred-in shares carry their basis (H4)', () =
     transferThenSellBook();
     const r = await traceCostBasis('split-transfer-in', 'average', AAPL, 40, createCostBasisCache());
     expect(r.perShareCost).toBeCloseTo(10, 6);
-    expect(r.totalCost).toBeCloseTo(400, 6); // 40 shares still holding $10 of basis each
+    expect(r.basisOfCoveredShares).toBeCloseTo(400, 6); // 40 shares still holding $10 of basis each
 
     // What the 60-share sale reports: $4,800 proceeds against $600 of basis.
     // With the transferred shares admitted at $0 the gain would be the full
@@ -463,7 +472,7 @@ describe('traceCostBasis — transferred-in shares carry their basis (H4)', () =
   it('FIFO reports the same carried basis for the surviving shares', async () => {
     transferThenSellBook();
     const r = await traceCostBasis('split-transfer-in', 'fifo', AAPL, 40, createCostBasisCache());
-    expect(r.totalCost).toBeCloseTo(400, 6);
+    expect(r.basisOfCoveredShares).toBeCloseTo(400, 6);
   });
 
   /**
@@ -487,12 +496,12 @@ describe('traceCostBasis — transferred-in shares carry their basis (H4)', () =
     carriedBasisSlotBook();
     const avg = await traceCostBasis('split-transfer-in', 'average', AAPL, 200, createCostBasisCache());
     expect(avg.perShareCost).toBeCloseTo(30, 6);
-    expect(avg.totalCost).toBeCloseTo(6_000, 6);
+    expect(avg.basisOfCoveredShares).toBeCloseTo(6_000, 6);
     expect(avg.warnings).toBeUndefined();
 
     carriedBasisSlotBook();
     const fifo = await traceCostBasis('split-transfer-in', 'fifo', AAPL, 100, createCostBasisCache());
-    expect(fifo.totalCost).toBeCloseTo(1_000, 6);
+    expect(fifo.basisOfCoveredShares).toBeCloseTo(1_000, 6);
   });
 });
 
@@ -516,20 +525,20 @@ describe('traceCostBasis — genuinely unknown carried basis is named, never sil
     // Pooling the unknown 100 at $0 would report $25/share for shares that
     // actually cost $50. The known shares keep their own average.
     expect(r.perShareCost).toBeCloseTo(50, 6);
-    expect(r.unknownBasisShares).toBeCloseTo(100, 6);
-    expect(r.totalCost).toBeCloseTo(5_000, 6); // basis of the 100 shares that have one
-    expect(r.warnings).toHaveLength(1);
-    expect(r.warnings?.[0]).toContain('excluded from the average-cost pool');
-    expect(r.warnings?.[0]).toContain('2021-01-01');
+    expect(r.uncoveredShares).toBeCloseTo(100, 6);
+    expect(r.basisOfCoveredShares).toBeCloseTo(5_000, 6); // basis of the 100 shares that have one
+    expect(namesShares(r.warnings, 'excluded from the average-cost pool')).toBe(true);
   });
 
-  it('FIFO keeps the parcel in the queue at $0 but counts and names it', async () => {
+  it('FIFO keeps the parcel in the queue but reports its shares as uncovered', async () => {
     untraceableTransferBook();
     const r = await traceCostBasis('split-transfer-in', 'fifo', AAPL, 200, createCostBasisCache());
-    expect(r.totalCost).toBeCloseTo(5_000, 6);
-    expect(r.unknownBasisShares).toBeCloseTo(100, 6);
-    expect(r.warnings?.[0]).toContain('admitted at $0 basis');
-    expect(r.warnings?.[0]).toContain('2021-01-01');
+    expect(r.basisOfCoveredShares).toBeCloseTo(5_000, 6);
+    expect(r.coveredShares).toBeCloseTo(100, 6);
+    expect(r.uncoveredShares).toBeCloseTo(100, 6);
+    // $50/share over the shares that HAVE a basis, not $25 over all 200.
+    expect(r.perShareCost).toBeCloseTo(50, 6);
+    expect(namesShares(r.warnings, 'no traceable cost basis in this book')).toBe(true);
   });
 
   it('a fully-traceable book reports no unknown shares at all', async () => {
@@ -542,10 +551,110 @@ describe('traceCostBasis — genuinely unknown carried basis is named, never sil
     register(SRC, [upToSrc.in, toDest.out]);
     for (const method of ['fifo', 'lifo', 'average'] as CostBasisMethod[]) {
       const r = await traceCostBasis('split-transfer-in', method, AAPL, 100, createCostBasisCache());
-      expect(r.totalCost).toBeCloseTo(1_000, 6);
-      expect(r.unknownBasisShares).toBeUndefined();
+      expect(r.basisOfCoveredShares).toBeCloseTo(1_000, 6);
+      expect(r.uncoveredShares).toBeCloseTo(0, 6);
       expect(r.warnings).toBeUndefined();
     }
+  });
+});
+
+describe('traceCostBasis — coverage survives NESTING', () => {
+  beforeEach(installRegistryMocks);
+
+  /**
+   * A chain whose MIDDLE hop is only partly covered:
+   *   Grandparent (not in this book) -> Upstream: 100 shares, no basis
+   *   Upstream buys 100 @ $50                     -> 100 shares, $5,000
+   *   Upstream -> Source: all 200 shares          -> 100 covered + 100 not
+   *   Source buys 100 @ $10                       -> 100 shares, $1,000
+   *   Source -> Dest: all 300 shares              <- the trace under test
+   *
+   * Covered basis is $6,000 over 200 covered shares = $30/share. Folding the
+   * partly-covered 200-share parcel in as if all of it were covered gives
+   * $6,000 / 300 = $20/share — the H4 defect, one hop removed.
+   */
+  function partiallyCoveredChainBook() {
+    const GP = 'acct-grandparent';
+    const gpToUp = transfer({
+      txGuid: 'tx-xfer-gp-up', postDate: '2019-01-01', from: GP, to: UP, shares: 100,
+      inGuid: 'xfer-in-up', outGuid: 'xfer-out-gp',
+    });
+    const upToSrc = transfer({
+      txGuid: XFER_UP_SRC, postDate: '2021-01-01', from: UP, to: SRC, shares: 200,
+      inGuid: 'xfer-in-src', outGuid: 'xfer-out-up',
+    });
+    const toDest = srcToDest(300);
+    register(GP, []); // grandparent's history is not in this book
+    register(UP, [gpToUp.in, buy({ guid: 'buy-up', account: UP, postDate: '2020-01-01', shares: 100, value: 5_000 }), upToSrc.out]);
+    register(SRC, [upToSrc.in, buy({ guid: 'buy-src', account: SRC, postDate: '2023-01-01', shares: 100, value: 1_000 }), toDest.out]);
+  }
+
+  it('average carries a partly-covered parcel through as partly covered', async () => {
+    partiallyCoveredChainBook();
+    const r = await traceCostBasis('split-transfer-in', 'average', AAPL, 300, createCostBasisCache());
+    expect(r.coveredShares).toBeCloseTo(200, 6);
+    expect(r.uncoveredShares).toBeCloseTo(100, 6);
+    expect(r.basisOfCoveredShares).toBeCloseTo(6_000, 6);
+    // $30 over the covered shares — NOT $20 over all 300.
+    expect(r.perShareCost).toBeCloseTo(30, 6);
+    expect(r.coveredShares + r.uncoveredShares).toBeCloseTo(300, 6);
+  });
+
+  it('FIFO carries the parcel\'s uncovered fraction through too', async () => {
+    partiallyCoveredChainBook();
+    const r = await traceCostBasis('split-transfer-in', 'fifo', AAPL, 300, createCostBasisCache());
+    expect(r.coveredShares).toBeCloseTo(200, 6);
+    expect(r.uncoveredShares).toBeCloseTo(100, 6);
+    expect(r.basisOfCoveredShares).toBeCloseTo(6_000, 6);
+    expect(r.perShareCost).toBeCloseTo(30, 6);
+  });
+});
+
+describe('traceCostBasis — depth bound', () => {
+  beforeEach(installRegistryMocks);
+
+  /**
+   * acct-chain-0 buys 10 shares for $100, then the shares hop from account to
+   * account `hops` times. Returns the guid of the LAST transfer-in split.
+   */
+  function buildTransferChain(hops: number): string {
+    const name = (i: number) => `acct-chain-${i}`;
+    const rows = new Map<number, Row[]>();
+    rows.set(0, [buy({ guid: 'chain-buy', account: name(0), postDate: '2000-01-01', shares: 10, value: 100 })]);
+    for (let i = 0; i < hops; i++) {
+      const hop = transfer({
+        txGuid: `tx-chain-${i}`, postDate: '2001-01-01', from: name(i), to: name(i + 1), shares: 10,
+        inGuid: `chain-in-${i}`, outGuid: `chain-out-${i}`,
+      });
+      rows.get(i)!.push(hop.out);
+      rows.set(i + 1, [hop.in]);
+    }
+    for (const [i, list] of rows) register(name(i), list);
+    return `chain-in-${hops - 1}`;
+  }
+
+  it('follows a chain shorter than the bound all the way to the purchase', async () => {
+    const last = buildTransferChain(5);
+    const r = await traceCostBasis(last, 'average', AAPL, 10, createCostBasisCache());
+    expect(r.basisOfCoveredShares).toBeCloseTo(100, 6);
+    expect(r.coveredShares).toBeCloseTo(10, 6);
+    expect(r.uncoveredShares).toBeCloseTo(0, 6);
+  });
+
+  it('stops at MAX_TRACE_DEPTH and reports the shares uncovered, not $0 and not an exception', async () => {
+    const last = buildTransferChain(MAX_TRACE_DEPTH + 5);
+    const r = await traceCostBasis(last, 'average', AAPL, 10, createCostBasisCache());
+    expect(r.coveredShares).toBeCloseTo(0, 6);
+    expect(r.uncoveredShares).toBeCloseTo(10, 6);
+    expect(r.basisOfCoveredShares).toBe(0);
+    expect(r.warnings?.some(w => w.includes(`deeper than ${MAX_TRACE_DEPTH} hops`))).toBe(true);
+  });
+
+  it('applies the same bound under FIFO', async () => {
+    const last = buildTransferChain(MAX_TRACE_DEPTH + 5);
+    const r = await traceCostBasis(last, 'fifo', AAPL, 10, createCostBasisCache());
+    expect(r.uncoveredShares).toBeCloseTo(10, 6);
+    expect(r.warnings?.some(w => w.includes(`deeper than ${MAX_TRACE_DEPTH} hops`))).toBe(true);
   });
 });
 

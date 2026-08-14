@@ -756,7 +756,7 @@ describe('traceCostBasis across accounts (unscrubbed)', () => {
     // 60 shares transferred out of a 100 @ $10 lot => basis $600, NOT $400
     // ($400 would mean the transfer-out itself was double-counted as a prior sale)
     const result = await traceCostBasis('b-in', 'fifo', AAPL, 60, createCostBasisCache());
-    expect(result.totalCost).toBeCloseTo(600);
+    expect(result.basisOfCoveredShares).toBeCloseTo(600);
     expect(result.perShareCost).toBeCloseTo(10);
     expect(result.tracedFromAccount).toBe('AAPL');
   });
@@ -766,20 +766,20 @@ describe('traceCostBasis across accounts (unscrubbed)', () => {
     seedTwoLots(100, 1500);
 
     const fifo = await traceCostBasis('d-in', 'fifo', AAPL, 100, createCostBasisCache());
-    expect(fifo.totalCost).toBeCloseTo(1000); // earliest lot: 100 @ $10
+    expect(fifo.basisOfCoveredShares).toBeCloseTo(1000); // earliest lot: 100 @ $10
 
     const lifo = await traceCostBasis('d-in', 'lifo', AAPL, 100, createCostBasisCache());
-    expect(lifo.totalCost).toBeCloseTo(2000); // latest lot: 100 @ $20
+    expect(lifo.basisOfCoveredShares).toBeCloseTo(2000); // latest lot: 100 @ $20
 
     const avg = await traceCostBasis('d-in', 'average', AAPL, 100, createCostBasisCache());
-    expect(avg.totalCost).toBeCloseTo(1500); // blended: 100 @ $15
+    expect(avg.basisOfCoveredShares).toBeCloseTo(1500); // blended: 100 @ $15
   });
 
   it('chained transfer A->B->C: basis traces recursively through the chain', async () => {
     seedChain();
 
     const result = await traceCostBasis('c-in', 'fifo', AAPL, 50, createCostBasisCache());
-    expect(result.totalCost).toBeCloseTo(500); // original A purchase: 50 @ $10
+    expect(result.basisOfCoveredShares).toBeCloseTo(500); // original A purchase: 50 @ $10
     expect(result.perShareCost).toBeCloseTo(10);
   });
 });
@@ -798,7 +798,7 @@ describe('traceCostBasis with scrubbed lots', () => {
     // splits are sells. Basis must still resolve to the original $600, not $0.
     expect(split('b-in').lot_guid).not.toBeNull();
     const result = await traceCostBasis('b-in', 'fifo', AAPL, 60, createCostBasisCache());
-    expect(result.totalCost).toBeCloseTo(600);
+    expect(result.basisOfCoveredShares).toBeCloseTo(600);
     expect(result.perShareCost).toBeCloseTo(10);
   });
 });

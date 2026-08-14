@@ -17,39 +17,182 @@ export type CostBasisMethod = 'fifo' | 'lifo' | 'average';
 /** Share-count tolerance, matching the epsilon used elsewhere in the lot code. */
 const QTY_EPS = 0.0001;
 
+/**
+ * Hard bound on how many transfer hops a single trace will follow.
+ *
+ * Cycles are already impossible (the IN_PROGRESS sentinel is written before any
+ * recursion), but a legitimately long A->B->C->... chain is valid in this data
+ * model and would otherwise produce an unbounded request-time chain of queries
+ * and promises. 200 matches the depth guard on this repo's recursive
+ * account-ancestor CTEs (book-scope.ts:279, book-lock.ts:131,
+ * inventory-engine.ts:751).
+ *
+ * Exhausting it does NOT throw and does NOT return a fake $0: the shares come
+ * back UNCOVERED with a warning naming the reason, i.e. the same honest
+ * "excluded and named" path used for any other unestablishable basis.
+ */
+export const MAX_TRACE_DEPTH = 200;
+
 interface PurchaseLot {
   date: Date;
   shares: number;
+  /** Basis per COVERED share of this parcel (never per raw share). */
   costPerShare: number;
-  totalCost: number;
-  /**
-   * True when this parcel arrived as a transfer-in whose original basis could
-   * not be established (source history not in this book). Its costPerShare is
-   * 0, but that 0 is a GAP, not a fact — see unknownBasisShares.
-   */
-  unknownBasis?: boolean;
+  /** Fraction of this parcel's shares that have no establishable basis (0..1). */
+  uncoveredFraction: number;
 }
 
+/**
+ * The basis of a requested number of shares, split by COVERAGE.
+ *
+ * There is deliberately no `totalCost` field. A basis figure is only meaningful
+ * next to the share count it covers: adding `basisOfCoveredShares` into a pool
+ * while counting ALL the requested shares in the denominator is exactly the
+ * defect this type exists to prevent (partial cost / full shares understates
+ * basis and inflates every downstream gain). Callers that aggregate must use
+ * the CostBasisPool helpers below, which keep the two numbers in step.
+ *
+ * Invariant: coveredShares + uncoveredShares === the shares requested.
+ */
 export interface CostBasisResult {
-  totalCost: number;
+  /** Requested shares whose basis IS established. */
+  coveredShares: number;
+  /**
+   * Requested shares whose basis is NOT establishable — an in-kind transfer
+   * whose source lot is not in this book, predates the data, or sits beyond
+   * MAX_TRACE_DEPTH. Always present: a caller cannot forget to look at it.
+   */
+  uncoveredShares: number;
+  /** Cost basis of `coveredShares` ONLY — never of the whole request. */
+  basisOfCoveredShares: number;
+  /** basisOfCoveredShares / coveredShares; 0 when nothing is covered. */
   perShareCost: number;
   method: CostBasisMethod;
   tracedFromAccount?: string; // Source account name if traced
   /**
-   * Of the shares this result covers, how many have NO establishable basis
-   * (in-kind transfers whose source lot is not in this book, or predates the
-   * data). Never silently folded in at $0 without also being counted here.
-   */
-  unknownBasisShares?: number;
-  /**
-   * Plain-English notes naming the shares above, following the valuation-gap
-   * precedent in account-valuation.ts ("<label> excluded: <reason>") — a gap is
-   * reported out loud rather than presented as a real zero.
+   * Plain-English notes naming the uncovered shares, following the
+   * valuation-gap precedent in account-valuation.ts ("<label> excluded:
+   * <reason>") — a gap is reported out loud, never presented as a real zero.
    */
   warnings?: string[];
 }
 
-/** Merge child-trace warnings into an accumulator without duplicates. */
+/**
+ * A running (shares, basis) pool that cannot silently upgrade coverage.
+ *
+ * Every aggregate consumer of traceCostBasis needs this exact arithmetic, so it
+ * lives here once: mixing a partial basis with a full share count is the bug,
+ * and it is only avoidable if the two counts travel together.
+ */
+export interface CostBasisPool {
+  /** Shares in the pool that have an established basis. */
+  coveredShares: number;
+  /** Shares in the pool that do not. */
+  uncoveredShares: number;
+  /** Basis of `coveredShares` only. */
+  basisOfCoveredShares: number;
+  warnings: string[];
+}
+
+export function createCostBasisPool(): CostBasisPool {
+  return { coveredShares: 0, uncoveredShares: 0, basisOfCoveredShares: 0, warnings: [] };
+}
+
+/** A purchase with a real price: fully covered. */
+export function addPurchaseToPool(pool: CostBasisPool, shares: number, cost: number): void {
+  pool.coveredShares += shares;
+  pool.basisOfCoveredShares += cost;
+}
+
+/**
+ * Fold a traced transfer-in into the pool, PRESERVING its coverage. The traced
+ * result's own covered/uncovered split is carried through rather than the whole
+ * parcel being treated as covered — otherwise a partially-covered child is
+ * laundered into a fully-covered parent one hop up the chain.
+ */
+export function addTracedTransferToPool(pool: CostBasisPool, traced: CostBasisResult): void {
+  pool.coveredShares += traced.coveredShares;
+  pool.uncoveredShares += traced.uncoveredShares;
+  pool.basisOfCoveredShares += traced.basisOfCoveredShares;
+  collectWarnings(pool.warnings, traced.warnings);
+}
+
+/** Basis per covered share — the only per-share figure the pool can honestly state. */
+export function poolPerShareCost(pool: CostBasisPool): number {
+  return pool.coveredShares > 0 ? pool.basisOfCoveredShares / pool.coveredShares : 0;
+}
+
+/**
+ * A sale removes shares from the pool. Shares are fungible here, so the sale
+ * consumes covered and uncovered shares PRO RATA; the covered side gives up
+ * basis at the covered average.
+ */
+export function removeSharesFromPool(pool: CostBasisPool, shares: number): void {
+  const poolShares = pool.coveredShares + pool.uncoveredShares;
+  if (poolShares <= 0) return;
+  const sold = Math.min(shares, poolShares);
+  const fromCovered = sold * (pool.coveredShares / poolShares);
+  pool.basisOfCoveredShares -= poolPerShareCost(pool) * fromCovered;
+  pool.coveredShares -= fromCovered;
+  pool.uncoveredShares = Math.max(0, pool.uncoveredShares - (sold - fromCovered));
+}
+
+/**
+ * Draw `sharesNeeded` out of the pool as a result. The draw takes covered and
+ * uncovered shares pro rata; asking for more shares than the pool holds makes
+ * the shortfall uncovered rather than inventing basis for it.
+ */
+export function drawFromPool(
+  pool: CostBasisPool,
+  sharesNeeded: number,
+  method: CostBasisMethod,
+): CostBasisResult {
+  const poolShares = pool.coveredShares + pool.uncoveredShares;
+  const perShareCost = poolPerShareCost(pool);
+  const draw = Math.min(sharesNeeded, poolShares);
+  const shortfall = Math.max(0, sharesNeeded - draw);
+  const coveredShares = poolShares > 0 ? draw * (pool.coveredShares / poolShares) : 0;
+  const uncoveredShares = sharesNeeded - coveredShares;
+  const warnings = [...pool.warnings];
+  if (shortfall > QTY_EPS) {
+    collectWarnings(warnings, [
+      `${round4(shortfall)} share(s) exceed the traced history available in the source account: reported without a cost basis.`,
+    ]);
+  }
+  return {
+    coveredShares,
+    uncoveredShares,
+    basisOfCoveredShares: perShareCost * coveredShares,
+    perShareCost,
+    method,
+    ...(warnings.length > 0 ? { warnings } : {}),
+  };
+}
+
+/** A result covering `shares` at a known basis of `basis`. */
+function covered(shares: number, basis: number, method: CostBasisMethod): CostBasisResult {
+  return {
+    coveredShares: shares,
+    uncoveredShares: 0,
+    basisOfCoveredShares: basis,
+    perShareCost: shares > 0 ? basis / shares : 0,
+    method,
+  };
+}
+
+/** A result whose shares have NO establishable basis, with the reason named. */
+function uncovered(shares: number, method: CostBasisMethod, warning: string): CostBasisResult {
+  return {
+    coveredShares: 0,
+    uncoveredShares: shares,
+    basisOfCoveredShares: 0,
+    perShareCost: 0,
+    method,
+    warnings: [warning],
+  };
+}
+
+/** Merge warnings into an accumulator without duplicates. */
 function collectWarnings(into: string[], from?: string[]): void {
   if (!from) return;
   for (const w of from) if (!into.includes(w)) into.push(w);
@@ -58,6 +201,11 @@ function collectWarnings(into: string[], from?: string[]): void {
 /** ISO date (YYYY-MM-DD) used to NAME the shares in a warning. */
 function dateLabel(date: Date | null | undefined): string {
   return date ? date.toISOString().slice(0, 10) : 'an unknown date';
+}
+
+/** Share counts in warnings are display text; keep them readable. */
+function round4(n: number): number {
+  return Math.round(n * 10_000) / 10_000;
 }
 
 /**
@@ -217,6 +365,10 @@ async function fetchAccountSplits(
  * 1. If lot_guid exists, find all splits in the same lot to derive cost
  * 2. Otherwise, trace the transfer chain to find original purchases
  * 3. Apply FIFO/LIFO/average to allocate cost across transferred shares
+ *
+ * @param depth - hops already followed; callers leave this at 0. Beyond
+ *   MAX_TRACE_DEPTH the shares come back uncovered-and-named instead of
+ *   recursing further (see MAX_TRACE_DEPTH).
  */
 export async function traceCostBasis(
   transferInSplitGuid: string,
@@ -224,6 +376,7 @@ export async function traceCostBasis(
   commodityGuid: string,
   transferredShares: number,
   cache: CostBasisCache,
+  depth = 0,
 ): Promise<CostBasisResult> {
   const internalCache = cache as unknown as InternalCache;
   const cacheKey = `${transferInSplitGuid}-${method}`;
@@ -234,10 +387,25 @@ export async function traceCostBasis(
     return cached as CostBasisResult;
   }
 
-  // If this split is already being traced (circular transfer chain), return $0
-  // This is the ONLY case where we return zero for circular detection
+  // Depth-exhausted and circular results are NOT cached: both depend on where
+  // the trace started, so caching one would poison a later, shallower trace of
+  // the same split.
+  if (depth >= MAX_TRACE_DEPTH) {
+    return uncovered(
+      transferredShares,
+      method,
+      `${round4(transferredShares)} share(s) reported without a cost basis: the transfer chain is deeper than ${MAX_TRACE_DEPTH} hops and was not followed further.`,
+    );
+  }
+
+  // If this split is already being traced (circular transfer chain), the basis
+  // cannot be established from here — uncovered, not a real zero.
   if (cached === IN_PROGRESS) {
-    return { totalCost: 0, perShareCost: 0, method };
+    return uncovered(
+      transferredShares,
+      method,
+      `${round4(transferredShares)} share(s) reported without a cost basis: the transfer chain loops back on itself.`,
+    );
   }
 
   // Mark as in-progress for circular detection
@@ -261,7 +429,12 @@ export async function traceCostBasis(
   });
 
   if (!transferSplit) {
-    const result: CostBasisResult = { totalCost: 0, perShareCost: 0, method };
+    // The split we were asked to trace does not exist — nothing to establish.
+    const result = uncovered(
+      transferredShares,
+      method,
+      `${round4(transferredShares)} share(s) reported without a cost basis: the transfer split could not be read.`,
+    );
     internalCache.set(cacheKey, result);
     return result;
   }
@@ -307,11 +480,7 @@ export async function traceCostBasis(
       const incomingShares = totalShares + Math.max(0, ownShares);
       if (incomingShares > QTY_EPS) {
         const perShareCost = (totalCost + carriedBasis) / incomingShares;
-        const result: CostBasisResult = {
-          totalCost: perShareCost * transferredShares,
-          perShareCost,
-          method,
-        };
+        const result = covered(transferredShares, perShareCost * transferredShares, method);
         internalCache.set(cacheKey, result);
         return result;
       }
@@ -320,11 +489,7 @@ export async function traceCostBasis(
     // Only use the lot's own purchases when it actually contains some;
     // otherwise fall through to transfer-chain tracing below.
     if (totalShares > QTY_EPS) {
-      const result: CostBasisResult = {
-        totalCost: (totalCost / totalShares) * transferredShares,
-        perShareCost: totalCost / totalShares,
-        method,
-      };
+      const result = covered(transferredShares, (totalCost / totalShares) * transferredShares, method);
       internalCache.set(cacheKey, result);
       return result;
     }
@@ -341,9 +506,10 @@ export async function traceCostBasis(
   );
 
   if (!sourceSplit) {
-    // No traceable source — this is a legitimate zero cost (e.g., a gift, airdrop, etc.)
-    // NOT a circular detection case — store a real result
-    const result: CostBasisResult = { totalCost: 0, perShareCost: 0, method };
+    // No sending account at all — the shares did not come from anywhere with a
+    // basis (gift, airdrop, ...). That $0 is a FACT, not a gap, so it is
+    // reported as covered rather than as an unknown.
+    const result = covered(transferredShares, 0, method);
     internalCache.set(cacheKey, result);
     return result;
   }
@@ -362,6 +528,7 @@ export async function traceCostBasis(
     transferSplit.transaction?.post_date || new Date(),
     internalCache as unknown as CostBasisCache,
     transferSplit.tx_guid,
+    depth,
   );
 
   result.tracedFromAccount = sourceSplit.account?.name ?? undefined;
@@ -385,6 +552,7 @@ function consumptionOrder(lots: PurchaseLot[], method: CostBasisMethod): Purchas
  *
  * @param excludeTxGuid - Transaction to skip during replay (the transfer
  *   being traced), so its outbound splits are not counted as prior sales.
+ * @param depth - hops already followed by the enclosing trace.
  */
 async function getAccountCostBasis(
   accountGuid: string,
@@ -393,7 +561,8 @@ async function getAccountCostBasis(
   sharesNeeded: number,
   asOfDate: Date,
   cache: CostBasisCache,
-  excludeTxGuid?: string,
+  excludeTxGuid: string | undefined,
+  depth: number,
 ): Promise<CostBasisResult> {
   // Cache query results per account+commodity+date to avoid re-fetching
   // Use a separate namespace to avoid collision with split-level cache
@@ -428,7 +597,7 @@ async function getAccountCostBasis(
   });
 
   if (method === 'average') {
-    return calculateAverageCostBasis(sortedSplits, sharesNeeded, accountGuid, commodityGuid, cache);
+    return calculateAverageCostBasis(sortedSplits, sharesNeeded, accountGuid, commodityGuid, cache, depth);
   }
 
   // FIFO or LIFO: build purchase lots
@@ -444,25 +613,29 @@ async function getAccountCostBasis(
       if (isTransferInSplit(split, accountGuid, commodityGuid)) {
         // Recursively trace this transfer — the split's own value is $0, the
         // basis is CARRIED from the source lot.
-        const traced = await traceCostBasis(split.guid, method, commodityGuid, qty, cache);
+        const traced = await traceCostBasis(split.guid, method, commodityGuid, qty, cache, depth + 1);
         collectWarnings(warnings, traced.warnings);
-        const unknownBasis = !(traced.totalCost > 0);
-        if (unknownBasis) {
+        if (traced.uncoveredShares > QTY_EPS) {
           // Unlike the average pool, a FIFO/LIFO parcel cannot simply be
           // dropped: lots are individually identified and consumed in date
           // order, so removing one would shift which lot every later sale
-          // eats and corrupt the basis of the KNOWN parcels too. It stays in
-          // the queue at $0 — but is counted and named, never silent.
+          // eats and corrupt the basis of the COVERED parcels too. The
+          // uncovered SHARE COUNT rides along with the parcel instead, so a
+          // partially-covered transfer stays partially covered here and in
+          // every result derived from it.
           warnings.push(
-            `${qty} share(s) transferred in on ${dateLabel(split.transaction?.post_date)} admitted at $0 basis: no traceable cost basis in this book.`,
+            `${round4(traced.uncoveredShares)} of ${round4(qty)} share(s) transferred in on ${dateLabel(split.transaction?.post_date)} have no traceable cost basis in this book.`,
           );
         }
         lots.push({
           date: split.transaction?.post_date || new Date(),
           shares: qty,
-          costPerShare: traced.perShareCost,
-          totalCost: traced.totalCost,
-          unknownBasis,
+          // Per COVERED share — dividing the traced basis by the full parcel
+          // would launder the uncovered shares into a fake low average.
+          costPerShare: traced.coveredShares > QTY_EPS
+            ? traced.basisOfCoveredShares / traced.coveredShares
+            : 0,
+          uncoveredFraction: qty > 0 ? Math.min(1, traced.uncoveredShares / qty) : 0,
         });
       } else {
         // Direct purchase
@@ -470,7 +643,7 @@ async function getAccountCostBasis(
           date: split.transaction?.post_date || new Date(),
           shares: qty,
           costPerShare: qty > 0 ? val / qty : 0,
-          totalCost: val,
+          uncoveredFraction: 0,
         });
       }
     } else if (qty < 0) {
@@ -481,31 +654,44 @@ async function getAccountCostBasis(
         if (soldRemaining <= 0) break;
         const soldFromLot = Math.min(lot.shares, soldRemaining);
         lot.shares -= soldFromLot;
-        lot.totalCost -= soldFromLot * lot.costPerShare;
         soldRemaining -= soldFromLot;
       }
     }
   }
 
   // Allocate cost basis to the requested shares, in the same order a sale
-  // would consume them.
+  // would consume them. Each parcel contributes basis only for its COVERED
+  // fraction; the rest is carried out as uncovered shares.
   let remainingShares = sharesNeeded;
-  let totalCost = 0;
-  let unknownBasisShares = 0;
+  let coveredShares = 0;
+  let uncoveredShares = 0;
+  let basis = 0;
 
   for (const lot of consumptionOrder(lots, method)) {
     if (remainingShares <= 0 || lot.shares <= 0) continue;
     const allocated = Math.min(lot.shares, remainingShares);
-    totalCost += allocated * lot.costPerShare;
-    if (lot.unknownBasis) unknownBasisShares += allocated;
+    const allocatedUncovered = allocated * lot.uncoveredFraction;
+    coveredShares += allocated - allocatedUncovered;
+    uncoveredShares += allocatedUncovered;
+    basis += (allocated - allocatedUncovered) * lot.costPerShare;
     remainingShares -= allocated;
   }
 
+  // Shares the source account's history cannot account for at all are a gap,
+  // not free shares: report them uncovered rather than silently at $0.
+  if (remainingShares > QTY_EPS) {
+    uncoveredShares += remainingShares;
+    warnings.push(
+      `${round4(remainingShares)} share(s) exceed the traced history available in the source account: reported without a cost basis.`,
+    );
+  }
+
   return {
-    totalCost,
-    perShareCost: sharesNeeded > 0 ? totalCost / sharesNeeded : 0,
+    coveredShares,
+    uncoveredShares,
+    basisOfCoveredShares: basis,
+    perShareCost: coveredShares > 0 ? basis / coveredShares : 0,
     method,
-    ...(unknownBasisShares > 0 ? { unknownBasisShares } : {}),
     ...(warnings.length > 0 ? { warnings } : {}),
   };
 }
@@ -519,12 +705,18 @@ async function getAccountCostBasis(
  * each transfer-in is traced to its carried basis first.
  *
  * When the carried basis genuinely cannot be established (the source lot is
- * not in this book, or predates the data), those shares are EXCLUDED from the
- * pool — numerator and denominator both — and named in `warnings`, following
- * the same "exclude and say so, never present a gap as a real zero" rule that
- * account-valuation.ts applies to unpriceable holdings. Shares are fungible
- * under the average method, so one un-basised share would otherwise
- * contaminate the reported basis of every other share in the pool.
+ * not in this book, predates the data, or sits beyond MAX_TRACE_DEPTH), those
+ * shares are EXCLUDED from the pool — numerator and denominator both — and
+ * named in `warnings`, following the same "exclude and say so, never present a
+ * gap as a real zero" rule that account-valuation.ts applies to unpriceable
+ * holdings. Shares are fungible under the average method, so one un-basised
+ * share would otherwise contaminate the reported basis of every other share.
+ *
+ * Crucially, a traced transfer-in is folded in with `addTracedTransferToPool`,
+ * which carries the child's covered/uncovered SPLIT through. Treating a
+ * partially-covered child as fully covered would re-create the original defect
+ * one hop up the chain: 100 covered + 100 uncovered shares with $5,000 of basis
+ * would be reported as 200 shares at $25 instead of 100 shares at $50.
  */
 async function calculateAverageCostBasis(
   splits: Awaited<ReturnType<typeof fetchAccountSplits>>,
@@ -532,11 +724,9 @@ async function calculateAverageCostBasis(
   accountGuid: string,
   commodityGuid: string,
   cache: CostBasisCache,
+  depth: number,
 ): Promise<CostBasisResult> {
-  let knownShares = 0;
-  let knownCost = 0;
-  let unknownShares = 0;
-  const warnings: string[] = [];
+  const pool = createCostBasisPool();
 
   for (const split of splits) {
     const qty = toDecimalNumber(split.quantity_num, split.quantity_denom);
@@ -544,51 +734,22 @@ async function calculateAverageCostBasis(
 
     if (qty > 0) {
       if (isTransferInSplit(split, accountGuid, commodityGuid)) {
-        const traced = await traceCostBasis(split.guid, 'average', commodityGuid, qty, cache);
-        collectWarnings(warnings, traced.warnings);
-        if (traced.totalCost > 0) {
-          knownShares += qty;
-          knownCost += traced.totalCost;
-        } else {
-          unknownShares += qty;
-          warnings.push(
-            `${qty} share(s) transferred in on ${dateLabel(split.transaction?.post_date)} excluded from the average-cost pool: no traceable cost basis in this book.`,
-          );
+        const traced = await traceCostBasis(split.guid, 'average', commodityGuid, qty, cache, depth + 1);
+        addTracedTransferToPool(pool, traced);
+        if (traced.uncoveredShares > QTY_EPS) {
+          collectWarnings(pool.warnings, [
+            `${round4(traced.uncoveredShares)} of ${round4(qty)} share(s) transferred in on ${dateLabel(split.transaction?.post_date)} excluded from the average-cost pool: no traceable cost basis in this book.`,
+          ]);
         }
       } else {
-        knownShares += qty;
-        knownCost += val;
+        addPurchaseToPool(pool, qty, val);
       }
     } else if (qty < 0) {
-      // Shares are fungible in an average-cost pool, so a sale consumes the
-      // known and unknown-basis shares pro rata.
-      const soldShares = Math.abs(qty);
-      const poolShares = knownShares + unknownShares;
-      const fromKnown = poolShares > 0 ? Math.min(knownShares, soldShares * (knownShares / poolShares)) : 0;
-      const avgCost = knownShares > 0 ? knownCost / knownShares : 0;
-      knownCost -= avgCost * fromKnown;
-      knownShares -= fromKnown;
-      unknownShares = Math.max(0, unknownShares - (soldShares - fromKnown));
+      removeSharesFromPool(pool, Math.abs(qty));
     }
   }
 
-  const perShareCost = knownShares > 0 ? knownCost / knownShares : 0;
-  const poolShares = knownShares + unknownShares;
-  // The requested shares are drawn fungibly from the pool, so the unknown
-  // fraction of the pool is the unknown fraction of the request.
-  const unknownBasisShares = poolShares > 0
-    ? Math.min(sharesNeeded, sharesNeeded * (unknownShares / poolShares))
-    : 0;
-
-  return {
-    // Basis is reported for the shares that HAVE one; the rest are counted in
-    // unknownBasisShares instead of being handed an invented per-share cost.
-    totalCost: perShareCost * (sharesNeeded - unknownBasisShares),
-    perShareCost,
-    method: 'average',
-    ...(unknownBasisShares > QTY_EPS ? { unknownBasisShares } : {}),
-    ...(warnings.length > 0 ? { warnings } : {}),
-  };
+  return drawFromPool(pool, sharesNeeded, 'average');
 }
 
 /**
