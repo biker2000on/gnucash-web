@@ -644,6 +644,10 @@ function InvoiceDetailContent() {
     // Print
     // ------------------------------------------------------------------
 
+    // The printed document goes to the customer, so it follows the same rule
+    // as the public share page: an INFERRED due date (post date standing in
+    // for a missing `trans-date-due` slot) is omitted rather than asserted as
+    // a deadline. The header grid above still shows it, daggered, to us.
     const handlePrint = () => {
         if (!invoice) return;
         const label = kind === 'invoice' ? 'INVOICE' : 'BILL';
@@ -717,7 +721,7 @@ function InvoiceDetailContent() {
                         <div class="id"># ${escapeHtml(invoice.id)}</div>
                         <div>Opened: ${escapeHtml(invoice.dateOpened ?? '—')}</div>
                         ${invoice.datePosted ? `<div>Posted: ${escapeHtml(invoice.datePosted)}</div>` : ''}
-                        ${invoice.dueDate ? `<div>Due: ${escapeHtml(invoice.dueDate)}</div>` : ''}
+                        ${invoice.dueDate && !invoice.dueDateInferred ? `<div>Due: ${escapeHtml(invoice.dueDate)}</div>` : ''}
                         ${invoice.billingId ? `<div>Billing ID: ${escapeHtml(invoice.billingId)}</div>` : ''}
                     </div>
                 </div>
@@ -1026,7 +1030,18 @@ function InvoiceDetailContent() {
                             <div className="text-xs text-foreground-muted uppercase tracking-wider mb-0.5">Due</div>
                             <div className={`font-mono tabular-nums ${invoice.status === 'overdue' ? 'text-negative' : 'text-foreground-secondary'}`} style={TNUM}>
                                 {invoice.dueDate ?? '—'}
+                                {invoice.dueDateInferred && (
+                                    <span>
+                                        {' '}†
+                                        <span className="sr-only"> (due date inferred from the posting date)</span>
+                                    </span>
+                                )}
                             </div>
+                            {invoice.dueDateInferred && (
+                                <div className="mt-0.5 text-[11px] leading-tight text-foreground-muted">
+                                    † inferred from the posting date — this posting stored no due date
+                                </div>
+                            )}
                         </div>
                         <div>
                             <div className="text-xs text-foreground-muted uppercase tracking-wider mb-0.5">Billing ID</div>

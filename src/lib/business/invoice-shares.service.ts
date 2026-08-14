@@ -420,14 +420,31 @@ async function buildPublicInvoiceView(
     `,
   ]);
 
+  // An INFERRED due date is our own fallback (the post date standing in for a
+  // `trans-date-due` slot the posting never wrote), not a date the customer
+  // ever agreed to — so it is not a deadline we can assert to them. We do not
+  // dun on one either: handleDunning skips these invoices outright
+  // (`shouldSkipDunningForInferredDueDate`, counted as skippedInferredDueDate),
+  // so withholding the customer-facing OVERDUE badge here is CONSISTENT with
+  // the collection path, not a softer exception to it. Internally the fallback
+  // still does its job: aging buckets the invoice, flagged inferred, and the
+  // invoice/payments screens show the date with a dagger.
+  //
+  // We do not publish the caveat itself either — "this due date was inferred"
+  // is internal data-quality laundry that gives the reader nothing to act on
+  // and invites a dispute. So the public document simply omits the due date
+  // (it would only restate the posted date shown above it) and shows the
+  // invoice as open.
+  const inferredDue = view.dueDateInferred;
+
   return {
     type: 'invoice',
     companyName: await companyNameForBook(bookGuid),
     id: view.id,
-    status: view.status,
+    status: inferredDue && view.status === 'overdue' ? 'open' : view.status,
     dateOpened: view.dateOpened,
     datePosted: view.datePosted,
-    dueDate: view.dueDate,
+    dueDate: inferredDue ? null : view.dueDate,
     billingId: view.billingId,
     notes: view.notes,
     currency: await currencyMnemonic(view.currencyGuid),
