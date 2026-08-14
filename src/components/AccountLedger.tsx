@@ -516,6 +516,13 @@ export default function AccountLedger({
         filters.maxAmount !== '',
         filters.reconcileStates.length > 0,
     ].filter(Boolean).length;
+    // Filtered results retain their true as-of balances, including hidden
+    // account activity. Make that visible rather than implying adjacent rows
+    // alone explain the balance change.
+    const balancesIncludeAllActivity = debouncedSearch !== '' ||
+        debouncedFilters.minAmount !== '' ||
+        debouncedFilters.maxAmount !== '' ||
+        debouncedFilters.reconcileStates.length > 0;
 
     const clearAllFilters = () => {
         setFilters({ minAmount: '', maxAmount: '', reconcileStates: [] });
@@ -640,11 +647,13 @@ export default function AccountLedger({
             setTransactions(data);
             setOffset(data.length);
             setHasMore(data.length >= 100);
-            onCurrentBalanceChange?.(data[0]?.running_balance ?? null);
+            if (!balancesIncludeAllActivity) {
+                onCurrentBalanceChange?.(data[0]?.running_balance ?? null);
+            }
         } catch (error) {
             console.error('Error fetching transactions:', error);
         }
-    }, [accountGuid, buildUrlParams, onCurrentBalanceChange]);
+    }, [accountGuid, balancesIncludeAllActivity, buildUrlParams, onCurrentBalanceChange]);
 
     // Transaction row click handler
     const handleRowClick = useCallback((txGuid: string) => {
@@ -2622,7 +2631,7 @@ export default function AccountLedger({
                                             ? [{ label: 'Debit', value: <span className="text-primary font-mono">{formatCurrency(amount, tx.commodity_mnemonic)}</span> }]
                                             : [{ label: 'Credit', value: <span className="text-negative font-mono">{formatCurrency(Math.abs(amount), tx.commodity_mnemonic)}</span> }]
                                         ),
-                                        { label: 'Balance', value: balanceValue !== null
+                                        { label: balancesIncludeAllActivity ? 'Balance (all activity)' : 'Balance', value: balanceValue !== null
                                             ? <span className={`font-mono font-bold ${balanceValue < 0 ? 'text-negative' : 'text-positive'}`}>{formatCurrency(balanceValue, tx.commodity_mnemonic)}</span>
                                             : <span className="text-foreground-muted">{'\u2014'}</span>
                                         },
@@ -2689,7 +2698,7 @@ export default function AccountLedger({
                                     if (colId === 'transfer') return <th key={header.id} className="px-4 py-2">{isInvestmentAccount ? 'Transfer' : 'Transfer / Splits'}</th>;
                                     if (colId === 'debit') return <th key={header.id} className="px-4 py-2 text-right">Debit</th>;
                                     if (colId === 'credit') return <th key={header.id} className="px-4 py-2 text-right">Credit</th>;
-                                    if (colId === 'balance') return <th key={header.id} className="px-4 py-2 text-right">Balance</th>;
+                                    if (colId === 'balance') return <th key={header.id} className="px-4 py-2 text-right">{balancesIncludeAllActivity ? <>Balance (all activity)<span className="sr-only">. Balances include transactions hidden by the active filters.</span></> : 'Balance'}</th>;
                                     if (colId === 'shares') return <th key={header.id} className="px-4 py-2 text-right">Shares</th>;
                                     if (colId === 'price') return <th key={header.id} className="px-4 py-2 text-right">Price</th>;
                                     if (colId === 'buy') return <th key={header.id} className="px-4 py-2 text-right">Buy</th>;

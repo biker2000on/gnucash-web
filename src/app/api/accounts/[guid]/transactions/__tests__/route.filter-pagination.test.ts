@@ -56,8 +56,13 @@ function split(tx: string, i: number, value: { num: bigint; denom: bigint }, sta
 }
 const DATA: Tx[] = Array.from({ length: 60 }, (_, i) => {
     const guid = String(i).padStart(32, '0');
-    const splits = [split(guid, 0, dollars(10), 'n', ACCOUNT), split(guid, 1, dollars(-10), 'n', OTHER)];
-    if (i % 3 === 2) splits.push(split(guid, 2, dollars(500), 'y', OTHER));
+    // Every transaction has a $500, reconciled OTHER split. Only every third
+    // transaction has a $500 target-account quantity split and target-account
+    // reconciliation. Thus the fixtures fail if either predicate escapes the
+    // ledger account, while the matching account split is deliberately third.
+    const isMatch = i % 3 === 2;
+    const splits = [split(guid, 0, dollars(10), isMatch ? 'y' : 'n', ACCOUNT), split(guid, 1, dollars(-500), 'y', OTHER)];
+    if (i % 3 === 2) splits.push(split(guid, 2, dollars(500), 'y', ACCOUNT));
     return { guid, currency_guid: 'c'.repeat(32), num: '', post_date: new Date(Date.UTC(2026, 0, 1) - i * 86_400_000), enter_date: new Date(Date.UTC(2026, 0, 1)), description: `Transaction ${i}`, splits };
 });
 const matching = DATA.filter((_, i) => i % 3 === 2);
@@ -67,18 +72,23 @@ let lastPageQuery: { text: string; values: unknown[] } | null = null;
 function queryRows(text: string, values: unknown[]) {
     const bind = (placeholder: string) => values[Number(placeholder) - 1];
     let rows = DATA.filter(tx => tx.splits.some(s => s.account_guid === ACCOUNT));
-    const min = /abs\(s\.value_num::numeric\) >= \$(\d+)::numeric \* abs\(s\.value_denom::numeric\)/.exec(text);
+    const amountIsAccountScoped = /WHERE s\.tx_guid = t\.guid\s+AND s\.account_guid = ANY\(\$\d+::text\[\]\)\s+AND s\.quantity_denom <> 0/.test(text);
+    const reconcileIsAccountScoped = /WHERE s\.tx_guid = t\.guid\s+AND s\.account_guid = ANY\(\$\d+::text\[\]\)\s+AND lower\(s\.reconcile_state\)/.test(text);
+    const filterSplits = (tx: Tx, accountScoped: boolean) => accountScoped
+        ? tx.splits.filter(s => s.account_guid === ACCOUNT)
+        : tx.splits;
+    const min = /abs\(s\.quantity_num::numeric\) >= \$(\d+)::numeric \* abs\(s\.quantity_denom::numeric\)/.exec(text);
     if (min) {
         const bound = BigInt(String(bind(min[1]))) * 100n;
-        rows = rows.filter(tx => tx.splits.some(s => s.value_denom !== 0n && (s.value_num < 0n ? -s.value_num : s.value_num) >= bound * (s.value_denom < 0n ? -s.value_denom : s.value_denom) / 100n));
+        rows = rows.filter(tx => filterSplits(tx, amountIsAccountScoped).some(s => s.quantity_denom !== 0n && (s.quantity_num < 0n ? -s.quantity_num : s.quantity_num) >= bound * (s.quantity_denom < 0n ? -s.quantity_denom : s.quantity_denom) / 100n));
     }
-    const max = /abs\(s\.value_num::numeric\) > \$(\d+)::numeric \* abs\(s\.value_denom::numeric\)/.exec(text);
+    const max = /abs\(s\.quantity_num::numeric\) > \$(\d+)::numeric \* abs\(s\.quantity_denom::numeric\)/.exec(text);
     if (max) {
         const bound = BigInt(String(bind(max[1]))) * 100n;
-        rows = rows.filter(tx => !tx.splits.some(s => s.value_denom !== 0n && (s.value_num < 0n ? -s.value_num : s.value_num) > bound * (s.value_denom < 0n ? -s.value_denom : s.value_denom) / 100n));
+        rows = rows.filter(tx => !filterSplits(tx, amountIsAccountScoped).some(s => s.quantity_denom !== 0n && (s.quantity_num < 0n ? -s.quantity_num : s.quantity_num) > bound * (s.quantity_denom < 0n ? -s.quantity_denom : s.quantity_denom) / 100n));
     }
     const states = /lower\(s\.reconcile_state\) = ANY\(\$(\d+)::text\[\]\)/.exec(text);
-    if (states) rows = rows.filter(tx => tx.splits.some(s => (bind(states[1]) as string[]).includes(s.reconcile_state)));
+    if (states) rows = rows.filter(tx => filterSplits(tx, reconcileIsAccountScoped).some(s => (bind(states[1]) as string[]).includes(s.reconcile_state)));
     rows.sort(order);
     const limit = /LIMIT \$(\d+)/.exec(text)!;
     const offset = /OFFSET \$(\d+)/.exec(text)!;
@@ -126,17 +136,28 @@ describe('GET /api/accounts/[guid]/transactions filtering before pagination', ()
         expect(new Set([...page1, ...page2].map(tx => tx.guid)).size).toBe(20);
     });
 
-    it('deduplicates a transaction whose non-first split is the matching split', async () => {
+    it('deduplicates a transaction whose non-first target-account split is the matching split', async () => {
         const body = await get('minAmount=500&maxAmount=500&limit=100');
         const hit = body.filter(tx => tx.guid === DATA[2].guid);
         expect(hit).toHaveLength(1);
         expect(hit[0].splits).toHaveLength(3);
     });
 
-    it('puts reconcile filtering in the paginated SQL query', async () => {
+    it('filters reconciliation by the target-account split that the ledger icon renders', async () => {
         const body = await get('reconcileStates=y&limit=10');
         expect(body).toHaveLength(10);
+        expect(body.map(tx => tx.guid)).toEqual(matching.slice(0, 10).map(tx => tx.guid));
+        expect(body.every(tx => tx.splits.find(split => split.account_guid === ACCOUNT)?.reconcile_state === 'y')).toBe(true);
         expect(lastPageQuery?.text).toMatch(/lower\(s\.reconcile_state\) = ANY\(\$\d+::text\[\]\)/);
+        expect(lastPageQuery?.text).toMatch(/s\.account_guid = ANY\(\$\d+::text\[\]\)\s+AND lower\(s\.reconcile_state\)/);
+    });
+
+    it('filters the account Amount quantity, not an offsetting leg value', async () => {
+        const body = await get('minAmount=500&maxAmount=500&limit=100');
+        expect(body.map(tx => tx.guid)).toEqual(matching.map(tx => tx.guid));
+        expect(lastPageQuery?.text).toMatch(/s\.account_guid = ANY\(\$\d+::text\[\]\)\s+AND s\.quantity_denom <> 0/);
+        expect(lastPageQuery?.text).toContain('abs(s.quantity_num::numeric)');
+        expect(lastPageQuery?.text).not.toContain('abs(s.value_num::numeric)');
     });
 
     it.each(['minAmount=abc', 'maxAmount=%20', 'reconcileStates=,y', 'reconcileStates=%20'])('rejects malformed %s instead of returning the unfiltered ledger', async query => {

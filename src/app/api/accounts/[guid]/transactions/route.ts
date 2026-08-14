@@ -113,6 +113,28 @@ async function loadInvestmentRunningTotals(
     }
 }
 
+/**
+ * @openapi
+ * /api/accounts/{guid}/transactions:
+ *   get:
+ *     description: Returns a paginated account ledger.
+ *     parameters:
+ *       - in: query
+ *         name: minAmount
+ *         schema:
+ *           type: number
+ *         description: >
+ *           Minimum magnitude of an individual quantity split in this account
+ *           (or included subaccount). This deliberately differs from the global
+ *           transaction journal, which has no current account and therefore
+ *           uses the transaction's largest value split.
+ *       - in: query
+ *         name: maxAmount
+ *         schema:
+ *           type: number
+ *         description: Maximum magnitude of an individual quantity split in this account (or included subaccount).
+ */
+
 export async function GET(
     request: Request,
     { params }: { params: Promise<{ guid: string }> }
@@ -411,27 +433,40 @@ export async function GET(
             )`);
         }
 
-        // Amount is the transaction's largest absolute split. Cross-multiply
-        // rather than divide: numeric division rounds repeating fractions.
+        // This is a per-account ledger, so amount and reconciliation filters
+        // apply only to the splits whose amount/reconcile icon the ledger shows.
+        // The global transaction journal intentionally differs: it has no
+        // current account and therefore filters its largest value split.
+        //
+        // Amount uses quantity (the ledger's Amount column), not value. Compare
+        // each qualifying split exactly by cross-multiplication rather than
+        // division, because numeric division rounds repeating fractions. A
+        // transaction posting twice to this account is accepted when either
+        // individual split meets the bound; this intentionally differs from the
+        // displayed sum, whose exact comparison would require division.
         if (minAmount !== null) {
             filters.push(Prisma.sql`EXISTS (
                 SELECT 1 FROM splits s
                 WHERE s.tx_guid = t.guid
-                  AND s.value_denom <> 0
-                  AND abs(s.value_num::numeric) >= ${minAmount}::numeric * abs(s.value_denom::numeric)
+                  AND s.account_guid = ANY(${targetAccountGuids}::text[])
+                  AND s.quantity_denom <> 0
+                  AND abs(s.quantity_num::numeric) >= ${minAmount}::numeric * abs(s.quantity_denom::numeric)
             )`);
         }
         if (maxAmount !== null) {
             filters.push(Prisma.sql`NOT EXISTS (
                 SELECT 1 FROM splits s
                 WHERE s.tx_guid = t.guid
-                  AND s.value_denom <> 0
-                  AND abs(s.value_num::numeric) > ${maxAmount}::numeric * abs(s.value_denom::numeric)
+                  AND s.account_guid = ANY(${targetAccountGuids}::text[])
+                  AND s.quantity_denom <> 0
+                  AND abs(s.quantity_num::numeric) > ${maxAmount}::numeric * abs(s.quantity_denom::numeric)
             )`);
             if (minAmount === null) {
                 filters.push(Prisma.sql`EXISTS (
                     SELECT 1 FROM splits s
-                    WHERE s.tx_guid = t.guid AND s.value_denom <> 0
+                    WHERE s.tx_guid = t.guid
+                      AND s.account_guid = ANY(${targetAccountGuids}::text[])
+                      AND s.quantity_denom <> 0
                 )`);
             }
         }
@@ -439,6 +474,7 @@ export async function GET(
             filters.push(Prisma.sql`EXISTS (
                 SELECT 1 FROM splits s
                 WHERE s.tx_guid = t.guid
+                  AND s.account_guid = ANY(${targetAccountGuids}::text[])
                   AND lower(s.reconcile_state) = ANY(${reconcileStates}::text[])
             )`);
         }
