@@ -8,7 +8,7 @@
 import prisma, { generateGuid } from '@/lib/prisma';
 import { tryWithDatabaseAdvisoryLock } from '@/lib/db';
 import { getAccountGuidsForBook } from '@/lib/book-scope';
-import { acquireBookLock, acquireNamedXactLock, accountNameLockKey } from '@/lib/book-lock';
+import { acquireNamedXactLock, accountNameLockKey } from '@/lib/book-lock';
 import { decryptAccessUrl, fetchAccountsChunked, SimpleFinTransaction, SimpleFinAccessRevokedError, SimpleFinHolding } from './simplefin.service';
 import { toNumDenom } from '@/lib/validation';
 import { buildSymbolSet, parseSymbol } from './simplefin-symbol-parser';
@@ -308,7 +308,7 @@ export async function syncSimpleFin(
   return outcome.result;
 }
 
-async function runSimpleFinSync(
+export async function runSimpleFinSync(
   connectionId: number,
   bookGuid: string,
   options: SyncSimpleFinOptions = {},
@@ -399,7 +399,7 @@ async function runSimpleFinSync(
   });
 
   if (mappedAccounts.length === 0) {
-    await updateSimpleFinConnectionSyncStatus(connectionId, 'success');
+    await finalizeSimpleFinSync(connection, bookGuid, connectionId, result, options);
     return result;
   }
 
@@ -778,6 +778,30 @@ async function runSimpleFinSync(
     console.warn('SimpleFin sync recurring invoice run failed:', err);
   }
 
+  await finalizeSimpleFinSync(
+    connection,
+    bookGuid,
+    connectionId,
+    result,
+    options,
+    [...failedImports.values()],
+  );
+
+  return result;
+}
+
+/**
+ * Persist the terminal result and surface failures consistently for both the
+ * normal import path and early exits after mapping validation.
+ */
+async function finalizeSimpleFinSync(
+  connection: { user_id: number },
+  bookGuid: string,
+  connectionId: number,
+  result: SyncResult,
+  options: SyncSimpleFinOptions,
+  failedImports: FailedImportRange[] = [],
+): Promise<void> {
   if (result.errors.length > 0) {
     result.status = 'failed';
     await updateSimpleFinConnectionSyncStatus(
@@ -799,8 +823,6 @@ async function runSimpleFinSync(
       await createSimpleFinNotification(connection.user_id, bookGuid, connectionId, result, options);
     }
   }
-
-  return result;
 }
 
 /**
@@ -1365,11 +1387,10 @@ export async function getOrCreateImbalanceAccount(
   }
 
   return prisma.$transaction(async tx => {
-    // Lock ordering is canonical: book first, then the narrower account-name
-    // key. The re-check happens under both locks, closing the check/create
-    // race even on legacy books where the sibling-name unique index was not
-    // installed because pre-existing duplicates were detected.
-    await acquireBookLock(tx, bookGuid, 'create SimpleFin Imbalance account');
+    // The account-name key is sufficient to serialize this one natural key.
+    // Deliberately do not take the broader blocking book lock: an XML import
+    // can hold it longer than Prisma's interactive-transaction timeout,
+    // whereas unrelated book work cannot affect this (parent, name) race.
     await acquireNamedXactLock(tx, accountNameLockKey(book.root_account_guid, imbalanceName));
 
     const existing = await tx.accounts.findFirst({

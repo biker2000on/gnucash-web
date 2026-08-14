@@ -7,7 +7,6 @@ const FOREIGN_IMBALANCE = 'f'.repeat(32);
 
 const mocks = vi.hoisted(() => ({
   prisma: {} as Record<string, unknown>,
-  acquireBookLock: vi.fn(),
   acquireNamedXactLock: vi.fn(),
   accountNameLockKey: vi.fn((parent: string, name: string) => `account:${parent}:${name}`),
   guid: 0,
@@ -19,7 +18,6 @@ vi.mock('@/lib/prisma', () => ({
 }));
 
 vi.mock('@/lib/book-lock', () => ({
-  acquireBookLock: mocks.acquireBookLock,
   acquireNamedXactLock: mocks.acquireNamedXactLock,
   accountNameLockKey: mocks.accountNameLockKey,
 }));
@@ -47,7 +45,6 @@ function installFake(rows: Account[]) {
   let namedLockHeld = false;
   const namedLockWaiters: Array<() => void> = [];
 
-  mocks.acquireBookLock.mockResolvedValue(undefined);
   mocks.acquireNamedXactLock.mockImplementation(async (tx: { releaseNamedLock?: () => void }) => {
     if (namedLockHeld) await new Promise<void>(resolve => namedLockWaiters.push(resolve));
     namedLockHeld = true;
@@ -124,7 +121,7 @@ describe('SimpleFin Imbalance account book scope and creation race', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ name: 'Imbalance-USD', parent_guid: ROOT });
     expect(accounts.create).toHaveBeenCalledTimes(1);
-    expect(mocks.acquireBookLock).toHaveBeenCalledTimes(2);
     expect(mocks.acquireNamedXactLock).toHaveBeenCalledTimes(2);
+    expect(mocks.accountNameLockKey).toHaveBeenCalledWith(ROOT, 'Imbalance-USD');
   });
 });
