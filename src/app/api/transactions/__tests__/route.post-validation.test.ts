@@ -36,6 +36,7 @@ vi.mock('@/lib/services/audit.service', () => ({
 }));
 vi.mock('@/lib/trading-accounts', () => ({ processMultiCurrencySplits: vi.fn() }));
 vi.mock('@/lib/book-scope', () => ({
+    getAccountGuidsForBook: vi.fn(),
     getBookAccountGuids: vi.fn(),
     getActiveBookGuid: vi.fn(),
 }));

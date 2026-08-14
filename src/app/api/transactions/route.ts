@@ -7,7 +7,7 @@ import { isValidGuid } from '@/lib/guid';
 import { Prisma } from '@prisma/client';
 import { logAudit, snapshotTransactionByGuid } from '@/lib/services/audit.service';
 import { processMultiCurrencySplits } from '@/lib/trading-accounts';
-import { getBookAccountGuids, getActiveBookGuid } from '@/lib/book-scope';
+import { getAccountGuidsForBook, getBookAccountGuids, getActiveBookGuid } from '@/lib/book-scope';
 import { cacheInvalidateFrom } from '@/lib/cache';
 import { publishDataChange } from '@/lib/data-events';
 import { requireRole } from '@/lib/auth';
@@ -486,21 +486,16 @@ export async function POST(request: Request) {
         const lockError = await withPeriodLockCheck(roleResult.bookGuid, [body.post_date]);
         if (lockError) return lockError;
 
-        // Verify all account GUIDs exist (deduplicate since multiple splits can reference the same account)
+        // A split may only post to an account in the session-derived book.
+        // Do not turn a foreign guid into an existence oracle: a missing and a
+        // foreign account both produce this same 404, before any write starts.
         const uniqueAccountGuids = [...new Set(body.splits.map(s => s.account_guid))];
-        const accounts = await prisma.accounts.findMany({
-            where: {
-                guid: { in: uniqueAccountGuids },
-            },
-            select: { guid: true },
-        });
-
-        if (accounts.length !== uniqueAccountGuids.length) {
-            const foundGuids = new Set(accounts.map(a => a.guid));
-            const missingGuids = uniqueAccountGuids.filter(g => !foundGuids.has(g));
-            return NextResponse.json({
-                errors: [{ field: 'splits', message: `Invalid account GUIDs: ${missingGuids.join(', ')}` }]
-            }, { status: 400 });
+        const bookAccountGuids = new Set(await getAccountGuidsForBook(roleResult.bookGuid));
+        if (bookAccountGuids.size === 0 || uniqueAccountGuids.some(guid => !bookAccountGuids.has(guid))) {
+            return NextResponse.json(
+                { error: 'One or more accounts not found in this book' },
+                { status: 404 },
+            );
         }
 
         // Use client-provided GUID or generate one (validate format if provided)

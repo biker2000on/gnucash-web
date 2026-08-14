@@ -5,7 +5,7 @@ import { CreateTransactionRequest } from '@/lib/types';
 import { validateTransaction, summarizeValidationErrors } from '@/lib/validation';
 import { logAudit, snapshotTransactionByGuid } from '@/lib/services/audit.service';
 import { processMultiCurrencySplits } from '@/lib/trading-accounts';
-import { getBookAccountGuids, getActiveBookGuid } from '@/lib/book-scope';
+import { getAccountGuidsForBook, getBookAccountGuids, getActiveBookGuid } from '@/lib/book-scope';
 import { cacheInvalidateFrom } from '@/lib/cache';
 import { publishDataChange } from '@/lib/data-events';
 import { requireRole } from '@/lib/auth';
@@ -213,21 +213,16 @@ export async function PUT(
             }, { status: 400 });
         }
 
-        // Verify all account GUIDs exist (deduplicate since multiple splits can reference the same account)
+        // A split may only post to an account in the session-derived book.
+        // Missing and foreign accounts deliberately share one 404 response so
+        // this write endpoint cannot be used as a cross-book guid oracle.
         const uniqueAccountGuids = [...new Set(body.splits.map(s => s.account_guid))];
-        const accounts = await prisma.accounts.findMany({
-            where: {
-                guid: { in: uniqueAccountGuids },
-            },
-            select: { guid: true },
-        });
-
-        if (accounts.length !== uniqueAccountGuids.length) {
-            const foundGuids = new Set(accounts.map(a => a.guid));
-            const missingGuids = uniqueAccountGuids.filter(g => !foundGuids.has(g));
-            return NextResponse.json({
-                errors: [{ field: 'splits', message: `Invalid account GUIDs: ${missingGuids.join(', ')}` }]
-            }, { status: 400 });
+        const bookAccountGuids = new Set(await getAccountGuidsForBook(roleResult.bookGuid));
+        if (bookAccountGuids.size === 0 || uniqueAccountGuids.some(accountGuid => !bookAccountGuids.has(accountGuid))) {
+            return NextResponse.json(
+                { error: 'One or more accounts not found in this book' },
+                { status: 404 },
+            );
         }
 
         // Validate client-provided split GUIDs
@@ -249,9 +244,19 @@ export async function PUT(
             const lockedRows = await tx.$queryRaw<
                 { guid: string; enter_date: Date | null; post_date: Date | null }[]
             >`
-                SELECT guid, enter_date, post_date
-                FROM transactions
-                WHERE guid = ${guid}
+                SELECT t.guid, t.enter_date, t.post_date
+                FROM transactions t
+                WHERE t.guid = ${guid}
+                  AND EXISTS (
+                      SELECT 1 FROM splits s
+                      WHERE s.tx_guid = t.guid
+                        AND s.account_guid = ANY(${[...bookAccountGuids]}::text[])
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1 FROM splits s
+                      WHERE s.tx_guid = t.guid
+                        AND NOT (s.account_guid = ANY(${[...bookAccountGuids]}::text[]))
+                  )
                 FOR UPDATE
             `;
             if (lockedRows.length === 0) {
@@ -508,6 +513,14 @@ export async function DELETE(
             }, { status: 400 });
         }
 
+        // The path guid is client supplied too. Fail closed when the session
+        // book has no accounts, and use the same transaction-not-found result
+        // for a foreign transaction so DELETE cannot disclose or mutate it.
+        const bookAccountGuids = new Set(await getAccountGuidsForBook(roleResult.bookGuid));
+        if (bookAccountGuids.size === 0) {
+            throw new TransactionNotFoundError();
+        }
+
         // Everything — row lock + version check, period-lock check, snapshot,
         // extension-meta cleanup, and the deletes — runs in one transaction so
         // a failed delete cannot leave the SimpleFin dedup meta destroyed.
@@ -515,9 +528,19 @@ export async function DELETE(
             const lockedRows = await tx.$queryRaw<
                 { guid: string; enter_date: Date | null; post_date: Date | null; description: string | null }[]
             >`
-                SELECT guid, enter_date, post_date, description
-                FROM transactions
-                WHERE guid = ${guid}
+                SELECT t.guid, t.enter_date, t.post_date, t.description
+                FROM transactions t
+                WHERE t.guid = ${guid}
+                  AND EXISTS (
+                      SELECT 1 FROM splits s
+                      WHERE s.tx_guid = t.guid
+                        AND s.account_guid = ANY(${[...bookAccountGuids]}::text[])
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1 FROM splits s
+                      WHERE s.tx_guid = t.guid
+                        AND NOT (s.account_guid = ANY(${[...bookAccountGuids]}::text[]))
+                  )
                 FOR UPDATE
             `;
             if (lockedRows.length === 0) {

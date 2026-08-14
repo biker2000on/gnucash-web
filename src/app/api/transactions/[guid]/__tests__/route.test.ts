@@ -12,6 +12,7 @@ const {
     logAuditMock,
     snapshotTransactionByGuidMock,
     processMultiCurrencySplitsMock,
+    getAccountGuidsForBookMock,
     getBookAccountGuidsMock,
     getActiveBookGuidMock,
     cacheInvalidateFromMock,
@@ -43,6 +44,7 @@ const {
         logAuditMock: vi.fn(),
         snapshotTransactionByGuidMock: vi.fn(),
         processMultiCurrencySplitsMock: vi.fn(),
+        getAccountGuidsForBookMock: vi.fn(),
         getBookAccountGuidsMock: vi.fn(),
         getActiveBookGuidMock: vi.fn(),
         cacheInvalidateFromMock: vi.fn(),
@@ -65,6 +67,7 @@ vi.mock('@/lib/trading-accounts', () => ({
     processMultiCurrencySplits: processMultiCurrencySplitsMock,
 }));
 vi.mock('@/lib/book-scope', () => ({
+    getAccountGuidsForBook: getAccountGuidsForBookMock,
     getBookAccountGuids: getBookAccountGuidsMock,
     getActiveBookGuid: getActiveBookGuidMock,
 }));
@@ -88,6 +91,7 @@ import { PUT, DELETE } from '../route';
 const TX_GUID = 't'.repeat(32);
 const ACCOUNT_A = 'a'.repeat(32);
 const ACCOUNT_B = 'b'.repeat(32);
+const FOREIGN_ACCOUNT = 'e'.repeat(32);
 const BOOK_GUID = 'c'.repeat(32);
 const CURRENT_ENTER_DATE = new Date('2026-07-01T10:00:00.000Z');
 const POST_DATE = new Date('2026-07-15T12:00:00.000Z');
@@ -134,10 +138,14 @@ beforeEach(() => {
         bookGuid: BOOK_GUID,
     });
     validateTransactionMock.mockReturnValue({ valid: true, errors: [] });
-    prismaMock.accounts.findMany.mockResolvedValue([
-        { guid: ACCOUNT_A },
-        { guid: ACCOUNT_B },
-    ]);
+    const accountRows = [{ guid: ACCOUNT_A }, { guid: ACCOUNT_B }, { guid: FOREIGN_ACCOUNT }];
+    // Deliberately honour the production `where` clause. A constant array
+    // would let a scope assertion pass even if the route stopped scoping.
+    prismaMock.accounts.findMany.mockImplementation(async ({ where }: { where: { guid?: { in?: string[] } } }) => {
+        const wanted = where.guid?.in;
+        return wanted ? accountRows.filter(row => wanted.includes(row.guid)) : accountRows;
+    });
+    getAccountGuidsForBookMock.mockResolvedValue([ACCOUNT_A, ACCOUNT_B]);
     // Interactive transaction: run the callback against the same mock client.
     prismaMock.$transaction.mockImplementation(
         async (cb: (tx: unknown) => unknown) => cb(prismaMock),
@@ -288,6 +296,79 @@ describe('PUT /api/transactions/[guid] optimistic concurrency', () => {
     });
 });
 
+describe('PUT /api/transactions/[guid] book scope', () => {
+    it.each([
+        ['a foreign account', [FOREIGN_ACCOUNT, FOREIGN_ACCOUNT]],
+        ['a mixed in-book and foreign account request', [ACCOUNT_A, FOREIGN_ACCOUNT]],
+    ])('404s on %s before any mutation', async (_label, accountGuids) => {
+        const response = await PUT(putRequest({
+            ...validBody,
+            splits: validBody.splits.map((split, index) => ({
+                ...split,
+                account_guid: accountGuids[index],
+            })),
+            original_enter_date: CURRENT_ENTER_DATE.toISOString(),
+        }), routeParams);
+        const body = await response.json();
+
+        expect(response.status).toBe(404);
+        expect(body.error).toBe('One or more accounts not found in this book');
+        expect(body.error).not.toContain(FOREIGN_ACCOUNT);
+        expect(prismaMock.$transaction).not.toHaveBeenCalled();
+        expect(prismaMock.transactions.update).not.toHaveBeenCalled();
+        expect(prismaMock.splits.deleteMany).not.toHaveBeenCalled();
+        expect(prismaMock.splits.create).not.toHaveBeenCalled();
+    });
+
+    it('deduplicates repeated in-book account guids before validating scope', async () => {
+        const response = await PUT(putRequest({
+            ...validBody,
+            splits: validBody.splits.map(split => ({ ...split, account_guid: ACCOUNT_A })),
+            original_enter_date: CURRENT_ENTER_DATE.toISOString(),
+        }), routeParams);
+
+        expect(response.status).toBe(200);
+        expect(getAccountGuidsForBookMock).toHaveBeenCalledWith(BOOK_GUID);
+        expect(prismaMock.transactions.update).toHaveBeenCalledTimes(1);
+    });
+
+    it('fails closed when the caller book has no accounts', async () => {
+        getAccountGuidsForBookMock.mockResolvedValue([]);
+
+        const response = await PUT(putRequest({
+            ...validBody,
+            original_enter_date: CURRENT_ENTER_DATE.toISOString(),
+        }), routeParams);
+
+        expect(response.status).toBe(404);
+        expect(prismaMock.$transaction).not.toHaveBeenCalled();
+        expect(prismaMock.transactions.update).not.toHaveBeenCalled();
+    });
+
+    it('does not lock or mutate a foreign transaction addressed by the path guid', async () => {
+        // This fake honours the lock query's book predicate. If the predicate
+        // is reverted, the same mutable foreign row is returned and the route
+        // proceeds to its transaction/split writes.
+        prismaMock.$queryRaw.mockImplementation(async (query: TemplateStringsArray | { strings?: TemplateStringsArray }) => {
+            const sql = Array.isArray(query) ? query.join('?') : query.strings?.join('?') ?? '';
+            return sql.includes('account_guid = ANY') ? [] : [{
+                guid: TX_GUID,
+                enter_date: CURRENT_ENTER_DATE,
+                post_date: POST_DATE,
+            }];
+        });
+
+        const response = await PUT(putRequest({
+            ...validBody,
+            original_enter_date: CURRENT_ENTER_DATE.toISOString(),
+        }), routeParams);
+
+        expect(response.status).toBe(404);
+        expect(prismaMock.transactions.update).not.toHaveBeenCalled();
+        expect(prismaMock.splits.deleteMany).not.toHaveBeenCalled();
+    });
+});
+
 /**
  * A live split row as the route reads it inside the DB transaction (PUT reads
  * with an account include; DELETE selects the same fields).
@@ -391,6 +472,29 @@ describe('DELETE /api/transactions/[guid] reconciled-split guard', () => {
 
         expect(response.status).toBe(200);
         expect(prismaMock.transactions.delete).toHaveBeenCalled();
+    });
+});
+
+describe('DELETE /api/transactions/[guid] book scope', () => {
+    it('does not delete a foreign transaction addressed by the path guid', async () => {
+        prismaMock.$queryRaw.mockImplementation(async (query: TemplateStringsArray | { strings?: TemplateStringsArray }) => {
+            const sql = Array.isArray(query) ? query.join('?') : query.strings?.join('?') ?? '';
+            return sql.includes('account_guid = ANY') ? [] : [{
+                guid: TX_GUID,
+                enter_date: CURRENT_ENTER_DATE,
+                post_date: POST_DATE,
+                description: 'Foreign transaction',
+            }];
+        });
+
+        const response = await DELETE(
+            deleteRequest(`?original_enter_date=${encodeURIComponent(CURRENT_ENTER_DATE.toISOString())}`),
+            routeParams,
+        );
+
+        expect(response.status).toBe(404);
+        expect(prismaMock.transactions.delete).not.toHaveBeenCalled();
+        expect(prismaMock.splits.deleteMany).not.toHaveBeenCalled();
     });
 });
 
