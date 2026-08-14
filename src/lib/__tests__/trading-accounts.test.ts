@@ -239,6 +239,14 @@ describe('processMultiCurrencySplits book scope', () => {
     expect(tradingSplits).toHaveLength(2);
     expect(tradingSplits.map(split => split.account_guid)).not.toContain(foreignTradingLeaf);
     expect(tradingSplits.every(split => localScope.has(split.account_guid))).toBe(true);
+
+    const localTradingRoot = accounts.find(account =>
+      account.name === 'Trading' && account.parent_guid === 'root-book-b',
+    );
+    expect(localTradingRoot).toBeDefined();
+    expect(accounts.find(account =>
+      account.name === 'CURRENCY' && account.parent_guid === localTradingRoot?.guid,
+    )).toBeDefined();
   });
 });
 
