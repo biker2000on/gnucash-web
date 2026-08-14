@@ -3181,11 +3181,29 @@ editor), and `CreateBookWizard`/`NewBookWizard` are *not* duplicate wizards
 
 ## P3 — CI and developer onboarding
 
-- [ ] **CI never runs typecheck.** `.github/workflows/deploy.yml` runs
-  `docs:check`, `test:run`, `lint` — no `tsc --noEmit`, and no `typecheck`
-  script exists (re-verified 2026-08-13). The repo currently passes clean, so
-  this is free regression insurance being left unclaimed.
-- [ ] **Document the Prisma prerequisite.** A fresh clone cannot typecheck until
-  `npx prisma generate` runs — it produces ~1,268 phantom errors otherwise,
-  which is exactly what caused a false "1,268 TypeScript errors" finding during
-  this review. Worth a line in the README.
+- [x] **CI never runs typecheck.** DONE 2026-08-14. `typecheck` and
+  `pretypecheck` (`prisma generate`) scripts added; the gate runs in the
+  `quality` job ahead of `docs:check`, and `build-and-push` has `needs:
+  quality`, so a type error blocks the image push and the production deploy.
+- [x] **Document the Prisma prerequisite.** DONE 2026-08-14. `npx prisma
+  generate` is in the README setup block, and `pretypecheck` re-runs it on
+  every `npm run typecheck` so a developer who pulls a schema change cannot
+  reproduce the phantom-error confusion locally.
+
+**Still open in this area:**
+
+- [ ] **CI has no `pull_request` trigger.** `.github/workflows/deploy.yml`
+  fires on `push: branches: [main]` only, so nothing gates a change *before*
+  it reaches `main`. Highest-value CI gap remaining.
+- [ ] **`npm run build` is not in the `quality` job.** A Next.js build failure
+  (including generated route types that `tsc --noEmit` does not see) surfaces
+  only later, in the Docker build, after quality has already reported green.
+- [ ] **The Playwright E2E suite runs nowhere.** `playwright.config.ts` and
+  `tests/e2e/` exist; there is no CI step and no `test:e2e` script.
+- [ ] **No real-Postgres test harness.** `TEST_DATABASE_URL` appears in five
+  test files, in every case inside a comment disclaiming its absence. No
+  testcontainers, no postgres service in compose or CI. Lock-ordering and
+  `SELECT ... FOR UPDATE` guarantees are therefore asserted only by mocks,
+  which cannot observe interleaving.
+- [ ] **`test:coverage` exists but CI never invokes it**, so there is no
+  coverage threshold.

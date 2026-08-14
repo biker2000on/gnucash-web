@@ -1,10 +1,29 @@
 # GnuCash Web Implementation Plan
 
-This document outlines the roadmap for expanding gnucash-web from a read-only viewer to a full-featured financial web application, focusing on transaction journals, account hierarchy, budgeting, and reporting.
+This document originally outlined the roadmap for expanding gnucash-web from a read-only viewer into a full-featured financial web application. **That expansion is complete** — the app is a read/write accounting system, and the "Current State" description below was years out of date until 2026-08-14. It is kept for historical context; treat `TODOS.md` and `CHANGELOG.md` as the current record.
 
-## Current State
+## Current State (revised 2026-08-14)
 
-The application currently provides:
+The application is a full read/write accounting system on a GnuCash PostgreSQL
+schema. Beyond browsing, it now provides:
+
+- Transaction create, edit, delete, bulk move and bulk reconcile, with
+  reconciled/frozen splits protected on every write path
+- Statement reconciliation gated on an exact zero difference, with GnuCash-style
+  Imbalance adjusting entries
+- Investment lots: assignment (FIFO/LIFO/average), a scrub engine, cost-basis
+  tracing across account transfers, wash-sale detection and Form 8949 output
+- Business: invoices, bills, payments, inventory with COGS posting, A/R and A/P
+  aging, dunning, and Schedule F reporting
+- Tax: federal estimator, estimated-payment tracking, TXF export, filing
+  comparison, and farm/entity analysis
+- Scheduled transactions with a recurrence engine, plus a background worker
+- Document vault with OCR, entity extraction and full-text search
+- Multi-book support with per-book role scoping, OIDC/TOTP authentication
+- Full-fidelity GnuCash XML import and export
+
+### Historical starting point (2026, pre-expansion)
+
 - Read-only account hierarchy browsing with expandable tree
 - Account ledger view with running balances and infinite scroll
 - General ledger (all transactions) with search
