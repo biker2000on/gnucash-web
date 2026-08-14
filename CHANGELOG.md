@@ -8,6 +8,38 @@ Covers work landed since 0.23.2.0 (2026-07-29).
 
 ### ⚠️ Behavior changes you should read before upgrading
 
+- **Unposting an invoice or bill now records a reversing transaction instead of
+  deleting the original posting.** The ledger keeps both entries — the original
+  and its reversal, which cancel out — and the invoice returns to draft. The
+  reversal is dated today (never earlier than the posting it reverses), so a
+  closed prior period keeps the figures it was reported with. Previously the
+  posting transaction and its splits were deleted outright, which silently
+  rewrote prior-period financials and left no audit trail. A posting that no
+  longer balances, has lost its receivable line, or has vanished is now refused
+  with an explanatory error rather than being quietly discarded.
+- **Accounts receivable and payable aging now uses each posted invoice's stored
+  due date.** Previously aging was recomputed from the invoice date plus the
+  vendor's *current* payment terms, so editing terms retroactively moved
+  historical invoices between buckets and any explicit due-date override was
+  ignored. Existing items may move between aging buckets, and the accounts
+  payable "due within 7 / 30 days" totals may change. Invoices posted before
+  their due date was recorded show a **†** marker with an explanation, because
+  their due date is inferred from the posting date. **Payment reminder emails
+  are never sent for an invoice with an inferred due date** — an inferred date
+  can be up to a full terms period too early, and the reminder schedule only
+  ever sends its highest crossed level, so a first contact could otherwise have
+  been a final notice. Those invoices still appear in aging; they simply are
+  not dunned. Backfilling due dates on historical postings is planned.
+- **Reconciliation can no longer be completed while out of balance.** Finishing
+  requires the difference to be exactly zero in the account's own commodity
+  units — previously the difference was calculated and then ignored, so an
+  account could be marked reconciled while it did not agree with the statement,
+  and the statement balance you typed was discarded rather than recorded. When
+  a statement genuinely cannot be tied out, you can now create an adjusting
+  entry to an Imbalance account, the way GnuCash desktop does, so the next
+  reconciliation starts from a balanced position. Share and other non-currency
+  accounts are gated the same way but do **not** get the automatic adjustment;
+  those must be entered manually.
 - **Reverting a lot assignment on a reconciled or frozen split now fails safely
   when the assignment was made before this release.** Those sub-splits carry no
   revert-provenance marker, so the system cannot prove the reversal is
@@ -76,6 +108,31 @@ Covers work landed since 0.23.2.0 (2026-07-29).
 
 ### Fixed
 
+- **Ledger search and filters no longer hide matching transactions.** The
+  amount and reconciliation-state filters were applied *after* a page of
+  results had already been fetched, so searching for a $500 transaction simply
+  did not find it if it fell outside the first unfiltered page, filtered pages
+  came back short, and paging walked the unfiltered set. Filtering now happens
+  in the database in the same query that pages, so a filtered page is full
+  whenever more matches exist and paging walks the matches. Amounts are
+  compared exactly rather than in floating point, and a transaction is matched
+  by its largest line, so "at most $100" no longer returns a $3,000 paycheque
+  because it happened to contain a $12 fee line. Malformed filter values
+  (`?minAmount=abc`, a blank list entry, a bad page size or date) are now
+  rejected with a clear error instead of being silently ignored — previously
+  ignoring them returned the *entire* ledger.
+- **Failed inbound email is no longer discarded silently.** A message that
+  could not be processed was marked as read and recorded as retryable at the
+  same time, so it could never be listed again and never retried — an inbound
+  receipt or transaction simply vanished with no signal anywhere. Failures are
+  now classified: transient problems (network, rate limits, storage) are
+  retried a bounded number of times with backoff, while genuinely unprocessable
+  messages stop immediately. Either way the failure and its reason appear in a
+  "Needs attention" panel in settings and raise a notification, with an exact
+  count when the list is truncated. Claims that stall are reported rather than
+  rewritten, so a slow but healthy import is never marked failed underneath
+  itself. Re-sending the email remains the way to re-ingest it; per-message
+  manual retry is planned.
 - **Reconciled-split protection (C2).** The guard existed but had zero
   production callers, so every live write path bypassed it. It is now enforced
   in 11 write paths, inside the writing transaction, after parent transactions
@@ -132,6 +189,17 @@ Covers work landed since 0.23.2.0 (2026-07-29).
 
 ### Security
 
+- **Bank sync can no longer resolve or create accounts outside the book it is
+  syncing.** Account lookups on the SimpleFin path — including the mapped
+  account, categorisation-rule targets, historical counterparts, investment
+  sub-accounts, and the Imbalance account — were not constrained to the book,
+  and a fallback could select *any* root account. On a multi-book install that
+  allowed a sync to post into a different book's ledger. Every lookup and
+  creation is now scoped to the book being synced, the unscoped fallback is
+  removed, and concurrent syncs can no longer create duplicate Imbalance
+  accounts. A connection whose mapped accounts all point outside its book now
+  reports a **failure** with the reason, where it previously reported success
+  having imported nothing.
 - **Security headers are now sent on every response** — `X-Frame-Options:
   SAMEORIGIN`, `X-Content-Type-Options: nosniff`, a strict referrer policy, a
   restrictive Permissions-Policy, and HSTS. HSTS ships at a deliberately short
