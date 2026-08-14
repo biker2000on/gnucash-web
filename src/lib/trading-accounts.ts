@@ -166,11 +166,10 @@ export async function getOrCreateTradingAccount(
     const locked = await acquireNamedXactLock(db, accountNameLockKey(rootAccount.guid, 'Trading'));
     if (locked) {
       tradingRoot = await db.accounts.findFirst({
-        where: {
-          name: 'Trading',
-          account_type: 'TRADING',
-          guid: { in: scopedGuids },
-        },
+        // Do not use the caller's cached account list here: this re-check
+        // specifically has to see a Trading root created after that list was
+        // populated by a prior save. rootAccount is already in scope.
+        where: { name: 'Trading', account_type: 'TRADING', parent_guid: rootAccount.guid },
         orderBy: { guid: 'asc' },
       });
     }

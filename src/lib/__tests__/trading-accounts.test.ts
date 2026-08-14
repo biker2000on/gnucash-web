@@ -162,6 +162,42 @@ describe('getOrCreateTradingAccount', () => {
     const groupNames = namespaceGroups.map(g => g.name).sort();
     expect(groupNames).toEqual(['CURRENCY', 'NYSE']);
   });
+
+  it('does not create another Trading root across sequential multi-currency saves with stale scopes', async () => {
+    const accounts = setupStatefulMock([
+      { guid: 'root-guid', name: 'Root Account', account_type: 'ROOT' },
+      {
+        guid: 'usd-account', name: 'Cash', parent_guid: 'root-guid', commodity_guid: 'usd',
+        commodity: { mnemonic: 'USD', namespace: 'CURRENCY', fraction: 100 },
+      },
+      {
+        guid: 'eur-account', name: 'Euro', parent_guid: 'root-guid', commodity_guid: 'eur',
+        commodity: { mnemonic: 'EUR', namespace: 'CURRENCY', fraction: 100 },
+      },
+    ]);
+    // A real transaction client takes the advisory lock, so the parent-keyed
+    // re-check runs. Each save gets a fresh Set copied from the same stale
+    // cached array, neither of which contains the first created Trading tree.
+    const tx = {
+      accounts: {
+        findFirst: mockAccountsFindFirst,
+        findMany: mockAccountsFindMany,
+        create: mockAccountsCreate,
+      },
+      commodities: { findFirst: mockCommoditiesFindFirst },
+      $queryRaw: vi.fn().mockResolvedValue([]),
+    };
+
+    const save = (staleScope: Set<string>) => processMultiCurrencySplits([
+      { account_guid: 'usd-account', value_num: -10000, value_denom: 100 },
+      { account_guid: 'eur-account', value_num: 10000, value_denom: 100, quantity_num: 8500, quantity_denom: 100 },
+    ], tx as never, staleScope);
+
+    await save(new Set(['root-guid', 'usd-account', 'eur-account']));
+    await save(new Set(['root-guid', 'usd-account', 'eur-account']));
+
+    expect(accounts.filter(account => account.name === 'Trading' && account.parent_guid === 'root-guid')).toHaveLength(1);
+  });
 });
 
 describe('processMultiCurrencySplits book scope', () => {

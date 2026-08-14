@@ -103,6 +103,14 @@ export interface PostEquityCompResult {
     costBasis: number;
 }
 
+/** A helper appended a split outside the caller's already-validated book. */
+export class OutOfBookGeneratedSplitError extends Error {
+    constructor() {
+        super('A generated split is outside the active book');
+        this.name = 'OutOfBookGeneratedSplitError';
+    }
+}
+
 interface AccountWithCommodity {
     guid: string;
     name: string;
@@ -198,6 +206,12 @@ async function writeTransaction(
     // are generated, matching how this book's other investment transactions
     // are recorded.
     const { allSplits } = await processMultiCurrencySplits(rawSplits, tx, bookAccountGuids);
+    // Keep the posting boundary authoritative. Trading is safe by
+    // construction, but this catches a regression in it or any future helper
+    // that appends a split before a transaction is created.
+    if (allSplits.some(split => !bookAccountGuids.has(split.account_guid))) {
+        throw new OutOfBookGeneratedSplitError();
+    }
 
     const txGuid = generateGuid();
     await tx.transactions.create({

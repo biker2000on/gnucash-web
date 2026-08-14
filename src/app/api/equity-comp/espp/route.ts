@@ -11,6 +11,7 @@ import {
     postEsppPurchase,
     validateEsppInput,
     EquityCompValidationError,
+    OutOfBookGeneratedSplitError,
     type PostEsppInput,
 } from '@/lib/equity-comp';
 
@@ -108,6 +109,12 @@ export async function POST(request: Request) {
 
         return NextResponse.json(result, { status: 201 });
     } catch (error) {
+        if (error instanceof OutOfBookGeneratedSplitError) {
+            return NextResponse.json(
+                { error: 'One or more accounts not found in this book' },
+                { status: 404 },
+            );
+        }
         if (error instanceof EquityCompValidationError) {
             return NextResponse.json({ errors: error.errors }, { status: 400 });
         }
