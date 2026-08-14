@@ -22,14 +22,8 @@ import { qtyEpsilonForScu } from './lot-scrub';
 import {
     calculateGainLoss,
     calculateGainLossPercent,
-    combineCoverage,
-    sameCoverageStatement,
-    totalHoldings,
     type CostBasisCoverage,
-    type GainInput,
     type HoldingsData,
-    type HoldingsTotals,
-    type HoldingTotalsInput,
     type PriceData,
 } from './holdings-coverage';
 
@@ -39,12 +33,15 @@ export {
     combineCoverage,
     sameCoverageStatement,
     totalHoldings,
-    type CostBasisCoverage,
-    type GainInput,
-    type HoldingsData,
-    type HoldingsTotals,
-    type HoldingTotalsInput,
-    type PriceData,
+} from './holdings-coverage';
+
+export type {
+    CostBasisCoverage,
+    GainInput,
+    HoldingsData,
+    HoldingsTotals,
+    HoldingTotalsInput,
+    PriceData,
 } from './holdings-coverage';
 
 export const UNTRACED_BASIS_COVERAGE: CostBasisCoverage = {
