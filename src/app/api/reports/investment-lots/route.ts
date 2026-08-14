@@ -35,6 +35,14 @@ interface LotReportRow {
 
 interface InvestmentLotsReportData {
     rows: LotReportRow[];
+    /**
+     * Charges on a trade transaction that were deliberately NOT folded into
+     * basis or proceeds because they could not be classified as a commission
+     * (see @/lib/trade-fees). A silent refusal would leave this report short by
+     * the fee with nothing on screen to say so, so it is reported — the same
+     * notices the Form 8949 report shows for the same book.
+     */
+    warnings: string[];
     summary: {
         totalCostBasis: number;
         totalMarketValue: number | null;
@@ -107,7 +115,20 @@ export async function GET(request: NextRequest) {
         // Every shares/basis/realized/holding-period figure below comes from
         // this one canonical engine, which is the only place that knows about
         // carried basis, transferred acquisition dates and gains-offset splits.
-        const lotsByAccount = await getLotsForAccounts(investmentAccounts.map(a => a.guid));
+        //
+        // includeTradeFees makes basis and proceeds NET of brokerage
+        // commissions, the same treatment Form 8949 applies (@/lib/trade-fees:
+        // a classified trade fee is always capitalized, never deducted). It is
+        // what keeps this report and the capital-gains report from reporting
+        // two different gains for one sale. The account-path map is the one
+        // already built above — fee classification reads the full path, and the
+        // 8949 path classifies against the same map over the same book scope.
+        const feeWarnings: string[] = [];
+        const lotsByAccount = await getLotsForAccounts(investmentAccounts.map(a => a.guid), {
+            includeTradeFees: true,
+            accountPaths: accountPathMap,
+            feeWarnings,
+        });
         const now = new Date();
         const nowIso = now.toISOString();
         const rows: LotReportRow[] = [];
@@ -232,6 +253,7 @@ export async function GET(request: NextRequest) {
 
         const reportData: InvestmentLotsReportData = {
             rows,
+            warnings: feeWarnings,
             summary,
             generatedAt: new Date().toISOString(),
         };
