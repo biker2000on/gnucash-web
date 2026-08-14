@@ -138,6 +138,41 @@ export function CostBasisCoverageMark({
 }
 
 /**
+ * An always-visible, table-level statement of coverage.
+ *
+ * For a table whose rows all say the same thing, this is what replaces N
+ * repeated markers — NOT a tooltip on the column header. A reader who has
+ * scrolled the header off screen, or who never hovers anything, must still see
+ * that the numbers in front of them carry a caveat; DESIGN.md's put-it-in-the-
+ * header rule is about repeated abbreviations, not about financial disclosures.
+ *
+ * Renders nothing under complete coverage.
+ */
+export function CoverageCaption({
+    coverage,
+    consequence,
+    scope = 'All rows',
+    className = '',
+}: {
+    coverage: CostBasisCoverage;
+    consequence: CoverageConsequence;
+    /** What the statement applies to, e.g. "All rows". */
+    scope?: string;
+    className?: string;
+}) {
+    const caveat = coverageCaveat(coverage, consequence);
+    if (!caveat) return null;
+
+    const tone = coverage.status === 'partial' ? 'text-warning' : 'text-foreground-muted';
+
+    return (
+        <p className={`text-xs ${tone} ${className}`}>
+            {scope} — {caveat}
+        </p>
+    );
+}
+
+/**
  * The slice label rendered under a gain figure. Always visible: a user who
  * never opens the tooltip must still not read a covered gain as the whole
  * position's.

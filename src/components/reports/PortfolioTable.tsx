@@ -5,10 +5,12 @@ import { useIsMobile } from '@/lib/hooks/useIsMobile';
 import { MobileCard } from '@/components/ui/MobileCard';
 import {
     CostBasisCoverageMark,
+    CoverageCaption,
     CoveredSliceNote,
     gainHeading,
     BASIS_CONSEQUENCE,
 } from '@/components/investments/CostBasisCoverageMark';
+import { sameCoverageStatement } from '@/lib/commodities';
 
 function fmtCurrency(n: number): string {
     return new Intl.NumberFormat('en-US', {
@@ -47,18 +49,41 @@ export function PortfolioTable({ data, onAccountClick }: PortfolioTableProps) {
     const isMobile = useIsMobile();
 
     // This report sums split values with no transfer tracing, so every row's
-    // basis is equally unverified. The statement therefore belongs in the
-    // column headers once — DESIGN.md's rule for a hint that repeats down a
-    // column — with a per-row marker only where a row disagrees with its
-    // column, so a mixed report could not hide behind the header.
+    // basis is equally unverified. One always-visible caption states that for
+    // the whole table instead of repeating a marker down N rows — a caption,
+    // not a header tooltip: a reader scrolled past the header, or one who never
+    // hovers, must still see the caveat next to the numbers.
+    //
+    // A row states its own whenever its coverage says something DIFFERENT from
+    // the caption. Compared by meaning, not by status: two partial rows reading
+    // "150 of 200" and "10 of 900" share a tag and describe different
+    // positions, so a caption written from the aggregate speaks for neither.
     const columnCoverage = totals.costBasisCoverage;
-    const disagreesWithColumn = (h: PortfolioHolding) =>
-        h.costBasisCoverage.status !== columnCoverage.status;
-    const columnMark = (
+    const statesItsOwn = (h: PortfolioHolding) =>
+        !sameCoverageStatement(h.costBasisCoverage, columnCoverage);
+    const everyRowMatchesCaption = holdings.every(h => !statesItsOwn(h));
+    const totalsMark = (
         <CostBasisCoverageMark coverage={columnCoverage} consequence={BASIS_CONSEQUENCE} />
+    );
+    const caption = holdings.length > 0 && (
+        everyRowMatchesCaption ? (
+            <CoverageCaption
+                coverage={columnCoverage}
+                consequence={BASIS_CONSEQUENCE}
+                scope="All rows"
+                className="mb-3 text-left"
+            />
+        ) : (
+            <p className="mb-3 text-left text-xs text-warning">
+                Rows whose cost basis does not cover their whole position are marked; their
+                gain and gain % cover those shares only.
+            </p>
+        )
     );
 
     if (isMobile) {
+        // No caption on this path: a mobile card is its own row and already
+        // states its coverage inline, so a caption would only repeat it.
         return (
             <div className="p-4">
                 {holdings.length === 0 ? (
@@ -143,7 +168,7 @@ export function PortfolioTable({ data, onAccountClick }: PortfolioTableProps) {
                                 <span className="text-foreground-muted uppercase text-xs">Cost Basis</span>
                                 <span className="font-mono font-bold">
                                     {fmtCurrency(totals.costBasis)}
-                                    {columnMark}
+                                    {totalsMark}
                                 </span>
                             </div>
                             <div className="flex items-start justify-between text-sm">
@@ -153,7 +178,7 @@ export function PortfolioTable({ data, onAccountClick }: PortfolioTableProps) {
                                 <span className="text-right">
                                     <span className={`font-mono font-bold ${gainColor(totals.gain)}`}>
                                         {fmtCurrency(totals.gain)}
-                                        {columnMark}
+                                        {totalsMark}
                                     </span>
                                     <CoveredSliceNote coverage={columnCoverage} />
                                 </span>
@@ -162,7 +187,7 @@ export function PortfolioTable({ data, onAccountClick }: PortfolioTableProps) {
                                 <span className="text-foreground-muted uppercase text-xs">Gain %</span>
                                 <span className={`font-mono font-bold ${gainColor(totals.gainPercent)}`}>
                                     {fmtPercent(totals.gainPercent)}
-                                    {columnMark}
+                                    {totalsMark}
                                 </span>
                             </div>
                         </div>
@@ -174,6 +199,7 @@ export function PortfolioTable({ data, onAccountClick }: PortfolioTableProps) {
 
     return (
         <div className="p-6">
+            {caption}
             <table className="w-full border-collapse">
                 <thead>
                     <tr className="border-b border-border">
@@ -184,13 +210,13 @@ export function PortfolioTable({ data, onAccountClick }: PortfolioTableProps) {
                         <th className="text-center py-2 px-3 text-sm font-semibold text-foreground-secondary">Price Date</th>
                         <th className="text-right py-2 px-3 text-sm font-semibold text-foreground-secondary">Market Value</th>
                         <th className="text-right py-2 px-3 text-sm font-semibold text-foreground-secondary">
-                            Cost Basis{columnMark}
+                            Cost Basis
                         </th>
                         <th className="text-right py-2 px-3 text-sm font-semibold text-foreground-secondary">
-                            {gainHeading(columnCoverage)}{columnMark}
+                            {gainHeading(columnCoverage)}
                         </th>
                         <th className="text-right py-2 px-3 text-sm font-semibold text-foreground-secondary">
-                            Gain %{columnMark}
+                            Gain %
                         </th>
                     </tr>
                 </thead>
@@ -224,7 +250,7 @@ export function PortfolioTable({ data, onAccountClick }: PortfolioTableProps) {
                             <td className="py-2 px-3 text-sm text-right font-mono text-foreground">{fmtCurrency(h.marketValue)}</td>
                             <td className="py-2 px-3 text-sm text-right font-mono text-foreground">
                                 {fmtCurrency(h.costBasis)}
-                                {disagreesWithColumn(h) && (
+                                {statesItsOwn(h) && (
                                     <CostBasisCoverageMark
                                         coverage={h.costBasisCoverage}
                                         consequence={BASIS_CONSEQUENCE}
@@ -233,7 +259,7 @@ export function PortfolioTable({ data, onAccountClick }: PortfolioTableProps) {
                             </td>
                             <td className={`py-2 px-3 text-sm text-right font-mono ${gainColor(h.gain)}`}>
                                 {fmtCurrency(h.gain)}
-                                {disagreesWithColumn(h) && (
+                                {statesItsOwn(h) && (
                                     <>
                                         <CostBasisCoverageMark
                                             coverage={h.costBasisCoverage}
@@ -245,7 +271,7 @@ export function PortfolioTable({ data, onAccountClick }: PortfolioTableProps) {
                             </td>
                             <td className={`py-2 px-3 text-sm text-right font-mono ${gainColor(h.gainPercent)}`}>
                                 {fmtPercent(h.gainPercent)}
-                                {disagreesWithColumn(h) && (
+                                {statesItsOwn(h) && (
                                     <CostBasisCoverageMark
                                         coverage={h.costBasisCoverage}
                                         consequence={BASIS_CONSEQUENCE}
@@ -266,16 +292,16 @@ export function PortfolioTable({ data, onAccountClick }: PortfolioTableProps) {
                             </td>
                             <td className="py-2 px-3 text-sm text-right font-mono font-bold text-foreground">
                                 {fmtCurrency(totals.costBasis)}
-                                {columnMark}
+                                {totalsMark}
                             </td>
                             <td className={`py-2 px-3 text-sm text-right font-mono font-bold ${gainColor(totals.gain)}`}>
                                 {fmtCurrency(totals.gain)}
-                                {columnMark}
+                                {totalsMark}
                                 <CoveredSliceNote coverage={columnCoverage} />
                             </td>
                             <td className={`py-2 px-3 text-sm text-right font-mono font-bold ${gainColor(totals.gainPercent)}`}>
                                 {fmtPercent(totals.gainPercent)}
-                                {columnMark}
+                                {totalsMark}
                             </td>
                         </tr>
                     </tfoot>

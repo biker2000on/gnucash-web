@@ -92,6 +92,28 @@ export function combineCoverage(parts: CostBasisCoverage[]): CostBasisCoverage {
 }
 
 /** The per-holding numbers a total is built from. */
+/**
+ * Do two coverages make the SAME statement?
+ *
+ * Not `a.status === b.status`: two partial coverages can both be "partial"
+ * while saying entirely different things — "150 of 200 shares" and "10 of 900
+ * shares" are not interchangeable, and a surface that discloses one aggregate
+ * statement on behalf of rows matched only on the discriminant tag silently
+ * misdescribes every row whose counts differ.
+ *
+ * `complete` carries nothing to state, so two completes always agree.
+ */
+export function sameCoverageStatement(a: CostBasisCoverage, b: CostBasisCoverage): boolean {
+    if (a.status !== b.status) return false;
+    if (a.status === 'partial' && b.status === 'partial') {
+        return a.coveredShares === b.coveredShares && a.uncoveredShares === b.uncoveredShares;
+    }
+    if (a.status === 'unknown' && b.status === 'unknown') {
+        return a.reason === b.reason;
+    }
+    return true; // complete + complete
+}
+
 export interface HoldingTotalsInput {
     costBasis: number;
     costBasisCoverage: CostBasisCoverage;

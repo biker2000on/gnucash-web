@@ -36,6 +36,7 @@ import {
   calculateGainLoss,
   calculateGainLossPercent,
   combineCoverage,
+  sameCoverageStatement,
   totalHoldings,
   UNTRACED_BASIS_COVERAGE,
 } from '../commodities';
@@ -341,5 +342,34 @@ describe('totalHoldings', () => {
             totalGainLoss: 0,
             totalGainLossPercent: 0,
         });
+    });
+});
+
+describe('sameCoverageStatement', () => {
+    const partial = (coveredShares: number, uncoveredShares: number) =>
+        ({ status: 'partial' as const, coveredShares, uncoveredShares, warnings: [] });
+
+    it('two partial coverages with different counts do NOT agree', () => {
+        // The discriminant tag is the same and the meaning is not: a surface
+        // that discloses one statement on behalf of both misdescribes both.
+        expect(sameCoverageStatement(partial(150, 50), partial(10, 890))).toBe(false);
+        expect(sameCoverageStatement(partial(150, 50), partial(150, 60))).toBe(false);
+        expect(sameCoverageStatement(partial(150, 50), partial(150, 50))).toBe(true);
+    });
+
+    it('unknown coverages agree only when they give the same reason', () => {
+        expect(sameCoverageStatement(UNTRACED_BASIS_COVERAGE, UNTRACED_BASIS_COVERAGE)).toBe(true);
+        expect(sameCoverageStatement(
+            UNTRACED_BASIS_COVERAGE,
+            { status: 'unknown', reason: 'The share balance and the pool disagree.' },
+        )).toBe(false);
+    });
+
+    it('complete coverages always agree — there is nothing to state', () => {
+        expect(sameCoverageStatement(
+            { status: 'complete', coveredShares: 200 },
+            { status: 'complete', coveredShares: 7 },
+        )).toBe(true);
+        expect(sameCoverageStatement({ status: 'complete', coveredShares: 200 }, partial(150, 50))).toBe(false);
     });
 });
