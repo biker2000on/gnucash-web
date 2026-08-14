@@ -22,6 +22,83 @@ import {
     periodLockedResponse,
 } from '@/lib/services/period-lock.service';
 
+/** Thrown for a malformed filter value; caught in GET and answered as a 400. */
+class BadFilterError extends Error {}
+
+const DECIMAL_RE = /^[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?$/;
+
+/**
+ * Every parser below shares one rule: a query param is ABSENT only when it is
+ * missing entirely or exactly empty. Anything else the user actually typed is
+ * either understood or rejected — never quietly treated as "no filter", because
+ * that turns a typo into a request for the whole ledger.
+ */
+const isAbsent = (raw: string | null): raw is null | '' => raw === null || raw === '';
+
+/**
+ * Parse a non-negative integer query param, falling back to `fallback` when the
+ * param is absent. LIMIT/OFFSET are real SQL clauses, and PostgreSQL rejects a
+ * negative or NaN bind there, so a malformed value is a 400 rather than a
+ * silent fallback to the default page.
+ */
+function nonNegativeIntParam(raw: string | null, fallback: number, name: string): number {
+    if (isAbsent(raw)) return fallback;
+    const trimmed = raw.trim();
+    if (!/^\d+$/.test(trimmed) || !Number.isSafeInteger(Number(trimmed))) {
+        throw new BadFilterError(`Invalid ${name}: "${raw}" is not a non-negative integer`);
+    }
+    return Number.parseInt(trimmed, 10);
+}
+
+/**
+ * Parse an amount-bound query param into a decimal STRING for a `::numeric`
+ * cast in SQL. Returned as text (not a JS number) so the bound reaches
+ * PostgreSQL as an exact decimal rather than a binary float.
+ *
+ * A present-but-unparseable bound is REJECTED, never dropped — including one
+ * that is only whitespace. Dropping it would turn a filter the user asked for
+ * into no filter at all, answering with the whole ledger instead of the nothing
+ * it used to return.
+ */
+function numericParam(raw: string | null, name: string): string | null {
+    if (isAbsent(raw)) return null;
+    const trimmed = raw.trim();
+    if (!DECIMAL_RE.test(trimmed)) {
+        throw new BadFilterError(`Invalid ${name}: "${raw}" is not a number`);
+    }
+    return trimmed;
+}
+
+/**
+ * Parse a date query param. An unparseable date used to reach the driver as an
+ * Invalid Date and fail the whole request with a 500; it is a 400 now.
+ */
+function dateParam(raw: string | null, name: string): Date | null {
+    if (isAbsent(raw)) return null;
+    const date = new Date(raw);
+    if (Number.isNaN(date.getTime())) {
+        throw new BadFilterError(`Invalid ${name}: "${raw}" is not a date`);
+    }
+    return date;
+}
+
+/**
+ * Split a comma-separated filter param into tokens, rejecting empty ones.
+ *
+ * An empty token is malformed input, and the one thing it must not do is widen
+ * the result: `accountTypes=,` used to match nothing (it searched for the
+ * account type ""), so silently dropping the blank tokens would leave no
+ * predicate at all and return every transaction in the book.
+ */
+function listParam(raw: string | null, name: string): string[] {
+    if (raw === null || raw === '') return [];
+    const tokens = raw.split(',').map(t => t.trim());
+    if (tokens.some(t => t === '')) {
+        throw new BadFilterError(`Invalid ${name}: "${raw}" contains an empty value`);
+    }
+    return tokens;
+}
+
 /**
  * @openapi
  * /api/transactions:
@@ -66,12 +143,17 @@ import {
  *         name: minAmount
  *         schema:
  *           type: number
- *         description: Minimum absolute transaction amount.
+ *         description: >
+ *           Minimum transaction amount, where a transaction's amount is the
+ *           largest absolute value among its splits (the transaction's amount
+ *           for an ordinary two-split transaction).
  *       - in: query
  *         name: maxAmount
  *         schema:
  *           type: number
- *         description: Maximum absolute transaction amount.
+ *         description: >
+ *           Maximum transaction amount, measured the same way as minAmount: a
+ *           transaction is excluded when ANY of its splits exceeds this bound.
  *       - in: query
  *         name: reconcileStates
  *         schema:
@@ -86,6 +168,15 @@ import {
  *               type: array
  *               items:
  *                 $ref: '#/components/schemas/Transaction'
+ *       400:
+ *         description: >
+ *           A query parameter is present but malformed — a non-numeric
+ *           minAmount/maxAmount (whitespace included), an empty entry in
+ *           accountTypes/reconcileStates, an unparseable startDate/endDate, or a
+ *           limit/offset that is not a non-negative integer. Rejected rather
+ *           than ignored, so a malformed value can never quietly widen the
+ *           result set. A missing or exactly-empty parameter is still "no
+ *           filter".
  */
 export async function GET(request: Request) {
     try {
@@ -93,8 +184,8 @@ export async function GET(request: Request) {
         if (roleResult instanceof NextResponse) return roleResult;
 
         const { searchParams } = new URL(request.url);
-        const limit = parseInt(searchParams.get('limit') || '100');
-        const offset = parseInt(searchParams.get('offset') || '0');
+        const limit = nonNegativeIntParam(searchParams.get('limit'), 100, 'limit');
+        const offset = nonNegativeIntParam(searchParams.get('offset'), 0, 'offset');
         // '#tag' tokens in the search act as tag filters (AND semantics);
         // remaining text is the normal description/num/account search.
         const { text: search, tags: tagFilters } = parseSearchQuery(searchParams.get('search') || '');
@@ -108,100 +199,189 @@ export async function GET(request: Request) {
         // Get book account GUIDs for scoping
         const bookAccountGuids = await getBookAccountGuids();
 
-        // Build where conditions - scoped to active book
-        const whereConditions: Prisma.transactionsWhereInput = {
-            splits: {
-                some: {
-                    account_guid: { in: bookAccountGuids },
-                },
-            },
-        };
+        // Every filter below is expressed as a SQL predicate on `transactions t`
+        // and evaluated in the SAME query that paginates, so a requested page is
+        // a page of MATCHES. Filtering after LIMIT/OFFSET (as this route used to
+        // do for amount and reconcile state) both hid matching rows that landed
+        // on a later page and under-filled every page it did return.
+        //
+        // Each split-level predicate is an EXISTS subquery, which is what makes
+        // the result de-duplicated by construction: a transaction with twenty
+        // splits is still one row, and the matching split may be any of them,
+        // not just the first.
+        const filters: Prisma.Sql[] = [];
+
+        // Book scoping, merged with the account-type filter when present (a
+        // transaction qualifies via a single split that is both in-book and of a
+        // requested type — same semantics as the previous Prisma `splits.some`).
+        const types = listParam(accountTypes, 'accountTypes').map(t => t.toUpperCase());
+        filters.push(types.length > 0
+            ? Prisma.sql`EXISTS (
+                SELECT 1 FROM splits s
+                JOIN accounts a ON a.guid = s.account_guid
+                WHERE s.tx_guid = t.guid
+                  AND s.account_guid = ANY(${bookAccountGuids}::text[])
+                  AND a.account_type = ANY(${types}::text[])
+            )`
+            : Prisma.sql`EXISTS (
+                SELECT 1 FROM splits s
+                WHERE s.tx_guid = t.guid
+                  AND s.account_guid = ANY(${bookAccountGuids}::text[])
+            )`);
 
         // Date filters
-        if (startDate || endDate) {
-            whereConditions.post_date = {};
-            if (startDate) {
-                whereConditions.post_date.gte = new Date(startDate);
-            }
-            if (endDate) {
-                whereConditions.post_date.lte = new Date(endDate);
-            }
+        const from = dateParam(startDate, 'startDate');
+        const to = dateParam(endDate, 'endDate');
+        if (from) {
+            filters.push(Prisma.sql`t.post_date >= ${from}`);
+        }
+        if (to) {
+            filters.push(Prisma.sql`t.post_date <= ${to}`);
         }
 
         // Search filter (description, num, or account name)
         if (search) {
-            whereConditions.OR = [
-                { description: { contains: search, mode: 'insensitive' } },
-                { num: { contains: search, mode: 'insensitive' } },
-                {
-                    splits: {
-                        some: {
-                            account: {
-                                name: { contains: search, mode: 'insensitive' },
-                            },
-                        },
-                    },
-                },
-            ];
+            const like = `%${search}%`;
+            filters.push(Prisma.sql`(
+                t.description ILIKE ${like}
+                OR t.num ILIKE ${like}
+                OR EXISTS (
+                    SELECT 1 FROM splits s
+                    JOIN accounts a ON a.guid = s.account_guid
+                    WHERE s.tx_guid = t.guid AND a.name ILIKE ${like}
+                )
+            )`);
         }
 
         // Tag filters: a transaction matches a tag when it carries the tag
         // directly OR any of its splits' accounts carries it (account tags
         // propagate to transactions). Multiple tags AND together.
-        if (tagFilters.length > 0) {
-            whereConditions.AND = tagFilters.map(name => ({
-                OR: [
-                    { tags: { some: { tag: { name } } } },
-                    { splits: { some: { account: { tags: { some: { tag: { name } } } } } } },
-                ],
-            }));
+        for (const name of tagFilters) {
+            filters.push(Prisma.sql`(
+                EXISTS (
+                    SELECT 1 FROM gnucash_web_transaction_tags tt
+                    JOIN gnucash_web_tags g ON g.id = tt.tag_id
+                    WHERE tt.transaction_guid = t.guid AND g.name = ${name}
+                )
+                OR EXISTS (
+                    SELECT 1 FROM splits s
+                    JOIN gnucash_web_account_tags at2 ON at2.account_guid = s.account_guid
+                    JOIN gnucash_web_tags g ON g.id = at2.tag_id
+                    WHERE s.tx_guid = t.guid AND g.name = ${name}
+                )
+            )`);
         }
 
-        // Account type filter (merged with existing book scoping)
-        if (accountTypes) {
-            const types = accountTypes.split(',').map(t => t.trim().toUpperCase());
-            whereConditions.splits = {
-                some: {
-                    account_guid: { in: bookAccountGuids },
-                    account: {
-                        account_type: { in: types },
-                    },
-                },
-            };
+        // Amount range.
+        //
+        // SEMANTICS: the transaction's magnitude is the LARGEST absolute value
+        // among its splits, which for an ordinary two-split transaction is the
+        // transaction's amount — what the "Amount Range" control in
+        // src/components/filters/AmountFilter.tsx promises. Absolute, never
+        // signed. The cost is that a per-line search ("which transaction has a
+        // $12 fee line?") is no longer expressible here: a $3,000 paycheque is
+        // excluded by maxAmount=100 even though it contains a $12 split.
+        //
+        // The bounds never divide. GnuCash stores split values as num/denom
+        // fractions whose denominator is NOT always a power of ten, and
+        // `numeric / numeric` in PostgreSQL rounds the quotient to a finite
+        // scale, so a thirds-style fraction would compare wrong at the boundary.
+        // Cross-multiplying is exact, since `numeric * numeric` is exact:
+        //
+        //     |value| >= bound   <=>   |value_num| >= bound * |value_denom|
+        //     |value| <= bound   <=>   |value_num| <= bound * |value_denom|
+        //
+        // abs() on the denominator keeps a negative denominator from flipping
+        // the inequality, and `value_denom <> 0` keeps an undefined split out of
+        // the comparison instead of erroring or matching everything. Bounds are
+        // bound as decimal text and cast to ::numeric, so no binary float
+        // touches the comparison.
+        //
+        // Note the cast happens INSIDE abs(): `abs(x::numeric)`, never
+        // `abs(x)::numeric`. bigint abs() overflows on INT64_MIN
+        // (-9223372036854775808 has no positive bigint counterpart) and raises
+        // "bigint out of range", which would blow up exactly the signed values
+        // this predicate exists to handle. numeric is unbounded.
+        //
+        // "largest split >= min" is "some split reaches the floor"; "largest
+        // split <= max" is "no split breaks the ceiling".
+        const minVal = numericParam(minAmount, 'minAmount');
+        const maxVal = numericParam(maxAmount, 'maxAmount');
+        if (minVal !== null) {
+            filters.push(Prisma.sql`EXISTS (
+                SELECT 1 FROM splits s
+                WHERE s.tx_guid = t.guid
+                  AND s.value_denom <> 0
+                  AND abs(s.value_num::numeric) >= ${minVal}::numeric * abs(s.value_denom::numeric)
+            )`);
+        }
+        if (maxVal !== null) {
+            filters.push(Prisma.sql`NOT EXISTS (
+                SELECT 1 FROM splits s
+                WHERE s.tx_guid = t.guid
+                  AND s.value_denom <> 0
+                  AND abs(s.value_num::numeric) > ${maxVal}::numeric * abs(s.value_denom::numeric)
+            )`);
+            if (minVal === null) {
+                // A ceiling alone would otherwise admit a transaction with no
+                // comparable split at all (every denominator zero), which has no
+                // "largest split" to bound.
+                filters.push(Prisma.sql`EXISTS (
+                    SELECT 1 FROM splits s
+                    WHERE s.tx_guid = t.guid AND s.value_denom <> 0
+                )`);
+            }
         }
 
-        // Amount range filters (need raw SQL for these due to computed values)
-        // For minAmount and maxAmount, we'll use Prisma's raw filter
-        if (minAmount || maxAmount || reconcileStates) {
-            // These require post-filtering or raw SQL
-            // For now, we'll fetch and filter in JS for complex cases
-            // This is less efficient but maintains correctness
+        // Reconcile state: transaction matches when any split is in one of the
+        // requested states.
+        const states = listParam(reconcileStates, 'reconcileStates').map(s => s.toLowerCase());
+        if (states.length > 0) {
+            filters.push(Prisma.sql`EXISTS (
+                SELECT 1 FROM splits s
+                WHERE s.tx_guid = t.guid
+                  AND lower(s.reconcile_state) = ANY(${states}::text[])
+            )`);
         }
 
-        // Fetch transactions
-        const transactions = await prisma.transactions.findMany({
-            where: whereConditions,
-            orderBy: {
-                post_date: 'desc',
-            },
-            take: limit,
-            skip: offset,
-            include: {
-                splits: {
-                    include: {
-                        // Narrow to the only relation fields the response uses
-                        // (account_name, commodity_mnemonic) instead of every
-                        // column of accounts + commodities per split.
-                        account: {
-                            select: {
-                                name: true,
-                                commodity: { select: { mnemonic: true } },
+        // Page of matching transaction GUIDs. The guid tiebreaker keeps the
+        // order total: post_date alone has ties, and an unstable order makes
+        // LIMIT/OFFSET paging duplicate and skip rows across pages.
+        const pageRows = await prisma.$queryRaw<{ guid: string }[]>`
+            SELECT t.guid
+            FROM transactions t
+            WHERE ${Prisma.join(filters, ' AND ')}
+            ORDER BY t.post_date DESC, t.guid ASC
+            LIMIT ${limit} OFFSET ${offset}
+        `;
+        const pageGuids = pageRows.map(r => r.guid);
+
+        // Hydrate the page (all splits of each matching transaction, not just
+        // the splits that matched the filter).
+        const pageTransactions = pageGuids.length > 0
+            ? await prisma.transactions.findMany({
+                where: { guid: { in: pageGuids } },
+                include: {
+                    splits: {
+                        include: {
+                            // Narrow to the only relation fields the response uses
+                            // (account_name, commodity_mnemonic) instead of every
+                            // column of accounts + commodities per split.
+                            account: {
+                                select: {
+                                    name: true,
+                                    commodity: { select: { mnemonic: true } },
+                                },
                             },
                         },
                     },
                 },
-            },
-        });
+            })
+            : [];
+        const byGuid = new Map(pageTransactions.map(tx => [tx.guid, tx]));
+        const transactions = pageGuids
+            .map(guid => byGuid.get(guid))
+            .filter((tx): tx is (typeof pageTransactions)[number] => tx !== undefined);
 
         const accountPathMap = await buildAccountPathMap(bookAccountGuids);
 
@@ -221,38 +401,8 @@ export async function GET(request: Request) {
         // Fetch direct tags for the fetched transactions
         const tagMap = await getTagsForTransactions(txGuids);
 
-        // Post-filter for amount range and reconcile states if needed
-        let filteredTransactions = transactions;
-
-        if (minAmount) {
-            const minVal = parseFloat(minAmount);
-            filteredTransactions = filteredTransactions.filter(tx =>
-                tx.splits.some(split => {
-                    const absValue = Math.abs(Number(split.value_num) / Number(split.value_denom));
-                    return absValue >= minVal;
-                })
-            );
-        }
-
-        if (maxAmount) {
-            const maxVal = parseFloat(maxAmount);
-            filteredTransactions = filteredTransactions.filter(tx =>
-                tx.splits.some(split => {
-                    const absValue = Math.abs(Number(split.value_num) / Number(split.value_denom));
-                    return absValue <= maxVal;
-                })
-            );
-        }
-
-        if (reconcileStates) {
-            const states = reconcileStates.split(',').map(s => s.trim().toLowerCase());
-            filteredTransactions = filteredTransactions.filter(tx =>
-                tx.splits.some(split => states.includes(split.reconcile_state.toLowerCase()))
-            );
-        }
-
         // Transform to response format
-        const result = filteredTransactions.map(tx => ({
+        const result = transactions.map(tx => ({
             guid: tx.guid,
             currency_guid: tx.currency_guid,
             num: tx.num,
@@ -284,6 +434,9 @@ export async function GET(request: Request) {
 
         return NextResponse.json(serializeBigInts(result));
     } catch (error) {
+        if (error instanceof BadFilterError) {
+            return NextResponse.json({ error: error.message }, { status: 400 });
+        }
         console.error('Error fetching transactions:', error);
         return NextResponse.json({ error: 'Failed to fetch transactions' }, { status: 500 });
     }
