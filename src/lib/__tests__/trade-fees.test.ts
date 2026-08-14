@@ -18,8 +18,11 @@ import {
     allocateTradeFees,
     apportionCents,
     classifyFeeAccount,
+    deductibleFeeAccounts,
     type FeeAllocationSplit,
 } from '@/lib/trade-fees';
+import { TAX_CATEGORY_TREATMENT } from '@/lib/tax/deduction-categories';
+import { TAX_CATEGORIES } from '@/lib/tax/types';
 
 const split = (over: Partial<FeeAllocationSplit> & { guid: string }): FeeAllocationSplit => ({
     txGuid: 'tx-1',
@@ -57,12 +60,18 @@ describe('classifyFeeAccount', () => {
         expect(classifyFeeAccount('Expenses:Brokerage')).toBe('fee');
     });
 
-    it('refuses the charges that are NOT basis, even alongside fee words', () => {
+    it('refuses the charges that are NOT basis', () => {
         expect(classifyFeeAccount('Expenses:Investments:Accrued Interest')).toBe('not-fee');
         expect(classifyFeeAccount('Expenses:Margin Interest')).toBe('not-fee');
         expect(classifyFeeAccount('Expenses:Taxes:Foreign Tax Withheld')).toBe('not-fee');
-        // Deny beats allow: an "Interest Fees" account is still interest.
-        expect(classifyFeeAccount('Expenses:Brokerage:Interest Fees')).toBe('not-fee');
+    });
+
+    it('flags a path reading as BOTH a fee and a non-fee charge as ambiguous', () => {
+        // Deny still wins the outcome, but this is the one refusal that could
+        // otherwise drop a genuine fee with no signal at all.
+        expect(classifyFeeAccount('Expenses:Brokerage:Interest Fees')).toBe('ambiguous');
+        expect(classifyFeeAccount('Expenses:Brokerage Premium')).toBe('ambiguous');
+        expect(classifyFeeAccount('Expenses:Fees:Transaction Tax')).toBe('ambiguous');
     });
 
     it('reports anything it cannot place rather than guessing', () => {
@@ -254,6 +263,17 @@ describe('allocateTradeFees — non-fee charges on a trade', () => {
         expect(fees.size).toBe(0);
     });
 
+    it('reports — and does not capitalize — an allow/deny collision', () => {
+        const { fees, warnings } = allocateTradeFees([
+            split({ guid: 'stock', accountType: 'STOCK', value: 1000, quantity: 10 }),
+            split({ guid: 'cash', accountType: 'BANK', value: -1009, quantity: -1009 }),
+            commission({ guid: 'both', accountPath: 'Expenses:Fees:Transaction Tax', value: 9 }),
+        ]);
+        expect(fees.size).toBe(0);
+        expect(warnings).toHaveLength(1);
+        expect(warnings[0]).toContain('BOTH a trade fee and a non-fee charge');
+    });
+
     it('reports — and does not capitalize — an expense it cannot classify', () => {
         const { fees, warnings } = allocateTradeFees([
             split({ guid: 'stock', accountType: 'STOCK', value: 1000, quantity: 10 }),
@@ -288,14 +308,94 @@ describe('allocateTradeFees — fees already claimed as a deduction', () => {
         const { fees, warnings } = allocateTradeFees(trade(), new Set(['comm-acct']));
         expect(fees.size).toBe(0);
         expect(warnings).toHaveLength(1);
-        expect(warnings[0]).toContain('already');
-        expect(warnings[0]).toContain('deduction');
+        expect(warnings[0]).toContain('already deducts it from taxable income');
     });
 
     it('DOES capitalize the same fee when its account is not mapped', () => {
         const { fees, warnings } = allocateTradeFees(trade(), new Set(['some-other-account']));
         expect(fees.get('stock')).toBe(9.95);
         expect(warnings).toEqual([]);
+    });
+});
+
+/* ------------------------------------------------------------------ */
+/* Which mappings actually suppress capitalization                     */
+/* ------------------------------------------------------------------ */
+
+describe('deductibleFeeAccounts', () => {
+    const mapped = (category: string) => deductibleFeeAccounts(new Map([['comm', category]]));
+
+    it('suppresses only categories that really lower taxable income', () => {
+        expect(mapped('business_expense').has('comm')).toBe(true);
+        expect(mapped('other_deduction').has('comm')).toBe(true);
+        expect(mapped('charitable_donation').has('comm')).toBe(true);
+        // State taxes paid are a payment AND a Schedule A deduction.
+        expect(mapped('state_estimated_tax_payment').has('comm')).toBe(true);
+    });
+
+    it('does NOT suppress payment, informational, income or excluded mappings', () => {
+        // These buy no deduction, so refusing to capitalize would leave the
+        // fee counted nowhere — the original H2 omission, returning.
+        expect(mapped('estimated_tax_payment').has('comm')).toBe(false);
+        expect(mapped('federal_withholding').has('comm')).toBe(false);
+        expect(mapped('education_529_contribution').has('comm')).toBe(false);
+        expect(mapped('esa_contribution').has('comm')).toBe(false);
+        expect(mapped('roth_ira_contribution').has('comm')).toBe(false);
+        expect(mapped('fica_medicare').has('comm')).toBe(false);
+        expect(mapped('interest_income').has('comm')).toBe(false);
+        expect(mapped('exclude').has('comm')).toBe(false);
+    });
+
+    it('treats an unmapped account and an unknown category as not deducting', () => {
+        expect(deductibleFeeAccounts(undefined).size).toBe(0);
+        expect(mapped('some_future_category').has('comm')).toBe(false);
+    });
+
+    it('states a treatment for EVERY tax category (a new one must not default)', () => {
+        // TAX_CATEGORY_TREATMENT is a total Record over TaxCategory, so this
+        // is really a compile-time guarantee; the runtime check catches a
+        // category added to the list without a treatment row.
+        for (const category of TAX_CATEGORIES) {
+            expect(TAX_CATEGORY_TREATMENT[category]).toBeDefined();
+        }
+        expect(Object.keys(TAX_CATEGORY_TREATMENT)).toHaveLength(TAX_CATEGORIES.length);
+    });
+});
+
+/* ------------------------------------------------------------------ */
+/* Warning cap                                                         */
+/* ------------------------------------------------------------------ */
+
+describe('allocateTradeFees — warning volume', () => {
+    it('caps the list but reports how many notices it suppressed', () => {
+        // 30 distinct trades, each with an unclassifiable expense.
+        const splits = Array.from({ length: 30 }, (_, i) => [
+            split({
+                txGuid: `tx-${i}`, guid: `stock-${i}`, accountType: 'STOCK',
+                value: 1000, quantity: 10, txDescription: `Buy lot ${i}`,
+            }),
+            commission({
+                txGuid: `tx-${i}`, guid: `misc-${i}`,
+                accountPath: `Expenses:Investment Expenses ${i}`, value: 5,
+            }),
+        ]).flat();
+
+        const { fees, warnings } = allocateTradeFees(splits);
+        expect(fees.size).toBe(0);
+        expect(warnings).toHaveLength(26); // 25 notices + the suppression summary
+        expect(warnings[25]).toBe(
+            '5 further trade-fee notices were suppressed (only the first 25 are listed). '
+            + 'Resolve these and re-run to see the rest.',
+        );
+    });
+
+    it('adds no summary line when nothing was suppressed', () => {
+        const { warnings } = allocateTradeFees([
+            split({ guid: 'stock', accountType: 'STOCK', value: 1000, quantity: 10 }),
+            commission({ accountPath: 'Expenses:Investment Expenses', value: 5 }),
+        ]);
+        expect(warnings).toHaveLength(1);
+        expect(warnings[0]).not.toContain('suppressed');
     });
 });
 

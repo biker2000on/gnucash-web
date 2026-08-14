@@ -505,6 +505,35 @@ describe('aggregateBookTaxData', () => {
       // ...so the commission lands in the gain instead: 2000 - 100 - 1000.
       expect(result.realizedGains.longTerm).toBe(900);
     });
+
+    // A mapping that is NOT a deduction must still leave the fee capitalized.
+    // Refusing on "mapped to anything but exclude" would count these dollars
+    // NOWHERE — the original H2 omission, back for these configurations.
+    const NON_DEDUCTING: Array<[string, string]> = [
+      ['exclude', 'excluded from every tax computation'],
+      ['estimated_tax_payment', 'a tax PAYMENT, credited against tax owed, never a deduction'],
+      ['education_529_contribution', 'informational — 529 contributions carry no federal deduction'],
+    ];
+
+    for (const [category, why] of NON_DEDUCTING) {
+      it(`CAPITALIZES it when mapped to ${category} (${why})`, async () => {
+        arrangeSaleWithCommission();
+        mockPrisma.gnucash_web_tax_mappings.findMany.mockResolvedValue([
+          { account_guid: 'comm', tax_category: category },
+        ]);
+
+        const result = await run();
+
+        // Taxable income falls by the $100 exactly once — through basis.
+        expect(result.realizedGains.longTerm).toBe(900);
+        // And never through a deduction: no deducting category picks it up.
+        const deducting = result.categories.filter(c =>
+          ['business_expense', 'other_deduction', 'charitable_donation', 'medical_expense']
+            .includes(c.category),
+        );
+        expect(deducting).toEqual([]);
+      });
+    }
   });
   it('passes sheltered guids (retirement + excluded assets) to the category-sum guard', async () => {
     mockGetRetirementAccountGuids.mockResolvedValue(new Set(['ret-401k']));

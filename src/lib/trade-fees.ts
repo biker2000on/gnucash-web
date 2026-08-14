@@ -27,14 +27,22 @@
  *      is LEFT OUT and reported as a warning: omitting a fee is the smaller,
  *      already-shipped error; capitalizing accrued interest is a new one.
  *
- *   2. DEFER TO AN EXPLICIT DEDUCTION. If the user mapped the fee's account
- *      (or an ancestor) to a tax category, the tax estimator is ALREADY
- *      claiming that split as a deduction — see aggregateBookTaxData in
- *      @/lib/tax/book-income. Capitalizing it as well would let one dollar
- *      reduce taxable income twice. Such fees are NOT capitalized, and a
+ *   2. DEFER TO AN EXPLICIT DEDUCTION — but only to a REAL one. If the fee's
+ *      account (or an ancestor) is mapped to a category that actually LOWERS
+ *      taxable income, the estimator is already claiming that split as a
+ *      deduction (aggregateBookTaxData in @/lib/tax/book-income sums every
+ *      split of a mapped account), so capitalizing it too would let one dollar
+ *      reduce taxable income twice. Those fees are NOT capitalized, and a
  *      warning says so rather than leaving the user to wonder why their basis
- *      did not move. Only unmapped accounts (and 'exclude'-mapped ones, which
- *      the estimator ignores by construction) are capitalized.
+ *      did not move.
+ *
+ *      "Mapped to anything but 'exclude'" is NOT that test, and using it would
+ *      re-open the very omission this module fixes: a commission mapped to a
+ *      PAYMENT category (1040-ES vouchers, federal withholding) or an
+ *      INFORMATIONAL one (529/ESA, FICA, education) buys no deduction, so
+ *      refusing to capitalize it would leave the fee counted NOWHERE. The
+ *      predicate is reducesTaxableIncome (@/lib/tax/deduction-categories),
+ *      derived from what buildFederalInputsFromBookData actually consumes.
  *
  * ── MECHANICS ─────────────────────────────────────────────────────────────
  *  - MULTIPLE FEES: every eligible expense split of the ticket sums, so
@@ -64,6 +72,7 @@
  */
 
 import { toDecimalNumber } from './gnucash';
+import { reducesTaxableIncome } from './tax/deduction-categories';
 
 /** Fee amount allocated to a security split, keyed by that split's GUID. */
 export type TradeFeeBySplit = ReadonlyMap<string, number>;
@@ -143,16 +152,24 @@ const IS_A_FEE = [
     /\bbrokerage\b/,
 ];
 
-export type FeeClassification = 'fee' | 'not-fee' | 'unrecognized';
+export type FeeClassification = 'fee' | 'not-fee' | 'ambiguous' | 'unrecognized';
 
 /**
  * Classify an expense account by its path. PURE, and intentionally the ONLY
  * classifier — account_type alone is not evidence of a commission.
+ *
+ * A path matching BOTH lists ("Brokerage Premium", "Fees:Transaction Tax") is
+ * 'ambiguous' rather than a silent deny: deny still wins the outcome, but the
+ * caller reports it, because that is the one refusal where a genuine fee could
+ * be dropped with no signal to the user at all.
  */
 export function classifyFeeAccount(accountPath: string): FeeClassification {
     const path = accountPath.toLowerCase();
-    if (NOT_A_FEE.some(rx => rx.test(path))) return 'not-fee';
-    if (IS_A_FEE.some(rx => rx.test(path))) return 'fee';
+    const denied = NOT_A_FEE.some(rx => rx.test(path));
+    const allowed = IS_A_FEE.some(rx => rx.test(path));
+    if (denied && allowed) return 'ambiguous';
+    if (denied) return 'not-fee';
+    if (allowed) return 'fee';
     return 'unrecognized';
 }
 
@@ -217,8 +234,17 @@ export function allocateTradeFees(
 
     const fees = new Map<string, number>();
     const warnings = new Set<string>();
+    // Every refusal in this module relies on its warning to avoid being a
+    // silent under-report, so the cap must not silently swallow the overflow
+    // either — the suppressed count is reported alongside.
+    let suppressed = 0;
     const warn = (message: string) => {
-        if (warnings.size < MAX_WARNINGS) warnings.add(message);
+        if (warnings.has(message)) return;
+        if (warnings.size >= MAX_WARNINGS) {
+            suppressed += 1;
+            return;
+        }
+        warnings.add(message);
     };
 
     for (const txSplits of byTx.values()) {
@@ -232,6 +258,16 @@ export function allocateTradeFees(
         for (const expense of expenses) {
             const kind = classifyFeeAccount(expense.accountPath);
             if (kind === 'not-fee') continue; // confidently not basis; stay silent
+            if (kind === 'ambiguous') {
+                warn(
+                    `${txLabel(txSplits)}: $${Math.abs(expense.value).toFixed(2)} posted to `
+                    + `"${expense.accountPath}" was NOT added to cost basis — the account name `
+                    + 'reads as BOTH a trade fee and a non-fee charge (interest, tax or '
+                    + 'similar), so it cannot be classified safely. Split or rename the account '
+                    + 'if part of it is a commission.',
+                );
+                continue;
+            }
             if (kind === 'unrecognized') {
                 warn(
                     `${txLabel(txSplits)}: $${Math.abs(expense.value).toFixed(2)} posted to `
@@ -243,8 +279,8 @@ export function allocateTradeFees(
             if (deductibleAccounts.has(expense.accountGuid)) {
                 warn(
                     `${txLabel(txSplits)}: the $${Math.abs(expense.value).toFixed(2)} fee in `
-                    + `"${expense.accountPath}" is mapped to a tax category, so it is already `
-                    + 'claimed as a deduction and was NOT also added to cost basis. Remove the '
+                    + `"${expense.accountPath}" is mapped to a tax category that already deducts `
+                    + 'it from taxable income, so it was NOT also added to cost basis. Remove the '
                     + 'tax mapping if you would rather capitalize it.',
                 );
                 continue;
@@ -298,19 +334,45 @@ export function allocateTradeFees(
         });
     }
 
-    return { fees, warnings: [...warnings] };
+    const reported = [...warnings];
+    if (suppressed > 0) {
+        reported.push(
+            `${suppressed} further trade-fee notice${suppressed === 1 ? ' was' : 's were'} `
+            + `suppressed (only the first ${MAX_WARNINGS} are listed). Resolve these and re-run `
+            + 'to see the rest.',
+        );
+    }
+    return { fees, warnings: reported };
 }
 
 /** Chunk size for the tx_guid IN list; keeps the query planner and the
  *  Postgres parameter budget comfortable on large books. */
 const TX_CHUNK = 500;
 
+/**
+ * Accounts whose mapping means the estimator ALREADY deducts their splits
+ * from taxable income, so their fees must not also be capitalized. PURE.
+ *
+ * Payment, income, informational and 'exclude' mappings are deliberately NOT
+ * here: none of them lower taxable income, so a fee posted to such an account
+ * still needs its basis adjustment or it would be counted nowhere at all.
+ */
+export function deductibleFeeAccounts(
+    effectiveTaxMappings: ReadonlyMap<string, string> | undefined,
+): Set<string> {
+    const deductible = new Set<string>();
+    for (const [guid, category] of effectiveTaxMappings ?? []) {
+        if (reducesTaxableIncome(category)) deductible.add(guid);
+    }
+    return deductible;
+}
+
 export interface LoadTradeFeesOptions {
     /**
      * Effective account -> tax-category map (already expanded to descendants,
-     * exactly as the estimator resolves it). Any non-'exclude' mapping means
-     * the estimator is deducting that account, so its fees are not
-     * capitalized. See the invariant at the top of this file.
+     * exactly as the estimator resolves it). Only mappings that actually
+     * reduce taxable income suppress capitalization — see
+     * deductibleFeeAccounts and the invariant at the top of this file.
      */
     effectiveTaxMappings?: ReadonlyMap<string, string>;
     /** Account GUID -> full path, for classification and warning text. */
@@ -331,10 +393,7 @@ export async function loadTradeFees(
     const prisma = (await import('./prisma')).default;
     const { effectiveTaxMappings, accountPaths } = options;
 
-    const deductibleAccounts = new Set<string>();
-    for (const [guid, category] of effectiveTaxMappings ?? []) {
-        if (category !== 'exclude') deductibleAccounts.add(guid);
-    }
+    const deductibleAccounts = deductibleFeeAccounts(effectiveTaxMappings);
 
     const rows: FeeAllocationSplit[] = [];
     for (let offset = 0; offset < unique.length; offset += TX_CHUNK) {
