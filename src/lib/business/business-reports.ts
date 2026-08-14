@@ -29,6 +29,8 @@
 
 import prisma from '@/lib/prisma';
 import { SLOT_TYPE } from '@/lib/gnucash-xml/slots';
+import { buildAccountValuationContext, collectValuationCoverage, type ValuationGap } from '@/lib/account-valuation';
+import { sumSplitsByAccount } from '@/lib/reports/utils';
 
 /* ------------------------------------------------------------------ */
 /* Shared types                                                         */
@@ -118,6 +120,8 @@ export interface RawOpenInvoiceRow {
     dueDate: Date | string | null;
     /** Raw lot balance: sum of the post_lot's split values (sign-aware). */
     lotBalance: number;
+    /** Report-currency multiplier for the invoice's visible control account. */
+    valuationMultiplier?: number;
     currency: string;
 }
 
@@ -164,6 +168,98 @@ export interface AgingReport {
     totals: Record<AgingBucketKey, number>;
     grandTotal: number;
     invoiceCount: number;
+    reconciliation: AgingReconciliation;
+}
+
+/** Raw per-control-account amounts used to reconcile invoice aging to the GL. */
+export interface RawAgingControlAccountRow {
+    guid: string;
+    name: string;
+    /** All split values posted to this control account, in native sign. */
+    controlBalance: number;
+    /** Open invoice-lot split values in this account, in native sign. */
+    agedLotBalance: number;
+}
+
+export interface AgingControlAccountRow {
+    guid: string;
+    name: string;
+    /** The balance-sheet amount, normalized to the aging display sign. */
+    controlBalance: number;
+    /** The open invoice-lot amount represented in the aging table. */
+    agedTotal: number;
+    /** Direct or otherwise non-invoice-lot control-account activity. */
+    unreconciledDifference: number;
+}
+
+export interface AgingReconciliation {
+    controlAccounts: AgingControlAccountRow[];
+    controlBalance: number;
+    agedTotal: number;
+    unreconciledDifference: number;
+    /** Commodities excluded because neither side can be valued in report currency. */
+    valuationGaps: ValuationGap[];
+}
+
+export interface AgingControlAccountInput {
+    guid: string;
+    name: string;
+    accountType: string;
+    commodityGuid: string | null;
+    commodityNamespace?: string | null;
+}
+
+/**
+ * Combine the balance-sheet quantity totals with invoice-lot value totals.
+ * Callers pass only the visible account population, matching the balance
+ * sheet's `hidden: 0` filter.
+ */
+export function buildAgingControlAccountRows(
+    accounts: ReadonlyArray<AgingControlAccountInput>,
+    controlBalances: ReadonlyMap<string, { quantity: number }>,
+    agedLotBalances: ReadonlyMap<string, number>,
+    getMultiplier: (account: AgingControlAccountInput) => number,
+): RawAgingControlAccountRow[] {
+    return accounts.map((account) => ({
+        guid: account.guid,
+        name: account.name,
+        controlBalance: (controlBalances.get(account.guid)?.quantity ?? 0) * getMultiplier(account),
+        agedLotBalance: (agedLotBalances.get(account.guid) ?? 0) * getMultiplier(account),
+    }));
+}
+
+/**
+ * Reconcile invoice-driven aging to its RECEIVABLE/PAYABLE control accounts.
+ *
+ * `agedLotBalance` is deliberately a subset of `controlBalance`: only open
+ * invoice lots are counted there. A payment assigned to an invoice lot is
+ * therefore represented once in that lot's net balance, never again in the
+ * unreconciled difference.
+ */
+export function buildAgingReconciliation(
+    rows: ReadonlyArray<RawAgingControlAccountRow>,
+    side: AgingSide,
+    valuationGaps: ValuationGap[] = [],
+): AgingReconciliation {
+    const controlAccounts = rows.map((row) => {
+        const controlBalance = round2(amountDueFromLotBalance(row.controlBalance, side));
+        const agedTotal = round2(amountDueFromLotBalance(row.agedLotBalance, side));
+        return {
+            guid: row.guid,
+            name: row.name,
+            controlBalance,
+            agedTotal,
+            unreconciledDifference: round2(controlBalance - agedTotal),
+        };
+    });
+
+    return {
+        controlAccounts,
+        controlBalance: round2(controlAccounts.reduce((sum, row) => sum + row.controlBalance, 0)),
+        agedTotal: round2(controlAccounts.reduce((sum, row) => sum + row.agedTotal, 0)),
+        unreconciledDifference: round2(controlAccounts.reduce((sum, row) => sum + row.unreconciledDifference, 0)),
+        valuationGaps,
+    };
 }
 
 /**
@@ -174,13 +270,15 @@ export function buildAgingReport(
     rows: ReadonlyArray<RawOpenInvoiceRow>,
     side: AgingSide,
     asOf: Date = new Date(),
+    reconciliationRows: ReadonlyArray<RawAgingControlAccountRow> = [],
+    valuationGaps: ValuationGap[] = [],
 ): AgingReport {
     const byOwner = new Map<string, AgingOwnerRow>();
     const totals = emptyBuckets();
     let grandTotal = 0;
 
     for (const row of rows) {
-        const amountDue = amountDueFromLotBalance(row.lotBalance, side);
+        const amountDue = amountDueFromLotBalance(row.lotBalance, side) * (row.valuationMultiplier ?? 1);
         const posted = row.datePosted ? new Date(row.datePosted) : null;
         const { dueDate, dueDateInferred } = resolveAgingDueDate(row);
         const daysPastDue = dueDate ? wholeDaysBetween(asOf, dueDate) : 0;
@@ -228,6 +326,7 @@ export function buildAgingReport(
         totals,
         grandTotal,
         invoiceCount: rows.length,
+        reconciliation: buildAgingReconciliation(reconciliationRows, side, valuationGaps),
     };
 }
 
@@ -619,7 +718,18 @@ interface OpenInvoiceDbRow {
     owner_guid: string | null;
     owner_name: string | null;
     currency: string | null;
+    control_account_guid: string;
     lot_balance: number;
+}
+
+interface AgingLotBalanceDbRow {
+    account_guid: string;
+    aged_lot_balance: number;
+}
+
+interface AgingControlAccountLoad {
+    controlAccounts: RawAgingControlAccountRow[];
+    valuationGaps: ValuationGap[];
 }
 
 /**
@@ -630,13 +740,14 @@ interface OpenInvoiceDbRow {
 export async function loadOpenInvoices(
     side: AgingSide,
     bookAccountGuids: string[],
+    asOf: Date = new Date(),
 ): Promise<RawOpenInvoiceRow[]> {
     const ownerType = side === 'ar' ? OWNER_TYPE_CUSTOMER : OWNER_TYPE_VENDOR;
 
     const rows = await prisma.$queryRaw<OpenInvoiceDbRow[]>`
         WITH inv AS (
             SELECT
-                i.guid, i.id, i.date_posted, i.currency, i.post_txn, i.post_lot,
+                i.guid, i.id, i.date_posted, i.currency, i.post_txn, i.post_acc, i.post_lot,
                 (
                     SELECT sl.timespec_val
                     FROM slots sl
@@ -649,10 +760,13 @@ export async function loadOpenInvoices(
                 CASE WHEN i.owner_type = ${OWNER_TYPE_JOB} THEN j.owner_type ELSE i.owner_type END AS eff_owner_type,
                 CASE WHEN i.owner_type = ${OWNER_TYPE_JOB} THEN j.owner_guid ELSE i.owner_guid END AS eff_owner_guid
             FROM invoices i
+            JOIN transactions post_txn ON post_txn.guid = i.post_txn
+            JOIN accounts post_acc ON post_acc.guid = i.post_acc AND post_acc.hidden = 0
             LEFT JOIN jobs j ON i.owner_type = ${OWNER_TYPE_JOB} AND j.guid = i.owner_guid
             WHERE i.post_txn IS NOT NULL
               AND i.post_lot IS NOT NULL
               AND i.post_acc = ANY(${bookAccountGuids}::text[])
+              AND post_txn.post_date <= ${asOf}
         )
         SELECT
             inv.guid,
@@ -662,6 +776,7 @@ export async function loadOpenInvoices(
             inv.eff_owner_guid AS owner_guid,
             COALESCE(cu.name, ve.name) AS owner_name,
             c.mnemonic AS currency,
+            inv.post_acc AS control_account_guid,
             COALESCE(SUM(s.value_num::numeric / NULLIF(s.value_denom, 0)::numeric), 0)::float8 AS lot_balance
         FROM inv
         LEFT JOIN customers cu ON inv.eff_owner_type = ${OWNER_TYPE_CUSTOMER} AND cu.guid = inv.eff_owner_guid
@@ -669,9 +784,29 @@ export async function loadOpenInvoices(
         LEFT JOIN commodities c ON c.guid = inv.currency
         LEFT JOIN splits s ON s.lot_guid = inv.post_lot
         WHERE inv.eff_owner_type = ${ownerType}
-        GROUP BY inv.guid, inv.id, inv.date_posted, inv.due_date, inv.eff_owner_guid, cu.name, ve.name, c.mnemonic
+        GROUP BY inv.guid, inv.id, inv.date_posted, inv.due_date, inv.eff_owner_guid, cu.name, ve.name, c.mnemonic, inv.post_acc
         HAVING ABS(COALESCE(SUM(s.value_num::numeric / NULLIF(s.value_denom, 0)::numeric), 0)) > ${PAID_TOLERANCE}
     `;
+
+    const accountGuids = [...new Set(rows.map((row) => row.control_account_guid))];
+    const accounts = await prisma.accounts.findMany({
+        where: { guid: { in: accountGuids }, hidden: 0 },
+        select: {
+            guid: true,
+            account_type: true,
+            commodity_guid: true,
+            commodity: { select: { namespace: true } },
+        },
+    });
+    const accountByGuid = new Map(accounts.map((account) => [account.guid, account]));
+    const valuation = await buildAccountValuationContext(
+        accounts.map((account) => ({
+            accountType: account.account_type,
+            commodityGuid: account.commodity_guid,
+            commodityNamespace: account.commodity?.namespace,
+        })),
+        asOf,
+    );
 
     return rows.map((r) => ({
         guid: r.guid,
@@ -681,8 +816,127 @@ export async function loadOpenInvoices(
         datePosted: r.date_posted,
         dueDate: r.due_date,
         lotBalance: r.lot_balance,
+        valuationMultiplier: (() => {
+            const account = accountByGuid.get(r.control_account_guid);
+            return account ? valuation.getMultiplier({
+                accountType: account.account_type,
+                commodityGuid: account.commodity_guid,
+                commodityNamespace: account.commodity?.namespace,
+            }) : 0;
+        })(),
         currency: r.currency ?? 'USD',
     }));
+}
+
+/**
+ * Every RECEIVABLE/PAYABLE account in the active book, with its full ledger
+ * balance and the subset held in open invoice lots. Keeping this separate from
+ * `loadOpenInvoices` leaves the aging table invoice-driven while making its
+ * relationship to the balance sheet explicit.
+ */
+async function loadAgingReconciliation(
+    side: AgingSide,
+    bookAccountGuids: string[],
+    asOf: Date,
+): Promise<AgingControlAccountLoad> {
+    const ownerType = side === 'ar' ? OWNER_TYPE_CUSTOMER : OWNER_TYPE_VENDOR;
+    const accountType = side === 'ar' ? 'RECEIVABLE' : 'PAYABLE';
+
+    // Match the balance sheet's account population exactly: book-scoped,
+    // visible control accounts. The balance itself comes from the same
+    // quantity-and-valuation path below, rather than this invoice-lot query.
+    const accounts = await prisma.accounts.findMany({
+        where: {
+            guid: { in: bookAccountGuids },
+            account_type: accountType,
+            hidden: 0,
+        },
+        select: {
+            guid: true,
+            name: true,
+            account_type: true,
+            commodity_guid: true,
+            commodity: { select: { namespace: true } },
+        },
+    });
+
+    const rows = await prisma.$queryRaw<AgingLotBalanceDbRow[]>`
+        WITH inv AS (
+            SELECT
+                i.post_acc,
+                i.post_lot,
+                CASE WHEN i.owner_type = ${OWNER_TYPE_JOB} THEN j.owner_type ELSE i.owner_type END AS eff_owner_type
+            FROM invoices i
+            JOIN transactions post_txn ON post_txn.guid = i.post_txn
+            LEFT JOIN jobs j ON i.owner_type = ${OWNER_TYPE_JOB} AND j.guid = i.owner_guid
+            WHERE i.post_txn IS NOT NULL
+              AND i.post_lot IS NOT NULL
+              AND i.post_acc = ANY(${bookAccountGuids}::text[])
+              AND post_txn.post_date <= ${asOf}
+        ),
+        open_invoice_lots AS (
+            SELECT DISTINCT inv.post_acc, inv.post_lot
+            FROM inv
+            WHERE inv.eff_owner_type = ${ownerType}
+              AND ABS(COALESCE((
+                    SELECT SUM(ls.value_num::numeric / NULLIF(ls.value_denom, 0)::numeric)
+                    FROM splits ls
+                    WHERE ls.lot_guid = inv.post_lot
+              ), 0)) > ${PAID_TOLERANCE}
+        )
+        SELECT
+            oil.post_acc AS account_guid,
+            COALESCE(SUM(s.value_num::numeric / NULLIF(s.value_denom, 0)::numeric), 0)::float8 AS aged_lot_balance
+        FROM open_invoice_lots oil
+        JOIN splits s ON s.account_guid = oil.post_acc AND s.lot_guid = oil.post_lot
+        GROUP BY oil.post_acc
+    `;
+
+    const agedLotBalances = new Map(rows.map((row) => [row.account_guid, row.aged_lot_balance]));
+    const valuation = await buildAccountValuationContext(
+        accounts.map((account) => ({
+            accountType: account.account_type,
+            commodityGuid: account.commodity_guid,
+            commodityNamespace: account.commodity?.namespace,
+        })),
+        asOf,
+    );
+    const controlBalances = await sumSplitsByAccount(accounts.map((account) => account.guid), { lte: asOf });
+
+    const controlAccounts = buildAgingControlAccountRows(
+        accounts.map((account) => ({
+            guid: account.guid,
+            name: account.name,
+            accountType: account.account_type,
+            commodityGuid: account.commodity_guid,
+            commodityNamespace: account.commodity?.namespace,
+        })),
+        controlBalances,
+        agedLotBalances,
+        (account) => valuation.getMultiplier(account),
+    );
+    const valuationCoverage = collectValuationCoverage(
+        valuation,
+        accounts.map((account) => ({
+            account: {
+                accountType: account.account_type,
+                commodityGuid: account.commodity_guid,
+                commodityNamespace: account.commodity?.namespace,
+            },
+            quantity: controlBalances.get(account.guid)?.quantity ?? 0,
+        })),
+    );
+
+    return { controlAccounts, valuationGaps: valuationCoverage.gaps };
+}
+
+/** Visible, date-bounded control accounts and their invoice-lot subset. */
+export async function loadAgingControlAccounts(
+    side: AgingSide,
+    bookAccountGuids: string[],
+    asOf: Date,
+): Promise<RawAgingControlAccountRow[]> {
+    return (await loadAgingReconciliation(side, bookAccountGuids, asOf)).controlAccounts;
 }
 
 /** Full AR or AP aging report for the active book. */
@@ -691,8 +945,11 @@ export async function generateAgingReport(
     bookAccountGuids: string[],
     asOf: Date = new Date(),
 ): Promise<AgingReport> {
-    const rows = await loadOpenInvoices(side, bookAccountGuids);
-    return buildAgingReport(rows, side, asOf);
+    const [rows, reconciliation] = await Promise.all([
+        loadOpenInvoices(side, bookAccountGuids, asOf),
+        loadAgingReconciliation(side, bookAccountGuids, asOf),
+    ]);
+    return buildAgingReport(rows, side, asOf, reconciliation.controlAccounts, reconciliation.valuationGaps);
 }
 
 /* ---------------------------- Sales tax ---------------------------- */

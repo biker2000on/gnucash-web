@@ -18,6 +18,8 @@ import {
     bucketForDaysPastDue,
     amountDueFromLotBalance,
     buildAgingReport,
+    buildAgingReconciliation,
+    buildAgingControlAccountRows,
     sumDueWithin,
     computeDaysToPay,
     averageDaysToPay,
@@ -27,6 +29,7 @@ import {
     periodStarts,
     emptyBuckets,
     type RawOpenInvoiceRow,
+    type RawAgingControlAccountRow,
     type ScheduleCAccountInput,
 } from '../business-reports';
 
@@ -162,6 +165,127 @@ describe('buildAgingReport', () => {
         expect(report.owners[0].total).toBe(750);
         expect(report.owners[0].invoices[0]).toMatchObject({ bucket: 'b61_90', dueDateInferred: false });
         expect(report.grandTotal).toBe(750);
+    });
+
+    it.each([
+        {
+            side: 'ar' as const,
+            invoiceLotBalance: 100,
+            controlBalance: 125,
+            label: 'A/R',
+        },
+        {
+            side: 'ap' as const,
+            invoiceLotBalance: -100,
+            controlBalance: -125,
+            label: 'A/P',
+        },
+    ])('$label reports the exact $25 direct control-account difference without double-counting an invoice payment', ({ side, invoiceLotBalance, controlBalance }) => {
+        // The $100 lot is the net of a $150 invoice and a $50 payment assigned
+        // to that same lot. The control account also has a separate $25 manual
+        // journal entry. Before this change, main produced only the $100 aged
+        // total; the $25 control-account difference was invisible.
+        const invoiceRows = [inv({ lotBalance: invoiceLotBalance })];
+        const controlRows: RawAgingControlAccountRow[] = [{
+            guid: `${side}-control`,
+            name: side === 'ar' ? 'Accounts Receivable' : 'Accounts Payable',
+            controlBalance,
+            agedLotBalance: invoiceLotBalance,
+        }];
+
+        const mainFixture = buildAgingReport(invoiceRows, side, ASOF);
+        expect(mainFixture.grandTotal).toBe(100);
+
+        const report = buildAgingReport(invoiceRows, side, ASOF, controlRows);
+        expect(report.grandTotal).toBe(100);
+        expect(report.reconciliation).toMatchObject({
+            controlBalance: 125,
+            agedTotal: 100,
+            unreconciledDifference: 25,
+            controlAccounts: [{
+                controlBalance: 125,
+                agedTotal: 100,
+                unreconciledDifference: 25,
+            }],
+        });
+    });
+});
+
+describe('buildAgingReconciliation', () => {
+    it('keeps each control account itemized while summing the book-level difference', () => {
+        const reconciliation = buildAgingReconciliation([
+            { guid: 'ar-usd', name: 'A/R USD', controlBalance: 125, agedLotBalance: 100 },
+            { guid: 'ar-eur', name: 'A/R EUR', controlBalance: 80, agedLotBalance: 80 },
+        ], 'ar');
+
+        expect(reconciliation.controlBalance).toBe(205);
+        expect(reconciliation.agedTotal).toBe(180);
+        expect(reconciliation.unreconciledDifference).toBe(25);
+        expect(reconciliation.controlAccounts[0].unreconciledDifference).toBe(25);
+        expect(reconciliation.controlAccounts[1].unreconciledDifference).toBe(0);
+    });
+});
+
+describe('buildAgingControlAccountRows', () => {
+    const visibleAr = {
+        guid: 'ar-visible',
+        name: 'Accounts Receivable',
+        accountType: 'RECEIVABLE',
+        commodityGuid: 'usd',
+        commodityNamespace: 'CURRENCY',
+    };
+
+    it('uses the balance-sheet as-of quantity for control balance while making the future $400 aging difference explicit', () => {
+        const controlRows = buildAgingControlAccountRows(
+            [visibleAr],
+            new Map([['ar-visible', { quantity: 100 }]]),
+            new Map([['ar-visible', 500]]),
+            () => 1,
+        );
+        const report = buildAgingReport([
+            inv({ guid: 'past-100', datePosted: '2026-08-01T00:00:00.000Z', dueDate: '2026-08-01T00:00:00.000Z', lotBalance: 100 }),
+            inv({ guid: 'future-400', datePosted: '2027-12-31T00:00:00.000Z', dueDate: '2027-12-31T00:00:00.000Z', lotBalance: 400 }),
+        ], 'ar', new Date('2026-08-14T23:59:59.000Z'), controlRows);
+
+        expect(report.reconciliation).toMatchObject({
+            controlBalance: 100,
+            agedTotal: 500,
+            unreconciledDifference: -400,
+        });
+    });
+
+    it('does not emit a phantom residual for a hidden account omitted from the balance-sheet population', () => {
+        const rows = buildAgingControlAccountRows(
+            [visibleAr],
+            new Map([['ar-visible', { quantity: 100 }], ['ar-hidden', { quantity: 777 }]]),
+            new Map([['ar-visible', 100], ['ar-hidden', 777]]),
+            () => 1,
+        );
+
+        expect(rows).toEqual([expect.objectContaining({ guid: 'ar-visible', controlBalance: 100, agedLotBalance: 100 })]);
+    });
+
+    it('uses quantity times the valuation multiplier instead of the split value sum', () => {
+        const rows = buildAgingControlAccountRows(
+            [visibleAr],
+            new Map([['ar-visible', { quantity: 125 }]]),
+            new Map([['ar-visible', 125]]),
+            () => 0.8,
+        );
+
+        expect(rows[0]).toMatchObject({ controlBalance: 100, agedLotBalance: 100 });
+    });
+
+    it('retains an unpriceable commodity as an explicit valuation gap instead of a false reconciliation', () => {
+        const report = buildAgingReport([], 'ar', ASOF, [], [{
+            commodityGuid: 'gbp',
+            label: 'GBP',
+            reason: 'missing-exchange-rate',
+            message: 'GBP excluded: no exchange rate to USD as of 2026-07-08.',
+        }]);
+
+        expect(report.reconciliation.valuationGaps).toHaveLength(1);
+        expect(report.reconciliation.valuationGaps[0].label).toBe('GBP');
     });
 });
 

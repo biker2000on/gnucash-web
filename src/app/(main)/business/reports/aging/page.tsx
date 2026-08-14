@@ -263,6 +263,73 @@ function AgingPageInner() {
                             </div>
                         </div>
                     )}
+                    <section className="border border-border rounded-xl overflow-hidden" aria-labelledby="aging-reconciliation-heading">
+                        <div className="border-b border-border bg-background-secondary/30 px-4 py-3">
+                            <h2 id="aging-reconciliation-heading" className="text-sm font-medium text-foreground">
+                                Control-account reconciliation
+                            </h2>
+                            <p className="mt-1 text-xs text-foreground-secondary">
+                                Compares the balance-sheet control account with the open invoice lots above.
+                            </p>
+                        </div>
+                        {report.reconciliation.valuationGaps.length > 0 && (
+                            <div className="border-b border-warning/30 bg-warning/10 px-4 py-3 text-sm text-foreground-secondary">
+                                <p className="font-medium text-warning">Some control-account balances cannot be valued.</p>
+                                <ul className="mt-1 list-disc pl-4 text-xs">
+                                    {report.reconciliation.valuationGaps.map((gap) => (
+                                        <li key={`${gap.commodityGuid}-${gap.reason}`}>{gap.message}</li>
+                                    ))}
+                                </ul>
+                            </div>
+                        )}
+                        <div className="overflow-x-auto">
+                            <table className="w-full min-w-[620px] text-sm">
+                                <thead>
+                                    <tr className="border-b border-border text-xs uppercase tracking-wider text-foreground-muted">
+                                        <th className="px-4 py-2.5 text-left">Control account</th>
+                                        <th className="px-4 py-2.5 text-right">Balance sheet</th>
+                                        <th className="px-4 py-2.5 text-right">Aged invoice lots</th>
+                                        <th className="px-4 py-2.5 text-right">Unreconciled difference</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {report.reconciliation.controlAccounts.map((account) => (
+                                        <tr key={account.guid} className="border-b border-border/30">
+                                            <td className="px-4 py-2.5 text-foreground">{account.name}</td>
+                                            <td className="px-4 py-2.5 text-right"><Amount value={account.controlBalance} muted /></td>
+                                            <td className="px-4 py-2.5 text-right"><Amount value={account.agedTotal} muted /></td>
+                                            <td className="px-4 py-2.5 text-right">
+                                                <Amount value={account.unreconciledDifference} negative={account.unreconciledDifference < 0} />
+                                            </td>
+                                        </tr>
+                                    ))}
+                                    {report.reconciliation.controlAccounts.length === 0 && (
+                                        <tr>
+                                            <td colSpan={4} className="px-4 py-3 text-foreground-secondary">
+                                                No {side === 'ar' ? 'receivable' : 'payable'} control account is in this book.
+                                            </td>
+                                        </tr>
+                                    )}
+                                </tbody>
+                                <tfoot>
+                                    <tr className="bg-background-secondary/20 font-medium">
+                                        <td className="px-4 py-3 text-foreground">Total</td>
+                                        <td className="px-4 py-3 text-right"><Amount value={report.reconciliation.controlBalance} /></td>
+                                        <td className="px-4 py-3 text-right"><Amount value={report.reconciliation.agedTotal} /></td>
+                                        <td className="px-4 py-3 text-right">
+                                            <Amount
+                                                value={report.reconciliation.unreconciledDifference}
+                                                negative={report.reconciliation.unreconciledDifference < 0}
+                                            />
+                                        </td>
+                                    </tr>
+                                </tfoot>
+                            </table>
+                        </div>
+                        <p className="border-t border-border px-4 py-2 text-xs text-foreground-muted">
+                            The difference is direct or otherwise non-invoice-lot activity. Payments matched to an invoice reduce that invoice lot and are not counted again here.
+                        </p>
+                    </section>
                     <p className="text-xs text-foreground-muted">
                         Amounts due come from each invoice&apos;s posting-lot balance; credit notes appear
                         as negative amounts. Esc collapses expanded rows. As of{' '}
