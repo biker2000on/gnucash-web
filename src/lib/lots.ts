@@ -190,6 +190,23 @@ export async function getLotsForAccounts(accountGuids: string[]): Promise<Map<st
         metadataSlots.map(slot => [`${slot.obj_guid}:${slot.name}`, slot.string_val]),
     );
 
+    // Transfer destinations point back to their source lot using the metadata
+    // written by the scrubber.  Read that existing linkage in reverse so a
+    // source lot closed solely by a transfer-out does not look like it sold its
+    // shares for $0 and therefore realized its entire basis as a loss.
+    const transferDestinationSlots = await prisma.slots.findMany({
+        where: {
+            name: 'source_lot_guid',
+            string_val: { in: lotGuids },
+        },
+        select: { string_val: true },
+    });
+    const transferOutSourceLotGuids = new Set(
+        transferDestinationSlots
+            .map(slot => slot.string_val)
+            .filter((guid): guid is string => Boolean(guid)),
+    );
+
     const accountRows = await prisma.accounts.findMany({
         where: { guid: { in: uniqueAccountGuids } },
         select: { guid: true, commodity_guid: true },
@@ -240,9 +257,14 @@ export async function getLotsForAccounts(accountGuids: string[]): Promise<Map<st
             .filter(s => s.shares > 0)
             .reduce((sum, s) => sum + Math.abs(s.value), 0) + carriedBasis;
 
-        // Realized gain: proceeds - basis, excluding zero-qty gains offset
-        // splits (native GnuCash convention; see computeRealizedGain)
-        const realizedGain = computeRealizedGain(lotSplits, isClosed, carriedBasis);
+        // A lot closed by a transfer-out is not a disposition. Its basis and
+        // acquisition date travel to the destination lot through the existing
+        // source_lot_guid / carried_basis / acquisition_date linkage.
+        // Realized gain: proceeds - basis for actual dispositions, excluding
+        // zero-quantity gains offsets (see computeRealizedGain).
+        const realizedGain = isClosed && transferOutSourceLotGuids.has(lot.guid)
+            ? 0
+            : computeRealizedGain(lotSplits, isClosed, carriedBasis);
 
         // Unrealized gain: (currentPrice * remaining shares) - cost basis of remaining shares
         let unrealizedGain: number | null = null;

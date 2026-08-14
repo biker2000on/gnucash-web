@@ -127,6 +127,10 @@ function carriedBasisSlot(lotGuid: string, amount: string) {
   return { obj_guid: lotGuid, name: 'carried_basis', string_val: amount };
 }
 
+function transferSourceLotSlot(sourceLotGuid: string) {
+  return { obj_guid: 'transfer-destination-lot', name: 'source_lot_guid', string_val: sourceLotGuid };
+}
+
 beforeEach(() => {
   mockLatestPrice = null;
   mockLotsFindMany.mockReset();
@@ -219,5 +223,29 @@ describe('carried basis feeds totalCost and unrealizedGain', () => {
     expect(summary.carriedBasis).toBe(0);
     expect(summary.totalCost).toBeCloseTo(1_000);
     expect(summary.unrealizedGain).toBeCloseTo(200);
+  });
+});
+
+describe('transfer-out lot summaries', () => {
+  it('does not fabricate a realized loss when an existing destination link identifies a closed transfer-out', async () => {
+    // The $0 transfer-out closes the source lot, but source_lot_guid on the
+    // destination confirms that the shares (and their basis) moved rather than
+    // sold. Before this fix, -(1000 + 0) incorrectly reported a $1,000 loss.
+    mockLotsFindMany.mockResolvedValue([
+      lot('transfer-source', 1, [
+        split('buy', '2020-01-01', 10, 1_000),
+        split('transfer-out', '2024-02-01', -10, 0),
+      ]),
+    ]);
+    mockSlotsFindMany.mockImplementation(async (args: { where?: { name?: string } }) =>
+      args.where?.name === 'source_lot_guid'
+        ? [transferSourceLotSlot('transfer-source')]
+        : [],
+    );
+
+    const [summary] = await getAccountLots(ACCT);
+
+    expect(summary.isClosed).toBe(true);
+    expect(summary.realizedGain).toBe(0);
   });
 });
