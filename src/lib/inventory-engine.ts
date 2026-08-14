@@ -31,6 +31,8 @@
  *   its invoice entry and item. For FIFO this is recorded as a new, newest
  *   layer; restoring the original historical layer position would require a
  *   shipment allocation reference, which fulfillment allocations do not have.
+ *   Ledger amounts are rounded per posting, so separate fractional-quantity
+ *   postings can differ by at most a half-cent each from one combined posting.
  *
  * ─────────────────────────────────────────────────────────────────────────
  * LEDGER POSTINGS (per-operation `post` flag)
@@ -1003,7 +1005,6 @@ export async function shipStock(input: ShipInput): Promise<MovementResult> {
     const onHandAtLocation = await getOnHand(tx, item.id, input.locationId);
     assertSufficientStock(onHandAtLocation, signedQty, item.sku);
 
-    const isFifo = item.valuationMethod === 'fifo';
     const effectiveCost = await consumptionUnitCost(tx, item, input.quantity);
     const txnGuid = await maybePostCogs(
       tx, item, input.bookGuid, input.quantity, date, input.post, input.reference, effectiveCost,
@@ -1014,9 +1015,7 @@ export async function shipStock(input: ShipInput): Promise<MovementResult> {
       locationId: input.locationId,
       movementType: 'ship',
       quantity: signedQty,
-      // FIFO items record the layer-derived cost on the consuming movement;
-      // average items keep null (they consume at the moving average).
-      unitCost: isFifo ? effectiveCost : null,
+      unitCost: effectiveCost,
       movementDate: date,
       reference: input.reference ?? null,
       invoiceGuid: input.invoiceGuid ?? null,
@@ -1515,7 +1514,7 @@ async function getShipmentWeightedUnitCost(
   invoiceGuid: string,
   entryGuid: string,
   itemId: number,
-): Promise<number> {
+): Promise<number | null> {
   const rows = await tx.$queryRawUnsafe<Array<{
     shipment_quantity: unknown;
     total_cost: unknown;
@@ -1536,9 +1535,7 @@ async function getShipmentWeightedUnitCost(
   const totalCost = row?.total_cost == null ? NaN : Number(row.total_cost);
   const missingCostCount = Number(row?.missing_cost_count ?? 0);
   if (shipmentQuantity <= EPSILON || missingCostCount > 0 || !Number.isFinite(totalCost)) {
-    throw new InventoryValidationError(
-      `Entry ${entryGuid}: cannot return item ${itemId} because its shipment cost was not recorded`,
-    );
+    return null;
   }
   return totalCost / shipmentQuantity;
 }
@@ -1697,11 +1694,18 @@ export async function returnToStock(input: FulfillInput): Promise<FulfillResult>
 
     const reference = `Invoice ${invoice.id} return`;
     const movements: InventoryMovement[] = [];
+    const posting = shouldPostReturnCogs(input.post);
     for (const a of input.allocations) {
       const item = items.get(a.itemId)!;
-      const unitCost = await getShipmentWeightedUnitCost(
+      const basis = await getShipmentWeightedUnitCost(
         tx, input.invoiceGuid, a.entryGuid, item.id,
       );
+      if (posting && basis === null) {
+        throw new InventoryValidationError(
+          `Shipment cost is not recorded for ${item.sku}. Resubmit with COGS posting turned off, or adjust COGS manually.`,
+        );
+      }
+      const unitCost = basis ?? item.avgCost;
       const txnGuid = await maybePostReturn(
         tx, item, input.bookGuid, a.quantity, date, input.post, reference, unitCost,
       );
