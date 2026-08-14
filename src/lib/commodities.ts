@@ -7,7 +7,17 @@
 
 import prisma from './prisma';
 import { toDecimalNumber as toDecimal } from './gnucash';
-import { traceCostBasis, isTransferIn, createCostBasisCache, type CostBasisMethod, type CostBasisCache  } from './cost-basis';
+import {
+    traceCostBasis,
+    isTransferIn,
+    createCostBasisCache,
+    createCostBasisPool,
+    addPurchaseToPool,
+    addTracedTransferToPool,
+    removeSharesFromPool,
+    type CostBasisMethod,
+    type CostBasisCache,
+} from './cost-basis';
 
 export interface PriceData {
     guid: string;
@@ -18,7 +28,21 @@ export interface PriceData {
 
 export interface HoldingsData {
     shares: number;
+    /**
+     * Cost basis of `costBasisCoveredShares` — NOT necessarily of `shares`.
+     * When `costBasisUncoveredShares > 0` some holdings have no establishable
+     * basis (in-kind transfers whose origin is not in this book), so `gainLoss`
+     * below overstates the gain by whatever those shares actually cost. Report
+     * `costBasisWarnings` alongside the number rather than presenting it as a
+     * complete basis.
+     */
     costBasis: number;
+    /** Shares whose basis is included in `costBasis`. */
+    costBasisCoveredShares: number;
+    /** Shares with no establishable basis; excluded from `costBasis`. */
+    costBasisUncoveredShares: number;
+    /** Plain-English notes naming the uncovered shares. */
+    costBasisWarnings: string[];
     marketValue: number;
     gainLoss: number;
     gainLossPercent: number;
@@ -184,6 +208,9 @@ export async function getAccountHoldings(
         return {
             shares: 0,
             costBasis: 0,
+            costBasisCoveredShares: 0,
+            costBasisUncoveredShares: 0,
+            costBasisWarnings: [],
             marketValue: 0,
             gainLoss: 0,
             gainLossPercent: 0,
@@ -214,6 +241,11 @@ export async function getAccountHoldings(
 
     // Calculate cost basis -- with optional carry-over tracing
     let rawCostBasis: number;
+    // Coverage travels WITH the basis: `costBasis` below is the basis of
+    // `costBasisCoveredShares`, never of all `shares`.
+    let coveredShares = 0;
+    let uncoveredShares = 0;
+    let costBasisWarnings: string[] = [];
 
     if (costBasisOptions?.enabled && commodityGuid) {
         // Fetch splits with transaction/account data for transfer detection
@@ -245,35 +277,37 @@ export async function getAccountHoldings(
         });
 
         const cache = costBasisOptions.cache || createCostBasisCache();
-        let runShares = 0;
-        let runCostBasis = 0;
+        // A CostBasisPool, not a pair of loose running totals: a traced
+        // transfer-in returns basis for only the shares it could establish, so
+        // adding that basis while counting ALL the shares would divide a
+        // partial cost by a full share count and understate the basis of every
+        // share in the account (the H4 defect, one level up).
+        const pool = createCostBasisPool();
 
         for (const split of splitsWithTx) {
             const qty = toDecimal(split.quantity_num, split.quantity_denom);
             const val = Math.abs(toDecimal(split.value_num, split.value_denom));
 
             if (qty > 0) {
-                runShares += qty;
                 const txSplits = split.transaction?.splits || [];
                 if (isTransferIn(split, txSplits, commodityGuid)) {
                     const traced = await traceCostBasis(split.guid, costBasisOptions.method, commodityGuid, qty, cache);
-                    runCostBasis += traced.totalCost;
+                    addTracedTransferToPool(pool, traced);
                 } else {
-                    runCostBasis += val;
+                    addPurchaseToPool(pool, qty, val);
                 }
             } else if (qty < 0) {
-                const soldShares = Math.abs(qty);
-                if (runShares > 0) {
-                    const avgCost = runCostBasis / runShares;
-                    runCostBasis -= avgCost * soldShares;
-                }
-                runShares += qty;
+                removeSharesFromPool(pool, Math.abs(qty));
             }
         }
 
-        rawCostBasis = runCostBasis;
+        rawCostBasis = pool.basisOfCoveredShares;
+        coveredShares = pool.coveredShares;
+        uncoveredShares = pool.uncoveredShares;
+        costBasisWarnings = pool.warnings;
     } else {
         rawCostBasis = calculateCostBasis(splits);
+        coveredShares = shares;
     }
 
     // Get latest price
@@ -291,6 +325,9 @@ export async function getAccountHoldings(
     return {
         shares: isZeroShares ? 0 : shares,
         costBasis,
+        costBasisCoveredShares: isZeroShares ? 0 : coveredShares,
+        costBasisUncoveredShares: isZeroShares ? 0 : uncoveredShares,
+        costBasisWarnings,
         marketValue,
         gainLoss,
         gainLossPercent,
