@@ -23,6 +23,36 @@ import {
 } from '@/lib/services/period-lock.service';
 
 /**
+ * Parse a non-negative integer query param, falling back to `fallback` when the
+ * value is absent, unparseable, or negative. LIMIT/OFFSET are now real SQL
+ * clauses, and PostgreSQL rejects a negative or NaN bind there.
+ */
+function nonNegativeIntParam(raw: string | null, fallback: number): number {
+    if (raw === null || raw.trim() === '') return fallback;
+    const parsed = Number.parseInt(raw, 10);
+    if (!Number.isFinite(parsed) || parsed < 0) return fallback;
+    return parsed;
+}
+
+/**
+ * Parse an amount-bound query param into a decimal STRING for a `::numeric`
+ * cast in SQL. Returned as text (not a JS number) so the bound reaches
+ * PostgreSQL as an exact decimal rather than a binary float. Returns null for
+ * absent or non-numeric input, which drops the bound rather than erroring the
+ * query.
+ */
+function numericParam(raw: string | null): string | null {
+    if (raw === null || raw.trim() === '') return null;
+    const trimmed = raw.trim();
+    // A well-formed decimal is handed to PostgreSQL verbatim, so a bound like
+    // 0.005 is compared exactly and not through a float64 round-trip.
+    if (/^[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?$/.test(trimmed)) return trimmed;
+    // Anything else keeps the old lenient parseFloat behaviour ("12abc" -> 12).
+    const parsed = Number.parseFloat(trimmed);
+    return Number.isFinite(parsed) ? String(parsed) : null;
+}
+
+/**
  * @openapi
  * /api/transactions:
  *   get:
@@ -66,12 +96,17 @@ import {
  *         name: minAmount
  *         schema:
  *           type: number
- *         description: Minimum absolute transaction amount.
+ *         description: >
+ *           Minimum absolute split amount. A transaction matches when at least
+ *           one of its splits has |value| within [minAmount, maxAmount]; both
+ *           bounds are tested against the SAME split.
  *       - in: query
  *         name: maxAmount
  *         schema:
  *           type: number
- *         description: Maximum absolute transaction amount.
+ *         description: >
+ *           Maximum absolute split amount. See minAmount — both bounds apply to
+ *           the same split.
  *       - in: query
  *         name: reconcileStates
  *         schema:
@@ -93,8 +128,8 @@ export async function GET(request: Request) {
         if (roleResult instanceof NextResponse) return roleResult;
 
         const { searchParams } = new URL(request.url);
-        const limit = parseInt(searchParams.get('limit') || '100');
-        const offset = parseInt(searchParams.get('offset') || '0');
+        const limit = nonNegativeIntParam(searchParams.get('limit'), 100);
+        const offset = nonNegativeIntParam(searchParams.get('offset'), 0);
         // '#tag' tokens in the search act as tag filters (AND semantics);
         // remaining text is the normal description/num/account search.
         const { text: search, tags: tagFilters } = parseSearchQuery(searchParams.get('search') || '');
@@ -108,100 +143,159 @@ export async function GET(request: Request) {
         // Get book account GUIDs for scoping
         const bookAccountGuids = await getBookAccountGuids();
 
-        // Build where conditions - scoped to active book
-        const whereConditions: Prisma.transactionsWhereInput = {
-            splits: {
-                some: {
-                    account_guid: { in: bookAccountGuids },
-                },
-            },
-        };
+        // Every filter below is expressed as a SQL predicate on `transactions t`
+        // and evaluated in the SAME query that paginates, so a requested page is
+        // a page of MATCHES. Filtering after LIMIT/OFFSET (as this route used to
+        // do for amount and reconcile state) both hid matching rows that landed
+        // on a later page and under-filled every page it did return.
+        //
+        // Each split-level predicate is an EXISTS subquery, which is what makes
+        // the result de-duplicated by construction: a transaction with twenty
+        // splits is still one row, and the matching split may be any of them,
+        // not just the first.
+        const filters: Prisma.Sql[] = [];
+
+        // Book scoping, merged with the account-type filter when present (a
+        // transaction qualifies via a single split that is both in-book and of a
+        // requested type — same semantics as the previous Prisma `splits.some`).
+        const types = accountTypes
+            ? accountTypes.split(',').map(t => t.trim().toUpperCase()).filter(Boolean)
+            : [];
+        filters.push(types.length > 0
+            ? Prisma.sql`EXISTS (
+                SELECT 1 FROM splits s
+                JOIN accounts a ON a.guid = s.account_guid
+                WHERE s.tx_guid = t.guid
+                  AND s.account_guid = ANY(${bookAccountGuids}::text[])
+                  AND a.account_type = ANY(${types}::text[])
+            )`
+            : Prisma.sql`EXISTS (
+                SELECT 1 FROM splits s
+                WHERE s.tx_guid = t.guid
+                  AND s.account_guid = ANY(${bookAccountGuids}::text[])
+            )`);
 
         // Date filters
-        if (startDate || endDate) {
-            whereConditions.post_date = {};
-            if (startDate) {
-                whereConditions.post_date.gte = new Date(startDate);
-            }
-            if (endDate) {
-                whereConditions.post_date.lte = new Date(endDate);
-            }
+        if (startDate) {
+            filters.push(Prisma.sql`t.post_date >= ${new Date(startDate)}`);
+        }
+        if (endDate) {
+            filters.push(Prisma.sql`t.post_date <= ${new Date(endDate)}`);
         }
 
         // Search filter (description, num, or account name)
         if (search) {
-            whereConditions.OR = [
-                { description: { contains: search, mode: 'insensitive' } },
-                { num: { contains: search, mode: 'insensitive' } },
-                {
-                    splits: {
-                        some: {
-                            account: {
-                                name: { contains: search, mode: 'insensitive' },
-                            },
-                        },
-                    },
-                },
-            ];
+            const like = `%${search}%`;
+            filters.push(Prisma.sql`(
+                t.description ILIKE ${like}
+                OR t.num ILIKE ${like}
+                OR EXISTS (
+                    SELECT 1 FROM splits s
+                    JOIN accounts a ON a.guid = s.account_guid
+                    WHERE s.tx_guid = t.guid AND a.name ILIKE ${like}
+                )
+            )`);
         }
 
         // Tag filters: a transaction matches a tag when it carries the tag
         // directly OR any of its splits' accounts carries it (account tags
         // propagate to transactions). Multiple tags AND together.
-        if (tagFilters.length > 0) {
-            whereConditions.AND = tagFilters.map(name => ({
-                OR: [
-                    { tags: { some: { tag: { name } } } },
-                    { splits: { some: { account: { tags: { some: { tag: { name } } } } } } },
-                ],
-            }));
+        for (const name of tagFilters) {
+            filters.push(Prisma.sql`(
+                EXISTS (
+                    SELECT 1 FROM gnucash_web_transaction_tags tt
+                    JOIN gnucash_web_tags g ON g.id = tt.tag_id
+                    WHERE tt.transaction_guid = t.guid AND g.name = ${name}
+                )
+                OR EXISTS (
+                    SELECT 1 FROM splits s
+                    JOIN gnucash_web_account_tags at2 ON at2.account_guid = s.account_guid
+                    JOIN gnucash_web_tags g ON g.id = at2.tag_id
+                    WHERE s.tx_guid = t.guid AND g.name = ${name}
+                )
+            )`);
         }
 
-        // Account type filter (merged with existing book scoping)
-        if (accountTypes) {
-            const types = accountTypes.split(',').map(t => t.trim().toUpperCase());
-            whereConditions.splits = {
-                some: {
-                    account_guid: { in: bookAccountGuids },
-                    account: {
-                        account_type: { in: types },
-                    },
-                },
-            };
+        // Amount range. GnuCash stores each split value as a num/denom fraction
+        // whose denominator is NOT always a power of ten, so the comparison is
+        // done as an exact rational in PostgreSQL `numeric` — never in float and
+        // never by string-padding the numerator (see src/lib/reports/utils.ts,
+        // which uses the same `::numeric / NULLIF(denom, 0)::numeric` idiom).
+        // The bounds are passed as text and cast to numeric so no binary float
+        // ever touches the comparison.
+        //
+        // SEMANTICS: absolute value of a SINGLE split, and both bounds are
+        // tested against that same split — i.e. "this transaction has a line
+        // between $min and $max". Split-level (not transaction-total) because
+        // the journal renders every split of every row, so a per-split match is
+        // exactly what the user sees on screen.
+        const minVal = numericParam(minAmount);
+        const maxVal = numericParam(maxAmount);
+        if (minVal !== null || maxVal !== null) {
+            const bounds: Prisma.Sql[] = [];
+            if (minVal !== null) {
+                bounds.push(Prisma.sql`abs(s.value_num::numeric / NULLIF(s.value_denom, 0)::numeric) >= ${minVal}::numeric`);
+            }
+            if (maxVal !== null) {
+                bounds.push(Prisma.sql`abs(s.value_num::numeric / NULLIF(s.value_denom, 0)::numeric) <= ${maxVal}::numeric`);
+            }
+            filters.push(Prisma.sql`EXISTS (
+                SELECT 1 FROM splits s
+                WHERE s.tx_guid = t.guid AND ${Prisma.join(bounds, ' AND ')}
+            )`);
         }
 
-        // Amount range filters (need raw SQL for these due to computed values)
-        // For minAmount and maxAmount, we'll use Prisma's raw filter
-        if (minAmount || maxAmount || reconcileStates) {
-            // These require post-filtering or raw SQL
-            // For now, we'll fetch and filter in JS for complex cases
-            // This is less efficient but maintains correctness
+        // Reconcile state: transaction matches when any split is in one of the
+        // requested states.
+        const states = reconcileStates
+            ? reconcileStates.split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
+            : [];
+        if (states.length > 0) {
+            filters.push(Prisma.sql`EXISTS (
+                SELECT 1 FROM splits s
+                WHERE s.tx_guid = t.guid
+                  AND lower(s.reconcile_state) = ANY(${states}::text[])
+            )`);
         }
 
-        // Fetch transactions
-        const transactions = await prisma.transactions.findMany({
-            where: whereConditions,
-            orderBy: {
-                post_date: 'desc',
-            },
-            take: limit,
-            skip: offset,
-            include: {
-                splits: {
-                    include: {
-                        // Narrow to the only relation fields the response uses
-                        // (account_name, commodity_mnemonic) instead of every
-                        // column of accounts + commodities per split.
-                        account: {
-                            select: {
-                                name: true,
-                                commodity: { select: { mnemonic: true } },
+        // Page of matching transaction GUIDs. The guid tiebreaker keeps the
+        // order total: post_date alone has ties, and an unstable order makes
+        // LIMIT/OFFSET paging duplicate and skip rows across pages.
+        const pageRows = await prisma.$queryRaw<{ guid: string }[]>`
+            SELECT t.guid
+            FROM transactions t
+            WHERE ${Prisma.join(filters, ' AND ')}
+            ORDER BY t.post_date DESC, t.guid ASC
+            LIMIT ${limit} OFFSET ${offset}
+        `;
+        const pageGuids = pageRows.map(r => r.guid);
+
+        // Hydrate the page (all splits of each matching transaction, not just
+        // the splits that matched the filter).
+        const pageTransactions = pageGuids.length > 0
+            ? await prisma.transactions.findMany({
+                where: { guid: { in: pageGuids } },
+                include: {
+                    splits: {
+                        include: {
+                            // Narrow to the only relation fields the response uses
+                            // (account_name, commodity_mnemonic) instead of every
+                            // column of accounts + commodities per split.
+                            account: {
+                                select: {
+                                    name: true,
+                                    commodity: { select: { mnemonic: true } },
+                                },
                             },
                         },
                     },
                 },
-            },
-        });
+            })
+            : [];
+        const byGuid = new Map(pageTransactions.map(tx => [tx.guid, tx]));
+        const transactions = pageGuids
+            .map(guid => byGuid.get(guid))
+            .filter((tx): tx is (typeof pageTransactions)[number] => tx !== undefined);
 
         const accountPathMap = await buildAccountPathMap(bookAccountGuids);
 
@@ -221,38 +315,8 @@ export async function GET(request: Request) {
         // Fetch direct tags for the fetched transactions
         const tagMap = await getTagsForTransactions(txGuids);
 
-        // Post-filter for amount range and reconcile states if needed
-        let filteredTransactions = transactions;
-
-        if (minAmount) {
-            const minVal = parseFloat(minAmount);
-            filteredTransactions = filteredTransactions.filter(tx =>
-                tx.splits.some(split => {
-                    const absValue = Math.abs(Number(split.value_num) / Number(split.value_denom));
-                    return absValue >= minVal;
-                })
-            );
-        }
-
-        if (maxAmount) {
-            const maxVal = parseFloat(maxAmount);
-            filteredTransactions = filteredTransactions.filter(tx =>
-                tx.splits.some(split => {
-                    const absValue = Math.abs(Number(split.value_num) / Number(split.value_denom));
-                    return absValue <= maxVal;
-                })
-            );
-        }
-
-        if (reconcileStates) {
-            const states = reconcileStates.split(',').map(s => s.trim().toLowerCase());
-            filteredTransactions = filteredTransactions.filter(tx =>
-                tx.splits.some(split => states.includes(split.reconcile_state.toLowerCase()))
-            );
-        }
-
         // Transform to response format
-        const result = filteredTransactions.map(tx => ({
+        const result = transactions.map(tx => ({
             guid: tx.guid,
             currency_guid: tx.currency_guid,
             num: tx.num,
