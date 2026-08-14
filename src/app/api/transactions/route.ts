@@ -24,6 +24,7 @@ import {
 
 /** Thrown for a malformed filter value; caught in GET and answered as a 400. */
 class BadFilterError extends Error {}
+class OutOfBookGeneratedSplitError extends Error {}
 
 const DECIMAL_RE = /^[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?$/;
 
@@ -515,10 +516,17 @@ export async function POST(request: Request) {
             // Process multi-currency splits and add trading splits if needed
             const multiCurrencyResult = await processMultiCurrencySplits(
                 body.splits,
-                tx
+                tx,
+                bookAccountGuids,
             );
             isMultiCurrency = multiCurrencyResult.isMultiCurrency;
             const allSplits = multiCurrencyResult.allSplits;
+            // Helpers may append splits (Trading:* today). Keep the write
+            // boundary authoritative: no generated account can escape the
+            // caller's book even if a future helper gets its lookup wrong.
+            if (allSplits.some(split => !bookAccountGuids.has(split.account_guid))) {
+                throw new OutOfBookGeneratedSplitError();
+            }
             totalSplitsCount = allSplits.length;
 
             // Insert transaction
@@ -631,6 +639,12 @@ export async function POST(request: Request) {
 
         return NextResponse.json(serializeBigInts(result), { status: 201 });
     } catch (error) {
+        if (error instanceof OutOfBookGeneratedSplitError) {
+            return NextResponse.json(
+                { error: 'One or more accounts not found in this book' },
+                { status: 404 },
+            );
+        }
         if (error instanceof PeriodLockedError) {
             return periodLockedResponse(error);
         }

@@ -85,7 +85,7 @@ export async function POST(request: Request) {
         if (lockError) return lockError;
 
         const result = await prisma.$transaction(async (tx) =>
-            postEsppPurchase(body as PostEsppInput, tx)
+            postEsppPurchase(body as PostEsppInput, tx, bookAccountGuids)
         );
 
         await logAudit('CREATE', 'TRANSACTION', result.txGuid, null, {

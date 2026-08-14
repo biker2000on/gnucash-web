@@ -170,10 +170,11 @@ async function writeTransaction(
         currencyGuid: string;
         specs: EquityCompSplitSpec[];
         roleAccounts: Partial<Record<EquityCompRole, string>>;
+        bookAccountGuids: Set<string>;
     },
     tx: PrismaTx,
 ): Promise<{ txGuid: string; splitCount: number; tradingSplitsAdded: number }> {
-    const { kind, postDate, description, currencyGuid, specs, roleAccounts } = params;
+    const { kind, postDate, description, currencyGuid, specs, roleAccounts, bookAccountGuids } = params;
 
     const rawSplits = specs.map(spec => {
         const accountGuid = roleAccounts[spec.role];
@@ -196,7 +197,7 @@ async function writeTransaction(
     // span multiple commodities (stock + currency), balancing Trading:* splits
     // are generated, matching how this book's other investment transactions
     // are recorded.
-    const { allSplits } = await processMultiCurrencySplits(rawSplits, tx);
+    const { allSplits } = await processMultiCurrencySplits(rawSplits, tx, bookAccountGuids);
 
     const txGuid = generateGuid();
     await tx.transactions.create({
@@ -261,6 +262,7 @@ async function writeTransaction(
 export async function postVestEvent(
     input: PostVestInput,
     tx: PrismaTx,
+    bookAccountGuids: Set<string>,
 ): Promise<PostEquityCompResult> {
     const stock = await loadAccount(input.stockAccountGuid, 'Stock', tx);
     const income = await loadAccount(input.incomeAccountGuid, 'Income', tx);
@@ -302,6 +304,7 @@ export async function postVestEvent(
             income: income.guid,
             tax: taxAccount.guid,
         },
+        bookAccountGuids,
     }, tx);
 
     const incomeSpec = specs.find(s => s.role === 'income')!;
@@ -333,6 +336,7 @@ export async function postVestEvent(
 export async function postEsppPurchase(
     input: PostEsppInput,
     tx: PrismaTx,
+    bookAccountGuids: Set<string>,
 ): Promise<PostEquityCompResult> {
     const stock = await loadAccount(input.stockAccountGuid, 'Stock', tx);
     const cash = await loadAccount(input.cashAccountGuid, 'Cash', tx);
@@ -368,6 +372,7 @@ export async function postEsppPurchase(
             cash: cash.guid,
             income: income.guid,
         },
+        bookAccountGuids,
     }, tx);
 
     const incomeSpec = specs.find(s => s.role === 'income');

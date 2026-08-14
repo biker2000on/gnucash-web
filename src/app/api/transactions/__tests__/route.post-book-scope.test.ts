@@ -152,4 +152,23 @@ describe('POST /api/transactions book scope', () => {
         expect(response.status).toBe(201);
         expect(getAccountGuidsForBookMock).toHaveBeenCalledWith(BOOK_GUID);
     });
+
+    it('rejects an out-of-book split appended by a helper before any write', async () => {
+        processMultiCurrencySplitsMock.mockResolvedValueOnce({
+            isMultiCurrency: true,
+            allSplits: [
+                { account_guid: ACCOUNT_A, value_num: 100, value_denom: 100, quantity_num: 100, quantity_denom: 100 },
+                { account_guid: ACCOUNT_B, value_num: -100, value_denom: 100, quantity_num: -100, quantity_denom: 100 },
+                { account_guid: FOREIGN_ACCOUNT, value_num: 0, value_denom: 100, quantity_num: 0, quantity_denom: 100 },
+            ],
+        });
+
+        const response = await POST(request([ACCOUNT_A, ACCOUNT_B]));
+        const body = await response.json();
+
+        expect(response.status).toBe(404);
+        expect(JSON.stringify(body)).not.toContain(FOREIGN_ACCOUNT);
+        expect(prismaMock.transactions.create).not.toHaveBeenCalled();
+        expect(prismaMock.splits.create).not.toHaveBeenCalled();
+    });
 });

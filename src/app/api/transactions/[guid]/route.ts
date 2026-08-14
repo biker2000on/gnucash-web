@@ -36,6 +36,7 @@ class TransactionNotFoundError extends Error {
         this.name = 'TransactionNotFoundError';
     }
 }
+class OutOfBookGeneratedSplitError extends Error {}
 
 /**
  * Parse the client-supplied optimistic-lock token. Returns:
@@ -304,9 +305,16 @@ export async function PUT(
             // Process multi-currency splits and add trading splits if needed
             const multiCurrencyResult = await processMultiCurrencySplits(
                 body.splits,
-                tx
+                tx,
+                bookAccountGuids,
             );
             const allSplits = multiCurrencyResult.allSplits;
+            // Trading and any future split-appending helper must remain in the
+            // caller's book. Throw before the first write so the transaction
+            // rolls back atomically if that invariant is ever violated.
+            if (allSplits.some(split => !bookAccountGuids.has(split.account_guid))) {
+                throw new OutOfBookGeneratedSplitError();
+            }
 
             // Update transaction; enter_date is always bumped to a fresh
             // timestamp so every sibling writer's optimistic check invalidates.
@@ -452,6 +460,12 @@ export async function PUT(
 
         return NextResponse.json(serializeBigInts(result));
     } catch (error) {
+        if (error instanceof OutOfBookGeneratedSplitError) {
+            return NextResponse.json(
+                { error: 'One or more accounts not found in this book' },
+                { status: 404 },
+            );
+        }
         if (error instanceof TransactionNotFoundError) {
             return NextResponse.json({ error: 'Transaction not found' }, { status: 404 });
         }

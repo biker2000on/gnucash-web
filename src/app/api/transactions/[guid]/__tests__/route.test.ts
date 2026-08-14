@@ -345,6 +345,31 @@ describe('PUT /api/transactions/[guid] book scope', () => {
         expect(prismaMock.transactions.update).not.toHaveBeenCalled();
     });
 
+    it('rejects an out-of-book split appended by a helper before replacing the transaction', async () => {
+        processMultiCurrencySplitsMock.mockResolvedValueOnce({
+            isMultiCurrency: true,
+            allSplits: [
+                { ...validBody.splits[0], quantity_num: 100, quantity_denom: 100 },
+                { ...validBody.splits[1], quantity_num: -100, quantity_denom: 100 },
+                {
+                    account_guid: FOREIGN_ACCOUNT,
+                    value_num: 0, value_denom: 100,
+                    quantity_num: 0, quantity_denom: 100,
+                },
+            ],
+        });
+
+        const response = await PUT(putRequest({
+            ...validBody,
+            original_enter_date: CURRENT_ENTER_DATE.toISOString(),
+        }), routeParams);
+
+        expect(response.status).toBe(404);
+        expect(prismaMock.transactions.update).not.toHaveBeenCalled();
+        expect(prismaMock.splits.deleteMany).not.toHaveBeenCalled();
+        expect(prismaMock.splits.create).not.toHaveBeenCalled();
+    });
+
     it('does not lock or mutate a foreign transaction addressed by the path guid', async () => {
         // This fake honours the lock query's book predicate. If the predicate
         // is reverted, the same mutable foreign row is returned and the route
