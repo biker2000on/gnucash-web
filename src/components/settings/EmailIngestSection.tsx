@@ -37,6 +37,8 @@ interface IngestStatus {
     mailboxUser: string | null;
     senders: IngestSender[];
     log: IngestLogEntry[];
+    /** Outstanding terminal failures, independent of the capped activity list. */
+    failures: IngestLogEntry[];
 }
 
 const KIND_OPTIONS: Array<{ value: IngestSender['defaultKind']; label: string }> = [
@@ -66,6 +68,47 @@ function outcomeBadge(outcome: string): { color: string; label: string } {
         default:
             return { color: 'bg-error', label: 'Error' };
     }
+}
+
+interface LogRowProps {
+    entry: IngestLogEntry;
+    badge: { color: string; label: string };
+    busy: boolean;
+    onRetry: (entry: IngestLogEntry) => void;
+}
+
+function LogRow({ entry, badge, busy, onRetry }: LogRowProps) {
+    return (
+        <li className="flex items-start gap-3 text-sm border border-border rounded-lg px-3 py-2">
+            <span
+                className={`inline-block w-2.5 h-2.5 mt-1 rounded-full shrink-0 ${badge.color}`}
+                title={badge.label}
+            />
+            <div className="min-w-0 flex-1">
+                <div className="text-foreground truncate">
+                    {entry.subject || '(no subject)'}
+                    <span className="text-foreground-muted"> — {entry.fromEmail ?? 'unknown sender'}</span>
+                </div>
+                <div className="text-xs text-foreground-muted truncate" title={entry.detail ?? undefined}>
+                    {badge.label}
+                    {entry.attempts > 0 && ` · attempt ${entry.attempts}`}
+                    {entry.ingestedCount > 0 && ` · ${entry.ingestedCount} document${entry.ingestedCount === 1 ? '' : 's'}`}
+                    {' · '}{new Date(entry.processedAt).toLocaleString()}
+                    {entry.detail && ` · ${entry.detail}`}
+                </div>
+            </div>
+            {entry.retriable && (
+                <button
+                    type="button"
+                    onClick={() => onRetry(entry)}
+                    disabled={busy}
+                    className="text-xs text-primary hover:underline disabled:opacity-50 shrink-0 mt-0.5"
+                >
+                    Retry
+                </button>
+            )}
+        </li>
+    );
 }
 
 export function EmailIngestSection() {
@@ -195,6 +238,7 @@ export function EmailIngestSection() {
     const configured = status?.configured === true;
     const senders = status?.senders ?? [];
     const log = status?.log ?? [];
+    const failures = status?.failures ?? [];
     const bookName = (guid: string | null) =>
         guid ? (books.find(b => b.guid === guid)?.name ?? guid.slice(0, 8)) : 'Default';
 
@@ -242,6 +286,30 @@ export function EmailIngestSection() {
                         >
                             {polling ? 'Polling…' : 'Poll now'}
                         </button>
+                    </div>
+                )}
+
+                {failures.length > 0 && (
+                    <div className="space-y-2 border border-error/30 bg-error/5 rounded-lg p-3">
+                        <h4 className="text-sm font-medium text-error">
+                            Needs attention — {failures.length} message{failures.length === 1 ? '' : 's'} not ingested
+                        </h4>
+                        <p className="text-xs text-foreground-secondary">
+                            These emails failed permanently and no document was created. Fix the
+                            cause, then retry — outstanding failures stay listed here regardless of
+                            how much newer activity there is.
+                        </p>
+                        <ul className="space-y-1.5">
+                            {failures.map(entry => (
+                                <LogRow
+                                    key={entry.id}
+                                    entry={entry}
+                                    badge={outcomeBadge(entry.outcome)}
+                                    busy={busy}
+                                    onRetry={retryEntry}
+                                />
+                            ))}
+                        </ul>
                     </div>
                 )}
 
@@ -322,35 +390,13 @@ export function EmailIngestSection() {
                             {log.map(entry => {
                                 const badge = outcomeBadge(entry.outcome);
                                 return (
-                                    <li key={entry.id} className="flex items-start gap-3 text-sm border border-border rounded-lg px-3 py-2">
-                                        <span
-                                            className={`inline-block w-2.5 h-2.5 mt-1 rounded-full shrink-0 ${badge.color}`}
-                                            title={badge.label}
-                                        />
-                                        <div className="min-w-0 flex-1">
-                                            <div className="text-foreground truncate">
-                                                {entry.subject || '(no subject)'}
-                                                <span className="text-foreground-muted"> — {entry.fromEmail ?? 'unknown sender'}</span>
-                                            </div>
-                                            <div className="text-xs text-foreground-muted truncate" title={entry.detail ?? undefined}>
-                                                {badge.label}
-                                                {entry.attempts > 0 && ` · attempt ${entry.attempts}`}
-                                                {entry.ingestedCount > 0 && ` · ${entry.ingestedCount} document${entry.ingestedCount === 1 ? '' : 's'}`}
-                                                {' · '}{new Date(entry.processedAt).toLocaleString()}
-                                                {entry.detail && ` · ${entry.detail}`}
-                                            </div>
-                                        </div>
-                                        {entry.retriable && (
-                                            <button
-                                                type="button"
-                                                onClick={() => void retryEntry(entry)}
-                                                disabled={busy}
-                                                className="text-xs text-primary hover:underline disabled:opacity-50 shrink-0 mt-0.5"
-                                            >
-                                                Retry
-                                            </button>
-                                        )}
-                                    </li>
+                                    <LogRow
+                                        key={entry.id}
+                                        entry={entry}
+                                        badge={badge}
+                                        busy={busy}
+                                        onRetry={retryEntry}
+                                    />
                                 );
                             })}
                         </ul>

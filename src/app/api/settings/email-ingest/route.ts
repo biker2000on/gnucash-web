@@ -6,6 +6,7 @@ import {
   addIngestSender,
   getEmailIngestConfig,
   INGEST_KINDS,
+  listIngestFailures,
   listIngestLog,
   listIngestSenders,
   requestIngestRetry,
@@ -49,9 +50,12 @@ export async function GET() {
     if (roleResult instanceof NextResponse) return roleResult;
 
     const config = getEmailIngestConfig();
-    const [senders, log] = config
-      ? await Promise.all([listIngestSenders(), listIngestLog(10)])
-      : [[] as IngestSender[], [] as IngestLogEntry[]];
+    // `failures` is queried separately from the capped recent-activity list so
+    // ten later successes can never hide an outstanding failure (or its Retry
+    // control) by pushing it off the end.
+    const [senders, log, failures] = config
+      ? await Promise.all([listIngestSenders(), listIngestLog(10), listIngestFailures(50)])
+      : [[] as IngestSender[], [] as IngestLogEntry[], [] as IngestLogEntry[]];
 
     return NextResponse.json({
       configured: config !== null,
@@ -60,6 +64,7 @@ export async function GET() {
       defaultBookGuid: config?.defaultBookGuid ?? null,
       senders: senders.map(serializeSender),
       log: log.map(serializeLogEntry),
+      failures: failures.map(serializeLogEntry),
     });
   } catch (error) {
     console.error('Error loading email-ingest settings:', error);
@@ -72,7 +77,8 @@ export async function GET() {
  * - `{ action: 'poll' }` — poll the mailbox now (enqueued; inline if Redis
  *   is unavailable).
  * - `{ action: 'retry', id }` — re-arm a terminally failed ingest-log entry so
- *   the next poll reprocesses it (the message was deliberately left unread).
+ *   the next poll re-fetches and reprocesses it. Scoped to entries the caller
+ *   owns, capped, and rate-limited.
  * - `{ email, defaultKind?, bookGuid? }` — add a sender to the allowlist,
  *   owned by the current user and (by default) the active book.
  */
@@ -109,14 +115,36 @@ export async function POST(request: NextRequest) {
       if (!Number.isFinite(id)) {
         return NextResponse.json({ error: 'A log entry id is required' }, { status: 400 });
       }
-      const rearmed = await requestIngestRetry(id);
-      if (!rearmed) {
+
+      // Ownership is enforced inside requestIngestRetry against the sender
+      // allowlist. A row belonging to someone else comes back as 'not_found'
+      // and is answered 404 — never 403, which would confirm it exists and
+      // turn this endpoint into an oracle for other users' inbound mail.
+      const outcome = await requestIngestRetry(id, roleResult.user.id);
+      if (!outcome.ok) {
+        if (outcome.reason === 'not_found') {
+          return NextResponse.json({ error: 'Ingest log entry not found' }, { status: 404 });
+        }
+        if (outcome.reason === 'cooldown') {
+          return NextResponse.json(
+            { error: `Too soon — try again in about ${outcome.retryAfterMinutes} minute(s)` },
+            { status: 429, headers: { 'Retry-After': String(outcome.retryAfterMinutes * 60) } },
+          );
+        }
+        if (outcome.reason === 'exhausted') {
+          return NextResponse.json(
+            { error: 'This message has used all of its retry attempts' },
+            { status: 409 },
+          );
+        }
         return NextResponse.json(
           { error: 'That entry is not in a retriable state' },
           { status: 409 },
         );
       }
+
       // Kick a poll so the retry happens now rather than on the next tick.
+      // Rate-limited by the manual-retry cooldown enforced above.
       const jobId = await enqueueJob('poll-email-ingest');
       return NextResponse.json({ retried: true, enqueued: jobId !== null });
     }

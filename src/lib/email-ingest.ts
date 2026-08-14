@@ -23,8 +23,8 @@
  * attachment, unsupported type, missing book config) — and transient ones that
  * exhaust the budget — go to the terminal `failed_permanent` state, which
  * keeps the reason in `detail`, raises an `error` notification for the owning
- * user, leaves the message UNREAD in the mailbox, and can be re-armed by the
- * user through `requestIngestRetry`.
+ * user, and can be re-armed by the user through `requestIngestRetry` (which the
+ * poller then re-fetches by Message-ID).
  *
  * The IMAP connection is hidden behind the small `IngestMailClient` interface
  * so unit tests never import imapflow (it is only loaded via dynamic import
@@ -256,7 +256,6 @@ const PERMANENT_FAILURE_PATTERNS = [
   'too large',
   'empty file',
   'no book configured',
-  'unsupported',
 ];
 
 /**
@@ -282,10 +281,6 @@ const TRANSIENT_FAILURE_PATTERNS = [
   'rate limit',
   'ratelimit',
   'too many requests',
-  '429',
-  '503',
-  '502',
-  '504',
   'service unavailable',
   'temporarily unavailable',
   'try again',
@@ -295,21 +290,65 @@ const TRANSIENT_FAILURE_PATTERNS = [
   'deadlock',
   'could not serialize',
   'failed to save receipt record',
-  'storage',
+  'storage backend',
 ];
 
-/** Flatten an error (or an intake `{ ok: false, error }` string) to a message. */
+/**
+ * Node/libuv and Postgres error codes that are unambiguously retryable.
+ * Checked before any substring matching — a typed code from the upstream API
+ * beats guessing from prose, and prose matching is what misfires on messages
+ * that merely happen to contain "503" or "storage".
+ */
+const TRANSIENT_ERROR_CODES = new Set([
+  'ECONNRESET', 'ECONNREFUSED', 'ECONNABORTED', 'ETIMEDOUT', 'ESOCKETTIMEDOUT',
+  'ENOTFOUND', 'EAI_AGAIN', 'EHOSTUNREACH', 'ENETUNREACH', 'ENETDOWN', 'EPIPE',
+  'EBUSY', 'EAGAIN',
+  // Postgres: serialization failure, deadlock detected, too many connections,
+  // cannot connect now, admin shutdown.
+  '40001', '40P01', '53300', '57P03', '57P01',
+]);
+
+/** HTTP statuses worth another attempt, when the upstream reports one. */
+function isTransientHttpStatus(status: unknown): boolean {
+  return typeof status === 'number' && (status === 429 || (status >= 500 && status <= 599));
+}
+
+/** Pull a typed error code / HTTP status off an unknown thrown value. */
+function errorCodeOf(err: unknown): { code?: string; status?: unknown } {
+  if (!err || typeof err !== 'object') return {};
+  const e = err as { code?: unknown; status?: unknown; statusCode?: unknown };
+  return {
+    code: typeof e.code === 'string' ? e.code.toUpperCase() : undefined,
+    status: e.status ?? e.statusCode,
+  };
+}
+
+/**
+ * Flatten an error (or an intake `{ ok: false, error }` string) to a message,
+ * keeping any typed code/status so the reason persisted in the ingest log
+ * still identifies the fault after the object itself is gone.
+ */
 export function describeIngestError(err: unknown): string {
   if (typeof err === 'string') return err;
-  if (err instanceof Error) {
-    const code = (err as NodeJS.ErrnoException).code;
-    return code && !err.message.includes(code) ? `${code}: ${err.message}` : err.message;
-  }
-  try {
-    return String(err);
-  } catch {
-    return 'Unknown error';
-  }
+
+  const { code, status } = errorCodeOf(err);
+  const base = err instanceof Error
+    ? err.message
+    : (() => {
+        // A non-Error object stringifies to "[object Object]", which would
+        // throw the reason away — prefer any message-ish field it carries.
+        if (err && typeof err === 'object') {
+          const m = (err as { message?: unknown }).message;
+          if (typeof m === 'string' && m) return m;
+          try { return JSON.stringify(err).slice(0, 500); } catch { /* circular */ }
+        }
+        try { return String(err); } catch { return 'Unknown error'; }
+      })();
+
+  const prefix = [code, isTransientHttpStatus(status) || typeof status === 'number' ? `HTTP ${status}` : null]
+    .filter((p): p is string => !!p && !base.includes(p))
+    .join(' ');
+  return prefix ? `${prefix}: ${base}` : base;
 }
 
 /**
@@ -323,6 +362,12 @@ export function describeIngestError(err: unknown): string {
  * failure still lands in `failed_permanent` once the budget is spent.
  */
 export function classifyIngestFailure(err: unknown): IngestFailureKind {
+  // Typed signals first — they are unambiguous where prose is not.
+  const { code, status } = errorCodeOf(err);
+  if ((code && TRANSIENT_ERROR_CODES.has(code)) || isTransientHttpStatus(status)) {
+    return 'transient';
+  }
+
   const message = describeIngestError(err).toLowerCase();
   if (PERMANENT_FAILURE_PATTERNS.some(p => message.includes(p))) return 'permanent';
   if (TRANSIENT_FAILURE_PATTERNS.some(p => message.includes(p))) return 'transient';
@@ -580,6 +625,28 @@ interface MessageRow {
   processed_at: Date;
 }
 
+function rowToLogEntry(row: MessageRow): IngestLogEntry {
+  const attempts = row.attempts ?? 0;
+  return {
+    id: row.id,
+    messageKey: row.message_key,
+    fromEmail: row.from_email,
+    subject: row.subject,
+    outcome: row.outcome,
+    detail: row.detail,
+    ingestedCount: row.ingested_count,
+    attempts,
+    // Mirrors requestIngestRetry's own preconditions, so the UI never offers a
+    // control the server will refuse. (The cooldown is time-based and checked
+    // server-side only.)
+    retriable:
+      row.outcome === INGEST_OUTCOME_FAILED
+      && !row.message_key.startsWith('fallback:')
+      && attempts < INGEST_MAX_ATTEMPTS + INGEST_MAX_MANUAL_RETRIES,
+    processedAt: row.processed_at,
+  };
+}
+
 /** Most recent ingest-log entries (default: last 10). */
 export async function listIngestLog(limit = 10): Promise<IngestLogEntry[]> {
   await ensureEmailIngestTables();
@@ -589,18 +656,7 @@ export async function listIngestLog(limit = 10): Promise<IngestLogEntry[]> {
     FROM gnucash_web_ingest_messages
     ORDER BY processed_at DESC, id DESC
     LIMIT ${limit}`;
-  return rows.map(row => ({
-    id: row.id,
-    messageKey: row.message_key,
-    fromEmail: row.from_email,
-    subject: row.subject,
-    outcome: row.outcome,
-    detail: row.detail,
-    ingestedCount: row.ingested_count,
-    attempts: row.attempts ?? 0,
-    retriable: row.outcome === INGEST_OUTCOME_FAILED,
-    processedAt: row.processed_at,
-  }));
+  return rows.map(rowToLogEntry);
 }
 
 /**
@@ -720,12 +776,14 @@ export async function recordProcessedMessage(input: {
  * both a brand-new key and a stolen stale one.
  *
  * Termination: the only three reclaim paths are (a) a stale in-flight claim,
- * gated on INGEST_CLAIM_STALE_MINUTES of wall time, (b) a transient `error`,
- * gated on BOTH `attempts < INGEST_MAX_ATTEMPTS` and an exponentially growing
- * backoff, and (c) an explicit user-requested retry. Each of them stamps
+ * gated on INGEST_CLAIM_STALE_MINUTES of wall time AND
+ * `attempts < INGEST_MAX_ATTEMPTS`, (b) a transient `error`, gated on BOTH
+ * `attempts < INGEST_MAX_ATTEMPTS` and an exponentially growing backoff, and
+ * (c) an explicit user-requested retry, itself capped at
+ * INGEST_MAX_MANUAL_RETRIES and rate-limited by a cooldown. Each stamps
  * `processed_at = NOW()` and increments `attempts`, so no path can be taken
- * twice without time passing, and (b) can be taken only a bounded number of
- * times. This cannot become a hot loop.
+ * twice without time passing and every path is attempt-bounded. This cannot
+ * become a hot loop, and a crash-loop cannot replay a message forever.
  */
 export async function claimIngestMessage(input: {
   messageKey: string;
@@ -755,6 +813,7 @@ export async function claimIngestMessage(input: {
       processed_at = CURRENT_TIMESTAMP
     WHERE (
       gnucash_web_ingest_messages.outcome = 'processing'
+      AND gnucash_web_ingest_messages.attempts < ${INGEST_MAX_ATTEMPTS}
       AND gnucash_web_ingest_messages.processed_at
           < (NOW() - ${INGEST_CLAIM_STALE_MINUTES} * INTERVAL '1 minute')::timestamp
     ) OR (
@@ -772,31 +831,183 @@ export async function claimIngestMessage(input: {
   return claimed[0].attempts ?? 1;
 }
 
+export interface AbandonedClaimRow {
+  messageKey: string;
+  fromEmail: string | null;
+  subject: string | null;
+  attempts: number;
+}
+
 /**
- * Re-arm a terminally failed message so the next poll picks it up again.
+ * Promote in-flight claims that ran out of attempts to the terminal state.
  *
- * This is the manual escape hatch behind the ingest log's "Retry" control: the
- * automatic budget is deliberately small, and only a human can decide that the
- * underlying cause (a missing book, a storage outage, a sender typo) is fixed.
- * Resetting `attempts` to 0 hands back a full budget, but only ever one
- * user-initiated round at a time — the row goes straight back to
- * `failed_permanent` if it fails again, so this cannot loop on its own.
- *
- * Returns false when the row does not exist or is not in a terminal failure
- * state (a succeeded message is never re-ingested — see the idempotency note
- * on `pollEmailIngestPass`).
+ * `claimIngestMessage` refuses to reclaim a stale `processing` row once
+ * `attempts` reaches INGEST_MAX_ATTEMPTS — without this, such a row would sit
+ * in `processing` forever: never finished, never retried, never visible.
+ * Sweeping it into `failed_permanent` makes the give-up point explicit,
+ * inspectable, and notifiable.
  */
-export async function requestIngestRetry(id: number): Promise<boolean> {
+export async function reapAbandonedClaims(): Promise<AbandonedClaimRow[]> {
   await ensureEmailIngestTables();
+  const rows = await prisma.$queryRaw<
+    Array<{ message_key: string; from_email: string | null; subject: string | null; attempts: number }>
+  >`
+    UPDATE gnucash_web_ingest_messages
+    SET outcome = ${INGEST_OUTCOME_FAILED},
+        detail = 'Worker never finished this message (crash, OOM, or redeploy) '
+                 || 'and the retry budget is spent — inspect and retry manually',
+        processed_at = CURRENT_TIMESTAMP
+    WHERE outcome = 'processing'
+      AND attempts >= ${INGEST_MAX_ATTEMPTS}
+      AND processed_at
+          < (NOW() - ${INGEST_CLAIM_STALE_MINUTES} * INTERVAL '1 minute')::timestamp
+    RETURNING message_key, from_email, subject, attempts`;
+  return rows.map(r => ({
+    messageKey: r.message_key,
+    fromEmail: r.from_email,
+    subject: r.subject,
+    attempts: r.attempts,
+  }));
+}
+
+/** Message keys the user re-armed, which the poller must explicitly re-fetch. */
+export async function listRetryRequestedKeys(): Promise<string[]> {
+  await ensureEmailIngestTables();
+  const rows = await prisma.$queryRaw<Array<{ message_key: string }>>`
+    SELECT message_key FROM gnucash_web_ingest_messages
+    WHERE outcome = ${INGEST_OUTCOME_RETRY_REQUESTED}
+    ORDER BY processed_at ASC
+    LIMIT 50`;
+  return rows.map(r => r.message_key);
+}
+
+/**
+ * How many user-initiated retries a message may receive on top of the
+ * automatic budget. Each manual retry buys exactly ONE more attempt (attempts
+ * is never reset), so the lifetime attempt ceiling for any message key is
+ * INGEST_MAX_ATTEMPTS + INGEST_MAX_MANUAL_RETRIES — still a hard bound, not a
+ * client-driven loop.
+ */
+export const INGEST_MAX_MANUAL_RETRIES = 2;
+
+/** Minimum wait between manual retries of the same message. */
+export const INGEST_MANUAL_RETRY_COOLDOWN_MINUTES = 10;
+
+export type IngestRetryResult =
+  /** Re-armed; the next poll will re-fetch the message. */
+  | { ok: true }
+  /** Missing, or not owned by the caller. Callers MUST answer 404 for both. */
+  | { ok: false; reason: 'not_found' }
+  /** Exists and is the caller's, but is not in a re-armable state. */
+  | { ok: false; reason: 'not_retriable' }
+  /** Manual retry budget spent. */
+  | { ok: false; reason: 'exhausted' }
+  /** Too soon since the last manual retry. */
+  | { ok: false; reason: 'cooldown'; retryAfterMinutes: number };
+
+interface RetryCandidateRow {
+  id: number;
+  message_key: string;
+  from_email: string | null;
+  outcome: string;
+  attempts: number;
+  processed_at: Date;
+}
+
+/**
+ * Re-arm a terminally failed message so the next poll re-fetches it.
+ *
+ * AUTHORIZATION. `gnucash_web_ingest_messages` has no owner column, so
+ * ownership is derived the same way the poller derives it: the row's
+ * `from_email` is matched against the sender allowlist (case- and
+ * plus-addressing-insensitive, via `matchAllowedSender`), and the resulting
+ * `gnucash_web_ingest_senders.user_id` must be the caller. A row that exists
+ * but belongs to somebody else is reported as `not_found`, never as a
+ * permission error — answering "forbidden" would confirm the row exists and
+ * leak another user's inbound mail as an oracle.
+ *
+ * BOUNDS. `attempts` is deliberately NOT reset: a manual retry grants exactly
+ * one further attempt, capped at INGEST_MAX_MANUAL_RETRIES beyond the
+ * automatic budget, and is rate-limited by
+ * INGEST_MANUAL_RETRY_COOLDOWN_MINUTES. The final UPDATE re-checks outcome and
+ * cooldown in its WHERE, so two concurrent requests cannot both succeed.
+ *
+ * A message with a `fallback:` dedupe key cannot be re-armed at all: the
+ * poller re-finds a re-armed message by Message-ID, and a fallback key means
+ * the message had none.
+ */
+export async function requestIngestRetry(
+  id: number,
+  requesterUserId: number,
+): Promise<IngestRetryResult> {
+  await ensureEmailIngestTables();
+
+  const rows = await prisma.$queryRaw<RetryCandidateRow[]>`
+    SELECT id, message_key, from_email, outcome, attempts, processed_at
+    FROM gnucash_web_ingest_messages
+    WHERE id = ${id}
+    LIMIT 1`;
+  const row = rows[0];
+  if (!row) return { ok: false, reason: 'not_found' };
+
+  // Ownership: the allowlist entry that routed this mail decides who owns it.
+  const senders = await listIngestSenders();
+  const owner = row.from_email ? matchAllowedSender(row.from_email, senders) : null;
+  if (!owner || owner.userId !== requesterUserId) {
+    return { ok: false, reason: 'not_found' };
+  }
+
+  if (row.outcome !== INGEST_OUTCOME_FAILED) return { ok: false, reason: 'not_retriable' };
+  if (row.message_key.startsWith('fallback:')) return { ok: false, reason: 'not_retriable' };
+  if (row.attempts >= INGEST_MAX_ATTEMPTS + INGEST_MAX_MANUAL_RETRIES) {
+    return { ok: false, reason: 'exhausted' };
+  }
+
+  const elapsedMinutes = (Date.now() - row.processed_at.getTime()) / 60_000;
+  if (elapsedMinutes < INGEST_MANUAL_RETRY_COOLDOWN_MINUTES) {
+    return {
+      ok: false,
+      reason: 'cooldown',
+      retryAfterMinutes: Math.max(
+        1,
+        Math.ceil(INGEST_MANUAL_RETRY_COOLDOWN_MINUTES - elapsedMinutes),
+      ),
+    };
+  }
+
+  // Atomic re-check: outcome and cooldown are re-evaluated under the row lock,
+  // so a concurrent duplicate request updates nothing.
   const updated = await prisma.$executeRaw`
     UPDATE gnucash_web_ingest_messages
     SET outcome = ${INGEST_OUTCOME_RETRY_REQUESTED},
-        attempts = 0,
         detail = 'Manual retry requested; queued for the next mailbox poll',
         processed_at = CURRENT_TIMESTAMP
     WHERE id = ${id}
-      AND outcome = ${INGEST_OUTCOME_FAILED}`;
-  return updated > 0;
+      AND outcome = ${INGEST_OUTCOME_FAILED}
+      AND attempts < ${INGEST_MAX_ATTEMPTS + INGEST_MAX_MANUAL_RETRIES}
+      AND processed_at
+          < (NOW() - ${INGEST_MANUAL_RETRY_COOLDOWN_MINUTES} * INTERVAL '1 minute')::timestamp`;
+  if (updated === 0) return { ok: false, reason: 'cooldown', retryAfterMinutes: 1 };
+  return { ok: true };
+}
+
+/**
+ * Outstanding terminal failures, newest first — the "needs attention" list.
+ *
+ * Kept separate from `listIngestLog` on purpose: the recent-activity list is
+ * capped at ten rows, so ten later successes would otherwise hide a failure
+ * and its Retry control entirely.
+ */
+export async function listIngestFailures(limit = 50): Promise<IngestLogEntry[]> {
+  await ensureEmailIngestTables();
+  const rows = await prisma.$queryRaw<MessageRow[]>`
+    SELECT id, message_key, from_email, subject, outcome, detail, ingested_count,
+           attempts, processed_at
+    FROM gnucash_web_ingest_messages
+    WHERE outcome = ${INGEST_OUTCOME_FAILED}
+    ORDER BY processed_at DESC, id DESC
+    LIMIT ${limit}`;
+  return rows.map(rowToLogEntry);
 }
 
 // ---------------------------------------------------------------------------
@@ -820,6 +1031,16 @@ export interface IngestEnvelope {
 /** Narrow mailbox surface so the poller can be tested with a fake client. */
 export interface IngestMailClient {
   listUnseen(): Promise<IngestEnvelope[]>;
+  /**
+   * Re-find already-seen messages by Message-ID, for user-requested retries.
+   *
+   * Terminal failures are marked seen like everything else — leaving them
+   * unread would make every poll re-list them forever — so a re-armed message
+   * has to be located explicitly. Message-ID is used rather than a stored UID
+   * because a UID is only meaningful alongside the folder's UIDVALIDITY, which
+   * the server may invalidate at any time.
+   */
+  findByMessageIds(messageIds: string[]): Promise<IngestEnvelope[]>;
   fetchAttachments(uid: number): Promise<IngestAttachment[]>;
   markSeen(uid: number): Promise<void>;
   close(): Promise<void>;
@@ -850,22 +1071,41 @@ export async function createImapIngestClient(config: EmailIngestConfig): Promise
   await client.connect();
   const lock = await client.getMailboxLock(config.folder);
 
+  const fetchEnvelopes = async (uids: number[]): Promise<IngestEnvelope[]> => {
+    const envelopes: IngestEnvelope[] = [];
+    for await (const msg of client.fetch(uids, { uid: true, envelope: true }, { uid: true })) {
+      envelopes.push({
+        uid: msg.uid,
+        messageId: msg.envelope?.messageId ?? null,
+        from: msg.envelope?.from?.[0]?.address ?? null,
+        subject: msg.envelope?.subject ?? '',
+        date: msg.envelope?.date ?? null,
+      });
+    }
+    return envelopes;
+  };
+
   return {
     async listUnseen() {
       const uids = await client.search({ seen: false }, { uid: true });
       if (!uids || uids.length === 0) return [];
+      return fetchEnvelopes(uids);
+    },
 
-      const envelopes: IngestEnvelope[] = [];
-      for await (const msg of client.fetch(uids, { uid: true, envelope: true }, { uid: true })) {
-        envelopes.push({
-          uid: msg.uid,
-          messageId: msg.envelope?.messageId ?? null,
-          from: msg.envelope?.from?.[0]?.address ?? null,
-          subject: msg.envelope?.subject ?? '',
-          date: msg.envelope?.date ?? null,
-        });
+    async findByMessageIds(messageIds) {
+      const found: IngestEnvelope[] = [];
+      // One search per id: IMAP HEADER search takes a single value, and the
+      // caller only ever passes the handful of messages a user re-armed.
+      for (const messageId of messageIds) {
+        try {
+          const uids = await client.search({ header: { 'message-id': messageId } }, { uid: true });
+          if (!uids || uids.length === 0) continue;
+          found.push(...await fetchEnvelopes(uids));
+        } catch (err) {
+          console.warn(`[email-ingest] Could not re-find message ${messageId}:`, err);
+        }
       }
-      return envelopes;
+      return found;
     },
 
     async fetchAttachments(uid) {
@@ -931,6 +1171,61 @@ export interface PollEmailIngestResult {
  *
  * Returns the outcome that was written.
  */
+/**
+ * Record a failure WITHOUT ever downgrading a terminal success.
+ *
+ * `recordProcessedMessage` is an unconditional upsert, which makes it unsafe
+ * on the failure path: anything that throws after `ingested` was persisted
+ * (mailbox flagging, notification delivery) would otherwise rewrite the row to
+ * a retryable `error`, and that row then satisfies the transient reclaim
+ * predicate and replays a message whose documents already exist. The WHERE
+ * clause makes that transition impossible.
+ *
+ * Returns false when the write was refused because the row is already
+ * `ingested`.
+ */
+async function recordFailureOutcome(input: {
+  messageKey: string;
+  fromEmail: string | null;
+  subject: string | null;
+  outcome: string;
+  detail: string;
+}): Promise<boolean> {
+  await ensureEmailIngestTables();
+  const written = await prisma.$executeRaw`
+    INSERT INTO gnucash_web_ingest_messages
+      (message_key, from_email, subject, outcome, detail, ingested_count)
+    VALUES (
+      ${input.messageKey.slice(0, 512)},
+      ${input.fromEmail?.slice(0, 255) ?? null},
+      ${input.subject?.slice(0, 500) ?? null},
+      ${input.outcome},
+      ${input.detail},
+      0
+    )
+    ON CONFLICT (message_key) DO UPDATE SET
+      from_email = EXCLUDED.from_email,
+      subject = EXCLUDED.subject,
+      outcome = EXCLUDED.outcome,
+      detail = EXCLUDED.detail,
+      processed_at = CURRENT_TIMESTAMP
+    WHERE gnucash_web_ingest_messages.outcome <> ${INGEST_OUTCOME_INGESTED}`;
+  return written > 0;
+}
+
+/**
+ * Flag a message seen. Mailbox hygiene only — a failure here must never turn a
+ * recorded ingest into a retryable one, so it is swallowed and logged. Worst
+ * case the message is listed again and skipped by its finished row.
+ */
+async function markSeenQuietly(client: IngestMailClient, uid: number): Promise<void> {
+  try {
+    await client.markSeen(uid);
+  } catch (err) {
+    console.warn(`[email-ingest] Could not flag message uid ${uid} as seen:`, err);
+  }
+}
+
 async function recordIngestFailure(input: {
   messageKey: string;
   fromEmail: string | null;
@@ -941,7 +1236,9 @@ async function recordIngestFailure(input: {
   /** Owning user/book, when the sender was resolved. */
   userId?: number | null;
   bookGuid?: string | null;
-}): Promise<typeof INGEST_OUTCOME_RETRYING | typeof INGEST_OUTCOME_FAILED> {
+}): Promise<
+  typeof INGEST_OUTCOME_RETRYING | typeof INGEST_OUTCOME_FAILED | typeof INGEST_OUTCOME_INGESTED
+> {
   const attemptsLeft = input.kind === 'transient' && input.attempt < INGEST_MAX_ATTEMPTS;
   const outcome = attemptsLeft ? INGEST_OUTCOME_RETRYING : INGEST_OUTCOME_FAILED;
 
@@ -953,13 +1250,21 @@ async function recordIngestFailure(input: {
           : `gave up after ${input.attempt} of ${INGEST_MAX_ATTEMPTS} attempts`
       }`;
 
-  await recordProcessedMessage({
+  const written = await recordFailureOutcome({
     messageKey: input.messageKey,
     fromEmail: input.fromEmail,
     subject: input.subject,
     outcome,
     detail,
   });
+  if (!written) {
+    // The row is already `ingested` — this failure came from something AFTER
+    // the documents landed (mailbox flagging, notification). Nothing to report.
+    console.warn(
+      `[email-ingest] Ignoring post-success failure for ${input.messageKey}: ${input.reason}`,
+    );
+    return INGEST_OUTCOME_INGESTED;
+  }
 
   // Terminal failures are the ones that mean "an inbound document is not in
   // your book" — those get a notification. In-flight retries stay in the log
@@ -1019,18 +1324,31 @@ async function ingestOneAttachment(
  * owning user. Every message is processed inside its own try/catch so one bad
  * email never blocks the rest.
  *
- * IDEMPOTENCY. Two layers, and they are what make retrying safe:
+ * IDEMPOTENCY — and its one known hole. Two layers protect the ORDERLY paths:
  *
  *  1. The unique `message_key` row is CLAIMED before a single attachment is
  *     downloaded or handed to the intake core, and only one claimant wins. A
- *     concurrent or restarted poll performs no side effects.
- *  2. A message that ingested ANY attachment is terminal (`ingested`) and is
- *     never retried, even if a sibling attachment failed. This matters because
- *     `intakeReceipt`/`intakeStatement`/`intakePayslip` are NOT
+ *     concurrent or overlapping poll performs no side effects.
+ *  2. A message that ingested ANY attachment is recorded terminal (`ingested`)
+ *     and is never retried, even if a sibling attachment failed. This matters
+ *     because `intakeReceipt`/`intakeStatement`/`intakePayslip` are NOT
  *     content-addressed — they have no hash-based dedupe, so replaying a
- *     successful attachment would create a second document. Retries therefore
- *     only ever happen from a state where zero documents were created, which
- *     makes a duplicate impossible rather than merely unlikely.
+ *     successful attachment WOULD create a second document. Every failure path
+ *     that can be retried therefore leaves zero documents behind.
+ *
+ * KNOWN HOLE (pre-existing, tracked separately): a hard CRASH between a
+ * successful `intakeOneAttachment` and `recordProcessedMessage` leaves the row
+ * in `processing` with documents already created. `claimIngestMessage` reclaims
+ * a stale `processing` row on elapsed time alone — there is no per-attachment
+ * checkpoint — so the next worker replays every attachment and duplicates the
+ * ones that had already landed. Layer 2 does not cover this, because the
+ * "ingested" record is exactly what the crash destroyed. Closing it properly
+ * needs content-addressed intake plus per-attachment checkpointing, which is
+ * out of scope here. What this module does do is BOUND the damage: the stale
+ * reclaim now honours `attempts < INGEST_MAX_ATTEMPTS`, and `reapAbandonedClaims`
+ * promotes an exhausted claim to `failed_permanent` with a notification, so a
+ * crash loop can duplicate at most INGEST_MAX_ATTEMPTS times and then stops
+ * loudly instead of silently forever.
  *
  * A partial success is reported as `ingested` with the failed attachment named
  * in `detail` and a `warning` notification, so the gap is visible even though
@@ -1082,18 +1400,77 @@ async function pollEmailIngestPass(
 
   const client = await (clientFactory ? clientFactory() : createImapIngestClient(config));
   try {
-    const envelopes = await client.listUnseen();
+    const senders = await listIngestSenders();
+
+    // Give up loudly on claims whose worker never came back, before anything
+    // else — otherwise they sit in `processing` invisibly forever.
+    for (const abandoned of await reapAbandonedClaims()) {
+      console.error(
+        `[email-ingest] Abandoned claim for ${abandoned.messageKey} after ${abandoned.attempts} attempts`,
+      );
+      const owner = abandoned.fromEmail ? matchAllowedSender(abandoned.fromEmail, senders) : null;
+      if (owner) {
+        try {
+          await createNotification({
+            userId: owner.userId,
+            bookGuid: owner.bookGuid ?? config.defaultBookGuid,
+            type: 'email_ingest',
+            severity: 'error',
+            title: 'Email ingest failed',
+            message:
+              `Processing never completed for the email from ${abandoned.fromEmail}` +
+              `${abandoned.subject ? ` — "${abandoned.subject}"` : ''} after ` +
+              `${abandoned.attempts} attempts. Inspect it under Settings → Email ingest.`,
+            href: '/settings',
+            source: 'email-ingest',
+            sourceId: abandoned.messageKey.slice(0, 255),
+          });
+        } catch (notifyErr) {
+          console.warn('[email-ingest] Failed to notify about an abandoned claim:', notifyErr);
+        }
+      }
+      result.errors++;
+      result.failedPermanently++;
+    }
+
+    const unseen = await client.listUnseen();
+
+    // Messages the user re-armed are already flagged seen (terminal mail is
+    // never left unread — that would re-list it on every poll forever), so
+    // they have to be re-found explicitly by Message-ID.
+    const rearmedKeys = await listRetryRequestedKeys();
+    const rearmed = rearmedKeys.length > 0
+      ? await client.findByMessageIds(rearmedKeys)
+      : [];
+
+    // A re-armed message may also still be unseen; dedupe by uid.
+    const byUid = new Map<number, IngestEnvelope>();
+    for (const envelope of [...unseen, ...rearmed]) byUid.set(envelope.uid, envelope);
+    const envelopes = [...byUid.values()];
     if (envelopes.length === 0) return result;
 
-    const senders = await listIngestSenders();
     const states = await getIngestMessageStates(envelopes.map(e => messageDedupeKey(e)));
     const seenThisRun = new Set<string>();
 
-    /** Tally a failure the poller has already persisted. */
-    const tallyFailure = (outcome: string) => {
+    /**
+     * Tally a failure the poller has already persisted, and settle the
+     * mailbox flag: a TERMINAL failure is flagged seen so ordinary polls stop
+     * selecting it (a user retry re-finds it by Message-ID instead), while a
+     * transient one stays unread so the next poll can pick it up.
+     */
+    const finishFailure = async (outcome: string, uid: number) => {
+      if (outcome === INGEST_OUTCOME_INGESTED) {
+        // recordIngestFailure refused to downgrade a persisted success.
+        await markSeenQuietly(client, uid);
+        return;
+      }
       result.errors++;
-      if (outcome === INGEST_OUTCOME_FAILED) result.failedPermanently++;
-      else result.retrying++;
+      if (outcome === INGEST_OUTCOME_FAILED) {
+        result.failedPermanently++;
+        await markSeenQuietly(client, uid);
+      } else {
+        result.retrying++;
+      }
     };
 
     for (const envelope of envelopes) {
@@ -1109,13 +1486,10 @@ async function pollEmailIngestPass(
         // claim below decides those.
         const finished = states.get(key);
         if (finished || seenThisRun.has(key)) {
-          // A terminally failed message is left UNREAD on purpose: it is the
-          // only copy of the document, and `requestIngestRetry` needs the
-          // poller to be able to list it again. Everything else is done with,
-          // so clear it from the mailbox.
-          if (finished?.outcome !== INGEST_OUTCOME_FAILED) {
-            await client.markSeen(envelope.uid);
-          }
+          // Every finished message — success, skip, OR terminal failure — is
+          // flagged seen so an ordinary poll never selects it again. A
+          // re-armed failure comes back through findByMessageIds instead.
+          await markSeenQuietly(client, envelope.uid);
           result.skipped++;
           continue;
         }
@@ -1150,7 +1524,7 @@ async function pollEmailIngestPass(
             outcome: 'skipped_sender',
             detail: 'Sender is not on the allowlist',
           });
-          await client.markSeen(envelope.uid);
+          await markSeenQuietly(client, envelope.uid);
           result.skipped++;
           continue;
         }
@@ -1158,8 +1532,8 @@ async function pollEmailIngestPass(
         const bookGuid = sender.bookGuid ?? config.defaultBookGuid;
         if (!bookGuid) {
           // Permanent as far as this poll is concerned — retrying the same
-          // config produces the same answer. The user is told, and the message
-          // stays unread so a retry works once they set a book.
+          // config produces the same answer. The user is told, and can re-arm
+          // the message once a book is set.
           const outcome = await recordIngestFailure({
             messageKey: key,
             fromEmail: envelope.from,
@@ -1170,7 +1544,7 @@ async function pollEmailIngestPass(
             userId: sender.userId,
             bookGuid: null,
           });
-          tallyFailure(outcome);
+          await finishFailure(outcome, envelope.uid);
           continue;
         }
 
@@ -1190,7 +1564,7 @@ async function pollEmailIngestPass(
             outcome: 'no_attachments',
             detail: 'No PDF/JPG/PNG/HEIC attachments under 15MB',
           });
-          await client.markSeen(envelope.uid);
+          await markSeenQuietly(client, envelope.uid);
           result.skipped++;
           continue;
         }
@@ -1238,7 +1612,7 @@ async function pollEmailIngestPass(
             userId: sender.userId,
             bookGuid,
           });
-          tallyFailure(outcome);
+          await finishFailure(outcome, envelope.uid);
           continue;
         }
 
@@ -1255,7 +1629,7 @@ async function pollEmailIngestPass(
           detail: detailParts.join(' · '),
           ingestedCount: ingestedItems.length,
         });
-        await client.markSeen(envelope.uid);
+        await markSeenQuietly(client, envelope.uid);
         result.ingested += ingestedItems.length;
 
         try {
@@ -1288,7 +1662,7 @@ async function pollEmailIngestPass(
             userId: sender?.userId ?? null,
             bookGuid: sender?.bookGuid ?? config.defaultBookGuid,
           });
-          tallyFailure(outcome);
+          await finishFailure(outcome, envelope.uid);
         } catch (recordErr) {
           // Could not even persist the failure — do not lose the count.
           result.errors++;
