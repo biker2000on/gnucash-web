@@ -126,12 +126,12 @@ describe('POST /api/transactions book scope', () => {
         const response = await POST(request(accounts));
         const body = await response.json();
 
+        expect(prismaMock.transactions.create).not.toHaveBeenCalled();
+        expect(prismaMock.splits.create).not.toHaveBeenCalled();
+        expect(prismaMock.$transaction).not.toHaveBeenCalled();
         expect(response.status).toBe(404);
         expect(body).toEqual({ error: 'One or more accounts not found in this book' });
         expect(JSON.stringify(body)).not.toContain(FOREIGN_ACCOUNT);
-        expect(prismaMock.$transaction).not.toHaveBeenCalled();
-        expect(prismaMock.transactions.create).not.toHaveBeenCalled();
-        expect(prismaMock.splits.create).not.toHaveBeenCalled();
     });
 
     it('fails closed when the session-derived book scope is empty', async () => {

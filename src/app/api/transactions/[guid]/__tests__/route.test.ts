@@ -350,7 +350,9 @@ describe('PUT /api/transactions/[guid] book scope', () => {
         // is reverted, the same mutable foreign row is returned and the route
         // proceeds to its transaction/split writes.
         prismaMock.$queryRaw.mockImplementation(async (query: TemplateStringsArray | { strings?: TemplateStringsArray }) => {
-            const sql = Array.isArray(query) ? query.join('?') : query.strings?.join('?') ?? '';
+            const sql = Array.isArray(query)
+                ? query.join('?')
+                : (query as { strings?: TemplateStringsArray }).strings?.join('?') ?? '';
             return sql.includes('account_guid = ANY') ? [] : [{
                 guid: TX_GUID,
                 enter_date: CURRENT_ENTER_DATE,
@@ -478,7 +480,9 @@ describe('DELETE /api/transactions/[guid] reconciled-split guard', () => {
 describe('DELETE /api/transactions/[guid] book scope', () => {
     it('does not delete a foreign transaction addressed by the path guid', async () => {
         prismaMock.$queryRaw.mockImplementation(async (query: TemplateStringsArray | { strings?: TemplateStringsArray }) => {
-            const sql = Array.isArray(query) ? query.join('?') : query.strings?.join('?') ?? '';
+            const sql = Array.isArray(query)
+                ? query.join('?')
+                : (query as { strings?: TemplateStringsArray }).strings?.join('?') ?? '';
             return sql.includes('account_guid = ANY') ? [] : [{
                 guid: TX_GUID,
                 enter_date: CURRENT_ENTER_DATE,
