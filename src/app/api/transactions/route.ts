@@ -91,7 +91,7 @@ function dateParam(raw: string | null, name: string): Date | null {
  * predicate at all and return every transaction in the book.
  */
 function listParam(raw: string | null, name: string): string[] {
-    if (raw === null || raw === '') return [];
+    if (isAbsent(raw)) return [];
     const tokens = raw.split(',').map(t => t.trim());
     if (tokens.some(t => t === '')) {
         throw new BadFilterError(`Invalid ${name}: "${raw}" contains an empty value`);
