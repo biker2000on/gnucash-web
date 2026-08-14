@@ -27,7 +27,7 @@ import prisma from './prisma';
 import { generateGuid, toDecimalNumber, fromDecimal, findOrCreateAccount } from './gnucash';
 import { isLongTerm } from './holding-period';
 import { isOwnAccountCommodityTransfer } from './account-transfer';
-import { allocateTradeFees } from './trade-fees';
+import { allocateTradeFees, NO_TRADE_FEES, type TradeFeeBySplit } from './trade-fees';
 import {
   assertSplitsNotProtected,
   lockTransactionsForSplits,
@@ -514,6 +514,133 @@ export async function splitSellAcrossLots(
 }
 
 // ---------------------------------------------------------------------------
+// Trade fees (brokerage commissions riding on the lot's own trades)
+// ---------------------------------------------------------------------------
+
+/** The account fields the path builder needs, however they were selected. */
+interface FeeAccountNode {
+  guid: string;
+  name: string | null;
+  parent_guid: string | null;
+  account_type: string | null;
+}
+
+/**
+ * Build full ":"-joined account paths ("Expenses:Brokerage:Commissions"),
+ * root account excluded — the SAME shape buildAccountPathMap
+ * (@/lib/reports/utils) hands the Investment Lots report and Form 8949.
+ *
+ * Fee classification reads the PATH, never the leaf name. Classifying on the
+ * bare leaf both drops real fees (a "Schwab" account under
+ * "Expenses:Commissions" reads as unrecognized on its own) and, worse, loses
+ * the ancestors that carry the DENY words: only the full path can see that
+ * "Fees" sits under "Expenses:Brokerage:Interest". Because adding ancestor
+ * text can only ADD matches and deny always beats allow, widening leaf ->
+ * path can never turn a non-fee into a fee; it can only recover a fee or
+ * refuse one. That is the conservative direction.
+ */
+async function buildFeeAccountPaths(
+  seeds: FeeAccountNode[],
+  tx: PrismaTx,
+): Promise<Map<string, string>> {
+  const byGuid = new Map<string, FeeAccountNode>();
+  for (const node of seeds) if (node.guid) byGuid.set(node.guid, node);
+
+  // Pull in the ancestors the seed rows do not already carry, in batches.
+  // Bounded so a corrupt parent chain cannot loop forever.
+  for (let depth = 0; depth < 25; depth++) {
+    const missing = [...new Set(
+      [...byGuid.values()]
+        .map(node => node.parent_guid)
+        .filter((guid): guid is string => !!guid && !byGuid.has(guid)),
+    )];
+    if (missing.length === 0) break;
+    const parents = (await tx.accounts.findMany({
+      where: { guid: { in: missing } },
+      select: { guid: true, name: true, parent_guid: true, account_type: true },
+    })) ?? [];
+    if (parents.length === 0) break;
+    for (const parent of parents) byGuid.set(parent.guid, parent as FeeAccountNode);
+  }
+
+  const paths = new Map<string, string>();
+  const resolve = (guid: string, seen: Set<string>): string => {
+    const cached = paths.get(guid);
+    if (cached !== undefined) return cached;
+    const node = byGuid.get(guid);
+    if (!node || seen.has(guid)) return '';
+    // Root accounts never appear in a path.
+    if (node.account_type === 'ROOT') {
+      paths.set(guid, '');
+      return '';
+    }
+    seen.add(guid);
+    const parentPath = node.parent_guid ? resolve(node.parent_guid, seen) : '';
+    const own = node.name ?? '';
+    const path = parentPath ? `${parentPath}:${own}` : own;
+    paths.set(guid, path);
+    return path;
+  };
+  for (const guid of byGuid.keys()) resolve(guid, new Set());
+  return paths;
+}
+
+/**
+ * Allocate the brokerage commissions attached to the trades that produced
+ * `lotSplits`, keyed by the security split each one belongs to.
+ *
+ * EVERY fee decision is delegated to allocateTradeFees (@/lib/trade-fees) —
+ * the one classifier the Investment Lots report and Form 8949 also call. This
+ * module deliberately owns no fee predicate of its own: a fourth opinion on
+ * "what is a fee" is precisely how the ledger and the two reports came to
+ * report three different numbers for the same sale.
+ */
+async function allocateLotTradeFees(
+  lotSplits: Array<{ tx_guid?: string | null }>,
+  tx: PrismaTx,
+): Promise<TradeFeeBySplit> {
+  const txGuids = [...new Set(
+    lotSplits
+      .map(split => split.tx_guid)
+      .filter((guid): guid is string => typeof guid === 'string' && guid.length > 0),
+  )];
+  if (txGuids.length === 0) return NO_TRADE_FEES;
+
+  const rows = (await tx.splits.findMany({
+    where: { tx_guid: { in: txGuids } },
+    include: {
+      account: { select: { guid: true, name: true, parent_guid: true, account_type: true } },
+      transaction: { select: { post_date: true, description: true } },
+    },
+  })) ?? [];
+  // No expense leg means there is no charge to classify at all, so skip the
+  // ancestor walk rather than paying for paths nothing will read.
+  if (!rows.some(split => split.account?.account_type === 'EXPENSE')) return NO_TRADE_FEES;
+
+  const paths = await buildFeeAccountPaths(
+    rows.map(split => ({
+      guid: split.account_guid,
+      name: split.account?.name ?? null,
+      parent_guid: split.account?.parent_guid ?? null,
+      account_type: split.account?.account_type ?? null,
+    })),
+    tx,
+  );
+
+  return allocateTradeFees(rows.map(split => ({
+    guid: split.guid,
+    txGuid: split.tx_guid,
+    accountGuid: split.account_guid,
+    accountType: split.account?.account_type ?? '',
+    accountPath: paths.get(split.account_guid) || split.account?.name || '',
+    value: toDecimalNumber(split.value_num, split.value_denom),
+    quantity: toDecimalNumber(split.quantity_num, split.quantity_denom),
+    txDescription: split.transaction?.description ?? undefined,
+    txDate: split.transaction?.post_date?.toISOString(),
+  }))).fees;
+}
+
+// ---------------------------------------------------------------------------
 // Carried basis (transfer basis carryover)
 // ---------------------------------------------------------------------------
 
@@ -558,27 +685,12 @@ export async function computeCarriedBasis(
       value_denom: true,
     },
   })) ?? [];
-  const sourceTxGuids = [...new Set(sourceLotSplits
-    .map(s => s.tx_guid)
-    .filter((guid): guid is string => typeof guid === 'string'))];
-  const feeRows = sourceTxGuids.length > 0 ? await tx.splits.findMany({
-    where: { tx_guid: { in: sourceTxGuids } },
-    include: {
-      account: { select: { name: true, account_type: true } },
-      transaction: { select: { post_date: true, description: true } },
-    },
-  }) : [];
-  const allocatedFees = allocateTradeFees(feeRows.map(s => ({
-    guid: s.guid,
-    txGuid: s.tx_guid,
-    accountGuid: s.account_guid,
-    accountType: s.account?.account_type ?? '',
-    accountPath: s.account?.name ?? '',
-    value: toDecimalNumber(s.value_num, s.value_denom),
-    quantity: toDecimalNumber(s.quantity_num, s.quantity_denom),
-    txDescription: s.transaction?.description ?? undefined,
-    txDate: s.transaction?.post_date?.toISOString(),
-  })));
+  // Classification runs on the FULL account path, exactly as it does on the
+  // Investment Lots and Form 8949 paths. This used to pass the bare leaf name,
+  // which silently dropped every commission whose account is named for the
+  // broker rather than the charge ("Expenses:Commissions:Schwab") and left the
+  // carried basis short by that amount on transfer.
+  const allocatedFees = await allocateLotTradeFees(sourceLotSplits, tx);
   const sourceLotSlot = await tx.slots.findFirst({
     where: { obj_guid: sourceLotGuid, name: 'source_lot_guid' },
     select: { string_val: true },
@@ -594,7 +706,7 @@ export async function computeCarriedBasis(
       // cost; its actual basis is in carried_basis.
       if (!sourceLotSlot?.string_val) {
         buyCost += Math.abs(toDecimalNumber(s.value_num, s.value_denom))
-          + (allocatedFees.fees.get(s.guid) ?? 0);
+          + (allocatedFees.get(s.guid) ?? 0);
       }
     }
   }
@@ -1449,6 +1561,18 @@ export async function assignAdjustmentToLots(
  * linking functions) counts as additional basis. Mixed lots (partial sale +
  * transfer-out) realize only the SOLD shares' pro-rata gain.
  *
+ * Commissions: the classified trade fees of the lot's own trades
+ * (@/lib/trade-fees, the same allocator both money reports call) are netted
+ * into the booked figure, so the Income:Capital Gains entry equals what the
+ * Investment Lots report and Form 8949 report for the same sale. NOTE the
+ * bookkeeping consequence: the adjusting split now carries the NET gain, so a
+ * fully-sold lot's investment account retains a residual value equal to the
+ * capitalized fee, mirroring the commission that is still sitting in its
+ * expense account. That is the deliberate trade: the gains ACCOUNT agrees
+ * with the tax forms, which is the figure users reconcile against, and the
+ * tax aggregation already withholds those same expense splits from its
+ * deduction sums (capitalizedFeeSplitGuids) so the dollar is counted once.
+ *
  * @param lotGuid - GUID of the closed lot
  * @param runId - Unique run identifier for tagging
  * @param tx - Prisma transaction client
@@ -1562,19 +1686,41 @@ export async function generateCapitalGains(
     };
   }
 
+  // ── Brokerage commissions ────────────────────────────────────────────────
+  // A commission is booked as a separate EXPENSE split of the trade, so the
+  // lot's own splits cannot see it and the gain derived from them alone is
+  // GROSS. Both money reports net it (IRS Pub. 550: a buy-side commission is
+  // capitalized into basis, a sell-side one reduces the amount realized), so
+  // booking the gross figure here made the ledger disagree with both of them
+  // about the same sale. Recovered through the SAME allocator they call.
+  const tradeFees = await allocateLotTradeFees(lot.splits, tx);
+  const feeOf = (split: { guid: string }) => tradeFees.get(split.guid) ?? 0;
+
   // ── Calculate gain/loss ──────────────────────────────────────────────────
   // Native GnuCash sign convention: a buy split has POSITIVE value (debit)
   // and a sell split NEGATIVE value (credit), so the lot's splits sum to
   // basis - proceeds and gain = -(sum). That legacy form only holds when every
   // consumed share was SOLD and no basis was carried in from a transfer;
   // otherwise realize the sold shares' pro-rata share of the total basis
-  // (buy cost + carried_basis).
+  // (buy cost + carried_basis). Either way a fee moves the value toward the
+  // positive, so it shrinks the gain by its own amount — the identical rule
+  // computeRealizedGain (@/lib/lots) and lotToRealizedSales
+  // (@/lib/reports/capital-gains) apply.
   const carriedBasis = await readCarriedBasis(lotGuid, tx);
   const soldShares = sellSplits.reduce(
     (sum, s) => sum + Math.abs(toDecimalNumber(s.quantity_num, s.quantity_denom)), 0,
   );
-  const saleProceeds = -sellSplits.reduce(
+  // GROSS proceeds answer "is this a disposal at all?" (the zero-proceeds
+  // guard below); the fee-netted figure is what the gain is computed from. A
+  // fee must never be what makes a real sale look like a $0 non-event — that
+  // would silently delete a worthless-security write-off's deduction — nor
+  // what promotes a $0 transfer into a reportable sale. Same split of duties
+  // as lotToRealizedSales.
+  const grossSaleProceeds = -sellSplits.reduce(
     (sum, s) => sum + toDecimalNumber(s.value_num, s.value_denom), 0,
+  );
+  const saleProceeds = grossSaleProceeds - sellSplits.reduce(
+    (sum, s) => sum + feeOf(s), 0,
   );
 
   let gainLoss: number;
@@ -1582,7 +1728,7 @@ export async function generateCapitalGains(
     gainLoss = -lot.splits.reduce(
       (sum, s) => sum + toDecimalNumber(s.value_num, s.value_denom),
       0,
-    );
+    ) - lot.splits.reduce((sum, s) => sum + feeOf(s), 0);
   } else {
     const boughtShares = buySplits.reduce(
       (sum, s) => sum + toDecimalNumber(s.quantity_num, s.quantity_denom), 0,
@@ -1609,7 +1755,8 @@ export async function generateCapitalGains(
     const buyCost = buySplits.reduce(
       (sum, s) => sum + (transferInSplitGuids.has(s.guid)
         ? 0
-        : Math.abs(toDecimalNumber(s.value_num, s.value_denom))),
+        : Math.abs(toDecimalNumber(s.value_num, s.value_denom)))
+        + feeOf(s),
       0,
     );
     const basisPerShare = boughtShares > qtyEps ? (buyCost + carriedBasis) / boughtShares : 0;
@@ -1636,7 +1783,7 @@ export async function generateCapitalGains(
   // is an unvalued trade (no price in the price DB — see valueZeroValueTrade),
   // not a real sale at zero; refusing to book prevents a phantom loss equal to
   // the entire basis.
-  if (soldShares > qtyEps && Math.abs(saleProceeds) < 0.005) {
+  if (soldShares > qtyEps && Math.abs(grossSaleProceeds) < 0.005) {
     await tx.lots.update({
       where: { guid: lotGuid },
       data: { is_closed: 1 },
