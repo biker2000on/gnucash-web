@@ -19,6 +19,7 @@ import {
     amountDueFromLotBalance,
     buildAgingReport,
     buildAgingReconciliation,
+    buildAgingControlAccountRows,
     sumDueWithin,
     computeDaysToPay,
     averageDaysToPay,
@@ -222,6 +223,57 @@ describe('buildAgingReconciliation', () => {
         expect(reconciliation.unreconciledDifference).toBe(25);
         expect(reconciliation.controlAccounts[0].unreconciledDifference).toBe(25);
         expect(reconciliation.controlAccounts[1].unreconciledDifference).toBe(0);
+    });
+});
+
+describe('buildAgingControlAccountRows', () => {
+    const visibleAr = {
+        guid: 'ar-visible',
+        name: 'Accounts Receivable',
+        accountType: 'RECEIVABLE',
+        commodityGuid: 'usd',
+        commodityNamespace: 'CURRENCY',
+    };
+
+    it('uses the balance-sheet as-of quantity for control balance while making the future $400 aging difference explicit', () => {
+        const controlRows = buildAgingControlAccountRows(
+            [visibleAr],
+            new Map([['ar-visible', { quantity: 100 }]]),
+            new Map([['ar-visible', 500]]),
+            () => 1,
+        );
+        const report = buildAgingReport([
+            inv({ guid: 'past-100', datePosted: '2026-08-01T00:00:00.000Z', dueDate: '2026-08-01T00:00:00.000Z', lotBalance: 100 }),
+            inv({ guid: 'future-400', datePosted: '2027-12-31T00:00:00.000Z', dueDate: '2027-12-31T00:00:00.000Z', lotBalance: 400 }),
+        ], 'ar', new Date('2026-08-14T23:59:59.000Z'), controlRows);
+
+        expect(report.reconciliation).toMatchObject({
+            controlBalance: 100,
+            agedTotal: 500,
+            unreconciledDifference: -400,
+        });
+    });
+
+    it('does not emit a phantom residual for a hidden account omitted from the balance-sheet population', () => {
+        const rows = buildAgingControlAccountRows(
+            [visibleAr],
+            new Map([['ar-visible', { quantity: 100 }], ['ar-hidden', { quantity: 777 }]]),
+            new Map([['ar-visible', 100], ['ar-hidden', 777]]),
+            () => 1,
+        );
+
+        expect(rows).toEqual([expect.objectContaining({ guid: 'ar-visible', controlBalance: 100, agedLotBalance: 100 })]);
+    });
+
+    it('uses quantity times the valuation multiplier instead of the split value sum', () => {
+        const rows = buildAgingControlAccountRows(
+            [visibleAr],
+            new Map([['ar-visible', { quantity: 125 }]]),
+            new Map([['ar-visible', 100]]),
+            () => 0.8,
+        );
+
+        expect(rows[0]).toMatchObject({ controlBalance: 100, agedLotBalance: 100 });
     });
 });
 

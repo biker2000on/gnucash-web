@@ -29,6 +29,8 @@
 
 import prisma from '@/lib/prisma';
 import { SLOT_TYPE } from '@/lib/gnucash-xml/slots';
+import { buildAccountValuationContext } from '@/lib/account-valuation';
+import { sumSplitsByAccount } from '@/lib/reports/utils';
 
 /* ------------------------------------------------------------------ */
 /* Shared types                                                         */
@@ -193,6 +195,33 @@ export interface AgingReconciliation {
     controlBalance: number;
     agedTotal: number;
     unreconciledDifference: number;
+}
+
+export interface AgingControlAccountInput {
+    guid: string;
+    name: string;
+    accountType: string;
+    commodityGuid: string | null;
+    commodityNamespace?: string | null;
+}
+
+/**
+ * Combine the balance-sheet quantity totals with invoice-lot value totals.
+ * Callers pass only the visible account population, matching the balance
+ * sheet's `hidden: 0` filter.
+ */
+export function buildAgingControlAccountRows(
+    accounts: ReadonlyArray<AgingControlAccountInput>,
+    controlBalances: ReadonlyMap<string, { quantity: number }>,
+    agedLotBalances: ReadonlyMap<string, number>,
+    getMultiplier: (account: AgingControlAccountInput) => number,
+): RawAgingControlAccountRow[] {
+    return accounts.map((account) => ({
+        guid: account.guid,
+        name: account.name,
+        controlBalance: (controlBalances.get(account.guid)?.quantity ?? 0) * getMultiplier(account),
+        agedLotBalance: agedLotBalances.get(account.guid) ?? 0,
+    }));
 }
 
 /**
@@ -685,10 +714,8 @@ interface OpenInvoiceDbRow {
     lot_balance: number;
 }
 
-interface AgingControlAccountDbRow {
-    guid: string;
-    name: string;
-    control_balance: number;
+interface AgingLotBalanceDbRow {
+    account_guid: string;
     aged_lot_balance: number;
 }
 
@@ -764,11 +791,30 @@ export async function loadOpenInvoices(
 export async function loadAgingControlAccounts(
     side: AgingSide,
     bookAccountGuids: string[],
+    asOf: Date,
 ): Promise<RawAgingControlAccountRow[]> {
     const ownerType = side === 'ar' ? OWNER_TYPE_CUSTOMER : OWNER_TYPE_VENDOR;
     const accountType = side === 'ar' ? 'RECEIVABLE' : 'PAYABLE';
 
-    const rows = await prisma.$queryRaw<AgingControlAccountDbRow[]>`
+    // Match the balance sheet's account population exactly: book-scoped,
+    // visible control accounts. The balance itself comes from the same
+    // quantity-and-valuation path below, rather than this invoice-lot query.
+    const accounts = await prisma.accounts.findMany({
+        where: {
+            guid: { in: bookAccountGuids },
+            account_type: accountType,
+            hidden: 0,
+        },
+        select: {
+            guid: true,
+            name: true,
+            account_type: true,
+            commodity_guid: true,
+            commodity: { select: { namespace: true } },
+        },
+    });
+
+    const rows = await prisma.$queryRaw<AgingLotBalanceDbRow[]>`
         WITH inv AS (
             SELECT
                 i.post_acc,
@@ -791,27 +837,36 @@ export async function loadAgingControlAccounts(
               ), 0)) > ${PAID_TOLERANCE}
         )
         SELECT
-            a.guid,
-            a.name,
-            COALESCE(SUM(s.value_num::numeric / NULLIF(s.value_denom, 0)::numeric), 0)::float8 AS control_balance,
-            COALESCE(SUM(CASE WHEN oil.post_lot IS NOT NULL
-                THEN s.value_num::numeric / NULLIF(s.value_denom, 0)::numeric
-                ELSE 0 END), 0)::float8 AS aged_lot_balance
-        FROM accounts a
-        LEFT JOIN splits s ON s.account_guid = a.guid
-        LEFT JOIN open_invoice_lots oil ON oil.post_acc = s.account_guid AND oil.post_lot = s.lot_guid
-        WHERE a.guid = ANY(${bookAccountGuids}::text[])
-          AND a.account_type = ${accountType}
-        GROUP BY a.guid, a.name
-        ORDER BY a.name, a.guid
+            oil.post_acc AS account_guid,
+            COALESCE(SUM(s.value_num::numeric / NULLIF(s.value_denom, 0)::numeric), 0)::float8 AS aged_lot_balance
+        FROM open_invoice_lots oil
+        JOIN splits s ON s.account_guid = oil.post_acc AND s.lot_guid = oil.post_lot
+        GROUP BY oil.post_acc
     `;
 
-    return rows.map((row) => ({
-        guid: row.guid,
-        name: row.name,
-        controlBalance: row.control_balance,
-        agedLotBalance: row.aged_lot_balance,
-    }));
+    const agedLotBalances = new Map(rows.map((row) => [row.account_guid, row.aged_lot_balance]));
+    const valuation = await buildAccountValuationContext(
+        accounts.map((account) => ({
+            accountType: account.account_type,
+            commodityGuid: account.commodity_guid,
+            commodityNamespace: account.commodity?.namespace,
+        })),
+        asOf,
+    );
+    const controlBalances = await sumSplitsByAccount(accounts.map((account) => account.guid), { lte: asOf });
+
+    return buildAgingControlAccountRows(
+        accounts.map((account) => ({
+            guid: account.guid,
+            name: account.name,
+            accountType: account.account_type,
+            commodityGuid: account.commodity_guid,
+            commodityNamespace: account.commodity?.namespace,
+        })),
+        controlBalances,
+        agedLotBalances,
+        (account) => valuation.getMultiplier(account),
+    );
 }
 
 /** Full AR or AP aging report for the active book. */
@@ -822,7 +877,7 @@ export async function generateAgingReport(
 ): Promise<AgingReport> {
     const [rows, controlAccounts] = await Promise.all([
         loadOpenInvoices(side, bookAccountGuids),
-        loadAgingControlAccounts(side, bookAccountGuids),
+        loadAgingControlAccounts(side, bookAccountGuids, asOf),
     ]);
     return buildAgingReport(rows, side, asOf, controlAccounts);
 }
