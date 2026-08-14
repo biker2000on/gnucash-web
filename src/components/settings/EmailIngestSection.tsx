@@ -21,9 +21,21 @@ interface IngestLogEntry {
     detail: string | null;
     ingestedCount: number;
     attempts: number;
-    /** Terminal failure the user can re-arm. */
-    retriable: boolean;
     processedAt: string;
+}
+
+interface AttentionEntry extends IngestLogEntry {
+    category: 'failed' | 'stalled';
+}
+
+interface AttentionList {
+    items: AttentionEntry[];
+    /** True totals, independent of how many `items` were returned. */
+    failedTotal: number;
+    stalledTotal: number;
+    shown: number;
+    truncated: boolean;
+    limit: number;
 }
 
 interface BookOption {
@@ -37,8 +49,19 @@ interface IngestStatus {
     mailboxUser: string | null;
     senders: IngestSender[];
     log: IngestLogEntry[];
-    /** Outstanding terminal failures, independent of the capped activity list. */
-    failures: IngestLogEntry[];
+    /** Items needing attention, independent of the capped activity list. */
+    attention: AttentionList;
+}
+
+function attentionSummary(attention: AttentionList): string {
+    const parts: string[] = [];
+    if (attention.failedTotal > 0) {
+        parts.push(`${attention.failedTotal} message${attention.failedTotal === 1 ? '' : 's'} not ingested`);
+    }
+    if (attention.stalledTotal > 0) {
+        parts.push(`${attention.stalledTotal} stalled`);
+    }
+    return parts.join(', ');
 }
 
 const KIND_OPTIONS: Array<{ value: IngestSender['defaultKind']; label: string }> = [
@@ -61,8 +84,6 @@ function outcomeBadge(outcome: string): { color: string; label: string } {
         case 'error':
             // Transient failure — an automatic retry is still pending.
             return { color: 'bg-warning', label: 'Retrying' };
-        case 'retry_requested':
-            return { color: 'bg-warning', label: 'Retry queued' };
         case 'failed_permanent':
             return { color: 'bg-error', label: 'Failed' };
         default:
@@ -73,11 +94,9 @@ function outcomeBadge(outcome: string): { color: string; label: string } {
 interface LogRowProps {
     entry: IngestLogEntry;
     badge: { color: string; label: string };
-    busy: boolean;
-    onRetry: (entry: IngestLogEntry) => void;
 }
 
-function LogRow({ entry, badge, busy, onRetry }: LogRowProps) {
+function LogRow({ entry, badge }: LogRowProps) {
     return (
         <li className="flex items-start gap-3 text-sm border border-border rounded-lg px-3 py-2">
             <span
@@ -97,16 +116,6 @@ function LogRow({ entry, badge, busy, onRetry }: LogRowProps) {
                     {entry.detail && ` · ${entry.detail}`}
                 </div>
             </div>
-            {entry.retriable && (
-                <button
-                    type="button"
-                    onClick={() => onRetry(entry)}
-                    disabled={busy}
-                    className="text-xs text-primary hover:underline disabled:opacity-50 shrink-0 mt-0.5"
-                >
-                    Retry
-                </button>
-            )}
         </li>
     );
 }
@@ -216,29 +225,10 @@ export function EmailIngestSection() {
         }
     };
 
-    const retryEntry = async (entry: IngestLogEntry) => {
-        setBusy(true);
-        try {
-            const res = await fetch('/api/settings/email-ingest', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ action: 'retry', id: entry.id }),
-            });
-            const data = await res.json().catch(() => null);
-            if (!res.ok) throw new Error(data?.error || 'Retry failed');
-            success('Queued for another attempt on the next mailbox poll');
-            void load();
-        } catch (e) {
-            error(e instanceof Error ? e.message : 'Retry failed');
-        } finally {
-            setBusy(false);
-        }
-    };
-
     const configured = status?.configured === true;
     const senders = status?.senders ?? [];
     const log = status?.log ?? [];
-    const failures = status?.failures ?? [];
+    const attention = status?.attention;
     const bookName = (guid: string | null) =>
         guid ? (books.find(b => b.guid === guid)?.name ?? guid.slice(0, 8)) : 'Default';
 
@@ -289,24 +279,32 @@ export function EmailIngestSection() {
                     </div>
                 )}
 
-                {failures.length > 0 && (
+                {attention && attention.items.length > 0 && (
                     <div className="space-y-2 border border-error/30 bg-error/5 rounded-lg p-3">
                         <h4 className="text-sm font-medium text-error">
-                            Needs attention — {failures.length} message{failures.length === 1 ? '' : 's'} not ingested
+                            Needs attention — {attentionSummary(attention)}
                         </h4>
                         <p className="text-xs text-foreground-secondary">
-                            These emails failed permanently and no document was created. Fix the
-                            cause, then retry — outstanding failures stay listed here regardless of
-                            how much newer activity there is.
+                            No document was created for these emails. Fix the cause — sender
+                            allowlist, book configuration, or the attachment itself — and forward
+                            the email again. Outstanding items stay listed here regardless of how
+                            much newer activity there is.
                         </p>
+                        {attention.truncated && (
+                            <p className="text-xs text-error">
+                                Showing the {attention.shown} most recent of{' '}
+                                {attention.failedTotal + attention.stalledTotal} — the rest are not
+                                listed here.
+                            </p>
+                        )}
                         <ul className="space-y-1.5">
-                            {failures.map(entry => (
+                            {attention.items.map(entry => (
                                 <LogRow
                                     key={entry.id}
                                     entry={entry}
-                                    badge={outcomeBadge(entry.outcome)}
-                                    busy={busy}
-                                    onRetry={retryEntry}
+                                    badge={entry.category === 'stalled'
+                                        ? { color: 'bg-warning', label: 'Stalled' }
+                                        : outcomeBadge(entry.outcome)}
                                 />
                             ))}
                         </ul>
@@ -390,13 +388,7 @@ export function EmailIngestSection() {
                             {log.map(entry => {
                                 const badge = outcomeBadge(entry.outcome);
                                 return (
-                                    <LogRow
-                                        key={entry.id}
-                                        entry={entry}
-                                        badge={badge}
-                                        busy={busy}
-                                        onRetry={retryEntry}
-                                    />
+                                    <LogRow key={entry.id} entry={entry} badge={badge} />
                                 );
                             })}
                         </ul>

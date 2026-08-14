@@ -41,14 +41,11 @@ import {
   INGEST_CLAIM_STALE_MINUTES,
   INGEST_MAX_ATTEMPTS,
   INGEST_RETRY_BACKOFF_MINUTES,
-  INGEST_MANUAL_RETRY_COOLDOWN_MINUTES,
-  INGEST_MAX_MANUAL_RETRIES,
   INGEST_OUTCOME_FAILED,
+  listIngestAttention,
   INGEST_OUTCOME_RETRYING,
-  INGEST_OUTCOME_RETRY_REQUESTED,
   classifyIngestFailure,
   describeIngestError,
-  requestIngestRetry,
   retryBackoffMinutes,
   type IngestMailClient,
   type IngestEnvelope,
@@ -347,6 +344,32 @@ describe('email-ingest', () => {
       }
     });
 
+    /**
+     * BEHAVIOUR CHANGE, pinned deliberately. A non-Error object used to reach
+     * describeIngestError's `String(err)` and stringify to '[object Object]',
+     * which matched nothing and was therefore retried. Its `message` field is
+     * now read, so a permanent reason inside a plain object is honoured and the
+     * message goes terminal on the FIRST attempt instead of after three.
+     * That is more correct, but it moves a case onto the drop-mail side, so it
+     * gets an explicit test rather than riding along silently.
+     */
+    it('reads the message off a non-Error object instead of stringifying it', () => {
+      expect(describeIngestError({ message: 'corrupt file' })).toBe('corrupt file');
+      expect(classifyIngestFailure({ message: 'corrupt file' })).toBe('permanent');
+
+      // Previously: '[object Object]' -> no pattern match -> transient.
+      expect(describeIngestError({ message: 'corrupt file' })).not.toContain('[object Object]');
+
+      // A non-Error object with no usable message still defaults to transient.
+      expect(classifyIngestFailure({ nope: 1 })).toBe('transient');
+      expect(describeIngestError({ nope: 1 })).toContain('nope');
+    });
+
+    it('keeps a typed code from a non-Error object', () => {
+      expect(classifyIngestFailure({ code: 'ECONNRESET' })).toBe('transient');
+      expect(describeIngestError({ code: 'ECONNRESET', message: 'reset' })).toContain('ECONNRESET');
+    });
+
     it('defaults an unrecognized failure to transient (the retry budget bounds it)', () => {
       expect(classifyIngestFailure(new Error('kaboom'))).toBe('transient');
       expect(classifyIngestFailure(undefined)).toBe('transient');
@@ -425,25 +448,14 @@ describe('email-ingest', () => {
     const ENV = { INGEST_IMAP_HOST: 'imap.example.com', INGEST_IMAP_USER: 'u', INGEST_IMAP_PASS: 'p' };
     const savedEnv: Record<string, string | undefined> = {};
 
-    /**
-     * Fake mailbox. `envelopes` are the UNSEEN ones; anything in `archive` is
-     * already flagged seen and only reachable through findByMessageIds — which
-     * is exactly how a re-armed terminal failure has to be re-found.
-     */
+    /** Fake mailbox: `envelopes` are the UNSEEN ones the poller will select. */
     function makeFakeClient(
       envelopes: IngestEnvelope[],
       attachments: Record<number, IngestAttachment[]>,
-      archive: IngestEnvelope[] = [],
     ) {
       const seen: number[] = [];
-      const all = [...envelopes, ...archive];
       const client: IngestMailClient = {
         listUnseen: vi.fn(async () => envelopes),
-        findByMessageIds: vi.fn(async (messageIds: string[]) => {
-          const wanted = new Set(messageIds);
-          return all.filter(e => e.messageId
-            && wanted.has(e.messageId.replace(/^</, '').replace(/>$/, '').toLowerCase()));
-        }),
         fetchAttachments: vi.fn(async (uid: number) => attachments[uid] ?? []),
         markSeen: vi.fn(async (uid: number) => { seen.push(uid); }),
         close: vi.fn(async () => {}),
@@ -472,7 +484,6 @@ describe('email-ingest', () => {
             })),
           );
         }
-        // listRetryRequestedKeys / reapAbandonedClaims: nothing pending here.
         return Promise.resolve([]);
       });
     }
@@ -558,26 +569,6 @@ describe('email-ingest', () => {
           return Promise.resolve(1);
         }
 
-        // requestIngestRetry: SET outcome = ? ... WHERE id = ? AND outcome = ?
-        //                     AND attempts < ? AND processed_at < cooldown
-        if (sql.includes('UPDATE gnucash_web_ingest_messages')) {
-          const requested = values[0] as string;
-          const id = values[1] as number;
-          const requiredOutcome = values[2] as string;
-          const attemptCap = values[3] as number;
-          const cooldownMinutes = values[4] as number;
-          const target = rows.find(r => r.id === id);
-          if (!target
-              || target.outcome !== requiredOutcome
-              || target.attempts >= attemptCap
-              || target.processed_at >= minutesAgo(cooldownMinutes)) {
-            return Promise.resolve(0);
-          }
-          target.outcome = requested;
-          target.detail = 'Manual retry requested; queued for the next mailbox poll';
-          target.processed_at = new Date();
-          return Promise.resolve(1);
-        }
         return Promise.resolve(1);
       });
 
@@ -587,14 +578,13 @@ describe('email-ingest', () => {
 
         // claimIngestMessage: INSERT ... ON CONFLICT DO UPDATE ... WHERE
         // (stale claim AND budget left) OR (transient error AND budget left
-        // AND backoff elapsed) OR user-requested retry.
+        // AND backoff elapsed).
         if (sql.includes('INSERT INTO gnucash_web_ingest_messages')) {
           const key = values[0] as string;
           const staleMaxAttempts = values[3] as number;
           const staleMinutes = values[4] as number;
           const maxAttempts = values[5] as number;
           const backoffBase = values[6] as number;
-          const retryRequested = values[7] as string;
           const existing = rows.find(r => r.message_key === key);
           if (!existing) {
             rows.push({
@@ -612,8 +602,7 @@ describe('email-ingest', () => {
               && existing.processed_at < minutesAgo(staleMinutes))
             || (existing.outcome === 'error'
               && existing.attempts < maxAttempts
-              && existing.processed_at < minutesAgo(backoffFor(existing.attempts)))
-            || existing.outcome === retryRequested;
+              && existing.processed_at < minutesAgo(backoffFor(existing.attempts)));
           if (!reclaimable) return Promise.resolve([]); // live claim / backing off
           existing.outcome = 'processing';
           existing.processed_at = new Date();
@@ -621,60 +610,59 @@ describe('email-ingest', () => {
           return Promise.resolve([{ message_key: key, attempts: existing.attempts }]);
         }
 
-        // reapAbandonedClaims: exhausted stale claims -> failed_permanent.
-        if (sql.includes('UPDATE gnucash_web_ingest_messages')) {
+        // listIngestAttention: scoped CTE + per-category window count.
+        if (sql.includes('WITH scoped AS')) {
           const failed = values[0] as string;
-          const maxAttempts = values[1] as number;
-          const staleMinutes = values[2] as number;
-          const swept = rows.filter(r =>
-            r.outcome === 'processing'
-            && r.attempts >= maxAttempts
-            && r.processed_at < minutesAgo(staleMinutes));
-          for (const row of swept) {
-            row.outcome = failed;
-            row.detail = 'Worker never finished this message';
-            row.processed_at = new Date();
-          }
-          return Promise.resolve(swept.map(r => ({
-            message_key: r.message_key,
+          const owned = values[2] as string[];
+          const maxAttempts = values[4] as number;
+          const staleMinutes = values[5] as number;
+          const limit = values[6] as number;
+          const normalize = (email: string) =>
+            email.toLowerCase().replace(/\+[^@]*@/, '@');
+          const matching = rows.filter(r => {
+            if (!r.from_email) return false;
+            if (!owned.includes(normalize(r.from_email))) return false;
+            return r.outcome === failed
+              || (r.outcome === 'processing'
+                && r.attempts >= maxAttempts
+                && r.processed_at < minutesAgo(staleMinutes));
+          });
+          const withCategory = matching.map(r => ({
+            ...r,
             from_email: r.from_email ?? null,
             subject: r.subject ?? null,
-            attempts: r.attempts,
-          })));
+            detail: r.detail ?? null,
+            ingested_count: 0,
+            category: r.outcome === failed ? 'failed' : 'stalled',
+          }));
+          // COUNT(*) OVER (PARTITION BY category) is computed BEFORE the LIMIT.
+          const totals = withCategory.reduce<Record<string, number>>((acc, r) => {
+            acc[r.category] = (acc[r.category] ?? 0) + 1;
+            return acc;
+          }, {});
+          return Promise.resolve(
+            withCategory
+              .sort((a, b) => b.processed_at.getTime() - a.processed_at.getTime())
+              .slice(0, limit)
+              .map(r => ({ ...r, category_total: totals[r.category] })),
+          );
         }
 
         if (sql.includes('FROM gnucash_web_ingest_senders')) {
           return Promise.resolve(options.senders ?? []);
         }
 
-        // requestIngestRetry candidate lookup.
-        if (sql.includes('SELECT id, message_key')) {
-          const id = values[0] as number;
-          const row = rows.find(r => r.id === id);
-          return Promise.resolve(row ? [{ ...row, from_email: row.from_email ?? null }] : []);
-        }
-
         // getIngestMessageStates: finished rows only.
         if (sql.includes('SELECT message_key, outcome, attempts')) {
           const keys = values[0] as string[];
-          const retryRequested = values[1] as string;
-          const maxAttempts = values[2] as number;
+          const maxAttempts = values[1] as number;
           return Promise.resolve(
             rows
               .filter(r =>
                 keys.includes(r.message_key)
                 && r.outcome !== 'processing'
-                && r.outcome !== retryRequested
                 && !(r.outcome === 'error' && r.attempts < maxAttempts))
               .map(r => ({ message_key: r.message_key, outcome: r.outcome, attempts: r.attempts })),
-          );
-        }
-
-        // listRetryRequestedKeys.
-        if (sql.includes('SELECT message_key FROM gnucash_web_ingest_messages')) {
-          const requested = values[0] as string;
-          return Promise.resolve(
-            rows.filter(r => r.outcome === requested).map(r => ({ message_key: r.message_key })),
           );
         }
 
@@ -722,7 +710,6 @@ describe('email-ingest', () => {
       const listGate = new Promise<void>(resolve => { releaseList = resolve; });
       const firstClient: IngestMailClient = {
         listUnseen: vi.fn(async () => { await listGate; return []; }),
-        findByMessageIds: vi.fn(async () => []),
         fetchAttachments: vi.fn(async () => []),
         markSeen: vi.fn(async () => {}),
         close: vi.fn(async () => {}),
@@ -1190,120 +1177,13 @@ describe('email-ingest', () => {
           }],
         });
 
-        // Second poll: the message is seen, so listUnseen no longer offers it
-        // and nothing re-armed it — the poller does no work at all.
-        const { client } = makeFakeClient([], {}, [envelopeFor(38, 'gone@x')]);
+        // Second poll: the message is flagged seen, so listUnseen no longer
+        // offers it at all — the poller does no work for it, ever again.
+        const { client } = makeFakeClient([], {});
         const result = await pollEmailIngest(async () => client);
 
         expect(result).toMatchObject({ checked: 0, skipped: 0, errors: 0 });
         expect(client.fetchAttachments).not.toHaveBeenCalled();
-      });
-
-      // ---------------------------------------------------------------
-      // Manual retry: ownership-scoped, capped, rate-limited (ASI-5-007/B5)
-      // ---------------------------------------------------------------
-      const OWNER_ID = 42;
-      const OTHER_USER_ID = 99;
-
-      /** A terminal failure owned by senderRow's user, past its cooldown. */
-      const terminalRow = (key = 'rearm@x') => ({
-        message_key: key,
-        from_email: 'alice@example.com',
-        subject: 'Receipt',
-        outcome: INGEST_OUTCOME_FAILED,
-        detail: 'ECONNRESET — gave up after 3 of 3 attempts',
-        processed_at: minutesAgo(INGEST_MANUAL_RETRY_COOLDOWN_MINUTES + 5),
-        attempts: INGEST_MAX_ATTEMPTS,
-      });
-
-      it('re-arms a terminal failure for its owner and re-fetches it by Message-ID', async () => {
-        const { rows } = primeStatefulDb({ senders: [senderRow], messages: [terminalRow()] });
-
-        expect(await requestIngestRetry(1, OWNER_ID)).toEqual({ ok: true });
-        expect(rows[0]).toMatchObject({ outcome: INGEST_OUTCOME_RETRY_REQUESTED });
-        // attempts is NOT reset — a manual retry buys exactly one more try.
-        expect(rows[0].attempts).toBe(INGEST_MAX_ATTEMPTS);
-
-        intakeReceiptMock.mockResolvedValue({ ok: true, id: 77, filename: 'receipt.pdf' });
-        // The message is already seen: it is reachable ONLY via findByMessageIds.
-        const { client, seen } = makeFakeClient([], attachmentsFor(35), [envelopeFor(35, 'rearm@x')]);
-        const result = await pollEmailIngest(async () => client);
-
-        expect(client.findByMessageIds).toHaveBeenCalledWith(['rearm@x']);
-        expect(result).toMatchObject({ checked: 1, ingested: 1, errors: 0 });
-        expect(rows[0]).toMatchObject({ outcome: 'ingested' });
-        expect(seen).toEqual([35]);
-      });
-
-      it('reports another user\'s row as not_found rather than forbidden', async () => {
-        const { rows } = primeStatefulDb({ senders: [senderRow], messages: [terminalRow()] });
-
-        // senderRow.user_id is OWNER_ID, so this caller does not own the row.
-        expect(await requestIngestRetry(1, OTHER_USER_ID))
-          .toEqual({ ok: false, reason: 'not_found' });
-        // Identical answer for a row that genuinely does not exist — no oracle.
-        expect(await requestIngestRetry(4242, OTHER_USER_ID))
-          .toEqual({ ok: false, reason: 'not_found' });
-        expect(rows[0].outcome).toBe(INGEST_OUTCOME_FAILED);
-      });
-
-      it('treats a message from a de-allowlisted sender as not_found', async () => {
-        // No allowlist entry ⇒ no derivable owner ⇒ nobody may re-arm it.
-        primeStatefulDb({ senders: [], messages: [terminalRow()] });
-        expect(await requestIngestRetry(1, OWNER_ID))
-          .toEqual({ ok: false, reason: 'not_found' });
-      });
-
-      it('rate-limits manual retries with a cooldown', async () => {
-        primeStatefulDb({
-          senders: [senderRow],
-          messages: [{ ...terminalRow(), processed_at: minutesAgo(1) }],
-        });
-
-        const result = await requestIngestRetry(1, OWNER_ID);
-        expect(result.ok).toBe(false);
-        if (!result.ok && result.reason === 'cooldown') {
-          expect(result.retryAfterMinutes).toBeGreaterThan(0);
-        } else {
-          throw new Error(`expected a cooldown refusal, got ${JSON.stringify(result)}`);
-        }
-      });
-
-      it('caps manual retries so they cannot become an unbounded client-driven loop', async () => {
-        primeStatefulDb({
-          senders: [senderRow],
-          messages: [{
-            ...terminalRow(),
-            attempts: INGEST_MAX_ATTEMPTS + INGEST_MAX_MANUAL_RETRIES,
-          }],
-        });
-        expect(await requestIngestRetry(1, OWNER_ID))
-          .toEqual({ ok: false, reason: 'exhausted' });
-      });
-
-      it('refuses to re-arm a message that has no Message-ID to re-find', async () => {
-        primeStatefulDb({
-          senders: [senderRow],
-          messages: [{ ...terminalRow('fallback:abc123') }],
-        });
-        expect(await requestIngestRetry(1, OWNER_ID))
-          .toEqual({ ok: false, reason: 'not_retriable' });
-      });
-
-      it('refuses to re-arm anything that is not a terminal failure', async () => {
-        primeStatefulDb({
-          senders: [senderRow],
-          messages: [{
-            message_key: 'done@x',
-            from_email: 'alice@example.com',
-            outcome: 'ingested',
-            processed_at: minutesAgo(60),
-            attempts: 1,
-          }],
-        });
-        // Re-ingesting a succeeded message would duplicate its documents.
-        expect(await requestIngestRetry(1, OWNER_ID))
-          .toEqual({ ok: false, reason: 'not_retriable' });
       });
 
       it('never retries a partial success, so a retry cannot duplicate a document', async () => {
@@ -1450,7 +1330,7 @@ describe('email-ingest', () => {
         expect(rows[0]).toMatchObject({ outcome: 'ingested', attempts: 2 });
       });
 
-      it('gives up loudly on a claim that keeps crashing instead of replaying forever', async () => {
+      it('stops replaying a crash-looping claim without rewriting the live row', async () => {
         const { rows } = primeStatefulDb({
           senders: [senderRow],
           messages: [{
@@ -1464,20 +1344,166 @@ describe('email-ingest', () => {
           }],
         });
 
-        const { client, seen } = makeFakeClient([envelopeFor(61, 'crashloop@x')], attachmentsFor(61));
+        const { client } = makeFakeClient([envelopeFor(61, 'crashloop@x')], attachmentsFor(61));
         const result = await pollEmailIngest(async () => client);
 
-        // The reaper promotes it to a terminal, inspectable state...
-        expect(rows[0]).toMatchObject({ outcome: INGEST_OUTCOME_FAILED });
-        expect(result.failedPermanently).toBeGreaterThanOrEqual(1);
-        // ...and it is NOT replayed a fourth time.
+        // Not replayed a fourth time — the attempt bound refuses the claim.
         expect(intakeReceiptMock).not.toHaveBeenCalled();
         expect(client.fetchAttachments).not.toHaveBeenCalled();
-        // ...and the owner is told.
-        expect(createNotificationMock).toHaveBeenCalledWith(
-          expect.objectContaining({ userId: 42, severity: 'error' }),
-        );
-        expect(seen).toEqual([61]);
+        expect(result).toMatchObject({ ingested: 0, skipped: 1 });
+
+        // And deliberately NOT transitioned: an overdue claim is not proof its
+        // worker died, so the poller must never terminate work that may be
+        // live. It stays `processing` and is surfaced by listIngestAttention.
+        expect(rows[0]).toMatchObject({ outcome: 'processing', attempts: INGEST_MAX_ATTEMPTS });
+      });
+
+      // ---------------------------------------------------------------
+      // Attention list: scoped to the requester, honest about its cap
+      // ---------------------------------------------------------------
+      describe('listIngestAttention', () => {
+        const OWNER_ID = 42;
+        const OTHER_USER_ID = 99;
+        const failedRow = (key: string, from = 'alice@example.com') => ({
+          message_key: key,
+          from_email: from,
+          subject: `Subject ${key}`,
+          outcome: INGEST_OUTCOME_FAILED,
+          detail: 'unsupported file type — permanent failure, no automatic retry',
+          processed_at: minutesAgo(30),
+          attempts: 1,
+        });
+
+        it('reports terminal failures with their reason', async () => {
+          primeStatefulDb({ senders: [senderRow], messages: [failedRow('a@x')] });
+
+          const attention = await listIngestAttention(OWNER_ID);
+          expect(attention.failedTotal).toBe(1);
+          expect(attention.stalledTotal).toBe(0);
+          expect(attention.truncated).toBe(false);
+          expect(attention.items[0]).toMatchObject({ category: 'failed' });
+          expect(attention.items[0].detail).toContain('unsupported file type');
+        });
+
+        it('surfaces an exhausted in-flight claim as stalled rather than rewriting it', async () => {
+          const { rows } = primeStatefulDb({
+            senders: [senderRow],
+            messages: [{
+              message_key: 'stuck@x',
+              from_email: 'alice@example.com',
+              subject: 'Stuck',
+              outcome: 'processing',
+              detail: 'Reclaimed after stale or failed attempt',
+              processed_at: minutesAgo(INGEST_CLAIM_STALE_MINUTES + 60),
+              attempts: INGEST_MAX_ATTEMPTS,
+            }],
+          });
+
+          const attention = await listIngestAttention(OWNER_ID);
+          expect(attention.stalledTotal).toBe(1);
+          expect(attention.items[0]).toMatchObject({ category: 'stalled', outcome: 'processing' });
+          expect(attention.items[0].detail).toContain('retry budget is spent');
+          // Read-only: the row is untouched, so a slow-but-live worker is safe.
+          expect(rows[0]).toMatchObject({ outcome: 'processing', attempts: INGEST_MAX_ATTEMPTS });
+        });
+
+        it('leaves a claim alone while it still has budget or is still fresh', async () => {
+          primeStatefulDb({
+            senders: [senderRow],
+            messages: [
+              // Overdue but budget remains — claimIngestMessage will retry it.
+              {
+                message_key: 'retryable@x', from_email: 'alice@example.com',
+                outcome: 'processing', processed_at: minutesAgo(INGEST_CLAIM_STALE_MINUTES + 5),
+                attempts: 1,
+              },
+              // Budget spent but recently touched — very likely still running.
+              {
+                message_key: 'fresh@x', from_email: 'alice@example.com',
+                outcome: 'processing', processed_at: minutesAgo(1),
+                attempts: INGEST_MAX_ATTEMPTS,
+              },
+            ],
+          });
+
+          const attention = await listIngestAttention(OWNER_ID);
+          expect(attention.stalledTotal).toBe(0);
+          expect(attention.items).toEqual([]);
+        });
+
+        it('shows only the requester\'s own messages', async () => {
+          primeStatefulDb({
+            senders: [senderRow], // alice@example.com belongs to user 42
+            messages: [failedRow('mine@x'), failedRow('theirs@x', 'mallory@elsewhere.com')],
+          });
+
+          const mine = await listIngestAttention(OWNER_ID);
+          expect(mine.failedTotal).toBe(1);
+          expect(mine.items[0].messageKey).toBe('mine@x');
+
+          // A user with no allowlist entries sees nothing at all.
+          const theirs = await listIngestAttention(OTHER_USER_ID);
+          expect(theirs).toMatchObject({ failedTotal: 0, stalledTotal: 0, items: [] });
+        });
+
+        it('matches the sender allowlist the way the poller does', async () => {
+          // Stored from_email is plus-tagged and mixed case; the allowlist is not.
+          primeStatefulDb({
+            senders: [senderRow],
+            messages: [failedRow('tagged@x', 'Alice+receipts@Example.com')],
+          });
+          const attention = await listIngestAttention(OWNER_ID);
+          expect(attention.failedTotal).toBe(1);
+        });
+
+        /**
+         * As with the claim predicate, the stateful fake MIRRORS this query's
+         * scoping and staleness rules rather than executing them, so the
+         * behavioural tests above cannot prove the production SQL still
+         * carries them. These assertions pin the emitted statement.
+         */
+        it('emits a query scoped to the requester and gated on the stale window', async () => {
+          const { queries } = primeStatefulDb({
+            senders: [senderRow], messages: [failedRow('sql@x')],
+          });
+          await listIngestAttention(OWNER_ID, 10);
+
+          const sql = queries.find(q => q.includes('WITH scoped AS'));
+          expect(sql).toBeDefined();
+          const normalized = sql!.replace(/\s+/g, ' ');
+
+          // Requester scoping — without this every user sees every failure.
+          expect(normalized).toContain(
+            "regexp_replace(lower(from_email), ?, '@') = ANY(?::text[])",
+          );
+          // Stalled category is gated on BOTH a spent budget and elapsed time,
+          // so a fresh in-flight claim is never reported as stalled.
+          expect(normalized).toMatch(
+            /outcome = 'processing' AND attempts >= \? AND processed_at < \(NOW\(\) - \? \* INTERVAL '1 minute'\)/,
+          );
+          // Totals come from a window function evaluated BEFORE the LIMIT.
+          expect(normalized).toContain('COUNT(*) OVER (PARTITION BY category)');
+
+          const call = db.$queryRaw.mock.calls.find(
+            (c: unknown[]) => (c[0] as TemplateStringsArray).join('?').includes('WITH scoped AS'));
+          expect(call?.slice(1)).toContain(INGEST_CLAIM_STALE_MINUTES);
+          expect(call?.slice(1)).toContain(INGEST_MAX_ATTEMPTS);
+          // The scoping array actually bound is the requester's own senders.
+          expect(call?.slice(1)).toContainEqual(['alice@example.com']);
+        });
+
+        it('reports the TRUE total when the list is capped', async () => {
+          primeStatefulDb({
+            senders: [senderRow],
+            messages: Array.from({ length: 7 }, (_, i) => failedRow(`bulk-${i}@x`)),
+          });
+
+          const attention = await listIngestAttention(OWNER_ID, 3);
+          expect(attention.items).toHaveLength(3);
+          // The whole point: the caller learns there are 7, not 3.
+          expect(attention.failedTotal).toBe(7);
+          expect(attention.truncated).toBe(true);
+        });
       });
 
       it('persists the reason when the whole message throws', async () => {
