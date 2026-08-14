@@ -637,6 +637,15 @@ export async function loadOpenInvoices(
         WITH inv AS (
             SELECT
                 i.guid, i.id, i.date_posted, i.currency, i.post_txn, i.post_lot,
+                (
+                    SELECT sl.timespec_val
+                    FROM slots sl
+                    WHERE sl.obj_guid = i.post_txn
+                      AND sl.name = 'trans-date-due'
+                      AND sl.slot_type = ${SLOT_TYPE.TIMESPEC}
+                    ORDER BY sl.id DESC
+                    LIMIT 1
+                ) AS due_date,
                 CASE WHEN i.owner_type = ${OWNER_TYPE_JOB} THEN j.owner_type ELSE i.owner_type END AS eff_owner_type,
                 CASE WHEN i.owner_type = ${OWNER_TYPE_JOB} THEN j.owner_guid ELSE i.owner_guid END AS eff_owner_guid
             FROM invoices i
@@ -649,15 +658,7 @@ export async function loadOpenInvoices(
             inv.guid,
             inv.id,
             inv.date_posted,
-            (
-                SELECT sl.timespec_val
-                FROM slots sl
-                WHERE sl.obj_guid = inv.post_txn
-                  AND sl.name = 'trans-date-due'
-                  AND sl.slot_type = ${SLOT_TYPE.TIMESPEC}
-                ORDER BY sl.id DESC
-                LIMIT 1
-            ) AS due_date,
+            inv.due_date,
             inv.eff_owner_guid AS owner_guid,
             COALESCE(cu.name, ve.name) AS owner_name,
             c.mnemonic AS currency,
@@ -668,7 +669,7 @@ export async function loadOpenInvoices(
         LEFT JOIN commodities c ON c.guid = inv.currency
         LEFT JOIN splits s ON s.lot_guid = inv.post_lot
         WHERE inv.eff_owner_type = ${ownerType}
-        GROUP BY inv.guid, inv.id, inv.date_posted, inv.eff_owner_guid, cu.name, ve.name, c.mnemonic
+        GROUP BY inv.guid, inv.id, inv.date_posted, inv.due_date, inv.eff_owner_guid, cu.name, ve.name, c.mnemonic
         HAVING ABS(COALESCE(SUM(s.value_num::numeric / NULLIF(s.value_denom, 0)::numeric), 0)) > ${PAID_TOLERANCE}
     `;
 

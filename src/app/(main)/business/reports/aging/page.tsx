@@ -210,7 +210,10 @@ function AgingPageInner() {
                                                                     <span className="ml-3 font-mono text-xs text-foreground-muted" style={TNUM}>
                                                                         posted {invoice.datePosted ?? '—'} · due {invoice.dueDate ?? '—'}
                                                                         {invoice.dueDateInferred && (
-                                                                            <span aria-describedby="inferred-due-date-note"> †</span>
+                                                                            <span>
+                                                                                {' '}†
+                                                                                <span className="sr-only"> (due date inferred from the posting date)</span>
+                                                                            </span>
                                                                         )}
                                                                         {invoice.daysPastDue > 0 && (
                                                                             <span className="text-negative">

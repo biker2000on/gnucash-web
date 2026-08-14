@@ -18,6 +18,7 @@ import {
   daysOverdue,
   nextDunningLevel,
   renderDunningTemplate,
+  shouldSkipDunningForInferredDueDate,
   DEFAULT_DUNNING_SCHEDULE,
 } from '../dunning';
 import { resolveAgingDueDate } from '../business-reports';
@@ -72,7 +73,18 @@ describe('dunning due-date source', () => {
 
     expect(dueDateInferred).toBe(false);
     expect(overdue).toBe(68);
-    expect(nextDunningLevel([7, 14, 30], overdue, [])).toBe(30);
+    expect(nextDunningLevel([7, 14, 30, 60], overdue, [])).toBe(60);
+  });
+
+  it('skips dunning when a legacy transaction has only an inferred due date', () => {
+    const { dueDate, dueDateInferred } = resolveAgingDueDate({
+      datePosted: '2026-06-01T00:00:00.000Z',
+      dueDate: null,
+    });
+
+    expect(dueDate?.toISOString().slice(0, 10)).toBe('2026-06-01');
+    expect(dueDateInferred).toBe(true);
+    expect(shouldSkipDunningForInferredDueDate(dueDateInferred)).toBe(true);
   });
 });
 

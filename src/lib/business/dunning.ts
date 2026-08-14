@@ -57,6 +57,11 @@ export function daysOverdue(dueDate: Date, now: Date = new Date()): number {
   return Math.floor(ms / (24 * 60 * 60 * 1000));
 }
 
+/** Never send dunning email when the due date was inferred from legacy data. */
+export function shouldSkipDunningForInferredDueDate(dueDateInferred: boolean): boolean {
+  return dueDateInferred;
+}
+
 /**
  * The next dunning level (schedule day value) to send for an invoice, or
  * null when nothing new is due.

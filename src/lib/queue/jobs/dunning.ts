@@ -27,6 +27,7 @@ export interface DunningRunResult {
   emailsSent: number;
   skippedOptOut: number;
   skippedNoEmail: number;
+  skippedInferredDueDate: number;
   errors: number;
 }
 
@@ -38,6 +39,7 @@ export async function handleDunning(job: Job): Promise<DunningRunResult> {
     nextDunningLevel,
     renderDunningTemplate,
     daysOverdue,
+    shouldSkipDunningForInferredDueDate,
   } = await import('@/lib/business/dunning');
   const { loadOpenInvoices, resolveAgingDueDate, amountDueFromLotBalance } = await import(
     '@/lib/business/business-reports'
@@ -51,6 +53,7 @@ export async function handleDunning(job: Job): Promise<DunningRunResult> {
     emailsSent: 0,
     skippedOptOut: 0,
     skippedNoEmail: 0,
+    skippedInferredDueDate: 0,
     errors: 0,
   };
 
@@ -110,8 +113,12 @@ export async function handleDunning(job: Job): Promise<DunningRunResult> {
       for (const inv of openInvoices) {
         result.invoicesConsidered++;
         try {
-          const { dueDate } = resolveAgingDueDate(inv);
+          const { dueDate, dueDateInferred } = resolveAgingDueDate(inv);
           if (!dueDate) continue;
+          if (shouldSkipDunningForInferredDueDate(dueDateInferred)) {
+            result.skippedInferredDueDate++;
+            continue;
+          }
           const overdue = daysOverdue(dueDate, now);
           if (overdue <= 0) continue;
 
@@ -172,7 +179,8 @@ export async function handleDunning(job: Job): Promise<DunningRunResult> {
   console.log(
     `[Job ${job.id}] Dunning: ${result.booksScanned} book(s), ` +
       `${result.invoicesConsidered} invoice(s) considered, ${result.emailsSent} email(s) sent, ` +
-      `${result.skippedOptOut} opted out, ${result.skippedNoEmail} without email, ${result.errors} error(s)`,
+      `${result.skippedOptOut} opted out, ${result.skippedNoEmail} without email, ` +
+      `${result.skippedInferredDueDate} inferred due date, ${result.errors} error(s)`,
   );
   return result;
 }
