@@ -26,6 +26,8 @@
 import prisma from './prisma';
 import { generateGuid, toDecimalNumber, fromDecimal, findOrCreateAccount } from './gnucash';
 import { isLongTerm } from './holding-period';
+import { isOwnAccountCommodityTransfer } from './account-transfer';
+import { allocateTradeFees } from './trade-fees';
 import {
   assertSplitsNotProtected,
   lockTransactionsForSplits,
@@ -548,12 +550,35 @@ export async function computeCarriedBasis(
   const sourceLotSplits = (await tx.splits.findMany({
     where: { lot_guid: sourceLotGuid },
     select: {
+      guid: true,
+      tx_guid: true,
       quantity_num: true,
       quantity_denom: true,
       value_num: true,
       value_denom: true,
     },
   })) ?? [];
+  const sourceTxGuids = [...new Set(sourceLotSplits
+    .map(s => s.tx_guid)
+    .filter((guid): guid is string => typeof guid === 'string'))];
+  const feeRows = sourceTxGuids.length > 0 ? await tx.splits.findMany({
+    where: { tx_guid: { in: sourceTxGuids } },
+    include: {
+      account: { select: { name: true, account_type: true } },
+      transaction: { select: { post_date: true, description: true } },
+    },
+  }) : [];
+  const allocatedFees = allocateTradeFees(feeRows.map(s => ({
+    guid: s.guid,
+    txGuid: s.tx_guid,
+    accountGuid: s.account_guid,
+    accountType: s.account?.account_type ?? '',
+    accountPath: s.account?.name ?? '',
+    value: toDecimalNumber(s.value_num, s.value_denom),
+    quantity: toDecimalNumber(s.quantity_num, s.quantity_denom),
+    txDescription: s.transaction?.description ?? undefined,
+    txDate: s.transaction?.post_date?.toISOString(),
+  })));
   const sourceLotSlot = await tx.slots.findFirst({
     where: { obj_guid: sourceLotGuid, name: 'source_lot_guid' },
     select: { string_val: true },
@@ -568,7 +593,8 @@ export async function computeCarriedBasis(
       // Its positive split value is bookkeeping value, not a new acquisition
       // cost; its actual basis is in carried_basis.
       if (!sourceLotSlot?.string_val) {
-        buyCost += Math.abs(toDecimalNumber(s.value_num, s.value_denom));
+        buyCost += Math.abs(toDecimalNumber(s.value_num, s.value_denom))
+          + (allocatedFees.fees.get(s.guid) ?? 0);
       }
     }
   }
@@ -1511,11 +1537,10 @@ export async function generateCapitalGains(
           account: { select: { guid: true, commodity_guid: true, account_type: true } },
         },
       })) ?? [];
-      const isTransferOut = siblings.some(o =>
-        o.account_guid !== lot.account!.guid &&
-        o.account?.commodity_guid === accountCommodityGuid &&
-        o.account?.account_type !== 'TRADING' &&
-        toDecimalNumber(o.quantity_num, o.quantity_denom) > 0,
+      const isTransferOut = isOwnAccountCommodityTransfer(
+        { ...s, account_guid: lot.account!.guid, transaction: { splits: siblings } },
+        accountCommodityGuid,
+        'out',
       );
       (isTransferOut ? transferOutSplits : sellSplits).push(s);
     }

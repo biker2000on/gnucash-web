@@ -23,6 +23,7 @@ import { toDecimalNumber } from './gnucash';
 import { getLatestPrice } from './commodities';
 import { isLongTerm } from './reports/capital-gains';
 import { loadTradeFees, NO_TRADE_FEES, type TradeFeeBySplit } from './trade-fees';
+import { isOwnAccountCommodityTransfer } from './account-transfer';
 
 export interface LotSplit {
     guid: string;
@@ -62,6 +63,8 @@ export interface LotSummary {
      * 0 when absent.
      */
     carriedBasis: number;
+    /** Transfer-in split GUIDs whose recorded values were replaced by carriedBasis. */
+    transferInSplitGuids?: string[];
     /**
      * Classified brokerage commissions/fees from the lot's trade transactions
      * that were folded into `totalCost` (buy side) and `realizedGain` (both
@@ -337,32 +340,14 @@ export async function getLotsForAccounts(
         // used by the scrubber and wash-sale detector; value alone is not
         // enough because a zero-value write-off is a real loss.
         const transferOutSplitGuids = new Set(lot.splits
-            .filter(split => {
-                const shares = toDecimalNumber(split.quantity_num, split.quantity_denom);
-                if (shares >= -0.0001) return false;
-                return (split.transaction?.splits ?? []).some(sibling =>
-                    sibling.account_guid !== accountGuid &&
-                    sibling.account?.commodity_guid === commodityGuid &&
-                    sibling.account?.account_type !== 'TRADING' &&
-                    toDecimalNumber(sibling.quantity_num, sibling.quantity_denom) > 0,
-                );
-            })
+            .filter(split => isOwnAccountCommodityTransfer(split, commodityGuid, 'out'))
             .map(split => split.guid));
         // A source_lot_guid means this lot was created for an own-account
         // transfer. Confirm the positive split has the matching
         // same-commodity, non-TRADING negative counterpart before excluding
         // its recorded value from basis; genuine later buys remain purchases.
         const transferInSplitGuids = new Set(lot.splits
-            .filter(split => {
-                const shares = toDecimalNumber(split.quantity_num, split.quantity_denom);
-                if (!sourceLotGuid || shares <= 0.0001) return false;
-                return (split.transaction?.splits ?? []).some(sibling =>
-                    sibling.account_guid !== accountGuid &&
-                    sibling.account?.commodity_guid === commodityGuid &&
-                    sibling.account?.account_type !== 'TRADING' &&
-                    toDecimalNumber(sibling.quantity_num, sibling.quantity_denom) < 0,
-                );
-            })
+            .filter(split => carriedBasis > 0 && isOwnAccountCommodityTransfer(split, commodityGuid, 'in'))
             .map(split => split.guid));
 
         // Total shares = sum of all split quantities
@@ -448,6 +433,7 @@ export async function getLotsForAccounts(
             sourceLotGuid,
             acquisitionDate,
             carriedBasis,
+            transferInSplitGuids: [...transferInSplitGuids],
             tradeFees,
             splits: lotSplits,
         };

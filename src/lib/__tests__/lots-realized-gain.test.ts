@@ -233,6 +233,21 @@ describe('carried basis feeds totalCost and unrealizedGain', () => {
     expect(summary.realizedGain).toBeCloseTo(2_500);
   });
 
+  it('keeps a legacy source-linked lot without carried_basis on its recorded-value basis', async () => {
+    mockLotsFindMany.mockResolvedValue([
+      lot('legacy-valued-xfer', 1, [
+        transferInSplit('in', '2024-02-01', 100, 3_000),
+        split('sell', '2024-03-01', -100, -3_500),
+      ]),
+    ]);
+    mockSlotsFindMany.mockResolvedValue([sourceLotSlot('legacy-valued-xfer')]);
+
+    const [summary] = await getAccountLots(ACCT);
+
+    expect(summary.totalCost).toBeCloseTo(3_000);
+    expect(summary.realizedGain).toBeCloseTo(500);
+  });
+
   it('partially-sold lot with BOTH real buy cost and carried basis pro-rates once', async () => {
     // 10 shares transferred in at $0 value carrying $800 of basis, plus a real
     // 10-share buy for $1,200, then 5 shares sold for $700.
