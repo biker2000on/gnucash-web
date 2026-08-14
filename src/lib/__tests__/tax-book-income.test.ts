@@ -23,6 +23,9 @@ vi.mock('@/lib/prisma', () => ({
   default: {
     gnucash_web_tax_mappings: { findMany: vi.fn() },
     accounts: { findMany: vi.fn() },
+    // loadRealizedSales also reads the trade transactions' sibling splits to
+    // recover brokerage commissions (@/lib/trade-fees); these lots carry none.
+    splits: { findMany: vi.fn() },
     $queryRaw: vi.fn(),
   },
 }));
@@ -47,6 +50,7 @@ import type { TaxCategory } from '@/lib/tax/types';
 const mockPrisma = prisma as unknown as {
   gnucash_web_tax_mappings: { findMany: Mock };
   accounts: { findMany: Mock };
+  splits: { findMany: Mock };
   $queryRaw: Mock;
 };
 const mockGetRetirementAccountGuids = vi.mocked(getRetirementAccountGuids);
@@ -166,6 +170,9 @@ describe('aggregateBookTaxData', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     splitQueryGuids = null;
+
+    // No commission/fee splits on these trades — figures stay gross.
+    mockPrisma.splits.findMany.mockResolvedValue([]);
 
     mockPrisma.gnucash_web_tax_mappings.findMany.mockResolvedValue([
       { account_guid: 'broker', tax_category: 'exclude' },
