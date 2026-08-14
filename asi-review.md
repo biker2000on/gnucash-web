@@ -1,5 +1,36 @@
 # ASI Review — GnuCash Web
 
+> ## ⚠️ Re-verification addendum — 2026-08-14, commit `5c5a555`
+>
+> **The status markers and the Executive Summary below are STALE.** This report
+> is a point-in-time audit of `9c4c1488`. The findings text is preserved as
+> written, but the repository has moved a long way since, and every claim was
+> re-checked against code at `5c5a555`.
+>
+> **The file still carries 52 `Status: Open` markers. Only 19 are genuinely
+> open.** The Executive Summary's "8 High findings" is wrong in the good
+> direction: **zero High findings remain.** Verified survivors are 9 Medium and
+> 10 Low:
+>
+> `ASI-1-007` `ASI-1-008` `ASI-1-009` `ASI-1-010` `ASI-2-004` `ASI-2-005`
+> `ASI-3-005` `ASI-3-007` `ASI-3-009` `ASI-5-008` `ASI-5-009` `ASI-5-011`
+> `ASI-6-004` `ASI-6-006` `ASI-6-007` `ASI-7-005` `ASI-7-006` `ASI-7-007`
+> `ASI-8-002`
+>
+> Everything else marked Open below has been fixed. Notably the entire first
+> theme of the Executive Summary — *"Nothing gates prod"* — is closed:
+> `.github/workflows/deploy.yml:20-48` runs typecheck, `docs:check`, tests and
+> lint in a `quality` job that `build-and-push` depends on; actions are pinned;
+> `Dockerfile:8,27` uses `npm ci`; migration tracking and a backup gate exist at
+> `src/lib/db-init.ts:15-43`; rollback is documented in
+> `docs/deployment-rollback.md`. The two financial-math defects in theme 2
+> (`ASI-1-002`, `ASI-1-003`) are also closed.
+>
+> **Do not schedule work from this file's checkboxes.** The current verified
+> backlog lives in `TODOS.md` under `## P0 — Cross-book writes`,
+> `## P1 — Data integrity and correctness`, and
+> `## P1 — Follow-ups raised by cross-review`.
+
 **Date:** 2026-08-04 (local, UTC-4)
 **ASI standard:** 0.5
 **Review agent:** Claude Code (Claude Fable 5), orchestrating 7 parallel read-only review subagents

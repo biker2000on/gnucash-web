@@ -9,8 +9,14 @@
 >   and correctness findings from the 2026-08-12 adversarial review.
 > - **`asi-review.md`** — the ASI pre-release audit findings.
 >
-> Re-verified against code at `1178c54` on 2026-08-13. Do not read an empty
+> Re-verified against code at `5c5a555` on 2026-08-14. Do not read an empty
 > "Open" section below as "the codebase has no known defects."
+>
+> As of that re-verification: **one Critical defect is open** (transaction
+> create/update accept out-of-book accounts), plus 19 ASI findings (0 High) and
+> a set of cross-review follow-ups. `asi-review.md` carries a re-verification
+> addendum at the top because its own status markers are stale; trust that
+> addendum and `TODOS.md` over the individual checkboxes in that file.
 
 ## Open
 

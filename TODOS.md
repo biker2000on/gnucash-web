@@ -2959,188 +2959,211 @@ suite locks several of them in — the mirror-image assertion is named per item.
   **Note:** this closed the *inventory* path only. The general ledger routes
   still validate account existence without book scoping — see P0 below.
 
-## P0 — Cross-book writes still open
+## P0 — Cross-book writes
 
-- [ ] **Transaction create/update accept out-of-book accounts.**
-  `src/app/api/transactions/route.ts:330-345` and
+Re-verified against code at `5c5a555` on 2026-08-14.
+
+- [ ] **Transaction create/update accept out-of-book accounts.** STILL OPEN,
+  and this is the most serious defect in the repo.
+  `src/app/api/transactions/route.ts:489-504` and
   `src/app/api/transactions/[guid]/route.ts:216-231` check account GUID
-  *existence only*, with no book constraint, while taking `account_guid`
-  straight from the request body under the `edit` role. Same class as C5 with a
-  larger blast radius — this is the app's most-used write endpoint. The in-repo
-  fix already exists: `getAccountGuidsForBook(bookGuid)`
+  *existence only* — `where: { guid: { in: uniqueAccountGuids } }`, no book
+  constraint — while taking `account_guid` straight from the request body under
+  the `edit` role. `grep -c getAccountGuidsForBook` returns 0 in both files.
+  Same class as the four fixed below, on the app's most-used write endpoint.
+  The in-repo fix exists: `getAccountGuidsForBook(bookGuid)`
   (`src/lib/book-scope.ts:232`), used in exactly this shape at
   `src/app/api/webhooks/inbound/transaction/route.ts:64`. **Effort:** M.
-- [ ] **Bulk reconcile lacks book-membership validation.**
-  `src/app/api/splits/bulk/reconcile/route.ts:86-101` selects and updates
-  exclusively by split GUID, never constraining to `roleResult.bookGuid`.
-  An editor holding another book's split GUIDs can alter its reconciliation
-  state. **Effort:** S.
-- [ ] **SimpleFin sync: check-then-create race and unscoped Imbalance lookup.**
-  `src/lib/services/simplefin-sync.service.ts:1150` — can produce duplicate
-  accounts or post to the wrong book. **Effort:** M.
+- [ ] **SimpleFin sync: check-then-create race.** The unscoped Imbalance lookup
+  is FIXED; the race is not. Child-account creation still checks then creates
+  at `src/lib/services/simplefin-sync.service.ts:1458-1503` with no advisory
+  lock or unique constraint, so a concurrent sync can duplicate accounts.
+  (ASI-5-009.) **Effort:** M.
+- [x] **Bulk reconcile lacked book-membership validation.** FIXED 2026-08-14 —
+  `src/app/api/splits/bulk/reconcile/route.ts:78-140`. Atomic rejection,
+  anti-oracle 404, fail-closed on an empty scope set.
+- [x] **Bulk move accepted out-of-book splits and targets.** FIXED 2026-08-14 —
+  `src/app/api/splits/bulk/move/route.ts:107-140`. Found by cross-review, not
+  by any audit; it could move money between ledgers.
+- [x] **Inventory posting permitted cross-book accounts (C5).** FIXED
+  2026-08-13 — `src/lib/inventory-engine.ts:708-757`.
 
-## P1 — Data integrity
+## P1 — Data integrity and correctness
 
-- [ ] **H11 — Reconciliation can be finished out of balance, and the statement
-  balance is discarded.** `src/components/ReconciliationPanel.tsx:293`, `:89-97`,
-  `:141`. `disabled={saving || selectedSplits.size === 0}` — no check on
-  `difference`; GnuCash desktop refuses this. The POST body carries only
-  `{splits, reconcile_state, reconcile_date}`, so **`statementBalance` is never
-  transmitted** and nothing records what the reconciliation was reconciled
-  *against*. `parseFloat(statementBalance) || 0` turns an empty field into a
-  confidently-wrong difference.
-- [ ] **H1 — Unpriceable holdings are silently valued at $0.**
-  `src/lib/account-valuation.ts:187-194`. Price *selection* is correct
-  (latest-on-or-before); the fallback is not — `multiplierCache.set(guid, rate ?? 0)`.
-  **`isConvertible` and `warnings[]` have zero consumers** (re-verified
-  2026-08-13): balance sheet, net worth, family office and account summary all
-  multiply straight through. Sibling bug at `:195-199` — a **currency** account
-  with no FX path falls back to `?? 1`, i.e. parity, so €10,000 reports as
-  $10,000. Neither records a warning. **Fix:** surface `warnings`/`isConvertible`
-  instead of silently valuing at $0.
-- [ ] **H13 — Server validation errors discarded on create but shown on edit,
-  over a genuine tolerance drift.** `TransactionFormModal.tsx:109` vs
-  `api/transactions/route.ts:322`: POST returns `{errors:[...]}` with no `error`
-  key while PUT returns both, and the client reads `errorData.error || 'Failed
-  to create transaction'` — so every field-level create error becomes a generic
-  string. Compounded by a real epsilon drift: `TransactionForm.tsx:530` rejects
-  at `> 0.01` but `validation.ts:103` and `AccountLedger.tsx:917` reject at
-  `> 0.001` (re-verified 2026-08-13). A transaction off by 0.005 passes the
-  client, is refused by the server, and the reason is swallowed — an unfixable,
-  unexplained failure. *(Bonus: the comment at `validation.ts:102` reads "1 cent
-  / 100 = 0.01" directly above code using `0.001`.)*
-- [ ] **H14 — Fixed-asset adjustment uses transaction VALUE instead of account
-  QUANTITY.** `src/lib/asset-transaction-service.ts:37`, `:173`. For a EUR asset
-  holding €100 recorded at $120, "adjust to target 100" computes
-  `delta = 100 − 120 = −20` and posts €20 of depreciation. Correct: zero.
+Re-verified against code at `5c5a555` on 2026-08-14. The 2026-08-12 adversarial
+review's High findings are **almost entirely closed**; what remains is listed
+first, then the closures, so this section stops describing shipped work as open.
+
+### Still open
+
 - [ ] **H15 — Escape destroys a half-typed multi-split transaction.**
-  `TransactionFormModal.tsx:163-164`: `closeOnBackdrop={false}` (good) but
-  `closeOnEscape={true}`, and `Modal` calls `onClose()` unconditionally. Pressing
-  Escape to dismiss an account dropdown discards five splits. No dirty-state
-  tracking exists anywhere in `TransactionForm`.
+  `src/components/TransactionFormModal.tsx:152-165` closes unconditionally via
+  `src/components/ui/Modal.tsx:54-66`, with no dirty check. **Effort:** S.
+  Cheapest real data-loss fix available.
+- [ ] **H9 remainder — aging never ties to the A/R / A/P control account.** The
+  stored-due-date half is fixed; `src/lib/business/business-reports.ts:665-673`
+  still totals only invoice-lot splits, so non-lot control-account activity is
+  excluded and aging cannot be reconciled to the balance sheet. **Effort:** M.
+- [ ] **No exact server-side same-currency balance check.**
+  `src/lib/validation.ts:131-142` still aggregates in float against a `0.001`
+  tolerance. The multi-currency path *does* verify exactly with BigInt
+  (`trading-accounts.ts:322`); the same-currency path does not. There is no
+  DB-level balance constraint (`schema.prisma:69`). **Effort:** M.
+- [ ] **Divergent balance tolerances across the codebase.** A one-cent
+  imbalance is accepted by settlements import (`0.011`,
+  `src/lib/import/settlements.ts:267`) and rejected by the create path
+  (`0.001`). Also `0.01` at `services/mortgage.service.ts:233`,
+  `reports/capital-gains.ts:442`, `api/investments/portfolio/route.ts:285`;
+  `0.005` at seven sites in `lot-scrub.ts`; a `0.0001` share epsilon across 17
+  non-test files. Same book, same money, different verdicts. **Effort:** L.
+- [ ] **Aggregate money in PostgreSQL `numeric`, not `float8`.** 110 cast sites
+  across 48 files (99/42 in lowercase `::float8` form; the rest
+  `CAST(... AS DOUBLE PRECISION)`). `src/lib/reports/utils.ts:50-51` is
+  converted and is the **target pattern** — divide in `numeric`, cast once at
+  the boundary. Next highest leverage: `src/lib/business/business-reports.ts`
+  (11 sites, drives A/R aging), then `jobs.service.ts` (11),
+  `reports/equity-statement.ts` (6), `insights.ts` (6). **Effort:** L overall,
+  S per file.
+- [ ] **Per-account ledger running balance aggregates in float8 before summing.**
+  `src/app/api/accounts/[guid]/transactions/route.ts:664-678`. **Effort:** S.
 
-## P1 — Investment and tax correctness
+### Tax — still open
 
-Note the overlap with the closed **P1 - Lot Scrub and Investment-Type
-Correctness (2026-08-04 audit)** above: H3 and H5 are *residuals in different
-call sites*, not re-openings of that item — record them as new work.
-
-- [ ] **H3 — Closed lots fabricate a realized loss equal to the entire basis.**
-  `src/lib/lots.ts:118-122`. Re-verified 2026-08-13 — still
-  `-splits.filter(...).reduce((s,x)=>s+x.value,0) - carriedBasis`. A transfer-out
-  carries qty −N, value $0, so the whole buy cost becomes a "realized loss";
-  a transfer between your own accounts is not a §1001 disposition. Buy 10 @ $100
-  then transfer out → realized gain **−$1,000**; correct is **$0**. Blast radius:
-  `detectWashSales` uses the same function to decide "was this a loss sale?", so
-  a transfer-out manufactures phantom wash-sale disallowances. The mirror error
-  is asserted by `lots-realized-gain.test.ts:80-87`.
-- [ ] **H4 — `average` cost basis admits transferred shares at $0.**
-  `src/lib/cost-basis.ts:358-360`. Re-verified 2026-08-13: `average` returns
-  early, *before* the `isTransferInSplit` recursion that FIFO and LIFO get —
-  and this is a user-selectable per-account preference. Transfer in 10 sh (real
-  basis $1,000) + buy 10 @ $150 → average basis $1,500 instead of $2,500:
-  **$1,000 of basis destroyed → $1,000 phantom gain.**
-- [ ] **H2 — Commissions are dropped from basis and proceeds.**
-  `src/components/InvestmentTransactionForm.tsx:111-145`, `:148-182`. The
-  security split is written with `total` rather than `total + commission` (buy)
-  and gross rather than net (sell), so the commission is expensed instead of
-  capitalised (IRC §1012 / Pub 551). Buy 10 @ $100 +$5, sell 10 @ $100 −$5 →
-  8949 reports gain **$0**; correct is proceeds $995, basis $1,005, **loss $10**.
-  Locked in by `investment-entry-regressions.test.ts:99-112`.
-- [ ] **H5 — Wash-sale disallowance matched per calendar *day* and
-  double-counted.** `src/lib/reports/capital-gains.ts:261-265`. The join is
-  ticker + account + **day**; `WashSaleResult.splitGuid` exists but is never
-  used. Same day: sale A loss $1,000 (fully washed) and sale B loss $3,000 (not
-  replaced) both absorb the day's $1,000 → net −$2,000 instead of −$3,000.
-  **Fix:** join on `splitGuid`.
-- [ ] **H6 — Investment Lots report re-implements basis math and gets it
-  wrong.** `src/app/api/reports/investment-lots/route.ts:126-179`. The slots
-  query fetches `name: 'title'` only — `carried_basis` and `acquisition_date`
-  appear **nowhere** in the file. Transferred lots show $0 basis; unrealized
-  gain compares full-lot basis against *remaining* shares (a partially-sold lot
-  shows −$100 where `lots.ts` shows +$300); holding period restarts on transfer,
-  contra §1223. **Fix:** delete the duplicate implementation and reuse `lots.ts`.
-- [ ] **Year-parameterize `NEC_THRESHOLD`.** It is a bare constant with no
-  tax-year parameter while `ssWageBase` right beside it *is* year-keyed
-  (`PARAMS[year]`). Verified structural defect — whether $600 is currently
-  correct is secondary to the fact that it *cannot* vary by year.
-- [ ] **Wire `CORP_CLASSIFICATIONS`, or delete it.** Exported and **never read**
-  (1 occurrence repo-wide); the 1099 corporate exemption is solely a manual
-  checkbox, so a `c_corp` with a W-9 and $50k paid shows `ready_to_file`.
-- [ ] **TXF omits realized capital gains entirely.**
-- [ ] **TXF `N304` for Traditional IRA may collide with Sch C line 24b
-  (meals).** **Unprovable in-repo** — circumstantially strong (the Sch C block
-  runs N293→N307 in exact line order with a single gap exactly where 24b
-  belongs), but settling it needs GnuCash's `txf.scm` or the TXF V042 list.
-- [ ] **Credit-card payments not excluded from 1099-NEC (§6050W).** Matters
-  mainly for card-heavy books. **Priority:** P3.
+- [ ] **Year-parameterize `NEC_THRESHOLD`.**
+  `src/lib/business/vendor-1099-compliance.ts:15,115`. **Effort:** S.
+- [ ] **Wire `CORP_CLASSIFICATIONS`, or delete it.** Declared at
+  `src/lib/business/vendor-1099.service.ts:47` and never read; status uses the
+  manual `exemptFrom1099` flag at `:180-184`. **Effort:** S.
+- [ ] **TXF omits realized capital gains entirely.** The tax package emits Form
+  8949 separately (`src/app/api/reports/tax-package/route.ts:53-65`); there is
+  no capital-gain path in `src/lib/tax/txf.ts`. **Effort:** M.
+- [ ] **TXF `N304` for Traditional IRA may collide with Sch C line 24b.**
+  Unprovable without an external TXF reference; left as a question, not a
+  finding.
+- [ ] **Credit-card payments not excluded from 1099-NEC (§6050W).** Vendor
+  totals use all paid amounts with no payment-rail exclusion
+  (`vendor-1099.service.ts:169-184`). **Effort:** M.
 - [ ] **Farmer flag not plumbed into the estimated-tax tracker.** The correct
-  math exists two modules away; the tracker doesn't pass the flag. **P4.**
-- [ ] **Jan 1–15 estimated payments.** Originally overstated — the payment *is*
-  displayed as "prior year" and correctly credited to year N−1 Q4. The real
-  defect is only that the YTD stat card and the quarter buckets disagree. **P4.**
-- [ ] **Delete a misleading comment.** `annualized-installments.ts:34-36` and
-  `route.ts:345` advertise a Schedule AI "simplification" that **does not
-  exist** — the code is exact. That comment is what produced the false CRITICAL
-  recorded in the review's Appendix A. **P4.**
+  computation exists at `src/lib/withholding.ts:394`; the tracker never passes
+  the option. **Effort:** S.
+- [ ] **Jan 1–15 estimated-payment display is internally inconsistent.**
+  Quarter attribution is prior-year Q4 in
+  `src/lib/tax/estimated-quarters.ts:79-105`; the YTD display path does not
+  share that bucketing. **Effort:** S.
+- [ ] **Delete a misleading comment.**
+  `src/lib/tax/annualized-installments.ts:34-36` describes a simplification
+  that no longer matches the code. **Effort:** XS.
 
-## P2 — Business workflow correctness
+### Closed by the 2026-08-13/14 work
 
-- [ ] **H8 — "Unpost" deletes the posting transaction instead of reversing
-  it.** `src/lib/business/invoice-engine.ts:1258-1272` — hard `deleteMany` on
-  splits → `deleteSlotsRecursive` → `transactions.delete` → `lots.delete`. A
-  $1,000 March invoice leaves **zero evidence** it was ever posted. Asserted by
-  `invoice-engine.test.ts:934`.
-- [ ] **H9 — Aging never ties to the A/R control account, and ignores explicit
-  due dates.** `src/lib/business/business-reports.ts:624,640,644`; `:75`. Totals
-  only invoice-*lot* splits, so any non-lot A/R posting (write-off, credit memo,
-  opening balance) desynchronises aging from the GL. Separately the explicit
-  `trans-date-due` slot written at posting (`invoice-engine.ts:1150`) is
-  discarded and aging recomputes `post date + duedays`: an invoice posted Aug 1
-  with a negotiated Sep 30 due date reads **19 days overdue** on Aug 20 instead
-  of Current.
-- [ ] **H10 — COGS defaults to not posting.** `src/lib/inventory-engine.ts:968`
-  (`if (!post) return null`, re-verified 2026-08-13 at `:977` and `:1005`) and
-  `.../fulfillment/route.ts:68` forwards an omitted `body.post` as `undefined`.
-  Default fulfilment moves stock but books no COGS → gross profit $100 instead
-  of $40, inventory asset overstated.
+- [x] **H1** — unpriceable holdings no longer valued at $0 and FX no longer
+  falls back to parity; excluded and named instead
+  (`src/lib/account-valuation.ts:302-317`).
+- [x] **H2** — commissions now capitalize into basis and are excluded from tax
+  deduction inputs by construction (`src/lib/trade-fees.ts`,
+  `src/lib/tax/book-income.ts:173`).
+- [x] **H3** — in-kind transfer-outs no longer fabricate a realized loss
+  (`src/lib/lots.ts:236-271`, `src/lib/lot-assignment.ts:1361-1401`).
+- [x] **H4** — cost basis is traced through transfers; unestablishable basis is
+  excluded and named rather than admitted at $0 (`src/lib/cost-basis.ts`).
+- [x] **H5** — wash-sale disallowance joins by disposal split GUID, not by
+  calendar day (`src/lib/reports/capital-gains.ts:284-293`).
+- [x] **H6** — the Investment Lots report consumes `lots.ts` instead of
+  re-deriving basis (`src/app/api/reports/investment-lots/route.ts:107-110`).
+- [x] **H8** — unpost writes a reversing transaction instead of deleting the
+  posting.
+- [x] **H9 (due-date half)** — aging reads the stored `trans-date-due` slot
+  (`src/lib/business/business-reports.ts:637-648`).
+- [x] **H10** — COGS posts by default on ship/fulfil
+  (`src/lib/inventory-engine.ts:985-1011`).
+- [x] **H11** — reconciliation is gated on an exact zero difference in the
+  account's own commodity units, with a GnuCash-style Imbalance adjusting entry
+  as the escape (`src/lib/reconcile.ts:359-379`).
+- [x] **H13** — create-path validation errors are surfaced, and the form and
+  API now validate the same submitted set.
+- [x] **H14** — fixed-asset adjustments are computed against quantity
+  (`src/lib/asset-transaction-service.ts:34-50`).
+- [x] **ASI-6-005** — ledger filters are applied in SQL in the paging query, on
+  both the global and per-account routes.
 
-## P2 — Systemic: float8 money casts
+## P1 — Follow-ups raised by cross-review (2026-08-13/14)
 
-- [ ] **Aggregate money in PostgreSQL `numeric`, not `float8`.**
-  `src/lib/reports/utils.ts:42` is the worst instance — it feeds Balance Sheet,
-  Trial Balance, Income Statement, Cash Flow, General Ledger, Equity Statement
-  and Portfolio:
+These were raised by opposite-vendor reviewers while verifying the fixes above,
+so each cites code we shipped. Verified against `5c5a555`. Two originally filed
+here (`washsale-detector-transfer-exclusion`, `listparam-isabsent-centralization`)
+were confirmed **already closed** and are omitted.
 
-  ```sql
-  SUM(s.quantity_num::float8 / NULLIF(s.quantity_denom,0)::float8)::float8
-  SUM(s.value_num::float8   / NULLIF(s.value_denom,0)::float8)::float8
-  ```
-
-  The review counted 53 such casts across 20+ files; `grep -rn "::float8" src/`
-  returns 93 matching lines on 2026-08-13, so **re-measure before scoping.**
-  GnuCash's whole point is that money is an exact rational; converting to
-  IEEE-754 *before* summing makes results depend on row order (float addition is
-  non-associative) and drift over large split counts. Same pattern in the
-  ledger's user-facing running balance
-  (`api/accounts/[guid]/transactions/route.ts:164,521,538`), float-summed in both
-  SQL and JS. **Fix direction:** aggregate in `numeric`, keep BigInt end-to-end
-  in JS. Start with `reports/utils.ts`.
-
-  > **Calibration.** The auditor's reproductions used values above 2⁵³
-  > ($90 trillion), which is not a realistic book. This is recorded on the
-  > *accumulation/ordering* argument, which is real at ordinary magnitudes — not
-  > on the 2⁵³ example. Same caveat for "Duplicate transaction changes stored
-  > int64" (`TransactionJournal.tsx:353`): the mechanism is real, the cited
-  > trigger is not reachable in a normal book. Treat as **P3**, not critical.
-
-- [ ] **No exact server-side balance check.** `src/lib/validation.ts:94-104`
-  sums splits as **floats** and accepts residuals up to `0.001`, then stores the
-  original fractions exactly, so a crafted API call or import can persist a
-  genuinely unbalanced transaction. There is no DB-level balance constraint
-  (`schema.prisma:69`), and `data-health.ts:253` only detects it later, also
-  with a tolerance. The multi-currency path *does* verify exactly with BigInt
-  (`trading-accounts.ts:322`) — the same-currency path doesn't.
+- [ ] **Valued transfers delete the deferred gain.** A valued (non-zero)
+  same-commodity move between two of the user's own non-TRADING accounts
+  suppresses the gain at the source (`lot-scrub.ts:1520-1532`) but writes
+  `carried_basis` **only** when `Math.abs(transferValue) < 0.005`
+  (`lot-scrub.ts:691`, same guard at `:885`). So the destination lot takes the
+  transfer value as basis and `transferValue − originalBasis` is recognized at
+  neither end. Understated gains on a later sale — a filed-return defect, same
+  class as H2. **Effort:** M. **Highest-priority item in this list.**
+- [ ] **`lots.ts` reports gross while `capital-gains.ts` nets commissions.** The
+  Investment Lots report will disagree with Form 8949 by the commission on
+  every lot that had one. `lots.ts` has no `trade-fees` import. Must call
+  `classifyFeeAccount` and apply the same **unconditional** capitalization —
+  there is no longer any deductibility gate. **Effort:** M.
+- [ ] **`trans-date-due` backfill.** Invoices posted before the slot existed
+  have inferred due dates and are therefore **never dunned**
+  (`src/lib/queue/jobs/dunning.ts:116-118`). No backfill script exists.
+  **Effort:** M.
+- [ ] **Portfolio surfaces present partial cost basis as complete.**
+  `HoldingsData.costBasis` is documented as covering only traced shares, but
+  the dividends route (`:69,75`) and five render sites in
+  `HoldingsTable.tsx` label it plainly "Cost Basis", and `calculateGainLoss`
+  divides by it — overstating gain and yield. **Effort:** M.
+- [ ] **Short/oversold rows show a stale cost basis.** `route.ts:431` renders
+  `costBasis` unconditionally, so an oversold row shows a positive basis next
+  to a negative share balance; only the coverage field is nulled. No
+  short-position model exists anywhere. **Effort:** L.
+- [ ] **Ledger UI ignores the coverage field.** The API emits
+  `cost_basis_uncovered_shares` (`string | null`, tri-state) and
+  `AccountLedger.tsx:73` declares only `cost_basis`. **Effort:** S.
+- [ ] **Email-ingest manual retry.** Descoped deliberately. Needs an immutable
+  owner column (`email-ingest.ts:904-906` — ownership currently derives from
+  the *mutable* sender allowlist) before a retry path is safe. The IMAP
+  partial-match hazard is prospective, not current: the poller issues no
+  HEADER search today. **Effort:** L.
+- [ ] **No real-Postgres concurrency harness.** `TEST_DATABASE_URL` appears in
+  five test files, in every case inside a comment disclaiming its absence.
+  Lock-ordering and `FOR UPDATE` guarantees are asserted only by mocks, which
+  cannot observe interleaving — a regression that drops a parent lock passes CI
+  green. **Effort:** L.
+- [ ] **`reconciled-split.service.ts` guard lookups are not book-scoped.** No
+  `book_guid` predicate in the module (`:87-129`, `:295-317`), so its error
+  messages can name an account outside the caller's book. **Effort:** M.
+- [ ] **Inventory item accounts are nullable on save, required at post.**
+  `services/inventory.service.ts:76-78,566-568` writes nulls through;
+  `inventory-engine.ts:857` then demands non-null, so an item saves fine and
+  fails later at COGS posting. **Effort:** M.
+- [ ] **Legacy average-cost fulfilments cannot post a COGS reversal.**
+  `getShipmentWeightedUnitCost` returns null when any shipment row lacks
+  `unit_cost` (`inventory-engine.ts:1524-1539`). Needs a backfill.
+  **Effort:** M.
+- [ ] **Assets list and asset detail disagree.** The list sums `value`
+  (`api/assets/fixed/route.ts:106`); the detail page reads `running_balance`,
+  which sums `quantity` (`api/accounts/[guid]/transactions/route.ts:664`).
+  **Effort:** S.
+- [ ] **Four inline copies of the transfer predicate.** `lot-scrub.ts:1507`,
+  `lot-assignment.ts:1362`, `lots.ts:236`, plus structurally identical clauses
+  at `cost-basis.ts:323,504,780`. They agree today; nothing keeps them
+  agreeing. **Effort:** S.
+- [ ] **Three copies of the depth-200 ancestor CTE.** `book-scope.ts:279`,
+  `book-lock.ts:131`, `inventory-engine.ts:754` — the third added by our own C5
+  work. **Effort:** S.
+- [ ] **Reconcile adjustment tests never assert a shared `tx_guid`.**
+  `reconcile.test.ts:384-392`; a refactor wiring the offsetting split to a
+  different transaction leaves two unbalanced transactions and the suite still
+  passes. Also only covers `scu = 100`. **Effort:** S.
+- [ ] **Coverage epsilon is absolute, not magnitude-scaled.** Commodity-aware
+  via `qtyEpsilonForScu`, but a very long replay can accumulate float residue
+  past it. Fails **safe** (`null`, never a false zero). **Effort:** S.
+- [ ] **14 routes emit a generic `error: "Validation failed"` alongside
+  specific `errors[]`**, and the shared reader prefers `error` — so the user
+  sees the less useful message. **Effort:** S.
 
 ## P2 — Form UI slop and accessibility
 
