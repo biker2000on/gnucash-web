@@ -13,6 +13,18 @@ interface ConfirmationDialogProps {
     cancelLabel?: string;
     confirmVariant?: 'danger' | 'warning' | 'default';
     isLoading?: boolean;
+    /**
+     * Which button holds focus when the dialog opens. Defaults to 'confirm'.
+     * Use 'cancel' when confirming destroys something the user cannot get
+     * back, so the safe choice is the one already under the keyboard.
+     */
+    defaultFocus?: 'confirm' | 'cancel';
+    /**
+     * Whether a bare Enter anywhere in the dialog confirms. Defaults to true.
+     * Turn it off for the same reason as above: a reflexive Enter must not be
+     * able to trigger an irreversible action.
+     */
+    confirmOnEnter?: boolean;
 }
 
 const variantClasses = {
@@ -31,22 +43,28 @@ export function ConfirmationDialog({
     cancelLabel = 'Cancel',
     confirmVariant = 'default',
     isLoading = false,
+    defaultFocus = 'confirm',
+    confirmOnEnter = true,
 }: ConfirmationDialogProps) {
     const confirmButtonRef = useRef<HTMLButtonElement>(null);
+    const cancelButtonRef = useRef<HTMLButtonElement>(null);
 
-    // Focus confirm button when dialog opens
+    // Focus the chosen button when the dialog opens
     useEffect(() => {
-        if (isOpen && confirmButtonRef.current) {
-            // Small delay to ensure modal animations complete
-            setTimeout(() => {
-                confirmButtonRef.current?.focus({ preventScroll: true });
-            }, 100);
-        }
-    }, [isOpen]);
+        if (!isOpen) return;
+        // Small delay to ensure modal animations complete. Cleared on close so
+        // a dialog dismissed inside that window cannot pull focus back to a
+        // button that is on its way out.
+        const timer = setTimeout(() => {
+            const target = defaultFocus === 'cancel' ? cancelButtonRef.current : confirmButtonRef.current;
+            target?.focus({ preventScroll: true });
+        }, 100);
+        return () => clearTimeout(timer);
+    }, [isOpen, defaultFocus]);
 
     // Handle keyboard shortcuts
     useEffect(() => {
-        if (!isOpen || isLoading) return;
+        if (!isOpen || isLoading || !confirmOnEnter) return;
 
         const handleKeyDown = (e: KeyboardEvent) => {
             if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
@@ -57,7 +75,7 @@ export function ConfirmationDialog({
 
         document.addEventListener('keydown', handleKeyDown);
         return () => document.removeEventListener('keydown', handleKeyDown);
-    }, [isOpen, isLoading, onConfirm]);
+    }, [isOpen, isLoading, confirmOnEnter, onConfirm]);
 
     return (
         <Modal
@@ -74,6 +92,7 @@ export function ConfirmationDialog({
 
             <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-border">
                 <button
+                    ref={cancelButtonRef}
                     type="button"
                     onClick={onCancel}
                     disabled={isLoading}
