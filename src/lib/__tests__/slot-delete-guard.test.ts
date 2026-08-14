@@ -104,7 +104,11 @@ vi.mock('@/lib/auth', () => ({
     requireRole: requireRoleMock,
     getCurrentUser: vi.fn(async () => null),
 }));
+// PUT/DELETE scope by the caller's book via getAccountGuidsForBook; ACCT — the
+// only account these fixtures post to — must be in scope or the route 404s
+// before it ever reaches the slot deletes these tests are about.
 vi.mock('@/lib/book-scope', () => ({
+    getAccountGuidsForBook: vi.fn(async () => [ACCT]),
     getBookAccountGuids: vi.fn(async () => [ACCT]),
     getActiveBookGuid: vi.fn(async () => 'book-1'),
 }));
