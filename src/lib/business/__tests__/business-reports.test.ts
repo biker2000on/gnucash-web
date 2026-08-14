@@ -4,7 +4,7 @@
  * Exercises the database-free pieces of `business-reports.ts`:
  *   - aging bucketing (including exact 30/60/90 boundaries)
  *   - amount-due sign handling for AR vs AP lots
- *   - due-date computation from billterms
+ *   - persisted due-date handling and legacy fallback visibility
  *   - days-to-pay math
  *   - Schedule C keyword mapping (each line, meals at 50%, unmapped fallback)
  *   - sales-tax monthly grouping and sign normalization
@@ -40,7 +40,7 @@ function inv(overrides: Partial<RawOpenInvoiceRow>): RawOpenInvoiceRow {
         ownerGuid: 'cust-1',
         ownerName: 'Acme Corp',
         datePosted: '2026-06-01T00:00:00.000Z',
-        dueDays: 30,
+        dueDate: '2026-07-01T00:00:00.000Z',
         lotBalance: 100,
         currency: 'USD',
         ...overrides,
@@ -124,34 +124,41 @@ describe('buildAgingReport', () => {
         expect(report.totals).toEqual(emptyBuckets());
     });
 
-    it('buckets an overdue AR invoice by days past its terms-derived due date', () => {
-        // Posted 2026-06-01, net 15 → due 2026-06-16 → 22 days past due at ASOF.
+    it('buckets an AR invoice by its stored transaction due date, not current terms', () => {
+        // Posted 2026-06-01, terms would imply 2026-07-01, but posting stored
+        // 2026-05-01. At ASOF it is 68 days past due, so it belongs in 61-90.
         const report = buildAgingReport(
-            [inv({ dueDays: 15, lotBalance: 500 })],
+            [inv({ dueDate: '2026-05-01T00:00:00.000Z', lotBalance: 500 })],
             'ar',
             ASOF,
         );
         expect(report.owners).toHaveLength(1);
         const owner = report.owners[0];
-        expect(owner.invoices[0].daysPastDue).toBe(22);
-        expect(owner.invoices[0].bucket).toBe('b1_30');
-        expect(owner.buckets.b1_30).toBe(500);
-        expect(report.totals.b1_30).toBe(500);
+        expect(owner.invoices[0]).toMatchObject({
+            dueDate: '2026-05-01',
+            dueDateInferred: false,
+            daysPastDue: 68,
+            bucket: 'b61_90',
+        });
+        expect(owner.buckets.b61_90).toBe(500);
+        expect(report.totals.b61_90).toBe(500);
         expect(report.grandTotal).toBe(500);
     });
 
-    it('treats no-terms invoices as due on the post date', () => {
-        // Posted 2026-06-01, no terms → due 2026-06-01 → 37 days past due.
-        const report = buildAgingReport([inv({ dueDays: null })], 'ar', ASOF);
+    it('uses and exposes the deliberately conservative post-date fallback when the slot is missing', () => {
+        // Do not infer post date + terms for legacy data: that would silently
+        // recreate the defect when terms changed after posting.
+        const report = buildAgingReport([inv({ dueDate: null })], 'ar', ASOF);
         expect(report.owners[0].invoices[0].daysPastDue).toBe(37);
         expect(report.owners[0].invoices[0].bucket).toBe('b31_60');
+        expect(report.owners[0].invoices[0].dueDateInferred).toBe(true);
     });
 
     it('groups multiple invoices per owner and totals across buckets', () => {
         const rows = [
-            inv({ guid: 'i1', lotBalance: 100, dueDays: 60 }), // due 2026-07-31 → current
-            inv({ guid: 'i2', lotBalance: 200, dueDays: 0 }), // due 2026-06-01 → 37d → 31-60
-            inv({ guid: 'i3', ownerGuid: 'cust-2', ownerName: 'Beta LLC', lotBalance: 50, dueDays: 30 }),
+            inv({ guid: 'i1', lotBalance: 100, dueDate: '2026-07-31T00:00:00.000Z' }), // current
+            inv({ guid: 'i2', lotBalance: 200, dueDate: '2026-06-01T00:00:00.000Z' }), // 37d → 31-60
+            inv({ guid: 'i3', ownerGuid: 'cust-2', ownerName: 'Beta LLC', lotBalance: 50, dueDate: '2026-07-01T00:00:00.000Z' }),
         ];
         const report = buildAgingReport(rows, 'ar', ASOF);
         expect(report.owners).toHaveLength(2);
@@ -166,11 +173,12 @@ describe('buildAgingReport', () => {
 
     it('negates lot balances for the AP side', () => {
         const report = buildAgingReport(
-            [inv({ ownerGuid: 'vend-1', ownerName: 'Supplies Inc', lotBalance: -750, dueDays: 0 })],
+            [inv({ ownerGuid: 'vend-1', ownerName: 'Supplies Inc', lotBalance: -750, dueDate: '2026-05-01T00:00:00.000Z' })],
             'ap',
             ASOF,
         );
         expect(report.owners[0].total).toBe(750);
+        expect(report.owners[0].invoices[0]).toMatchObject({ bucket: 'b61_90', dueDateInferred: false });
         expect(report.grandTotal).toBe(750);
     });
 });
@@ -178,9 +186,9 @@ describe('buildAgingReport', () => {
 describe('sumDueWithin', () => {
     it('includes overdue and soon-due items, excludes far-future ones', () => {
         const rows = [
-            inv({ guid: 'i1', lotBalance: -100, dueDays: 0 }), // due 2026-06-01 (overdue)
-            inv({ guid: 'i2', lotBalance: -200, dueDays: 40 }), // due 2026-07-11 (in 3 days)
-            inv({ guid: 'i3', lotBalance: -400, dueDays: 90 }), // due 2026-08-30 (far out)
+            inv({ guid: 'i1', lotBalance: -100, dueDate: '2026-06-01T00:00:00.000Z' }), // overdue
+            inv({ guid: 'i2', lotBalance: -200, dueDate: '2026-07-11T00:00:00.000Z' }), // in 3 days
+            inv({ guid: 'i3', lotBalance: -400, dueDate: '2026-08-30T00:00:00.000Z' }), // far out
         ];
         expect(sumDueWithin(rows, 'ap', 7, ASOF)).toBe(300);
         expect(sumDueWithin(rows, 'ap', 60, ASOF)).toBe(700);
