@@ -23,7 +23,7 @@
 
 import { randomUUID } from 'node:crypto';
 import prisma, { type ExtendedPrismaClient } from '@/lib/prisma';
-import { toDecimalNumber } from '@/lib/gnucash';
+import { generateGuid, findOrCreateAccount, toDecimalNumber } from '@/lib/gnucash';
 import { acquireNamedXactLock } from '@/lib/book-lock';
 import {
     toCents,
@@ -58,7 +58,34 @@ export class ManualReconcileError extends Error {
 
 /** The subset of the client finalize needs — satisfied by both the singleton
  *  and the interactive-transaction client. */
-export type ReconcileTx = Pick<ExtendedPrismaClient, 'splits' | '$executeRaw' | '$queryRaw'>;
+export type ReconcileTx = Pick<ExtendedPrismaClient, 'splits' | 'accounts' | 'books' | 'transactions' | '$executeRaw' | '$queryRaw'>;
+
+function decimalPlacesForScu(scu: number): number {
+    let value = scu;
+    let places = 0;
+    while (value > 1 && value % 10 === 0) { value /= 10; places++; }
+    if (value !== 1) throw new ManualReconcileError('Account commodity SCU must be a power of ten.', 'bad_request');
+    return places;
+}
+
+function decimalToUnits(value: string | number, scu: number): bigint {
+    const raw = String(value);
+    const places = decimalPlacesForScu(scu);
+    if (!/^-?\d+(?:\.\d+)?$/.test(raw)) throw new ManualReconcileError('endingBalance must be a non-empty decimal string.', 'bad_request');
+    const negative = raw.startsWith('-');
+    const [whole, fraction = ''] = (negative ? raw.slice(1) : raw).split('.');
+    if (fraction.length > places) throw new ManualReconcileError(`endingBalance exceeds this commodity's ${places}-decimal precision.`, 'bad_request');
+    const units = BigInt(whole) * BigInt(scu) + BigInt((fraction + '0'.repeat(places)).slice(0, places));
+    return negative ? -units : units;
+}
+
+function splitToUnits(num: bigint, denom: bigint, scu: number): bigint {
+    const scaled = num * BigInt(scu);
+    if (denom === 0n || scaled % denom !== 0n) {
+        throw new ManualReconcileError('A split cannot be represented exactly in this account commodity SCU.', 'bad_request');
+    }
+    return scaled / denom;
+}
 
 export interface ReconciliationCompletion {
     bookGuid: string;
@@ -92,21 +119,26 @@ export function statementDateCutoff(statementDate: Date): Date {
  */
 async function summarizeReconciled(
     db: Pick<ReconcileTx, '$queryRaw'>,
-    accountGuid: string,
-): Promise<{ reconciledCents: number; lastReconcileDate: Date | null }> {
+    accountGuid: string, scu = 100,
+): Promise<{ reconciledUnits: bigint; lastReconcileDate: Date | null }> {
     const rows = await db.$queryRaw<Array<{
         reconciled_cents: bigint | null;
+        non_integral_count: bigint;
         last_reconcile_date: Date | null;
     }>>`
         SELECT
-            SUM(FLOOR(quantity_num * 100::numeric / quantity_denom + 0.5))::bigint AS reconciled_cents,
+            SUM(quantity_num::numeric * ${scu} / quantity_denom)::bigint AS reconciled_cents,
+            COUNT(*) FILTER (WHERE mod(quantity_num::numeric * ${scu}, quantity_denom::numeric) <> 0)::bigint AS non_integral_count,
             MAX(reconcile_date) AS last_reconcile_date
         FROM splits
         WHERE account_guid = ${accountGuid}
           AND reconcile_state = 'y'
     `;
+    if ((rows[0]?.non_integral_count ?? 0n) !== 0n) {
+        throw new ManualReconcileError('A reconciled split cannot be represented exactly in this account commodity SCU.', 'bad_request');
+    }
     return {
-        reconciledCents: Number(rows[0]?.reconciled_cents ?? 0n),
+        reconciledUnits: rows[0]?.reconciled_cents ?? 0n,
         lastReconcileDate: rows[0]?.last_reconcile_date ?? null,
     };
 }
@@ -132,7 +164,7 @@ export async function getReconcileWorkspace(
         throw new ManualReconcileError('Account not found', 'not_found');
     }
 
-    const { reconciledCents, lastReconcileDate } = await summarizeReconciled(prisma, accountGuid);
+    const { reconciledUnits: reconciledCents, lastReconcileDate } = await summarizeReconciled(prisma, accountGuid);
 
     const cutoff = statementDateCutoff(statementDate);
     const candidateRows = await prisma.$queryRaw<Array<{
@@ -182,7 +214,7 @@ export async function getReconcileWorkspace(
         },
         statementDate: statementDate.toISOString(),
         lastReconcileDate: verifiedThrough ? verifiedThrough.toISOString() : null,
-        reconciledBalance: reconciledCents / 100,
+        reconciledBalance: Number(reconciledCents) / 100,
         candidates: candidateRows.map((r) => ({
             guid: r.guid,
             transactionGuid: r.tx_guid,
@@ -216,11 +248,12 @@ export async function getReconcileWorkspace(
 export async function finalizeReconciliation(
     accountGuid: string,
     statementDate: Date,
-    endingBalance: number,
+    endingBalance: string | number,
     splitGuids: string[],
     tx?: ReconcileTx,
     completion?: ReconciliationCompletion,
-    allowDiscrepancy = false,
+    createAdjustment = false,
+    commodityScu = 100,
 ): Promise<FinalizeReconcileResult> {
     const uniqueGuids = [...new Set(splitGuids)];
 
@@ -240,7 +273,7 @@ export async function finalizeReconciliation(
         await acquireNamedXactLock(db, `reconcile:${accountGuid}`);
 
         // Load and validate the requested splits (re-validated AFTER locking).
-        let selectedCents = 0;
+        let selectedUnits = 0n;
         if (uniqueGuids.length > 0) {
             // Canonical lock order (same as the transaction PUT/DELETE
             // routes): lock the parent TRANSACTION rows first, ordered by
@@ -317,25 +350,74 @@ export async function finalizeReconciliation(
                 );
             }
 
-            selectedCents = selected.reduce(
-                (sum, s) => sum + toCents(toDecimalNumber(s.quantity_num, s.quantity_denom)),
-                0,
-            );
+            selectedUnits = selected.reduce((sum, s) => sum + splitToUnits(s.quantity_num, s.quantity_denom, commodityScu), 0n);
         }
 
         // Recompute the reconciled balance from the DB (single SQL aggregate).
-        const { reconciledCents } = await summarizeReconciled(db, accountGuid);
+        const { reconciledUnits } = await summarizeReconciled(db, accountGuid, commodityScu);
 
-        const differenceCents = toCents(endingBalance) - (reconciledCents + selectedCents);
-        if (differenceCents !== 0 && !allowDiscrepancy) {
-            const difference = differenceCents / 100;
+        const endingUnits = decimalToUnits(endingBalance, commodityScu);
+        const differenceUnits = endingUnits - (reconciledUnits + selectedUnits);
+        if (differenceUnits !== 0n && !createAdjustment) {
+            const difference = Number(differenceUnits) / commodityScu;
             throw new ManualReconcileError(
                 `Cannot finalize: difference is ${difference.toFixed(2)}, must be 0.00 ` +
-                `(ending ${endingBalance.toFixed(2)} − reconciled ${(reconciledCents / 100).toFixed(2)} ` +
-                `− selected ${(selectedCents / 100).toFixed(2)}).`,
+                `(ending ${String(endingBalance)} − reconciled ${Number(reconciledUnits) / commodityScu} ` +
+                `− selected ${Number(selectedUnits) / commodityScu}).`,
                 'not_zero',
-                { difference, differenceCents },
+                { difference, differenceCents: Number(differenceUnits) },
             );
+        }
+
+        // GnuCash-style escape hatch: make the discrepancy a real, reconciled
+        // split in this account and offset it to the book's Imbalance account.
+        // The next reconciliation therefore starts from the statement balance,
+        // rather than merely recording a discrepancy that repeats forever.
+        if (differenceUnits !== 0n && createAdjustment) {
+            const source = await db.accounts.findUnique({
+                where: { guid: accountGuid },
+                select: { commodity_guid: true, commodity: { select: { mnemonic: true } } },
+            });
+            const book = await db.books.findUnique({
+                where: { guid: completion?.bookGuid ?? '' },
+                select: { root_account_guid: true },
+            });
+            if (!source?.commodity_guid || !book?.root_account_guid) {
+                throw new ManualReconcileError('Cannot create an adjustment without the account commodity and book root.', 'bad_request');
+            }
+            const imbalanceAccountGuid = await findOrCreateAccount(
+                `Imbalance-${source.commodity?.mnemonic ?? 'Adjustment'}`,
+                book.root_account_guid,
+                source.commodity_guid,
+                db as never,
+            );
+            const adjustmentTxGuid = generateGuid();
+            await db.transactions.create({
+                data: {
+                    guid: adjustmentTxGuid,
+                    currency_guid: source.commodity_guid,
+                    num: '',
+                    post_date: statementDate,
+                    enter_date: new Date(),
+                    description: 'Reconciliation adjustment',
+                },
+            });
+            await db.splits.createMany({
+                data: [
+                    {
+                        guid: generateGuid(), tx_guid: adjustmentTxGuid, account_guid: accountGuid,
+                        memo: 'Reconciliation adjustment', action: '', reconcile_state: 'y', reconcile_date: statementDate,
+                        value_num: differenceUnits, value_denom: BigInt(commodityScu),
+                        quantity_num: differenceUnits, quantity_denom: BigInt(commodityScu), lot_guid: null,
+                    },
+                    {
+                        guid: generateGuid(), tx_guid: adjustmentTxGuid, account_guid: imbalanceAccountGuid,
+                        memo: 'Reconciliation adjustment', action: '', reconcile_state: 'n', reconcile_date: null,
+                        value_num: -differenceUnits, value_denom: BigInt(commodityScu),
+                        quantity_num: -differenceUnits, quantity_denom: BigInt(commodityScu), lot_guid: null,
+                    },
+                ],
+            });
         }
 
         // Same commit semantics as the statement-upload finalize:
@@ -372,7 +454,7 @@ export async function finalizeReconciliation(
                        SET status = 'completed',
                            completed_at = NOW(),
                            interaction_count = interaction_count + ${interactionDelta},
-                           ending_difference = ${differenceCents / 100},
+                           ending_difference = ${Number(differenceUnits) / commodityScu},
                            metadata = metadata || jsonb_build_object('statementEndingBalance', ${endingBalance})
                      WHERE id = ${completion.sessionId}
                        AND book_guid = ${completion.bookGuid}
@@ -386,7 +468,7 @@ export async function finalizeReconciliation(
                        SET status = 'completed',
                            completed_at = NOW(),
                            interaction_count = interaction_count + ${interactionDelta},
-                           ending_difference = ${differenceCents / 100},
+                           ending_difference = ${Number(differenceUnits) / commodityScu},
                            metadata = metadata || jsonb_build_object('statementEndingBalance', ${endingBalance})
                      WHERE id = (
                          SELECT id
@@ -410,7 +492,7 @@ export async function finalizeReconciliation(
                     VALUES (
                         ${randomUUID()}, ${completion.bookGuid}, ${accountGuid},
                         ${completion.userId}, ${statementDate}, 'completed',
-                        ${interactionDelta}, NOW(), ${differenceCents / 100},
+                        ${interactionDelta}, NOW(), ${Number(differenceUnits) / commodityScu},
                         jsonb_build_object('statementEndingBalance', ${endingBalance})
                     )
                 `;
@@ -436,7 +518,7 @@ export async function finalizeReconciliation(
         return {
             reconciledSplits: updated,
             statementDate: statementDate.toISOString(),
-            endingBalance,
+            endingBalance: Number(endingBalance),
         };
     };
 

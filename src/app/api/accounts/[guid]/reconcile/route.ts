@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
+import prisma from '@/lib/prisma';
 import { isAccountInActiveBook } from '@/lib/book-scope';
 import { cacheInvalidateAllForBook } from '@/lib/cache';
 import { publishDataChange } from '@/lib/data-events';
@@ -47,7 +48,6 @@ export async function GET(
         if (!await isAccountInActiveBook(guid)) {
             return NextResponse.json({ error: 'Account not found' }, { status: 404 });
         }
-
         const { searchParams } = new URL(request.url);
         const rawDate = searchParams.get('statementDate');
         const statementDate = rawDate
@@ -74,11 +74,12 @@ export async function GET(
 
 interface FinalizeBody {
     statementDate?: string;
-    endingBalance?: number;
+    endingBalance?: string;
     splitGuids?: string[];
     sessionId?: string | null;
     interactionDelta?: number;
-    allowDiscrepancy?: boolean;
+    commodityScu?: number;
+    createAdjustment?: boolean;
 }
 
 /**
@@ -105,6 +106,11 @@ export async function POST(
         if (!await isAccountInActiveBook(guid)) {
             return NextResponse.json({ error: 'Account not found' }, { status: 404 });
         }
+        const account = await prisma.accounts.findUnique({ where: { guid }, select: { commodity_scu: true } });
+        const commodityScu = account?.commodity_scu;
+        if (!commodityScu || commodityScu <= 0) {
+            return NextResponse.json({ error: 'Account commodity SCU is invalid' }, { status: 400 });
+        }
 
         const body: FinalizeBody = await request.json();
 
@@ -115,9 +121,9 @@ export async function POST(
                 { status: 400 },
             );
         }
-        if (typeof body.endingBalance !== 'number' || !Number.isFinite(body.endingBalance)) {
+        if (typeof body.endingBalance !== 'string' || !/^-?\d+(?:\.\d+)?$/.test(body.endingBalance)) {
             return NextResponse.json(
-                { error: 'endingBalance must be a finite number' },
+                { error: 'endingBalance must be a non-empty decimal string' },
                 { status: 400 },
             );
         }
@@ -130,9 +136,9 @@ export async function POST(
                 { status: 400 },
             );
         }
-        if (body.allowDiscrepancy !== undefined && typeof body.allowDiscrepancy !== 'boolean') {
+        if (body.createAdjustment !== undefined && typeof body.createAdjustment !== 'boolean') {
             return NextResponse.json(
-                { error: 'allowDiscrepancy must be a boolean when provided' },
+                { error: 'createAdjustment must be a boolean when provided' },
                 { status: 400 },
             );
         }
@@ -172,7 +178,8 @@ export async function POST(
                 sessionId: body.sessionId,
                 interactionDelta: body.interactionDelta,
             },
-            body.allowDiscrepancy === true,
+            body.createAdjustment === true,
+            commodityScu,
         );
         void cacheInvalidateAllForBook(roleResult.bookGuid);
         void publishDataChange(roleResult.bookGuid, 'reconciliation', { guid, action: 'update' });

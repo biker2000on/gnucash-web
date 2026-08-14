@@ -2449,6 +2449,7 @@ export default function AccountLedger({
                     {!isReconciling && (
                         <ReconciliationPanel
                             accountGuid={accountGuid}
+                            commodityScu={commodityScu}
                             accountCurrency={accountCurrency}
                             isInvestment={isInvestmentAccount}
                             sharePrecision={sharePrecision}
@@ -3613,6 +3614,7 @@ export default function AccountLedger({
         {isReconciling && (
             <ReconciliationPanel
                 accountGuid={accountGuid}
+                commodityScu={commodityScu}
                 accountCurrency={accountCurrency}
                 isInvestment={isInvestmentAccount}
                 sharePrecision={sharePrecision}

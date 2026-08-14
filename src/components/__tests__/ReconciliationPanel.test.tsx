@@ -67,6 +67,14 @@ describe('ReconciliationPanel SimpleFIN balance default', () => {
 });
 
 describe('ReconciliationPanel finish gate', () => {
+  it('renders no monetary sentinel and disables both finish paths without a statement balance', () => {
+    render(<ReconciliationPanel {...baseProps} isReconciling selectedBalance={20} selectedSplits={new Set(['split-1'])} />);
+    expect(screen.getByText('—')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Finish' })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: 'Create adjustment and finish' })).not.toBeInTheDocument();
+    expect(screen.getByText(/Enter the statement ending balance/)).toHaveAttribute('aria-live', 'polite');
+  });
+
   it('blocks Finish when the exact minor-unit difference is non-zero', () => {
     render(
       <ReconciliationPanel
@@ -79,7 +87,7 @@ describe('ReconciliationPanel finish gate', () => {
 
     fireEvent.change(screen.getByLabelText('Statement Balance'), { target: { value: '120.01' } });
     expect(screen.getByRole('button', { name: 'Finish' })).toBeDisabled();
-    expect(screen.getByRole('alert')).toHaveTextContent('exactly zero');
+    expect(screen.getByText(/Difference must be exactly zero/)).toHaveAttribute('aria-live', 'polite');
   });
 
   it('allows Finish only at an exact zero and posts the statement balance and date', async () => {
@@ -103,13 +111,19 @@ describe('ReconciliationPanel finish gate', () => {
     expect(fetchMock).toHaveBeenCalledWith('/api/accounts/checking-account/reconcile', expect.any(Object));
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({
       splitGuids: ['split-1'],
-      endingBalance: 120,
-      allowDiscrepancy: false,
+      endingBalance: '120.00',
+      createAdjustment: false,
     });
     expect(complete).toHaveBeenCalledOnce();
   });
 
-  it('requires explicit confirmation before finishing with a recorded discrepancy', async () => {
+  it('handles a negative selected amount in the exact balance calculation', () => {
+    render(<ReconciliationPanel {...baseProps} isReconciling selectedBalance={-20} selectedSplits={new Set(['split-1'])} />);
+    fireEvent.change(screen.getByLabelText('Statement Balance'), { target: { value: '80.00' } });
+    expect(screen.getByRole('button', { name: 'Finish' })).toBeEnabled();
+  });
+
+  it('creates an adjustment for an entered non-zero difference', async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true });
     vi.stubGlobal('fetch', fetchMock);
     render(
@@ -122,11 +136,9 @@ describe('ReconciliationPanel finish gate', () => {
     );
 
     fireEvent.change(screen.getByLabelText('Statement Balance'), { target: { value: '120.01' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Record discrepancy and finish…' }));
-    expect(fetchMock).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm finish with recorded discrepancy' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create adjustment and finish' }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
-    expect(fetchMock.mock.calls[0][1].body).toContain('"allowDiscrepancy":true');
+    expect(fetchMock.mock.calls[0][1].body).toContain('"createAdjustment":true');
   });
 });

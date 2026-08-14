@@ -2,8 +2,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('@/lib/prisma', () => ({
     default: {
-        accounts: { findUnique: vi.fn() },
-        splits: { findMany: vi.fn(), updateMany: vi.fn() },
+        accounts: { findUnique: vi.fn(), findFirst: vi.fn(), create: vi.fn() },
+        books: { findUnique: vi.fn() },
+        transactions: { create: vi.fn() },
+        splits: { findMany: vi.fn(), updateMany: vi.fn(), createMany: vi.fn() },
         $queryRaw: vi.fn(),
         $executeRaw: vi.fn(),
         $transaction: vi.fn(),
@@ -337,9 +339,26 @@ describe('finalizeReconciliation', () => {
         expect(mockPrisma.splits.updateMany).not.toHaveBeenCalled();
     });
 
+    it('uses the account SCU exactly for fractional shares instead of cents', async () => {
+        mockFinalize([
+            { ...selectedSplit(SPLIT_1, 5), quantity_denom: 1000n },
+            { ...selectedSplit(SPLIT_2, 5), quantity_denom: 1000n, tx_guid: TX_2 },
+        ], 5);
+        mockPrisma.splits.updateMany.mockResolvedValue({ count: 2 });
+
+        await expect(finalizeReconciliation(
+            ACCOUNT, STATEMENT_DATE, '0.015', [SPLIT_1, SPLIT_2], undefined, undefined, false, 1000,
+        )).resolves.toMatchObject({ reconciledSplits: 2 });
+    });
+
     it('permits only the explicit discrepancy escape hatch and records the entered statement balance', async () => {
         mockFinalize([selectedSplit(SPLIT_1, 5000)], 10000);
         mockPrisma.splits.updateMany.mockResolvedValue({ count: 1 });
+        mockPrisma.splits.createMany.mockResolvedValue({ count: 2 });
+        mockPrisma.accounts.findUnique.mockResolvedValue({ commodity_guid: 'commodity-1', commodity: { mnemonic: 'USD' } });
+        mockPrisma.accounts.findFirst.mockResolvedValue({ guid: 'imbalance-account' });
+        mockPrisma.books.findUnique.mockResolvedValue({ root_account_guid: 'root-account' });
+        mockPrisma.transactions.create.mockResolvedValue({});
         mockPrisma.$executeRaw.mockResolvedValue(0);
 
         await expect(

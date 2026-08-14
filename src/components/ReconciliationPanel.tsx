@@ -8,6 +8,7 @@ import { toLocalDateString } from '@/lib/datePresets';
 
 interface ReconciliationPanelProps {
     accountGuid: string;
+    commodityScu?: number;
     accountCurrency: string;
     isInvestment?: boolean;
     sharePrecision?: number;
@@ -26,6 +27,7 @@ interface ReconciliationPanelProps {
 export function ReconciliationPanel({
     accountCurrency,
     accountGuid,
+    commodityScu,
     isInvestment = false,
     sharePrecision = 4,
     currentBalance,
@@ -49,7 +51,6 @@ export function ReconciliationPanel({
     );
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const [confirmDiscrepancy, setConfirmDiscrepancy] = useState(false);
     const statementBalanceTouched = useRef(false);
     const simpleFinDefaultApplied = useRef(false);
     const wasReconciling = useRef(false);
@@ -79,7 +80,7 @@ export function ReconciliationPanel({
         }
     }, [isReconciling, simpleFinBalance, isInvestment]);
 
-    const minorUnitScale = isInvestment ? sharePrecision : 2;
+    const minorUnitScale = commodityScu && commodityScu > 0 ? Math.round(Math.log10(commodityScu)) : 2;
     const toMinorUnits = (value: string | number): bigint | null => {
         const raw = String(value).trim();
         if (!/^-?\d+(?:\.\d+)?$/.test(raw)) return null;
@@ -95,10 +96,10 @@ export function ReconciliationPanel({
     const statementMinorUnits = toMinorUnits(statementBalance);
     const currentMinorUnits = toMinorUnits(currentBalance.toFixed(minorUnitScale));
     const selectedMinorUnits = toMinorUnits(selectedBalance.toFixed(minorUnitScale));
-    const differenceMinorUnits = statementMinorUnits === null || currentMinorUnits === null || selectedMinorUnits === null
-        ? 1n
-        : statementMinorUnits - currentMinorUnits - selectedMinorUnits;
-    const difference = Number(differenceMinorUnits) / (10 ** minorUnitScale);
+    const hasStatementBalance = statementMinorUnits !== null;
+    const differenceMinorUnits = hasStatementBalance && currentMinorUnits !== null && selectedMinorUnits !== null
+        ? statementMinorUnits - currentMinorUnits - selectedMinorUnits
+        : null;
 
     const handleFinish = useCallback(async (recordDiscrepancy = false) => {
         if (selectedSplits.size === 0) {
@@ -106,6 +107,10 @@ export function ReconciliationPanel({
             return;
         }
 
+        if (!hasStatementBalance || differenceMinorUnits === null) {
+            setError('Enter a valid statement balance before finishing reconciliation.');
+            return;
+        }
         if (!recordDiscrepancy && differenceMinorUnits !== 0n) {
             setError('The difference must be exactly zero before finishing. Review the selected transactions or explicitly record the discrepancy.');
             return;
@@ -121,8 +126,9 @@ export function ReconciliationPanel({
                 body: JSON.stringify({
                     splitGuids: Array.from(selectedSplits),
                     statementDate,
-                    endingBalance: Number(statementBalance),
-                    allowDiscrepancy: recordDiscrepancy,
+                    endingBalance: statementBalance,
+                    commodityScu,
+                    createAdjustment: recordDiscrepancy,
                 }),
             });
 
@@ -138,7 +144,7 @@ export function ReconciliationPanel({
         } finally {
             setSaving(false);
         }
-    }, [accountGuid, differenceMinorUnits, selectedSplits, statementBalance, statementDate, onReconcileComplete, onCancelReconcile]);
+    }, [accountGuid, commodityScu, differenceMinorUnits, hasStatementBalance, selectedSplits, statementBalance, statementDate, onReconcileComplete, onCancelReconcile]);
 
     // Drag state
     const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
@@ -256,7 +262,7 @@ export function ReconciliationPanel({
                     <input
                         id="reconciliation-statement-balance"
                         type="number"
-                        step={isInvestment ? String(Math.pow(10, -sharePrecision)) : '0.01'}
+                        step={String(1 / (commodityScu && commodityScu > 0 ? commodityScu : 100))}
                         value={statementBalance}
                         onChange={(e) => {
                             statementBalanceTouched.current = true;
@@ -295,7 +301,7 @@ export function ReconciliationPanel({
                         Difference
                     </div>
                     <div className={`font-mono text-xs ${isExactlyBalanced ? 'text-positive' : 'text-warning'}`}>
-                        {displayAmount(difference)}
+                        {differenceMinorUnits === null ? '—' : displayAmount(Number(differenceMinorUnits) / (commodityScu && commodityScu > 0 ? commodityScu : 100))}
                     </div>
                 </div>
             </div>
@@ -319,7 +325,7 @@ export function ReconciliationPanel({
 
                 <button
                     onClick={() => handleFinish()}
-                    disabled={saving || selectedSplits.size === 0 || !isExactlyBalanced}
+                    disabled={saving || selectedSplits.size === 0 || !hasStatementBalance || !isExactlyBalanced}
                     className="px-3 py-1.5 text-xs bg-primary hover:bg-primary-hover disabled:bg-primary/50 disabled:cursor-not-allowed text-primary-foreground rounded-lg transition-colors flex items-center gap-1.5"
                 >
                     {saving ? (
@@ -337,37 +343,23 @@ export function ReconciliationPanel({
                     )}
                 </button>
             </div>
-            {!isExactlyBalanced && selectedSplits.size > 0 && (
+            {!hasStatementBalance && (
+                <p aria-live="polite" className="text-xs text-warning">
+                    Enter the statement ending balance to calculate the difference.
+                </p>
+            )}
+            {hasStatementBalance && !isExactlyBalanced && selectedSplits.size > 0 && (
                 <div className="border-t border-border pt-3 space-y-2">
-                    <p role="alert" className="text-xs text-warning">
-                        Difference must be exactly zero to finish. If this statement cannot be corrected, you can finish only by explicitly recording the discrepancy.
+                    <p aria-live="polite" className="text-xs text-warning">
+                        Difference must be exactly zero to finish. Create an adjusting transaction to Imbalance to finish this reconciliation.
                     </p>
-                    {!confirmDiscrepancy ? (
-                        <button
-                            onClick={() => setConfirmDiscrepancy(true)}
-                            disabled={saving}
-                            className="text-xs text-warning hover:text-foreground transition-colors"
-                        >
-                            Record discrepancy and finish…
-                        </button>
-                    ) : (
-                        <div className="flex items-center gap-2">
-                            <button
-                                onClick={() => handleFinish(true)}
-                                disabled={saving}
-                                className="px-3 py-1.5 text-xs bg-warning text-background rounded-lg transition-colors"
-                            >
-                                Confirm finish with recorded discrepancy
-                            </button>
-                            <button
-                                onClick={() => setConfirmDiscrepancy(false)}
-                                disabled={saving}
-                                className="text-xs text-foreground-secondary hover:text-foreground transition-colors"
-                            >
-                                Cancel
-                            </button>
-                        </div>
-                    )}
+                    <button
+                        onClick={() => handleFinish(true)}
+                        disabled={saving}
+                        className="px-3 py-1.5 text-xs bg-warning text-background rounded-lg transition-colors"
+                    >
+                        Create adjustment and finish
+                    </button>
                 </div>
             )}
         </div>
