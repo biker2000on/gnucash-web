@@ -18,6 +18,7 @@ import {
     bucketForDaysPastDue,
     amountDueFromLotBalance,
     buildAgingReport,
+    buildAgingReconciliation,
     sumDueWithin,
     computeDaysToPay,
     averageDaysToPay,
@@ -27,6 +28,7 @@ import {
     periodStarts,
     emptyBuckets,
     type RawOpenInvoiceRow,
+    type RawAgingControlAccountRow,
     type ScheduleCAccountInput,
 } from '../business-reports';
 
@@ -162,6 +164,64 @@ describe('buildAgingReport', () => {
         expect(report.owners[0].total).toBe(750);
         expect(report.owners[0].invoices[0]).toMatchObject({ bucket: 'b61_90', dueDateInferred: false });
         expect(report.grandTotal).toBe(750);
+    });
+
+    it.each([
+        {
+            side: 'ar' as const,
+            invoiceLotBalance: 100,
+            controlBalance: 125,
+            label: 'A/R',
+        },
+        {
+            side: 'ap' as const,
+            invoiceLotBalance: -100,
+            controlBalance: -125,
+            label: 'A/P',
+        },
+    ])('$label reports the exact $25 direct control-account difference without double-counting an invoice payment', ({ side, invoiceLotBalance, controlBalance }) => {
+        // The $100 lot is the net of a $150 invoice and a $50 payment assigned
+        // to that same lot. The control account also has a separate $25 manual
+        // journal entry. Before this change, main produced only the $100 aged
+        // total; the $25 control-account difference was invisible.
+        const invoiceRows = [inv({ lotBalance: invoiceLotBalance })];
+        const controlRows: RawAgingControlAccountRow[] = [{
+            guid: `${side}-control`,
+            name: side === 'ar' ? 'Accounts Receivable' : 'Accounts Payable',
+            controlBalance,
+            agedLotBalance: invoiceLotBalance,
+        }];
+
+        const mainFixture = buildAgingReport(invoiceRows, side, ASOF);
+        expect(mainFixture.grandTotal).toBe(100);
+
+        const report = buildAgingReport(invoiceRows, side, ASOF, controlRows);
+        expect(report.grandTotal).toBe(100);
+        expect(report.reconciliation).toMatchObject({
+            controlBalance: 125,
+            agedTotal: 100,
+            unreconciledDifference: 25,
+            controlAccounts: [{
+                controlBalance: 125,
+                agedTotal: 100,
+                unreconciledDifference: 25,
+            }],
+        });
+    });
+});
+
+describe('buildAgingReconciliation', () => {
+    it('keeps each control account itemized while summing the book-level difference', () => {
+        const reconciliation = buildAgingReconciliation([
+            { guid: 'ar-usd', name: 'A/R USD', controlBalance: 125, agedLotBalance: 100 },
+            { guid: 'ar-eur', name: 'A/R EUR', controlBalance: 80, agedLotBalance: 80 },
+        ], 'ar');
+
+        expect(reconciliation.controlBalance).toBe(205);
+        expect(reconciliation.agedTotal).toBe(180);
+        expect(reconciliation.unreconciledDifference).toBe(25);
+        expect(reconciliation.controlAccounts[0].unreconciledDifference).toBe(25);
+        expect(reconciliation.controlAccounts[1].unreconciledDifference).toBe(0);
     });
 });
 
