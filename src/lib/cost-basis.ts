@@ -10,14 +10,24 @@
 
 import prisma from './prisma';
 import { toDecimalNumber } from './gnucash';
+import { readCarriedBasis } from './lot-scrub';
 
 export type CostBasisMethod = 'fifo' | 'lifo' | 'average';
+
+/** Share-count tolerance, matching the epsilon used elsewhere in the lot code. */
+const QTY_EPS = 0.0001;
 
 interface PurchaseLot {
   date: Date;
   shares: number;
   costPerShare: number;
   totalCost: number;
+  /**
+   * True when this parcel arrived as a transfer-in whose original basis could
+   * not be established (source history not in this book). Its costPerShare is
+   * 0, but that 0 is a GAP, not a fact — see unknownBasisShares.
+   */
+  unknownBasis?: boolean;
 }
 
 export interface CostBasisResult {
@@ -25,6 +35,29 @@ export interface CostBasisResult {
   perShareCost: number;
   method: CostBasisMethod;
   tracedFromAccount?: string; // Source account name if traced
+  /**
+   * Of the shares this result covers, how many have NO establishable basis
+   * (in-kind transfers whose source lot is not in this book, or predates the
+   * data). Never silently folded in at $0 without also being counted here.
+   */
+  unknownBasisShares?: number;
+  /**
+   * Plain-English notes naming the shares above, following the valuation-gap
+   * precedent in account-valuation.ts ("<label> excluded: <reason>") — a gap is
+   * reported out loud rather than presented as a real zero.
+   */
+  warnings?: string[];
+}
+
+/** Merge child-trace warnings into an accumulator without duplicates. */
+function collectWarnings(into: string[], from?: string[]): void {
+  if (!from) return;
+  for (const w of from) if (!into.includes(w)) into.push(w);
+}
+
+/** ISO date (YYYY-MM-DD) used to NAME the shares in a warning. */
+function dateLabel(date: Date | null | undefined): string {
+  return date ? date.toISOString().slice(0, 10) : 'an unknown date';
 }
 
 /**
@@ -96,6 +129,25 @@ async function getLotSplits(lotGuid: string, internalCache: InternalCache): Prom
   const rows = await fetchLotSplitsForLot(lotGuid);
   internalCache.set(lotCacheKey(lotGuid), { _splits: rows } as unknown as CostBasisResult);
   return rows;
+}
+
+const carriedCacheKey = (lotGuid: string) => `__carried__${lotGuid}`;
+
+/**
+ * The cost basis carried into a transfer-destination lot, from the lot's
+ * `carried_basis` slot. This is the SAME field the lot-scrub engine writes on
+ * transfer linking and that lots.ts / reports/capital-gains.ts read — an
+ * in-kind transfer split has no value of its own, so this slot is where the
+ * transferred shares' basis actually lives. Cached per lot.
+ */
+async function getLotCarriedBasis(lotGuid: string, internalCache: InternalCache): Promise<number> {
+  const cached = internalCache.get(carriedCacheKey(lotGuid));
+  if (cached && cached !== IN_PROGRESS && typeof (cached as unknown as { _carried?: number })._carried === 'number') {
+    return (cached as unknown as { _carried: number })._carried;
+  }
+  const carried = await readCarriedBasis(lotGuid, prisma);
+  internalCache.set(carriedCacheKey(lotGuid), { _carried: carried } as unknown as CostBasisResult);
+  return carried;
 }
 
 /**
@@ -238,16 +290,36 @@ export async function traceCostBasis(
       return sum + toDecimalNumber(s.quantity_num, s.quantity_denom);
     }, 0);
 
-    // Only use the lot when it actually contains other purchase splits.
-    // Destination lots created by the scrub engine contain ONLY the
-    // transfer-in split (excluded above) plus sells, so totalShares would
-    // be 0 — in that case fall through to transfer-chain tracing below.
-    if (totalShares > 0.0001) {
-      const totalCost = purchaseSplits.reduce((sum, s) => {
-        const val = Math.abs(toDecimalNumber(s.value_num, s.value_denom));
-        return sum + val;
-      }, 0);
+    const totalCost = purchaseSplits.reduce((sum, s) => {
+      const val = Math.abs(toDecimalNumber(s.value_num, s.value_denom));
+      return sum + val;
+    }, 0);
 
+    // A transfer-destination lot created by the scrub engine holds ONLY the
+    // transfer-in split (excluded above) plus later sells, so it has no
+    // purchase VALUE to pro-rate — the transferred shares' basis lives in the
+    // lot's `carried_basis` slot instead. Spread (buy cost + carried basis)
+    // over every share that entered the lot, the same formula the scrub engine
+    // uses when it books gains (lot-scrub.ts generateCapitalGains).
+    const carriedBasis = await getLotCarriedBasis(transferSplit.lot_guid, internalCache);
+    if (carriedBasis > 0) {
+      const ownShares = toDecimalNumber(transferSplit.quantity_num, transferSplit.quantity_denom);
+      const incomingShares = totalShares + Math.max(0, ownShares);
+      if (incomingShares > QTY_EPS) {
+        const perShareCost = (totalCost + carriedBasis) / incomingShares;
+        const result: CostBasisResult = {
+          totalCost: perShareCost * transferredShares,
+          perShareCost,
+          method,
+        };
+        internalCache.set(cacheKey, result);
+        return result;
+      }
+    }
+
+    // Only use the lot's own purchases when it actually contains some;
+    // otherwise fall through to transfer-chain tracing below.
+    if (totalShares > QTY_EPS) {
       const result: CostBasisResult = {
         totalCost: (totalCost / totalShares) * transferredShares,
         perShareCost: totalCost / totalShares,
@@ -356,11 +428,12 @@ async function getAccountCostBasis(
   });
 
   if (method === 'average') {
-    return calculateAverageCostBasis(sortedSplits, sharesNeeded);
+    return calculateAverageCostBasis(sortedSplits, sharesNeeded, accountGuid, commodityGuid, cache);
   }
 
   // FIFO or LIFO: build purchase lots
   const lots: PurchaseLot[] = [];
+  const warnings: string[] = [];
 
   for (const split of sortedSplits) {
     const qty = toDecimalNumber(split.quantity_num, split.quantity_denom);
@@ -369,13 +442,27 @@ async function getAccountCostBasis(
     if (qty > 0) {
       // Purchase or transfer-in
       if (isTransferInSplit(split, accountGuid, commodityGuid)) {
-        // Recursively trace this transfer
+        // Recursively trace this transfer — the split's own value is $0, the
+        // basis is CARRIED from the source lot.
         const traced = await traceCostBasis(split.guid, method, commodityGuid, qty, cache);
+        collectWarnings(warnings, traced.warnings);
+        const unknownBasis = !(traced.totalCost > 0);
+        if (unknownBasis) {
+          // Unlike the average pool, a FIFO/LIFO parcel cannot simply be
+          // dropped: lots are individually identified and consumed in date
+          // order, so removing one would shift which lot every later sale
+          // eats and corrupt the basis of the KNOWN parcels too. It stays in
+          // the queue at $0 — but is counted and named, never silent.
+          warnings.push(
+            `${qty} share(s) transferred in on ${dateLabel(split.transaction?.post_date)} admitted at $0 basis: no traceable cost basis in this book.`,
+          );
+        }
         lots.push({
           date: split.transaction?.post_date || new Date(),
           shares: qty,
           costPerShare: traced.perShareCost,
           totalCost: traced.totalCost,
+          unknownBasis,
         });
       } else {
         // Direct purchase
@@ -404,11 +491,13 @@ async function getAccountCostBasis(
   // would consume them.
   let remainingShares = sharesNeeded;
   let totalCost = 0;
+  let unknownBasisShares = 0;
 
   for (const lot of consumptionOrder(lots, method)) {
     if (remainingShares <= 0 || lot.shares <= 0) continue;
     const allocated = Math.min(lot.shares, remainingShares);
     totalCost += allocated * lot.costPerShare;
+    if (lot.unknownBasis) unknownBasisShares += allocated;
     remainingShares -= allocated;
   }
 
@@ -416,36 +505,89 @@ async function getAccountCostBasis(
     totalCost,
     perShareCost: sharesNeeded > 0 ? totalCost / sharesNeeded : 0,
     method,
+    ...(unknownBasisShares > 0 ? { unknownBasisShares } : {}),
+    ...(warnings.length > 0 ? { warnings } : {}),
   };
 }
 
-function calculateAverageCostBasis(
-  splits: Array<{ quantity_num: bigint; quantity_denom: bigint; value_num: bigint; value_denom: bigint }>,
+/**
+ * Average-cost pool replay.
+ *
+ * An in-kind transfer-in split has NO value of its own — its basis is carried
+ * from the source lot. Admitting those shares at their $0 split value would
+ * drag the pooled average down and inflate the gain on every later sale, so
+ * each transfer-in is traced to its carried basis first.
+ *
+ * When the carried basis genuinely cannot be established (the source lot is
+ * not in this book, or predates the data), those shares are EXCLUDED from the
+ * pool — numerator and denominator both — and named in `warnings`, following
+ * the same "exclude and say so, never present a gap as a real zero" rule that
+ * account-valuation.ts applies to unpriceable holdings. Shares are fungible
+ * under the average method, so one un-basised share would otherwise
+ * contaminate the reported basis of every other share in the pool.
+ */
+async function calculateAverageCostBasis(
+  splits: Awaited<ReturnType<typeof fetchAccountSplits>>,
   sharesNeeded: number,
-): CostBasisResult {
-  let totalShares = 0;
-  let totalCost = 0;
+  accountGuid: string,
+  commodityGuid: string,
+  cache: CostBasisCache,
+): Promise<CostBasisResult> {
+  let knownShares = 0;
+  let knownCost = 0;
+  let unknownShares = 0;
+  const warnings: string[] = [];
 
   for (const split of splits) {
     const qty = toDecimalNumber(split.quantity_num, split.quantity_denom);
     const val = Math.abs(toDecimalNumber(split.value_num, split.value_denom));
 
     if (qty > 0) {
-      totalShares += qty;
-      totalCost += val;
+      if (isTransferInSplit(split, accountGuid, commodityGuid)) {
+        const traced = await traceCostBasis(split.guid, 'average', commodityGuid, qty, cache);
+        collectWarnings(warnings, traced.warnings);
+        if (traced.totalCost > 0) {
+          knownShares += qty;
+          knownCost += traced.totalCost;
+        } else {
+          unknownShares += qty;
+          warnings.push(
+            `${qty} share(s) transferred in on ${dateLabel(split.transaction?.post_date)} excluded from the average-cost pool: no traceable cost basis in this book.`,
+          );
+        }
+      } else {
+        knownShares += qty;
+        knownCost += val;
+      }
     } else if (qty < 0) {
+      // Shares are fungible in an average-cost pool, so a sale consumes the
+      // known and unknown-basis shares pro rata.
       const soldShares = Math.abs(qty);
-      const avgCost = totalShares > 0 ? totalCost / totalShares : 0;
-      totalCost -= avgCost * soldShares;
-      totalShares -= soldShares;
+      const poolShares = knownShares + unknownShares;
+      const fromKnown = poolShares > 0 ? Math.min(knownShares, soldShares * (knownShares / poolShares)) : 0;
+      const avgCost = knownShares > 0 ? knownCost / knownShares : 0;
+      knownCost -= avgCost * fromKnown;
+      knownShares -= fromKnown;
+      unknownShares = Math.max(0, unknownShares - (soldShares - fromKnown));
     }
   }
 
-  const perShareCost = totalShares > 0 ? totalCost / totalShares : 0;
+  const perShareCost = knownShares > 0 ? knownCost / knownShares : 0;
+  const poolShares = knownShares + unknownShares;
+  // The requested shares are drawn fungibly from the pool, so the unknown
+  // fraction of the pool is the unknown fraction of the request.
+  const unknownBasisShares = poolShares > 0
+    ? Math.min(sharesNeeded, sharesNeeded * (unknownShares / poolShares))
+    : 0;
+
   return {
-    totalCost: perShareCost * sharesNeeded,
+    // Basis is reported for the shares that HAVE one; the rest are counted in
+    // unknownBasisShares instead of being handed an invented per-share cost.
+    totalCost: perShareCost * (sharesNeeded - unknownBasisShares),
     perShareCost,
     method: 'average',
+    ...(unknownBasisShares > QTY_EPS ? { unknownBasisShares } : {}),
+    ...(warnings.length > 0 ? { warnings } : {}),
   };
 }
 
