@@ -1,3 +1,7 @@
+import type { CostBasisCoverage } from '@/lib/commodities';
+
+export type { CostBasisCoverage };
+
 export interface CashByAccount {
   parentGuid: string;
   parentName: string;
@@ -30,6 +34,8 @@ export interface ConsolidatedHolding {
   fullname: string;
   totalShares: number;
   totalCostBasis: number;
+  /** Coverage of `totalCostBasis`, pooled across the accounts below. */
+  totalCostBasisCoverage: CostBasisCoverage;
   totalMarketValue: number;
   totalGainLoss: number;
   totalGainLossPercent: number;
@@ -41,6 +47,7 @@ export interface ConsolidatedHolding {
     accountPath: string;
     shares: number;
     costBasis: number;
+    costBasisCoverage: CostBasisCoverage;
     marketValue: number;
     gainLoss: number;
     gainLossPercent: number;
@@ -74,6 +81,8 @@ export interface PortfolioData {
   summary: {
     totalValue: number;
     totalCostBasis: number;
+    /** Coverage of `totalCostBasis` across every holding in the portfolio. */
+    totalCostBasisCoverage: CostBasisCoverage;
     totalGainLoss: number;
     totalGainLossPercent: number;
   };
@@ -86,6 +95,8 @@ export interface PortfolioData {
     fullname: string;
     shares: number;
     costBasis: number;
+    /** What `costBasis` and `gainLoss` describe — never assume all `shares`. */
+    costBasisCoverage: CostBasisCoverage;
     marketValue: number;
     gainLoss: number;
     gainLossPercent: number;

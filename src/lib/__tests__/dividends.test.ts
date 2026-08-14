@@ -118,7 +118,10 @@ describe('yield-on-cost and current-yield math', () => {
     it('attaches yields to per-security rows from a valuation map', () => {
         const payments = quarterly('VTI', 2025, 1, 100); // 400 in 2025, all in TTM
         const valuations = new Map<string, SecurityValuation>([
-            ['c:guid-VTI', { commodityGuid: 'guid-VTI', ticker: 'VTI', costBasis: 10000, marketValue: 20000 }],
+            ['c:guid-VTI', {
+                commodityGuid: 'guid-VTI', ticker: 'VTI', costBasis: 10000, marketValue: 20000,
+                costBasisCoverage: { status: 'complete', coveredShares: 100 },
+            }],
         ]);
         const [row] = perSecurityDividends(payments, { asOf: AS_OF, valuations });
         expect(row.ticker).toBe('VTI');
@@ -301,7 +304,10 @@ describe('summarizeDividends end to end', () => {
             pay('2025-06-15', 500, 'ONEOFF', null), // irregular one-off
         ];
         const valuations = new Map<string, SecurityValuation>([
-            ['c:guid-VTI', { commodityGuid: 'guid-VTI', ticker: 'VTI', costBasis: 5000, marketValue: 10000 }],
+            ['c:guid-VTI', {
+                commodityGuid: 'guid-VTI', ticker: 'VTI', costBasis: 5000, marketValue: 10000,
+                costBasisCoverage: { status: 'complete', coveredShares: 50 },
+            }],
         ]);
         const summary = summarizeDividends(payments, { asOf: AS_OF, year: 2025, valuations });
 

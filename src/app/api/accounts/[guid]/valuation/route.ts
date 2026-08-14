@@ -108,6 +108,11 @@ export async function GET(
             holdings: {
                 shares: holdings.shares,
                 costBasis: holdings.costBasis,
+                // Coverage travels with the basis it describes: `costBasis` is
+                // the basis of the shares this says it covers, and `gainLoss`
+                // is that slice's gain. Dropping it here is what let the
+                // holdings panel print a partial basis as a complete one.
+                costBasisCoverage: holdings.costBasisCoverage,
                 marketValue: holdings.marketValue,
                 gainLoss: holdings.gainLoss,
                 gainLossPercent: holdings.gainLossPercent,

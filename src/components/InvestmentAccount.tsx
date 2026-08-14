@@ -2,6 +2,13 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { formatCurrency } from '@/lib/format';
+import {
+    CostBasisCoverageMark,
+    CoveredSliceNote,
+    gainHeading,
+    BASIS_CONSEQUENCE,
+} from '@/components/investments/CostBasisCoverageMark';
+import type { CostBasisCoverage } from '@/lib/commodities';
 import { useToast } from '@/contexts/ToastContext';
 import { InvestmentTransactionForm } from './InvestmentTransactionForm';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceArea, AreaChart, Area, ReferenceLine } from 'recharts';
@@ -34,8 +41,11 @@ interface ValuationData {
     };
     holdings?: {
         shares: number;
+        /** Basis of the shares `costBasisCoverage` describes, not always all of them. */
         costBasis: number;
+        costBasisCoverage: CostBasisCoverage;
         marketValue: number;
+        /** Gain of the covered shares; see `costBasisCoverage`. */
         gainLoss: number;
         gainLossPercent: number;
         latestPrice: PriceData | null;
@@ -424,6 +434,11 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
                         <div className="text-xs text-foreground-muted uppercase tracking-wider">Cost Basis</div>
                         <div className="text-lg sm:text-xl font-mono font-semibold text-foreground mt-1">
                             {formatCurrency(Math.abs(holdings.costBasis), 'USD')}
+                            {/* Names the shares this basis (and the gain beside it) leaves out. */}
+                            <CostBasisCoverageMark
+                                coverage={holdings.costBasisCoverage}
+                                consequence={BASIS_CONSEQUENCE}
+                            />
                         </div>
                     </div>
                     <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-4 overflow-hidden">
@@ -433,14 +448,26 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
                         </div>
                     </div>
                     <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-4 overflow-hidden">
-                        <div className="text-xs text-foreground-muted uppercase tracking-wider">Gain/Loss</div>
+                        {/* The heading names the slice: this is the gain on the shares
+                            the basis covers, beside a whole-position share count and
+                            market value. */}
+                        <div className="text-xs text-foreground-muted uppercase tracking-wider">
+                            {gainHeading(holdings.costBasisCoverage)}
+                        </div>
                         <div className={`font-mono font-semibold mt-1 ${
                             holdings.gainLoss >= 0 ? 'text-positive' : 'text-negative'
                         }`}>
-                            <div className="text-lg sm:text-xl">{holdings.gainLoss >= 0 ? '+' : ''}{formatCurrency(holdings.gainLoss, 'USD')}</div>
+                            <div className="text-lg sm:text-xl">
+                                {holdings.gainLoss >= 0 ? '+' : ''}{formatCurrency(holdings.gainLoss, 'USD')}
+                                <CostBasisCoverageMark
+                                    coverage={holdings.costBasisCoverage}
+                                    consequence={BASIS_CONSEQUENCE}
+                                />
+                            </div>
                             <div className="text-xs sm:text-sm">
                                 ({holdings.gainLoss >= 0 ? '+' : ''}{holdings.gainLossPercent.toFixed(2)}%)
                             </div>
+                            <CoveredSliceNote coverage={holdings.costBasisCoverage} />
                         </div>
                     </div>
                 </div>

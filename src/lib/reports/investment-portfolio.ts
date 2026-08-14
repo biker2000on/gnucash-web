@@ -7,7 +7,13 @@
 
 import prisma from '@/lib/prisma';
 import { Prisma } from '@prisma/client';
-import { calculateMarketValue, calculateGainLoss, calculateGainLossPercent } from '@/lib/commodities';
+import {
+    calculateMarketValue,
+    calculateGainLoss,
+    calculateGainLossPercent,
+    totalHoldings,
+    UNTRACED_BASIS_COVERAGE,
+} from '@/lib/commodities';
 import { getBaseCurrency } from '@/lib/currency';
 import { ReportType, ReportFilters, InvestmentPortfolioData, PortfolioHolding } from './types';
 import { sumSplitsByAccount, toDecimal } from './utils';
@@ -109,7 +115,18 @@ export async function generateInvestmentPortfolio(
 
         const effectiveShares = isZeroShares ? 0 : shares;
         const marketValue = isZeroShares ? 0 : calculateMarketValue(effectiveShares, latestPrice);
-        const gain = calculateGainLoss(marketValue, costBasis);
+        // This report sums raw split values with no transfer tracing, so it
+        // cannot say how much of the position that basis covers. The statement
+        // now travels into the report data instead of being made and dropped:
+        // the table cannot render an unverified basis as a complete one if it
+        // has to narrow on the coverage to display it.
+        const costBasisCoverage = UNTRACED_BASIS_COVERAGE;
+        const gain = calculateGainLoss({
+            shares: effectiveShares,
+            pricePerShare: latestPrice,
+            costBasis,
+            coverage: costBasisCoverage,
+        });
         const gainPercent = calculateGainLossPercent(gain, costBasis);
 
         return {
@@ -121,6 +138,7 @@ export async function generateInvestmentPortfolio(
             priceDate,
             marketValue,
             costBasis,
+            costBasisCoverage,
             gain,
             gainPercent,
         };
@@ -132,13 +150,18 @@ export async function generateInvestmentPortfolio(
     // Sort by account name
     holdings.sort((a, b) => a.accountName.localeCompare(b.accountName));
 
-    // Compute totals
-    const totalMarketValue = holdings.reduce((sum, h) => sum + h.marketValue, 0);
-    const totalCostBasis = holdings.reduce((sum, h) => sum + h.costBasis, 0);
-    const totalGain = totalMarketValue - totalCostBasis;
-    const totalGainPercent = totalCostBasis !== 0
-        ? (totalGain / Math.abs(totalCostBasis)) * 100
-        : 0;
+    // Compute totals through the shared helper, which SUMS the per-holding
+    // gains and pools their coverage. `totalMarketValue - totalCostBasis` is
+    // the same subtraction that made the account view disagree with its own
+    // rows: it happens to match today because every row here is unknown-coverage
+    // (whole-position gain), and would silently overstate the total the moment
+    // one row's basis covered only part of its shares.
+    const totals = totalHoldings(holdings.map(h => ({
+        costBasis: h.costBasis,
+        costBasisCoverage: h.costBasisCoverage,
+        marketValue: h.marketValue,
+        gainLoss: h.gain,
+    })));
 
     return {
         type: ReportType.INVESTMENT_PORTFOLIO,
@@ -147,10 +170,11 @@ export async function generateInvestmentPortfolio(
         filters,
         holdings,
         totals: {
-            marketValue: totalMarketValue,
-            costBasis: totalCostBasis,
-            gain: totalGain,
-            gainPercent: totalGainPercent,
+            marketValue: totals.totalValue,
+            costBasis: totals.totalCostBasis,
+            costBasisCoverage: totals.totalCostBasisCoverage,
+            gain: totals.totalGainLoss,
+            gainPercent: totals.totalGainLossPercent,
         },
         showZeroShares,
     };
