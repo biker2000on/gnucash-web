@@ -67,6 +67,9 @@ export default function PaymentsPage() {
     };
 
     const totalDue = roundCents(invoices.reduce((s, i) => s + i.amountDue, 0));
+    // Matches the aging report's dagger legend: a due date we fell back to the
+    // posting date for is shown, but never silently.
+    const hasInferredDueDates = invoices.some((i) => i.dueDateInferred);
 
     const typeButton = (value: ContactKind, label: string) => (
         <button
@@ -168,6 +171,12 @@ export default function PaymentsPage() {
                                                 <td className="px-4 py-2 font-mono tabular-nums text-foreground-secondary" style={TNUM}>{inv.datePosted ?? '—'}</td>
                                                 <td className={`px-4 py-2 font-mono tabular-nums ${inv.status === 'overdue' ? 'text-negative' : 'text-foreground-secondary'}`} style={TNUM}>
                                                     {inv.dueDate ?? '—'}
+                                                    {inv.dueDateInferred && (
+                                                        <span>
+                                                            {' '}†
+                                                            <span className="sr-only"> (due date inferred from the posting date)</span>
+                                                        </span>
+                                                    )}
                                                 </td>
                                                 <td className="px-4 py-2 font-mono tabular-nums text-right text-foreground-secondary" style={TNUM}>
                                                     {formatCurrency(inv.totals.total, currency)}
@@ -184,6 +193,11 @@ export default function PaymentsPage() {
                                         ))}
                                     </tbody>
                                 </table>
+                                {hasInferredDueDates && (
+                                    <p className="border-t border-border px-4 py-2 text-xs text-foreground-secondary">
+                                        † Due date inferred from the posting date because this transaction has no stored due date.
+                                    </p>
+                                )}
                             </div>
                         )}
                     </div>
