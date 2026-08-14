@@ -3,6 +3,12 @@
 import { InvestmentPortfolioData, PortfolioHolding } from '@/lib/reports/types';
 import { useIsMobile } from '@/lib/hooks/useIsMobile';
 import { MobileCard } from '@/components/ui/MobileCard';
+import {
+    CostBasisCoverageMark,
+    CoveredSliceNote,
+    gainHeading,
+    BASIS_CONSEQUENCE,
+} from '@/components/investments/CostBasisCoverageMark';
 
 function fmtCurrency(n: number): string {
     return new Intl.NumberFormat('en-US', {
@@ -40,6 +46,18 @@ export function PortfolioTable({ data, onAccountClick }: PortfolioTableProps) {
     const { holdings, totals } = data;
     const isMobile = useIsMobile();
 
+    // This report sums split values with no transfer tracing, so every row's
+    // basis is equally unverified. The statement therefore belongs in the
+    // column headers once — DESIGN.md's rule for a hint that repeats down a
+    // column — with a per-row marker only where a row disagrees with its
+    // column, so a mixed report could not hide behind the header.
+    const columnCoverage = totals.costBasisCoverage;
+    const disagreesWithColumn = (h: PortfolioHolding) =>
+        h.costBasisCoverage.status !== columnCoverage.status;
+    const columnMark = (
+        <CostBasisCoverageMark coverage={columnCoverage} consequence={BASIS_CONSEQUENCE} />
+    );
+
     if (isMobile) {
         return (
             <div className="p-4">
@@ -72,9 +90,45 @@ export function PortfolioTable({ data, onAccountClick }: PortfolioTableProps) {
                                     { label: 'Price', value: <span className="font-mono">{fmtCurrency(h.latestPrice)}</span> },
                                     { label: 'Price Date', value: h.priceDate || '-' },
                                     { label: 'Market Value', value: <span className="font-mono">{fmtCurrency(h.marketValue)}</span> },
-                                    { label: 'Cost Basis', value: <span className="font-mono">{fmtCurrency(h.costBasis)}</span> },
-                                    { label: 'Gain/Loss', value: <span className={`font-mono ${gainColor(h.gain)}`}>{fmtCurrency(h.gain)}</span> },
-                                    { label: 'Gain %', value: <span className={`font-mono ${gainColor(h.gainPercent)}`}>{fmtPercent(h.gainPercent)}</span> },
+                                    {
+                                        label: 'Cost Basis',
+                                        value: (
+                                            <span className="font-mono">
+                                                {fmtCurrency(h.costBasis)}
+                                                <CostBasisCoverageMark
+                                                    coverage={h.costBasisCoverage}
+                                                    consequence={BASIS_CONSEQUENCE}
+                                                />
+                                            </span>
+                                        ),
+                                    },
+                                    {
+                                        // A card has no column header to hang the hint on, so
+                                        // each one states its own coverage.
+                                        label: gainHeading(h.costBasisCoverage),
+                                        value: (
+                                            <span className={`font-mono ${gainColor(h.gain)}`}>
+                                                {fmtCurrency(h.gain)}
+                                                <CostBasisCoverageMark
+                                                    coverage={h.costBasisCoverage}
+                                                    consequence={BASIS_CONSEQUENCE}
+                                                />
+                                                <CoveredSliceNote coverage={h.costBasisCoverage} />
+                                            </span>
+                                        ),
+                                    },
+                                    {
+                                        label: 'Gain %',
+                                        value: (
+                                            <span className={`font-mono ${gainColor(h.gainPercent)}`}>
+                                                {fmtPercent(h.gainPercent)}
+                                                <CostBasisCoverageMark
+                                                    coverage={h.costBasisCoverage}
+                                                    consequence={BASIS_CONSEQUENCE}
+                                                />
+                                            </span>
+                                        ),
+                                    },
                                 ]}
                             />
                         ))}
@@ -87,15 +141,29 @@ export function PortfolioTable({ data, onAccountClick }: PortfolioTableProps) {
                             </div>
                             <div className="flex justify-between text-sm">
                                 <span className="text-foreground-muted uppercase text-xs">Cost Basis</span>
-                                <span className="font-mono font-bold">{fmtCurrency(totals.costBasis)}</span>
+                                <span className="font-mono font-bold">
+                                    {fmtCurrency(totals.costBasis)}
+                                    {columnMark}
+                                </span>
                             </div>
-                            <div className="flex justify-between text-sm">
-                                <span className="text-foreground-muted uppercase text-xs">Gain/Loss</span>
-                                <span className={`font-mono font-bold ${gainColor(totals.gain)}`}>{fmtCurrency(totals.gain)}</span>
+                            <div className="flex items-start justify-between text-sm">
+                                <span className="text-foreground-muted uppercase text-xs">
+                                    {gainHeading(columnCoverage)}
+                                </span>
+                                <span className="text-right">
+                                    <span className={`font-mono font-bold ${gainColor(totals.gain)}`}>
+                                        {fmtCurrency(totals.gain)}
+                                        {columnMark}
+                                    </span>
+                                    <CoveredSliceNote coverage={columnCoverage} />
+                                </span>
                             </div>
                             <div className="flex justify-between text-sm">
                                 <span className="text-foreground-muted uppercase text-xs">Gain %</span>
-                                <span className={`font-mono font-bold ${gainColor(totals.gainPercent)}`}>{fmtPercent(totals.gainPercent)}</span>
+                                <span className={`font-mono font-bold ${gainColor(totals.gainPercent)}`}>
+                                    {fmtPercent(totals.gainPercent)}
+                                    {columnMark}
+                                </span>
                             </div>
                         </div>
                     </>
@@ -115,9 +183,15 @@ export function PortfolioTable({ data, onAccountClick }: PortfolioTableProps) {
                         <th className="text-right py-2 px-3 text-sm font-semibold text-foreground-secondary">Price</th>
                         <th className="text-center py-2 px-3 text-sm font-semibold text-foreground-secondary">Price Date</th>
                         <th className="text-right py-2 px-3 text-sm font-semibold text-foreground-secondary">Market Value</th>
-                        <th className="text-right py-2 px-3 text-sm font-semibold text-foreground-secondary">Cost Basis</th>
-                        <th className="text-right py-2 px-3 text-sm font-semibold text-foreground-secondary">Gain/Loss</th>
-                        <th className="text-right py-2 px-3 text-sm font-semibold text-foreground-secondary">Gain %</th>
+                        <th className="text-right py-2 px-3 text-sm font-semibold text-foreground-secondary">
+                            Cost Basis{columnMark}
+                        </th>
+                        <th className="text-right py-2 px-3 text-sm font-semibold text-foreground-secondary">
+                            {gainHeading(columnCoverage)}{columnMark}
+                        </th>
+                        <th className="text-right py-2 px-3 text-sm font-semibold text-foreground-secondary">
+                            Gain %{columnMark}
+                        </th>
                     </tr>
                 </thead>
                 <tbody>
@@ -148,12 +222,35 @@ export function PortfolioTable({ data, onAccountClick }: PortfolioTableProps) {
                             <td className="py-2 px-3 text-sm text-right font-mono text-foreground">{fmtCurrency(h.latestPrice)}</td>
                             <td className="py-2 px-3 text-sm text-center text-foreground-secondary">{h.priceDate || '-'}</td>
                             <td className="py-2 px-3 text-sm text-right font-mono text-foreground">{fmtCurrency(h.marketValue)}</td>
-                            <td className="py-2 px-3 text-sm text-right font-mono text-foreground">{fmtCurrency(h.costBasis)}</td>
+                            <td className="py-2 px-3 text-sm text-right font-mono text-foreground">
+                                {fmtCurrency(h.costBasis)}
+                                {disagreesWithColumn(h) && (
+                                    <CostBasisCoverageMark
+                                        coverage={h.costBasisCoverage}
+                                        consequence={BASIS_CONSEQUENCE}
+                                    />
+                                )}
+                            </td>
                             <td className={`py-2 px-3 text-sm text-right font-mono ${gainColor(h.gain)}`}>
                                 {fmtCurrency(h.gain)}
+                                {disagreesWithColumn(h) && (
+                                    <>
+                                        <CostBasisCoverageMark
+                                            coverage={h.costBasisCoverage}
+                                            consequence={BASIS_CONSEQUENCE}
+                                        />
+                                        <CoveredSliceNote coverage={h.costBasisCoverage} />
+                                    </>
+                                )}
                             </td>
                             <td className={`py-2 px-3 text-sm text-right font-mono ${gainColor(h.gainPercent)}`}>
                                 {fmtPercent(h.gainPercent)}
+                                {disagreesWithColumn(h) && (
+                                    <CostBasisCoverageMark
+                                        coverage={h.costBasisCoverage}
+                                        consequence={BASIS_CONSEQUENCE}
+                                    />
+                                )}
                             </td>
                         </tr>
                     ))}
@@ -169,12 +266,16 @@ export function PortfolioTable({ data, onAccountClick }: PortfolioTableProps) {
                             </td>
                             <td className="py-2 px-3 text-sm text-right font-mono font-bold text-foreground">
                                 {fmtCurrency(totals.costBasis)}
+                                {columnMark}
                             </td>
                             <td className={`py-2 px-3 text-sm text-right font-mono font-bold ${gainColor(totals.gain)}`}>
                                 {fmtCurrency(totals.gain)}
+                                {columnMark}
+                                <CoveredSliceNote coverage={columnCoverage} />
                             </td>
                             <td className={`py-2 px-3 text-sm text-right font-mono font-bold ${gainColor(totals.gainPercent)}`}>
                                 {fmtPercent(totals.gainPercent)}
+                                {columnMark}
                             </td>
                         </tr>
                     </tfoot>

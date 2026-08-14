@@ -48,8 +48,11 @@ describe('PortfolioSummaryCards — cost-basis coverage', () => {
         fireEvent.click(marks[0]);
         expect(screen.getByText(/covers 250 of 300 shares/)).toBeTruthy();
 
-        // And the slice is named without needing the tooltip at all.
-        expect(screen.getAllByText('covered gain · 250 of 300 shares').length).toBeGreaterThan(0);
+        // And the slice is named without needing the tooltip at all — on BOTH
+        // the phone row and the desktop card. The phone is the device least
+        // able to hover, so leaving its caveat to the tooltip was the same
+        // mistake in a worse place.
+        expect(screen.getAllByText('covered gain · 250 of 300 shares')).toHaveLength(4);
     });
 
     it('reads exactly as before when the basis covers every share', () => {
@@ -66,6 +69,13 @@ describe('PortfolioSummaryCards — cost-basis coverage', () => {
 
         const marks = screen.getAllByLabelText('Cost-basis coverage is unverified');
         expect(marks.length).toBeGreaterThanOrEqual(2);
-        expect(screen.getAllByText('basis coverage unverified').length).toBeGreaterThan(0);
+        expect(screen.getAllByText('basis coverage unverified')).toHaveLength(4);
+
+        // "Covered Gain" would claim a measured slice. Under unknown coverage
+        // the gain is the WHOLE position's and may be overstated by whatever
+        // basis is missing, so the heading says exactly that.
+        expect(screen.getAllByText('Total Gain (basis unverified)').length).toBeGreaterThan(0);
+        expect(screen.queryByText('Total Covered Gain')).toBeNull();
+        expect(screen.queryByText('Total Gain/Loss')).toBeNull();
     });
 });

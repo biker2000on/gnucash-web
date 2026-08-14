@@ -1,5 +1,6 @@
 'use client';
 
+import type { ReactNode } from 'react';
 import { formatCurrency } from '@/lib/format';
 import {
   CostBasisCoverageMark,
@@ -47,18 +48,23 @@ export function PortfolioSummaryCards({
     <CostBasisCoverageMark coverage={totalCostBasisCoverage} consequence={BASIS_CONSEQUENCE} />
   );
 
-  const rows = [
+  // The phone card shows the same slice text as the desktop one. Leaving it to
+  // the tooltip there would put the whole caveat behind a hover on the device
+  // least able to hover.
+  const rows: Array<{ label: string; value: ReactNode; color: string; noted?: boolean }> = [
     { label: 'Total Value', value: formatCurrency(totalValue), color: 'text-foreground' },
     {
       label: 'Cost Basis',
       value: <>{formatCurrency(totalCostBasis)}{basisMark}</>,
       color: 'text-foreground',
+      noted: true,
     },
     {
       // "Total Gain/Loss" only when the basis behind it covers every share.
       label: `Total ${gainHeading(totalCostBasisCoverage)}`,
       value: <>{formatCurrency(totalGainLoss)}{basisMark}</>,
       color: gainLossColor,
+      noted: true,
     },
     { label: performanceLabel, value: performanceValue, color: '' },
   ];
@@ -68,13 +74,16 @@ export function PortfolioSummaryCards({
       {/* Phone: one condensed card with a row per metric */}
       <div className="sm:hidden bg-background-secondary rounded-lg border border-border divide-y divide-border/40">
         {rows.map(row => (
-          <div key={row.label} className="flex items-center justify-between gap-3 px-4 py-2.5">
+          <div key={row.label} className="flex items-start justify-between gap-3 px-4 py-2.5">
             <span className="text-xs text-foreground-muted uppercase tracking-wider">{row.label}</span>
-            <span
-              className={`text-sm font-bold font-mono ${row.color}`}
-              style={{ fontFeatureSettings: "'tnum'" }}
-            >
-              {row.value}
+            <span className="text-right">
+              <span
+                className={`text-sm font-bold font-mono ${row.color}`}
+                style={{ fontFeatureSettings: "'tnum'" }}
+              >
+                {row.value}
+              </span>
+              {row.noted && <CoveredSliceNote coverage={totalCostBasisCoverage} />}
             </span>
           </div>
         ))}

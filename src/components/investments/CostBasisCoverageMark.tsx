@@ -74,9 +74,24 @@ export function coveredSliceLabel(coverage: CostBasisCoverage): string | null {
     }
 }
 
-/** Heading for a gain figure: names the slice instead of implying the whole position. */
+/**
+ * Heading for a gain figure.
+ *
+ * The three states get three headings, because they are three different
+ * numbers. Only `partial` is a covered slice: `calculateGainLoss` values the
+ * covered shares there. Under `unknown` it values the WHOLE position and the
+ * result may be overstated by whatever basis is missing — calling that a
+ * "Covered Gain" would claim a measured slice that was never measured.
+ */
 export function gainHeading(coverage: CostBasisCoverage, whole = 'Gain/Loss'): string {
-    return coverage.status === 'complete' ? whole : 'Covered Gain';
+    switch (coverage.status) {
+        case 'complete':
+            return whole;
+        case 'partial':
+            return 'Covered Gain';
+        case 'unknown':
+            return 'Gain (basis unverified)';
+    }
 }
 
 /**

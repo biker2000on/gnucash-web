@@ -3,6 +3,7 @@
  */
 
 import type { ValuationCoverage } from '@/lib/account-valuation';
+import type { CostBasisCoverage } from '@/lib/commodities';
 
 export type { ValuationCoverage };
 
@@ -166,7 +167,14 @@ export interface PortfolioHolding {
   latestPrice: number;
   priceDate: string;
   marketValue: number;
+  /** Basis of the shares `costBasisCoverage` describes, not always all of them. */
   costBasis: number;
+  /**
+   * What `costBasis` and `gain` describe. This report sums raw split values
+   * with no transfer tracing, so it cannot claim completeness — carrying the
+   * statement is what stops the table rendering it as a complete basis.
+   */
+  costBasisCoverage: CostBasisCoverage;
   gain: number;
   gainPercent: number;
 }
@@ -176,6 +184,9 @@ export interface InvestmentPortfolioData extends ReportDataBase {
   totals: {
     marketValue: number;
     costBasis: number;
+    /** Coverage pooled across every holding in the report. */
+    costBasisCoverage: CostBasisCoverage;
+    /** Sum of the per-holding gains — never marketValue - costBasis. */
     gain: number;
     gainPercent: number;
   };
