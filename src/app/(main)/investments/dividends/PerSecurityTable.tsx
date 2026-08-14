@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { formatCurrency } from '@/lib/format';
 import type { PerSecurityDividend } from '@/lib/dividends';
-import { CostBasisCoverageMark } from '@/components/investments/CostBasisCoverageMark';
+import { CostBasisCoverageMark, YIELD_CONSEQUENCE } from '@/components/investments/CostBasisCoverageMark';
 import { TTM_TITLE } from './ttm';
 
 function formatPercent(value: number | null): string {
@@ -87,10 +87,14 @@ export function PerSecurityTable({ rows, year }: PerSecurityTableProps) {
                                 </td>
                                 <td className="px-4 py-2.5 text-right font-mono text-positive" style={mono}>
                                     {formatPercent(row.yieldOnCost)}
-                                    {/* Yield-on-cost divides by the cost basis, so it inherits
-                                        whatever that basis leaves out. */}
+                                    {/* Withheld (rendered as an em dash) whenever the basis
+                                        does not cover the whole position — the marker says
+                                        why, since a blank cell alone explains nothing. */}
                                     {row.costBasisCoverage && (
-                                        <CostBasisCoverageMark coverage={row.costBasisCoverage} />
+                                        <CostBasisCoverageMark
+                                            coverage={row.costBasisCoverage}
+                                            consequence={YIELD_CONSEQUENCE}
+                                        />
                                     )}
                                 </td>
                                 <td className="px-4 py-2.5 text-right font-mono text-foreground-secondary" style={mono}>

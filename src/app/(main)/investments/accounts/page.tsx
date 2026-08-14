@@ -10,6 +10,7 @@ import { PortfolioSummaryCards } from '@/components/investments/PortfolioSummary
 import ExpandableChart from '@/components/charts/ExpandableChart';
 import { calculateMoneyWeightedReturn, calculateTimeWeightedReturn } from '@/lib/investment-performance';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { totalHoldings } from '@/lib/commodities';
 
 type AllocationTab = 'holdings' | 'cashPct' | 'sector';
 
@@ -79,28 +80,15 @@ export default function AccountsPage() {
 
   // Calculate filtered summary. Include cash so Total Value is the full account
   // value and stays consistent with the performance chart (which folds in cash).
-  const filteredSummary = useMemo(() => {
-    if (holdingsWithCash.length === 0) {
-      return {
-        totalValue: 0,
-        totalCostBasis: 0,
-        totalGainLoss: 0,
-        totalGainLossPercent: 0,
-      };
-    }
-    const totalValue = holdingsWithCash.reduce((sum, h) => sum + h.marketValue, 0);
-    const totalCostBasis = holdingsWithCash.reduce((sum, h) => sum + h.costBasis, 0);
-    const totalGainLoss = totalValue - totalCostBasis;
-    const totalGainLossPercent = totalCostBasis > 0
-      ? ((totalGainLoss / totalCostBasis) * 100)
-      : 0;
-    return {
-      totalValue,
-      totalCostBasis,
-      totalGainLoss,
-      totalGainLossPercent,
-    };
-  }, [holdingsWithCash]);
+  //
+  // totalHoldings SUMS the per-holding covered gains. The old
+  // `totalValue - totalCostBasis` put every uncovered share's full market value
+  // back into the total, so this card read $6,500 above a visible row that said
+  // $4,000 — a total that disagrees with the sum of the rows beneath it.
+  const filteredSummary = useMemo(
+    () => totalHoldings(holdingsWithCash),
+    [holdingsWithCash],
+  );
 
   // Build allocation from filtered holdings
   const filteredAllocation = useMemo(() => {
@@ -218,6 +206,7 @@ export default function AccountsPage() {
       <PortfolioSummaryCards
         totalValue={filteredSummary.totalValue}
         totalCostBasis={filteredSummary.totalCostBasis}
+        totalCostBasisCoverage={filteredSummary.totalCostBasisCoverage}
         totalGainLoss={filteredSummary.totalGainLoss}
         performancePercent={safePerformancePercent}
         performanceMetric={performanceMetric}

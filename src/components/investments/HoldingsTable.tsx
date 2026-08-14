@@ -5,7 +5,12 @@ import { useRouter } from 'next/navigation';
 import { formatCurrency } from '@/lib/format';
 import { useIsMobile } from '@/lib/hooks/useIsMobile';
 import { MobileCard } from '@/components/ui/MobileCard';
-import { CostBasisCoverageMark } from '@/components/investments/CostBasisCoverageMark';
+import {
+  CostBasisCoverageMark,
+  CoveredSliceNote,
+  gainHeading,
+  BASIS_CONSEQUENCE,
+} from '@/components/investments/CostBasisCoverageMark';
 import type { CostBasisCoverage } from '@/lib/commodities';
 
 function stripRoot(path: string): string {
@@ -24,7 +29,35 @@ function CostBasis({ value, coverage }: { value: number; coverage: CostBasisCove
   return (
     <>
       {formatCurrency(value)}
-      <CostBasisCoverageMark coverage={coverage} />
+      <CostBasisCoverageMark coverage={coverage} consequence={BASIS_CONSEQUENCE} />
+    </>
+  );
+}
+
+/**
+ * A gain figure and the slice it covers.
+ *
+ * The marker sits on the cell carrying the NUMBER, and the slice is named in
+ * always-visible text beneath it: under partial coverage `$4,000` is the gain
+ * on 150 of 200 shares, and a reader who never opens a tooltip must not take it
+ * for the whole position's.
+ */
+function GainAmount({ value, coverage }: { value: number; coverage: CostBasisCoverage }) {
+  return (
+    <>
+      {formatCurrency(value)}
+      <CostBasisCoverageMark coverage={coverage} consequence={BASIS_CONSEQUENCE} />
+      <CoveredSliceNote coverage={coverage} />
+    </>
+  );
+}
+
+/** Gain %, marked on its own cell — it is the same slice's ratio, not the position's. */
+function GainPercent({ value, coverage }: { value: number; coverage: CostBasisCoverage }) {
+  return (
+    <>
+      {value >= 0 ? '+' : ''}{value.toFixed(2)}%
+      <CostBasisCoverageMark coverage={coverage} consequence={BASIS_CONSEQUENCE} />
     </>
   );
 }
@@ -211,8 +244,22 @@ export function HoldingsTable({ holdings, consolidatedHoldings }: HoldingsTableP
                       { label: 'Price', value: formatCurrency(holding.latestPrice) },
                       { label: 'Market Value', value: formatCurrency(holding.totalMarketValue) },
                       { label: 'Cost Basis', value: <CostBasis value={holding.totalCostBasis} coverage={holding.totalCostBasisCoverage} /> },
-                      { label: 'Gain/Loss', value: <span className={holding.totalGainLoss >= 0 ? 'text-positive' : 'text-error'}>{formatCurrency(holding.totalGainLoss)}</span> },
-                      { label: 'Gain %', value: <span className={holding.totalGainLossPercent >= 0 ? 'text-positive' : 'text-error'}>{holding.totalGainLossPercent >= 0 ? '+' : ''}{holding.totalGainLossPercent.toFixed(2)}%</span> },
+                      {
+                        label: gainHeading(holding.totalCostBasisCoverage),
+                        value: (
+                          <span className={holding.totalGainLoss >= 0 ? 'text-positive' : 'text-error'}>
+                            <GainAmount value={holding.totalGainLoss} coverage={holding.totalCostBasisCoverage} />
+                          </span>
+                        ),
+                      },
+                      {
+                        label: 'Gain %',
+                        value: (
+                          <span className={holding.totalGainLossPercent >= 0 ? 'text-positive' : 'text-error'}>
+                            <GainPercent value={holding.totalGainLossPercent} coverage={holding.totalCostBasisCoverage} />
+                          </span>
+                        ),
+                      },
                     ]}
                   />
                   {/* Expanded sub-accounts */}
@@ -226,8 +273,22 @@ export function HoldingsTable({ holdings, consolidatedHoldings }: HoldingsTableP
                         { label: 'Shares', value: account.shares.toLocaleString(undefined, { maximumFractionDigits: 4 }) },
                         { label: 'Market Value', value: formatCurrency(account.marketValue) },
                         { label: 'Cost Basis', value: <CostBasis value={account.costBasis} coverage={account.costBasisCoverage} /> },
-                        { label: 'Gain/Loss', value: <span className={account.gainLoss >= 0 ? 'text-positive/70' : 'text-error/70'}>{formatCurrency(account.gainLoss)}</span> },
-                        { label: 'Gain %', value: <span className={account.gainLossPercent >= 0 ? 'text-positive/70' : 'text-error/70'}>{account.gainLossPercent >= 0 ? '+' : ''}{account.gainLossPercent.toFixed(2)}%</span> },
+                        {
+                          label: gainHeading(account.costBasisCoverage),
+                          value: (
+                            <span className={account.gainLoss >= 0 ? 'text-positive/70' : 'text-error/70'}>
+                              <GainAmount value={account.gainLoss} coverage={account.costBasisCoverage} />
+                            </span>
+                          ),
+                        },
+                        {
+                          label: 'Gain %',
+                          value: (
+                            <span className={account.gainLossPercent >= 0 ? 'text-positive/70' : 'text-error/70'}>
+                              <GainPercent value={account.gainLossPercent} coverage={account.costBasisCoverage} />
+                            </span>
+                          ),
+                        },
                       ]}
                     />
                   ))}
@@ -313,8 +374,22 @@ export function HoldingsTable({ holdings, consolidatedHoldings }: HoldingsTableP
                 { label: 'Shares', value: holding.isCash ? 'Cash' : holding.shares.toLocaleString(undefined, { maximumFractionDigits: 4 }) },
                 { label: 'Market Value', value: formatCurrency(holding.marketValue) },
                 { label: 'Cost Basis', value: <CostBasis value={holding.costBasis} coverage={holding.costBasisCoverage} /> },
-                { label: 'Gain/Loss', value: <span className={holding.gainLoss >= 0 ? 'text-positive' : 'text-error'}>{formatCurrency(holding.gainLoss)}</span> },
-                { label: 'Gain %', value: <span className={holding.gainLossPercent >= 0 ? 'text-positive' : 'text-error'}>{holding.gainLossPercent >= 0 ? '+' : ''}{holding.gainLossPercent.toFixed(2)}%</span> },
+                {
+                  label: gainHeading(holding.costBasisCoverage),
+                  value: (
+                    <span className={holding.gainLoss >= 0 ? 'text-positive' : 'text-error'}>
+                      <GainAmount value={holding.gainLoss} coverage={holding.costBasisCoverage} />
+                    </span>
+                  ),
+                },
+                {
+                  label: 'Gain %',
+                  value: (
+                    <span className={holding.gainLossPercent >= 0 ? 'text-positive' : 'text-error'}>
+                      <GainPercent value={holding.gainLossPercent} coverage={holding.costBasisCoverage} />
+                    </span>
+                  ),
+                },
               ]}
             />
           ))}
@@ -351,10 +426,10 @@ export function HoldingsTable({ holdings, consolidatedHoldings }: HoldingsTableP
                   </td>
                   <td className="px-4 py-3 text-foreground-secondary">{formatCurrency(holding.marketValue)}</td>
                   <td className={`px-4 py-3 ${holding.gainLoss >= 0 ? 'text-positive' : 'text-error'}`}>
-                    {formatCurrency(holding.gainLoss)}
+                    <GainAmount value={holding.gainLoss} coverage={holding.costBasisCoverage} />
                   </td>
                   <td className={`px-4 py-3 ${holding.gainLossPercent >= 0 ? 'text-positive' : 'text-error'}`}>
-                    {holding.gainLossPercent >= 0 ? '+' : ''}{holding.gainLossPercent.toFixed(2)}%
+                    <GainPercent value={holding.gainLossPercent} coverage={holding.costBasisCoverage} />
                   </td>
                 </tr>
               ))}
@@ -413,10 +488,10 @@ function ConsolidatedRow({
         </td>
         <td className="px-4 py-3 text-foreground-secondary">{formatCurrency(holding.totalMarketValue)}</td>
         <td className={`px-4 py-3 ${holding.totalGainLoss >= 0 ? 'text-positive' : 'text-error'}`}>
-          {formatCurrency(holding.totalGainLoss)}
+          <GainAmount value={holding.totalGainLoss} coverage={holding.totalCostBasisCoverage} />
         </td>
         <td className={`px-4 py-3 ${holding.totalGainLossPercent >= 0 ? 'text-positive' : 'text-error'}`}>
-          {holding.totalGainLossPercent >= 0 ? '+' : ''}{holding.totalGainLossPercent.toFixed(2)}%
+          <GainPercent value={holding.totalGainLossPercent} coverage={holding.totalCostBasisCoverage} />
         </td>
       </tr>
 
@@ -439,10 +514,10 @@ function ConsolidatedRow({
           </td>
           <td className="px-4 py-2 text-sm text-foreground-muted">{formatCurrency(account.marketValue)}</td>
           <td className={`px-4 py-2 text-sm ${account.gainLoss >= 0 ? 'text-positive/70' : 'text-error/70'}`}>
-            {formatCurrency(account.gainLoss)}
+            <GainAmount value={account.gainLoss} coverage={account.costBasisCoverage} />
           </td>
           <td className={`px-4 py-2 text-sm ${account.gainLossPercent >= 0 ? 'text-positive/70' : 'text-error/70'}`}>
-            {account.gainLossPercent >= 0 ? '+' : ''}{account.gainLossPercent.toFixed(2)}%
+            <GainPercent value={account.gainLossPercent} coverage={account.costBasisCoverage} />
           </td>
         </tr>
       ))}

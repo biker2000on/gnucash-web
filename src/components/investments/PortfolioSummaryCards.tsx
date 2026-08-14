@@ -1,10 +1,25 @@
 'use client';
 
 import { formatCurrency } from '@/lib/format';
+import {
+  CostBasisCoverageMark,
+  CoveredSliceNote,
+  gainHeading,
+  BASIS_CONSEQUENCE,
+} from '@/components/investments/CostBasisCoverageMark';
+import type { CostBasisCoverage } from '@/lib/commodities';
 
 interface PortfolioSummaryCardsProps {
   totalValue: number;
   totalCostBasis: number;
+  /**
+   * What `totalCostBasis` and `totalGainLoss` describe. Required, not optional:
+   * these cards summarise a whole portfolio in three numbers, and a summary
+   * that silently omits its coverage is exactly how a partial basis gets read
+   * as a complete one.
+   */
+  totalCostBasisCoverage: CostBasisCoverage;
+  /** Sum of the per-holding covered gains — never totalValue - totalCostBasis. */
   totalGainLoss: number;
   performancePercent: number;
   performanceMetric: 'twr' | 'mwr';
@@ -13,6 +28,7 @@ interface PortfolioSummaryCardsProps {
 export function PortfolioSummaryCards({
   totalValue,
   totalCostBasis,
+  totalCostBasisCoverage,
   totalGainLoss,
   performancePercent = 0,
   performanceMetric,
@@ -27,10 +43,23 @@ export function PortfolioSummaryCards({
     </span>
   );
 
+  const basisMark = (
+    <CostBasisCoverageMark coverage={totalCostBasisCoverage} consequence={BASIS_CONSEQUENCE} />
+  );
+
   const rows = [
     { label: 'Total Value', value: formatCurrency(totalValue), color: 'text-foreground' },
-    { label: 'Cost Basis', value: formatCurrency(totalCostBasis), color: 'text-foreground' },
-    { label: 'Total Gain/Loss', value: formatCurrency(totalGainLoss), color: gainLossColor },
+    {
+      label: 'Cost Basis',
+      value: <>{formatCurrency(totalCostBasis)}{basisMark}</>,
+      color: 'text-foreground',
+    },
+    {
+      // "Total Gain/Loss" only when the basis behind it covers every share.
+      label: `Total ${gainHeading(totalCostBasisCoverage)}`,
+      value: <>{formatCurrency(totalGainLoss)}{basisMark}</>,
+      color: gainLossColor,
+    },
     { label: performanceLabel, value: performanceValue, color: '' },
   ];
 
@@ -59,13 +88,19 @@ export function PortfolioSummaryCards({
         </div>
         <div className="bg-background-secondary rounded-lg p-4 border border-border">
           <p className="text-foreground-muted text-sm">Cost Basis</p>
-          <p className="text-2xl font-bold text-foreground">{formatCurrency(totalCostBasis)}</p>
+          <p className="text-2xl font-bold text-foreground">
+            {formatCurrency(totalCostBasis)}
+            {basisMark}
+          </p>
+          <CoveredSliceNote coverage={totalCostBasisCoverage} className="mt-1" />
         </div>
         <div className="bg-background-secondary rounded-lg p-4 border border-border">
-          <p className="text-foreground-muted text-sm">Total Gain/Loss</p>
+          <p className="text-foreground-muted text-sm">Total {gainHeading(totalCostBasisCoverage)}</p>
           <p className={`text-2xl font-bold ${gainLossColor}`}>
             {formatCurrency(totalGainLoss)}
+            {basisMark}
           </p>
+          <CoveredSliceNote coverage={totalCostBasisCoverage} className="mt-1" />
           <div className="mt-3 flex items-center justify-between gap-3">
             <span className="text-xs uppercase tracking-wider text-foreground-muted">
               {performanceLabel}

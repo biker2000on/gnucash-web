@@ -18,7 +18,7 @@
  */
 
 import prisma from '@/lib/prisma';
-import { coveredShareFraction, type CostBasisCoverage } from '@/lib/commodities';
+import type { CostBasisCoverage } from '@/lib/commodities';
 import { toDecimalNumber } from '@/lib/gnucash';
 
 /* ------------------------------------------------------------------ */
@@ -79,11 +79,12 @@ export interface PerSecurityDividend {
      */
     accountGuid: string | null;
     /**
-     * Trailing-12mo dividends / cost basis * 100, or null when unknown.
+     * Trailing-12mo dividends / cost basis * 100.
      *
-     * Under partial coverage both sides describe the covered shares only (see
-     * `costBasisCoverage`) — dividing the WHOLE position's income by a partial
-     * basis would overstate the yield twice over.
+     * Null when there is no valuation AND null whenever `costBasisCoverage` is
+     * not `complete`: income cannot be attributed to a subset of shares without
+     * knowing when each was held, so the ratio is withheld rather than
+     * estimated. `ttmIncome` above is unaffected — that number IS known.
      */
     yieldOnCost: number | null;
     /** Trailing-12mo dividends / current market value * 100, or null */
@@ -285,14 +286,24 @@ export function perSecurityDividends(
         const costBasis = valuation ? valuation.costBasis : null;
         const marketValue = valuation ? valuation.marketValue : null;
         const costBasisCoverage = valuation ? valuation.costBasisCoverage : null;
-        // Yield-on-cost is income over basis. When the basis covers only part
-        // of the position, the income is restricted to the same part — shares
-        // pay dividends per share, so the covered slice earned that fraction of
-        // it. Dividing full income by a partial basis inflates the numerator's
-        // scope and shrinks the denominator at the same time.
-        const coveredIncome = costBasisCoverage
-            ? ttmIncome * coveredShareFraction(costBasisCoverage)
-            : ttmIncome;
+        // Yield-on-cost divides trailing-12-month income by TODAY's cost basis,
+        // so it is only meaningful when that basis covers the whole position.
+        //
+        // Under partial coverage there is no honest numerator. Scaling the
+        // income by the current covered fraction would assume the covered and
+        // uncovered shares were held for the same part of the year and earned
+        // dividends in the same ratio — false the moment an in-kind transfer
+        // lands mid-year, or with any sale, purchase, DRIP, or record-date
+        // timing. Current coverage is a present-day basis subset, not a
+        // historical dividend entitlement. Under unknown coverage the
+        // denominator's completeness is itself unmeasured.
+        //
+        // So the ratio is withheld rather than estimated: a percentage in a
+        // financial table reads as derived, and this one would not be. The
+        // income is known and still reported in full; deriving the yield
+        // properly needs per-lot, per-record-date income allocation, which this
+        // book does not carry.
+        const basisCoversWholePosition = costBasisCoverage?.status === 'complete';
 
         result.push({
             ticker: first.ticker,
@@ -304,7 +315,9 @@ export function perSecurityDividends(
             lastPaymentDate: last ? isoDate(last.date) : null,
             lastPaymentAmount: last ? last.amount : null,
             accountGuid: lastWithAccount?.investmentAccountGuid ?? null,
-            yieldOnCost: costBasis != null ? computeYieldOnCost(coveredIncome, costBasis) : null,
+            yieldOnCost: costBasis != null && basisCoversWholePosition
+                ? computeYieldOnCost(ttmIncome, costBasis)
+                : null,
             currentYield: marketValue != null ? computeCurrentYield(ttmIncome, marketValue) : null,
             costBasis,
             costBasisCoverage,

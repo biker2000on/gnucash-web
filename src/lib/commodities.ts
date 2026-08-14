@@ -60,13 +60,6 @@ export const UNTRACED_BASIS_COVERAGE: CostBasisCoverage = {
     reason: 'Cost basis carry-over is off, so shares transferred in enter at their $0 split value and the basis may be incomplete.',
 };
 
-/** The covered fraction of a position: 1 unless coverage is known to be partial. */
-export function coveredShareFraction(coverage: CostBasisCoverage): number {
-    if (coverage.status !== 'partial') return 1;
-    const total = coverage.coveredShares + coverage.uncoveredShares;
-    return total > 0 ? coverage.coveredShares / total : 1;
-}
-
 /**
  * Fold per-account coverage into one statement for an aggregate (a commodity
  * held in several accounts, a portfolio total).
@@ -96,6 +89,50 @@ export function combineCoverage(parts: CostBasisCoverage[]): CostBasisCoverage {
     return uncoveredShares > 0
         ? { status: 'partial', coveredShares, uncoveredShares, warnings }
         : { status: 'complete', coveredShares };
+}
+
+/** The per-holding numbers a total is built from. */
+export interface HoldingTotalsInput {
+    costBasis: number;
+    costBasisCoverage: CostBasisCoverage;
+    marketValue: number;
+    /** Already restricted to the shares its own coverage describes. */
+    gainLoss: number;
+}
+
+export interface HoldingsTotals {
+    totalValue: number;
+    totalCostBasis: number;
+    totalCostBasisCoverage: CostBasisCoverage;
+    totalGainLoss: number;
+    totalGainLossPercent: number;
+}
+
+/**
+ * Total a set of holdings without undoing their coverage.
+ *
+ * `totalGainLoss` SUMS the per-holding gains. Recomputing it as
+ * `totalValue - totalCostBasis` is the defect in aggregate form: each holding's
+ * gain is already restricted to the shares its basis covers, and that
+ * subtraction puts every uncovered share's full market value straight back in
+ * — so a total would disagree with the sum of the rows displayed beneath it.
+ */
+export function totalHoldings(holdings: HoldingTotalsInput[]): HoldingsTotals {
+    let totalValue = 0;
+    let totalCostBasis = 0;
+    let totalGainLoss = 0;
+    for (const holding of holdings) {
+        totalValue += holding.marketValue;
+        totalCostBasis += holding.costBasis;
+        totalGainLoss += holding.gainLoss;
+    }
+    return {
+        totalValue,
+        totalCostBasis,
+        totalCostBasisCoverage: combineCoverage(holdings.map(h => h.costBasisCoverage)),
+        totalGainLoss,
+        totalGainLossPercent: calculateGainLossPercent(totalGainLoss, totalCostBasis),
+    };
 }
 
 export interface HoldingsData {

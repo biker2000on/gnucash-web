@@ -247,6 +247,7 @@ export default function HoldingsPage() {
       <PortfolioSummaryCards
         totalValue={portfolio.summary.totalValue}
         totalCostBasis={portfolio.summary.totalCostBasis}
+        totalCostBasisCoverage={portfolio.summary.totalCostBasisCoverage}
         totalGainLoss={portfolio.summary.totalGainLoss}
         performancePercent={safePerformancePercent}
         performanceMetric={performanceMetric}

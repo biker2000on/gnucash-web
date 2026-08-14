@@ -14,7 +14,7 @@ vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }) }));
 vi.mock('@/lib/hooks/useIsMobile', () => ({ useIsMobile: () => false }));
 
 import { HoldingsTable } from '../HoldingsTable';
-import { coverageCaveat } from '../CostBasisCoverageMark';
+import { coverageCaveat, coveredSliceLabel, BASIS_CONSEQUENCE } from '../CostBasisCoverageMark';
 
 const PARTIAL: CostBasisCoverage = {
     status: 'partial',
@@ -46,7 +46,7 @@ describe('HoldingsTable — cost-basis coverage', () => {
         // The number itself is not withheld.
         expect(screen.getByText('$3,500.00')).toBeTruthy();
 
-        const mark = screen.getByLabelText('Cost basis covers only part of this position');
+        const [mark] = screen.getAllByLabelText('Cost basis covers only part of this position');
         expect(mark).toBeTruthy();
 
         // Hover reveals the sentence (DESIGN.md bans `title=`; this is the
@@ -54,7 +54,21 @@ describe('HoldingsTable — cost-basis coverage', () => {
         fireEvent.click(mark);
         expect(screen.getByText(/covers 150 of 200 shares/)).toBeTruthy();
         expect(screen.getByText(/50 have no traceable basis/)).toBeTruthy();
-        expect(screen.getByText(/gain and gain % are the covered shares' only/)).toBeTruthy();
+        expect(screen.getByText(/Gain and gain % cover those shares only/)).toBeTruthy();
+    });
+
+    it('marks the gain cells themselves and names the slice without a hover', () => {
+        render(<HoldingsTable holdings={[holding()]} />);
+
+        // $4,000 is the gain on 150 of 200 shares, printed beside a 200-share
+        // count and a $10,000 market value. Three cells carry a number derived
+        // from the partial basis — cost basis, gain, gain % — and each is
+        // marked; a marker on a neighbouring cell would not reach a reader
+        // scanning the gain column.
+        expect(screen.getAllByLabelText('Cost basis covers only part of this position')).toHaveLength(3);
+        // The slice is named in plain text, so it survives a user who never
+        // opens a tooltip.
+        expect(screen.getByText('covered gain · 150 of 200 shares')).toBeTruthy();
     });
 
     it('marks nothing on a fully covered holding — the normal case is unchanged', () => {
@@ -63,6 +77,8 @@ describe('HoldingsTable — cost-basis coverage', () => {
         expect(screen.getByText('$6,000.00')).toBeTruthy();
         expect(screen.queryByLabelText('Cost basis covers only part of this position')).toBeNull();
         expect(screen.queryByLabelText('Cost-basis coverage is unverified')).toBeNull();
+        // No slice note, and the heading stays the plain whole-position one.
+        expect(screen.queryByText(/covered gain/)).toBeNull();
     });
 
     it('marks an unverified basis differently from a measured shortfall', () => {
@@ -70,9 +86,11 @@ describe('HoldingsTable — cost-basis coverage', () => {
             costBasisCoverage: { status: 'unknown', reason: 'Cost basis carry-over is off.' },
         })]} />);
 
-        const mark = screen.getByLabelText('Cost-basis coverage is unverified');
+        const [mark] = screen.getAllByLabelText('Cost-basis coverage is unverified');
         fireEvent.click(mark);
-        expect(screen.getByText(/coverage is unverified, so the gain may be overstated/)).toBeTruthy();
+        expect(screen.getByText(/Cost-basis coverage is unverified/)).toBeTruthy();
+        expect(screen.getByText(/may be overstated by whatever basis is missing/)).toBeTruthy();
+        expect(screen.getByText('basis coverage unverified')).toBeTruthy();
     });
 
     it('caveats the consolidated row and each account under it', () => {
@@ -109,21 +127,26 @@ describe('HoldingsTable — cost-basis coverage', () => {
 
         // The consolidated row carries the pooled caveat; expanding it shows
         // one caveat on the partial account and none on the covered one.
-        expect(screen.getAllByLabelText('Cost basis covers only part of this position')).toHaveLength(1);
+        // Cost basis, gain and gain % on the consolidated row.
+        expect(screen.getAllByLabelText('Cost basis covers only part of this position')).toHaveLength(3);
         fireEvent.click(screen.getByText('AAPL'));
-        expect(screen.getAllByLabelText('Cost basis covers only part of this position')).toHaveLength(2);
+        // Plus the same three on the partial sub-account; the covered one adds none.
+        expect(screen.getAllByLabelText('Cost basis covers only part of this position')).toHaveLength(6);
     });
 });
 
 describe('coverageCaveat', () => {
     it('says nothing at all under complete coverage', () => {
-        expect(coverageCaveat(COMPLETE)).toBeNull();
+        expect(coverageCaveat(COMPLETE, BASIS_CONSEQUENCE)).toBeNull();
+        expect(coveredSliceLabel(COMPLETE)).toBeNull();
     });
 
     it('quotes the covered, total and uncovered share counts', () => {
-        expect(coverageCaveat(PARTIAL)).toContain('covers 150 of 200 shares');
-        expect(coverageCaveat(PARTIAL)).toContain('50 have no traceable basis');
+        const caveat = coverageCaveat(PARTIAL, BASIS_CONSEQUENCE)!;
+        expect(caveat).toContain('covers 150 of 200 shares');
+        expect(caveat).toContain('50 have no traceable basis');
         // The pool's own warning is passed through, dates and all.
-        expect(coverageCaveat(PARTIAL)).toContain('transferred in on 2021-01-01');
+        expect(caveat).toContain('transferred in on 2021-01-01');
+        expect(coveredSliceLabel(PARTIAL)).toBe('covered gain · 150 of 200 shares');
     });
 });

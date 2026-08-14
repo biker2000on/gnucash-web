@@ -5,6 +5,12 @@
  * `holdings.costBasis` and drop its coverage, so a security whose basis covers
  * only part of the position had its FULL trailing-12-month income divided by a
  * PARTIAL basis — an overstated yield printed with no caveat.
+ *
+ * The ratio is now WITHHELD unless the basis covers the whole position.
+ * Restricting the income to the covered fraction was rejected: it would assume
+ * covered and uncovered shares were held for the same part of the year and
+ * earned dividends in the same ratio, which any mid-year transfer, sale, DRIP,
+ * or record date breaks. The income itself is known and still reported.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -87,7 +93,7 @@ async function security(): Promise<SecurityRow> {
 }
 
 describe('dividends route — cost-basis coverage', () => {
-    it('carries coverage and stops dividing whole income by a partial basis', async () => {
+    it('withholds yield-on-cost under partial coverage and says why', async () => {
         // 200 shares, $10,000 of value, but the $5,000 basis covers only 150 of
         // them (75%). TTM income is $400.
         getAccountHoldingsMock.mockResolvedValue({
@@ -112,10 +118,12 @@ describe('dividends route — cost-basis coverage', () => {
 
         // BEFORE: $400 / $5,000 = 8.00%, the whole position's income measured
         // against three quarters of a basis.
-        // AFTER: the covered 150 shares earned 75% of that income, $300, so
-        // yield-on-cost is $300 / $5,000 = 6.00% — both sides, the same shares.
-        expect(row.yieldOnCost).toBeCloseTo(6, 6);
-        expect(row.yieldOnCost).not.toBeCloseTo(8, 2);
+        // AFTER: withheld. Which shares earned which of those four payments is
+        // not in this data — a 75%-of-income estimate would be a fabricated
+        // number wearing a percent sign.
+        expect(row.yieldOnCost).toBeNull();
+        // The income, which IS known, is untouched.
+        expect(row.ttmIncome).toBe(400);
     });
 
     it('a fully covered security reports the yield it does today', async () => {
@@ -134,7 +142,7 @@ describe('dividends route — cost-basis coverage', () => {
         expect(row.yieldOnCost).toBeCloseTo(8, 6); // $400 / $5,000, unchanged
     });
 
-    it('unknown coverage keeps the yield but says it is unverified', async () => {
+    it('withholds the yield under unknown coverage too', async () => {
         getAccountHoldingsMock.mockResolvedValue({
             shares: 200,
             costBasis: 5_000,
@@ -146,9 +154,10 @@ describe('dividends route — cost-basis coverage', () => {
         });
 
         const row = await security();
-        // Nothing is known to be missing, so nothing is withheld — but the row
-        // no longer claims the basis is complete.
-        expect(row.yieldOnCost).toBeCloseTo(8, 6);
+        // The denominator's own completeness is unmeasured, so the ratio is not
+        // derivable either.
+        expect(row.yieldOnCost).toBeNull();
+        expect(row.ttmIncome).toBe(400);
         expect(row.costBasisCoverage?.status).toBe('unknown');
     });
 });

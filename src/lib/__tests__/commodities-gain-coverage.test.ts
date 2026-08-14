@@ -36,6 +36,7 @@ import {
   calculateGainLoss,
   calculateGainLossPercent,
   combineCoverage,
+  totalHoldings,
   UNTRACED_BASIS_COVERAGE,
 } from '../commodities';
 
@@ -258,4 +259,87 @@ describe('combineCoverage', () => {
       { status: 'complete', coveredShares: 25 },
     ])).toEqual({ status: 'complete', coveredShares: 125 });
   });
+});
+
+describe('totalHoldings', () => {
+    /**
+     * The account view's summary card sits directly above the holdings rows it
+     * totals. Holding A is the partly covered one from above ($10,000 of market
+     * value, $3,500 of basis over 150 of 200 shares, $4,000 of covered gain);
+     * holding B is fully covered ($5,000 against $2,000, a $3,000 gain).
+     */
+    const HOLDINGS = [
+        {
+            costBasis: 3_500,
+            costBasisCoverage: {
+                status: 'partial' as const, coveredShares: 150, uncoveredShares: 50, warnings: [],
+            },
+            marketValue: 10_000,
+            gainLoss: 4_000,
+        },
+        {
+            costBasis: 2_000,
+            costBasisCoverage: { status: 'complete' as const, coveredShares: 100 },
+            marketValue: 5_000,
+            gainLoss: 3_000,
+        },
+    ];
+
+    it('sums the covered gains instead of subtracting the totals', () => {
+        const totals = totalHoldings(HOLDINGS);
+
+        expect(totals.totalValue).toBeCloseTo(15_000, 6);
+        expect(totals.totalCostBasis).toBeCloseTo(5_500, 6);
+
+        // BEFORE: totalValue - totalCostBasis = $15,000 - $5,500 = $9,500,
+        // printed above rows reading $4,000 and $3,000 — a total that
+        // disagreed with the sum of its own visible rows by exactly the
+        // $2,500 market value of the 50 uncovered shares.
+        expect(totals.totalValue - totals.totalCostBasis).toBeCloseTo(9_500, 6);
+        expect(totals.totalGainLoss).not.toBeCloseTo(9_500, 2);
+
+        // AFTER: $4,000 + $3,000.
+        expect(totals.totalGainLoss).toBeCloseTo(7_000, 6);
+        expect(totals.totalGainLoss).toBeCloseTo(
+            HOLDINGS.reduce((sum, h) => sum + h.gainLoss, 0), 6,
+        );
+        expect(totals.totalGainLossPercent).toBeCloseTo(127.2727272, 5);
+    });
+
+    it('carries the pooled coverage so the card can caveat itself', () => {
+        expect(totalHoldings(HOLDINGS).totalCostBasisCoverage).toEqual({
+            status: 'partial', coveredShares: 250, uncoveredShares: 50, warnings: [],
+        });
+    });
+
+    it('a fully covered set totals exactly as a plain subtraction would', () => {
+        const totals = totalHoldings([
+            {
+                costBasis: 6_000,
+                costBasisCoverage: { status: 'complete', coveredShares: 200 },
+                marketValue: 10_000,
+                gainLoss: 4_000,
+            },
+            {
+                costBasis: 2_000,
+                costBasisCoverage: { status: 'complete', coveredShares: 100 },
+                marketValue: 5_000,
+                gainLoss: 3_000,
+            },
+        ]);
+
+        expect(totals.totalGainLoss).toBeCloseTo(totals.totalValue - totals.totalCostBasis, 6);
+        expect(totals.totalGainLoss).toBeCloseTo(7_000, 6);
+        expect(totals.totalCostBasisCoverage).toEqual({ status: 'complete', coveredShares: 300 });
+    });
+
+    it('an empty set is complete and zero, not unknown', () => {
+        expect(totalHoldings([])).toEqual({
+            totalValue: 0,
+            totalCostBasis: 0,
+            totalCostBasisCoverage: { status: 'complete', coveredShares: 0 },
+            totalGainLoss: 0,
+            totalGainLossPercent: 0,
+        });
+    });
 });
