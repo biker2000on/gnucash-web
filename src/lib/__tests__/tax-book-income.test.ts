@@ -23,6 +23,9 @@ vi.mock('@/lib/prisma', () => ({
   default: {
     gnucash_web_tax_mappings: { findMany: vi.fn() },
     accounts: { findMany: vi.fn() },
+    // loadRealizedSales also reads the trade transactions' sibling splits to
+    // recover brokerage commissions (@/lib/trade-fees); these lots carry none.
+    splits: { findMany: vi.fn() },
     $queryRaw: vi.fn(),
   },
 }));
@@ -42,11 +45,13 @@ import { getRetirementAccountGuids } from '@/lib/reports/contribution-classifier
 import { generateContributionSummary } from '@/lib/reports/contribution-summary';
 import { getAccountLots, getLotsForAccounts, type LotSummary, type LotSplit } from '@/lib/lots';
 import { aggregateBookTaxData, expandMappingsToDescendants } from '@/lib/tax/book-income';
-import type { TaxCategory } from '@/lib/tax/types';
+import { buildFederalInputsFromBookData } from '@/lib/tax/estimator-inputs';
+import type { TaxCategory, TaxYear } from '@/lib/tax/types';
 
 const mockPrisma = prisma as unknown as {
   gnucash_web_tax_mappings: { findMany: Mock };
   accounts: { findMany: Mock };
+  splits: { findMany: Mock };
   $queryRaw: Mock;
 };
 const mockGetRetirementAccountGuids = vi.mocked(getRetirementAccountGuids);
@@ -111,6 +116,8 @@ const ACCOUNTS: AccountRow[] = [
   { guid: 'taxable-stock', name: 'VTI', fullname: 'Assets:Taxable:VTI', account_type: 'STOCK', parent_guid: null },
   { guid: 'estpay', name: '1040-ES Payments', fullname: 'Expenses:Taxes:1040-ES Payments', account_type: 'EXPENSE', parent_guid: null },
   { guid: 'state-estpay', name: 'State Vouchers', fullname: 'Expenses:Taxes:State Vouchers', account_type: 'EXPENSE', parent_guid: null },
+  { guid: 'comm', name: 'Commissions', fullname: 'Expenses:Commissions', account_type: 'EXPENSE', parent_guid: null },
+  { guid: 'cash', name: 'Cash', fullname: 'Assets:Cash', account_type: 'BANK', parent_guid: null },
 ];
 
 let splitSeq = 0;
@@ -167,6 +174,9 @@ describe('aggregateBookTaxData', () => {
     vi.clearAllMocks();
     splitQueryGuids = null;
 
+    // No commission/fee splits on these trades — figures stay gross.
+    mockPrisma.splits.findMany.mockResolvedValue([]);
+
     mockPrisma.gnucash_web_tax_mappings.findMany.mockResolvedValue([
       { account_guid: 'broker', tax_category: 'exclude' },
       { account_guid: 'estpay', tax_category: 'estimated_tax_payment' },
@@ -184,9 +194,16 @@ describe('aggregateBookTaxData', () => {
             .filter(a => guids.includes(a.guid) && (a.account_type === 'STOCK' || a.account_type === 'MUTUAL'))
             .map(a => ({ guid: a.guid, commodity: { mnemonic: a.name } }));
         }
+        // name/account_type ride along for buildAccountPathMap, which
+        // loadRealizedSales uses to classify fee accounts by path.
         return ACCOUNTS
           .filter(a => guids.includes(a.guid))
-          .map(a => ({ guid: a.guid, parent_guid: a.parent_guid }));
+          .map(a => ({
+            guid: a.guid,
+            name: a.name,
+            parent_guid: a.parent_guid,
+            account_type: a.account_type,
+          }));
       },
     );
 
@@ -398,6 +415,154 @@ describe('aggregateBookTaxData', () => {
     expect(fed?.total).toBe(4000);
     expect(state?.total).toBe(1200);
   });
+
+  /* ---------------------------------------------------------------- */
+  /* A commission lowers taxable income EXACTLY ONCE, UNCONDITIONALLY. */
+  /*                                                                   */
+  /* A trade fee is a cost of the security, never a deduction, so it   */
+  /* is always capitalized into basis and the split that produced it   */
+  /* is always held out of the deduction category sums. The outcome    */
+  /* must not depend on the account's tax mapping — deductibility is   */
+  /* conditional (SALT caps, AGI floors, the standard-deduction        */
+  /* election), and a design that deferred to a mapping left the fee   */
+  /* counted NOWHERE whenever the condition did not hold.              */
+  /* ---------------------------------------------------------------- */
+  describe('a commission reduces taxable income exactly once', () => {
+    const bigint = (v: number) => ({
+      value_num: BigInt(Math.round(v * 100)),
+      value_denom: 100n,
+      quantity_num: BigInt(Math.round(v * 100)),
+      quantity_denom: 100n,
+    });
+
+    /** Buy 10 @ $100 in 2023, sell all for $2000 in TAX_YEAR, $100 commission. */
+    const arrangeSaleWithCommission = () => {
+      mockGetAccountLots.mockImplementation(async (guid: string) => {
+        if (guid !== 'taxable-stock') return [];
+        return [lot({
+          splits: [
+            {
+              guid: 'split-buy', txGuid: 'tx-buy', postDate: '2023-02-10T12:00:00.000Z',
+              description: 'Buy', shares: 10, value: 1000, shareBalance: 10,
+            },
+            {
+              guid: 'split-sell', txGuid: 'tx-sell', postDate: `${TAX_YEAR}-06-15T12:00:00.000Z`,
+              description: 'Sell', shares: -10, value: -2000, shareBalance: 0,
+            },
+          ],
+        })];
+      });
+
+      const tx = { post_date: new Date(`${TAX_YEAR}-06-15T12:00:00.000Z`), description: 'Sell 10 VTI' };
+      mockPrisma.splits.findMany.mockResolvedValue([
+        {
+          guid: 'split-sell', tx_guid: 'tx-sell', account_guid: 'taxable-stock',
+          ...bigint(-2000), quantity_num: -1000n, quantity_denom: 100n,
+          account: { name: 'VTI', account_type: 'STOCK' }, transaction: tx,
+        },
+        {
+          guid: 'split-cash', tx_guid: 'tx-sell', account_guid: 'cash',
+          ...bigint(1900), account: { name: 'Cash', account_type: 'BANK' }, transaction: tx,
+        },
+        {
+          guid: 'split-comm', tx_guid: 'tx-sell', account_guid: 'comm',
+          ...bigint(100), account: { name: 'Commissions', account_type: 'EXPENSE' }, transaction: tx,
+        },
+      ]);
+
+      // Stand in for the real category-sum query, INCLUDING its exclusion of
+      // capitalized trade-fee splits: the $100 commission is reported unless
+      // 'split-comm' arrives in the excluded-GUID parameter.
+      mockPrisma.$queryRaw.mockImplementation(
+        (strings: TemplateStringsArray, ...values: unknown[]) => {
+          const sql = strings.join('?');
+          if (sql.includes('FROM account_hierarchy')) return Promise.resolve(ACCOUNTS);
+          if (sql.includes('FROM splits')) {
+            const passed = new Set(values.filter(Array.isArray).flat() as string[]);
+            return Promise.resolve(
+              passed.has('split-comm') ? [] : [{ account_guid: 'comm', total: 100 }],
+            );
+          }
+          return Promise.resolve([]);
+        },
+      );
+    };
+
+    /** Every category total that lowers taxable income, summed. */
+    const deductionTotal = (result: Awaited<ReturnType<typeof run>>) =>
+      result.categories
+        .filter(c => [
+          'business_expense', 'other_deduction', 'charitable_donation', 'medical_expense',
+          'mortgage_interest', 'property_tax', 'state_local_tax_paid',
+          'state_withholding', 'state_estimated_tax_payment',
+        ].includes(c.category))
+        .reduce((sum, c) => sum + c.total, 0);
+
+    // The outcome is IDENTICAL in all four: capitalized once, deducted never.
+    const MAPPINGS: Array<[string, string]> = [
+      ['(unmapped)', ''],
+      ['business_expense', 'business_expense'],
+      // The reviewer's counterexample: SALT is capped and only reached when
+      // the filer itemizes, so deferring to this mapping could deduct nothing.
+      ['state_withholding', 'state_withholding'],
+      ['exclude', 'exclude'],
+    ];
+
+    for (const [label, category] of MAPPINGS) {
+      it(`capitalizes it and takes no deduction — mapped to ${label}`, async () => {
+        arrangeSaleWithCommission();
+        mockPrisma.gnucash_web_tax_mappings.findMany.mockResolvedValue(
+          category ? [{ account_guid: 'comm', tax_category: category }] : [],
+        );
+
+        const result = await run();
+
+        // Counted once, through basis: 2000 - 100 fee - 1000 cost.
+        expect(result.realizedGains.longTerm).toBe(900);
+        // And never a second time as a deduction, whatever the mapping.
+        expect(deductionTotal(result)).toBe(0);
+      });
+    }
+
+    it('keeps the fee out of the deduction INPUTS a standard-deduction filer builds', async () => {
+      // The counterexample end to end: state_withholding feeds SALT, which a
+      // standard-deduction filer never claims. If the $100 reached
+      // stateLocalTaxesPaid it would be deducted nowhere AND capitalized
+      // nowhere. Assert on the built inputs, not just the category totals.
+      arrangeSaleWithCommission();
+      mockPrisma.gnucash_web_tax_mappings.findMany.mockResolvedValue([
+        { account_guid: 'comm', tax_category: 'state_withholding' },
+      ]);
+
+      const result = await run();
+      const inputs = buildFederalInputsFromBookData(result, TAX_YEAR as TaxYear, 'single');
+
+      expect(inputs.stateLocalTaxesPaid).toBe(0);
+      expect(inputs.longTermCapitalGains).toBe(900);
+    });
+
+    it('still deducts a NON-fee expense in the same account tree', async () => {
+      // The exclusion is by SPLIT guid, not by account: an ordinary expense
+      // split that was never capitalized keeps its deduction.
+      arrangeSaleWithCommission();
+      mockPrisma.gnucash_web_tax_mappings.findMany.mockResolvedValue([
+        { account_guid: 'estpay', tax_category: 'business_expense' },
+      ]);
+      mockPrisma.$queryRaw.mockImplementation(
+        (strings: TemplateStringsArray) => {
+          const sql = strings.join('?');
+          if (sql.includes('FROM account_hierarchy')) return Promise.resolve(ACCOUNTS);
+          if (sql.includes('FROM splits')) return Promise.resolve([{ account_guid: 'estpay', total: 250 }]);
+          return Promise.resolve([]);
+        },
+      );
+
+      const result = await run();
+      expect(result.categories.find(c => c.category === 'business_expense')?.total).toBe(250);
+      expect(result.realizedGains.longTerm).toBe(900);
+    });
+  });
+
   it('passes sheltered guids (retirement + excluded assets) to the category-sum guard', async () => {
     mockGetRetirementAccountGuids.mockResolvedValue(new Set(['ret-401k']));
     let capturedSql: string | null = null;

@@ -127,6 +127,24 @@ export async function aggregateBookTaxData(
     .map(a => a.guid);
   const shelteredGuids = [...new Set([...retirementGuids, ...excludedAssetGuids])];
 
+  /* --- Realized capital gains, loaded FIRST for the fee exclusion --- */
+  // A brokerage commission is a cost of the security, not a deduction: the
+  // 8949 extraction capitalizes it into basis (or nets it against proceeds),
+  // and reports back exactly which expense splits it consumed. Those splits
+  // must therefore NOT also feed a deduction category below, or one dollar
+  // would lower taxable income twice. The two sets are identical by
+  // construction, so a fee the extraction could NOT capitalize (unrecognized
+  // account, unattributable ticket, a book with no lots) is likewise not
+  // withheld from any deduction — it stays exactly as it is today.
+  //
+  // Purchase commissions on lots not yet sold are excluded here too, which is
+  // the correct treatment: a buy commission is capitalized in the year paid
+  // and recovered through basis at the eventual sale, never deducted.
+  const capitalizedFeeSplitGuids: string[] = [];
+  const allSales = await loadRealizedSales(bookAccountGuids, taxYear, {
+    capitalizedFeeSplitGuids,
+  });
+
   if (mappedGuids.length > 0) {
     const splitSums = await prisma.$queryRaw<Array<{
       account_guid: string;
@@ -149,6 +167,10 @@ export async function aggregateBookTaxData(
         -- buy/sell sub-splits, which carry real quantities and legitimate
         -- value flow.)
         AND NOT (s.quantity_num = 0 AND s.value_num <> 0)
+        -- Trade fees already capitalized into cost basis by the 8949
+        -- extraction. Deducting them here as well would let one commission
+        -- reduce taxable income twice; see capitalizedFeeSplitGuids above.
+        AND NOT (s.guid = ANY(${capitalizedFeeSplitGuids}))
         -- Sheltered-income guard: skip splits whose exact-opposite counter
         -- lands in a retirement or excluded asset account. A dividend paid
         -- inside a 401k/IRA posts income -X against IRA cash +X — not taxable
@@ -245,7 +267,6 @@ export async function aggregateBookTaxData(
   let longTerm = 0;
   const gainAccounts: BookTaxData['realizedGains']['accounts'] = [];
 
-  const allSales = await loadRealizedSales(bookAccountGuids, taxYear);
   // Period bound: Schedule AI columns only count sales settled by the
   // period end (same inclusive day bound as the splits query above).
   const throughDay = throughDate?.slice(0, 10);

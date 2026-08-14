@@ -172,6 +172,82 @@ describe('lotToRealizedSales', () => {
   });
 });
 
+/* ------------------------------------------------------------------ */
+/* Brokerage commissions (H2): a buy commission capitalizes into basis, */
+/* a sell commission reduces the amount realized. Both shrink the gain. */
+/* ------------------------------------------------------------------ */
+
+describe('lotToRealizedSales — brokerage commissions', () => {
+  it('reduces the reported gain by BOTH the buy and the sell commission', () => {
+    const buy = lotSplit(100, 1000, '2023-02-10T12:00:00.000Z');
+    const sell = lotSplit(-100, -1500, '2025-06-15T12:00:00.000Z');
+    const lot = makeLot({ splits: [buy, sell] });
+    const fees = new Map([[buy.guid, 9.95], [sell.guid, 6.95]]);
+
+    const [gross] = lotToRealizedSales(lot, 'VTI');
+    const [net] = lotToRealizedSales(lot, 'VTI', fees);
+
+    // Basis picks up the buy commission; proceeds drop by the sell commission.
+    expect(net.costBasis).toBeCloseTo(1009.95, 6);
+    expect(net.proceeds).toBeCloseTo(1493.05, 6);
+
+    const grossGain = gross.proceeds - gross.costBasis;
+    const netGain = net.proceeds - net.costBasis;
+    expect(grossGain).toBeCloseTo(500, 6);
+    expect(netGain).toBeCloseTo(500 - 9.95 - 6.95, 6);
+    // The whole point: the taxable gain falls by the sum of both commissions.
+    expect(grossGain - netGain).toBeCloseTo(16.9, 6);
+
+    // And that flows into the Form 8949 row.
+    expect(buildForm8949Row(net).gain).toBeCloseTo(483.1, 6);
+  });
+
+  it('capitalizes the buy commission across the whole lot, pro-rata per sale', () => {
+    const buy = lotSplit(100, 1000, '2023-02-10T12:00:00.000Z');
+    const firstSell = lotSplit(-40, -600, '2024-08-01T12:00:00.000Z');
+    const secondSell = lotSplit(-60, -900, '2025-03-01T12:00:00.000Z');
+    const lot = makeLot({ splits: [buy, firstSell, secondSell] });
+    const fees = new Map([[buy.guid, 10], [secondSell.guid, 5]]);
+
+    const sales = lotToRealizedSales(lot, 'VTI', fees);
+    expect(sales).toHaveLength(2);
+    // $1010 basis pool over 100 shares = $10.10/share.
+    expect(sales[0].costBasis).toBeCloseTo(404, 6);
+    expect(sales[0].proceeds).toBeCloseTo(600, 6); // no fee on the first sale
+    expect(sales[1].costBasis).toBeCloseTo(606, 6);
+    expect(sales[1].proceeds).toBeCloseTo(895, 6); // 900 gross - 5 commission
+  });
+
+  it('adds the buy commission to a transfer-carried basis rather than replacing it', () => {
+    const transferIn = lotSplit(10, 0, '2025-03-01T12:00:00.000Z');
+    const sell = lotSplit(-10, -1500, '2025-09-15T12:00:00.000Z');
+    const lot = makeLot({
+      acquisitionDate: '2023-05-10T12:00:00.000Z',
+      carriedBasis: 800,
+      splits: [transferIn, sell],
+    });
+    const sales = lotToRealizedSales(lot, 'AAPL', new Map([[transferIn.guid, 25]]));
+    expect(sales[0].costBasis).toBeCloseTo(825, 6);
+  });
+
+  it('never lets a fee turn a $0 transfer-out into a reportable sale', () => {
+    const buy = lotSplit(100, 1000, '2023-02-10T12:00:00.000Z');
+    const transferOut = lotSplit(-100, 0, '2025-04-01T12:00:00.000Z');
+    const lot = makeLot({ splits: [buy, transferOut] });
+    // Brokers do charge transfer/ACAT fees; that is still not a taxable sale.
+    expect(lotToRealizedSales(lot, 'VTI', new Map([[transferOut.guid, 75]]))).toEqual([]);
+  });
+
+  it('leaves figures gross when no fee map is supplied', () => {
+    const buy = lotSplit(10, 1000, '2023-02-10T12:00:00.000Z');
+    const sell = lotSplit(-10, -1500, '2025-06-15T12:00:00.000Z');
+    const lot = makeLot({ splits: [buy, sell] });
+    const [sale] = lotToRealizedSales(lot, 'VTI');
+    expect(sale.costBasis).toBe(1000);
+    expect(sale.proceeds).toBe(1500);
+  });
+});
+
 describe('term classification', () => {
   it('classifies more than one year as long-term', () => {
     expect(isLongTerm('2022-01-10', '2023-01-11')).toBe(true);

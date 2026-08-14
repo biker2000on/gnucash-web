@@ -20,6 +20,12 @@
  *    prior year. IRS "more than one year" is applied strictly (see isLongTerm).
  *  - dateAcquired falls back openDate -> earliest buy split when the lot has no
  *    acquisition_date slot (untransferred lots).
+ *  - Brokerage commissions and fees are recorded by GnuCash as separate
+ *    EXPENSE splits of the trade transaction, so they are invisible to the
+ *    lot's own splits. loadRealizedSales recovers them (@/lib/trade-fees) and
+ *    applies the IRS treatment: buy-side fees capitalize into basis, sell-side
+ *    fees reduce the amount realized. Both shrink the reported gain, and
+ *    proceeds then line up with a 1099-B's net box-1d figure.
  *
  * The row-building math is PURE (no DB, no clock) so it can be unit-tested;
  * DB loading lives in the separate loadRealizedSales / loadCapitalGainsReport
@@ -30,6 +36,7 @@ import type { LotSummary } from '@/lib/lots';
 import type { WashSaleResult } from '@/lib/lot-assignment';
 import { escapeCSVField } from '@/lib/reports/csv-export';
 import { isLongTerm, computeTerm, type Term } from '@/lib/holding-period';
+import { NO_TRADE_FEES, type TradeFeeBySplit } from '@/lib/trade-fees';
 
 // The IRS holding-period rule lives in @/lib/holding-period (single source of
 // truth, shared with the lot-scrub engine and the tax estimator); re-exported
@@ -49,7 +56,9 @@ export interface RealizedSaleInput {
   shares: number;          // shares sold (positive)
   dateAcquired: string;    // ISO date
   dateSold: string;        // ISO date
+  /** NET of the disposal's brokerage commissions/fees (see lotToRealizedSales). */
   proceeds: number;
+  /** INCLUDES the acquisition's capitalized commissions/fees. */
   costBasis: number;
   /** Set true once a 1099-B match confirms the broker reported basis. */
   basisReported?: boolean;
@@ -213,15 +222,29 @@ function formatShares(shares: number): string {
  * destination lot's carried_basis slot — not a taxable event), and the scrub
  * engine likewise refuses to book gains for zero-proceeds disposals
  * (unvalued trades). Either way there is no realized gain/loss to report.
+ *
+ * BROKERAGE COMMISSIONS: GnuCash books a commission as a separate EXPENSE
+ * split of the trade transaction, invisible to the lot's own splits. `fees`
+ * supplies the per-split amount recovered from those siblings (see
+ * @/lib/trade-fees). Per IRS Pub. 550 a buy-side commission is capitalized
+ * into basis and a sell-side commission reduces the amount realized, so a buy
+ * fee joins the basis pool and a sell fee is subtracted from that sale's
+ * proceeds. Omit `fees` (pure callers, tests) and the figures are gross, as
+ * before.
  */
-export function lotToRealizedSales(lot: LotSummary, ticker: string): RealizedSaleInput[] {
+export function lotToRealizedSales(
+  lot: LotSummary,
+  ticker: string,
+  fees: TradeFeeBySplit = NO_TRADE_FEES,
+): RealizedSaleInput[] {
   const sells = lot.splits.filter(s => s.shares < -EPS);
   if (sells.length === 0) return [];
 
   const buys = lot.splits.filter(s => s.shares > EPS);
   const boughtShares = buys.reduce((sum, s) => sum + s.shares, 0);
   const buyCost = buys.reduce((sum, s) => sum + Math.abs(s.value), 0);
-  const basisPool = buyCost + (lot.carriedBasis ?? 0);
+  const buyFees = buys.reduce((sum, s) => sum + (fees.get(s.guid) ?? 0), 0);
+  const basisPool = buyCost + (lot.carriedBasis ?? 0) + buyFees;
   const costPerShare = boughtShares > EPS ? basisPool / boughtShares : 0;
 
   // dateAcquired = acquisition slot -> open date -> earliest buy split
@@ -231,8 +254,12 @@ export function lotToRealizedSales(lot: LotSummary, ticker: string): RealizedSal
 
   const sales: RealizedSaleInput[] = [];
   for (const sell of sells) {
-    const proceeds = -sell.value;
-    if (Math.abs(proceeds) < 0.005) continue; // transfer-out / unvalued trade
+    // The "is this a sale at all?" test stays on GROSS value: a transfer-out
+    // is a $0-value disposal whatever fee rode along with it, and a fee must
+    // never be what promotes a transfer into a reportable sale (or what makes
+    // a real sale vanish by netting to ~0).
+    const grossProceeds = -sell.value;
+    if (Math.abs(grossProceeds) < 0.005) continue; // transfer-out / unvalued trade
     const shares = Math.abs(sell.shares);
     sales.push({
       splitGuid: sell.guid,
@@ -241,7 +268,7 @@ export function lotToRealizedSales(lot: LotSummary, ticker: string): RealizedSal
       shares,
       dateAcquired: lot.acquisitionDate || lot.openDate || earliestBuy || sell.postDate,
       dateSold: sell.postDate,
-      proceeds,
+      proceeds: grossProceeds - (fees.get(sell.guid) ?? 0),
       costBasis: shares * costPerShare,
     });
   }
@@ -552,10 +579,26 @@ export function generateScheduleDCSV(report: CapitalGainsReport): string {
  * extraction shared by the 8949 report and the tax estimator
  * (aggregateBookTaxData in src/lib/tax/book-income.ts), so the two surfaces
  * cannot drift on Schedule D numbers or on the exclusion rules.
+ *
+ * `sinks` collects the trade-fee allocator's two by-products, both optional:
+ *  - `feeWarnings`: notices about charges deliberately NOT capitalized
+ *    (unrecognized or ambiguous accounts, unattributable mixed tickets) and
+ *    about tax mappings neutralized on a fee account. The 8949 report shows
+ *    them; callers with nowhere to display them may omit the sink.
+ *  - `capitalizedFeeSplitGuids`: the expense splits whose value reached
+ *    basis. aggregateBookTaxData drops exactly these from its deduction
+ *    category sums, so a capitalized dollar is never also deducted, and a
+ *    dollar that was NOT capitalized is never withheld from a deduction.
  */
+export interface RealizedSalesSinks {
+  feeWarnings?: string[];
+  capitalizedFeeSplitGuids?: string[];
+}
+
 export async function loadRealizedSales(
   bookAccountGuids: string[],
   year: number,
+  sinks: RealizedSalesSinks = {},
 ): Promise<RealizedSaleInput[]> {
   // Imported lazily-ish at top would pull prisma into pure test imports; keep
   // the imports here local to the loader boundary.
@@ -599,12 +642,43 @@ export async function loadRealizedSales(
   );
   const lotsByAccount = await getLotsForAccounts(taxableAccounts.map(account => account.guid));
 
+  // Brokerage commissions live on sibling EXPENSE splits of the trade
+  // transactions, which the lot engine never loads; recover them once for
+  // every transaction touching these lots so basis and proceeds are net of
+  // fees (see @/lib/trade-fees).
+  //
+  // A classified trade fee is capitalized unconditionally — it is a cost of
+  // the security, never a deduction — and the splits it consumed are reported
+  // back so the tax aggregation can drop exactly those from its deduction
+  // sums. The effective tax mappings are passed only so a mapping that this
+  // neutralizes gets reported. Account paths drive fee-vs-not-a-fee
+  // classification: account_type alone would capitalize accrued bond interest
+  // and margin interest as basis.
+  const { loadTradeFees } = await import('@/lib/trade-fees');
+  const { buildAccountPathMap } = await import('@/lib/reports/utils');
+  const tradeTxGuids: string[] = [];
+  for (const account of taxableAccounts) {
+    for (const lot of lotsByAccount.get(account.guid) ?? []) {
+      for (const split of lot.splits) tradeTxGuids.push(split.txGuid);
+    }
+  }
+  const accountPaths = tradeTxGuids.length > 0
+    ? await buildAccountPathMap(bookAccountGuids)
+    : new Map<string, string>();
+  const allocation = await loadTradeFees(tradeTxGuids, {
+    effectiveTaxMappings: effectiveMappings,
+    accountPaths,
+  });
+  const fees = allocation.fees;
+  sinks.feeWarnings?.push(...allocation.warnings);
+  sinks.capitalizedFeeSplitGuids?.push(...allocation.capitalizedFeeSplitGuids);
+
   const sales: RealizedSaleInput[] = [];
   for (const account of taxableAccounts) {
     const ticker = account.commodity?.mnemonic || 'Unknown';
     const lots = lotsByAccount.get(account.guid) ?? [];
     for (const lot of lots) {
-      for (const sale of lotToRealizedSales(lot, ticker)) {
+      for (const sale of lotToRealizedSales(lot, ticker, fees)) {
         if (new Date(sale.dateSold).getUTCFullYear() !== year) continue;
         sales.push(sale);
       }
@@ -627,10 +701,14 @@ export async function loadCapitalGainsReport(
   year: number,
 ): Promise<CapitalGainsReport & { generatedAt: string }> {
   const { detectWashSales } = await import('@/lib/lot-assignment');
+  const feeWarnings: string[] = [];
   const [sales, washSales] = await Promise.all([
-    loadRealizedSales(bookAccountGuids, year),
+    loadRealizedSales(bookAccountGuids, year, { feeWarnings }),
     detectWashSales(bookAccountGuids),
   ]);
   const report = buildCapitalGainsReport(sales, washSales, year);
+  // Fees the allocator refused to capitalize belong in front of the user
+  // BEFORE they file, not buried in a log.
+  report.warnings.push(...feeWarnings);
   return { ...report, generatedAt: new Date().toISOString() };
 }
