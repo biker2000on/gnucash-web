@@ -1570,10 +1570,6 @@ export async function generateCapitalGains(
   // otherwise realize the sold shares' pro-rata share of the total basis
   // (buy cost + carried_basis).
   const carriedBasis = await readCarriedBasis(lotGuid, tx);
-  const sourceLotSlot = await tx.slots.findFirst({
-    where: { obj_guid: lotGuid, name: 'source_lot_guid' },
-    select: { string_val: true },
-  });
   const soldShares = sellSplits.reduce(
     (sum, s) => sum + Math.abs(toDecimalNumber(s.quantity_num, s.quantity_denom)), 0,
   );
@@ -1582,7 +1578,7 @@ export async function generateCapitalGains(
   );
 
   let gainLoss: number;
-  if (transferOutSplits.length === 0 && !sourceLotSlot?.string_val && Math.abs(carriedBasis) < 0.005) {
+  if (transferOutSplits.length === 0 && Math.abs(carriedBasis) < 0.005) {
     gainLoss = -lot.splits.reduce(
       (sum, s) => sum + toDecimalNumber(s.value_num, s.value_denom),
       0,
@@ -1591,14 +1587,31 @@ export async function generateCapitalGains(
     const boughtShares = buySplits.reduce(
       (sum, s) => sum + toDecimalNumber(s.quantity_num, s.quantity_denom), 0,
     );
-    // A source-linked lot was created by an own-account transfer. Its positive
-    // transfer-in value is not a purchase and must not be added to the
-    // carried original basis.
-    const buyCost = sourceLotSlot?.string_val
-      ? 0
-      : buySplits.reduce(
-        (sum, s) => sum + Math.abs(toDecimalNumber(s.value_num, s.value_denom)), 0,
-      );
+    // Only a carried-basis transfer replaces its recorded transfer-in value.
+    // Legacy source-linked lots have no replacement basis and retain their
+    // recorded value until they are explicitly re-scrubbed.
+    const transferInSplitGuids = new Set<string>();
+    if (Math.abs(carriedBasis) >= 0.005) {
+      for (const buy of buySplits) {
+        const siblings = await tx.splits.findMany({
+          where: { tx_guid: buy.tx_guid },
+          include: { account: { select: { guid: true, commodity_guid: true, account_type: true } } },
+        });
+        if (isOwnAccountCommodityTransfer(
+          { ...buy, account_guid: lot.account!.guid, transaction: { splits: siblings } },
+          accountCommodityGuid,
+          'in',
+        )) {
+          transferInSplitGuids.add(buy.guid);
+        }
+      }
+    }
+    const buyCost = buySplits.reduce(
+      (sum, s) => sum + (transferInSplitGuids.has(s.guid)
+        ? 0
+        : Math.abs(toDecimalNumber(s.value_num, s.value_denom))),
+      0,
+    );
     const basisPerShare = boughtShares > qtyEps ? (buyCost + carriedBasis) / boughtShares : 0;
     gainLoss = saleProceeds - soldShares * basisPerShare;
   }
