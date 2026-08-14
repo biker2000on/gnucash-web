@@ -10,7 +10,7 @@ import {
     gainHeading,
     BASIS_CONSEQUENCE,
 } from '@/components/investments/CostBasisCoverageMark';
-import { sameCoverageStatement } from '@/lib/commodities';
+import { sameCoverageStatement } from '@/lib/holdings-coverage';
 
 function fmtCurrency(n: number): string {
     return new Intl.NumberFormat('en-US', {

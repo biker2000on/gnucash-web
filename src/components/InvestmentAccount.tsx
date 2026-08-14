@@ -8,7 +8,7 @@ import {
     gainHeading,
     BASIS_CONSEQUENCE,
 } from '@/components/investments/CostBasisCoverageMark';
-import type { CostBasisCoverage } from '@/lib/commodities';
+import type { CostBasisCoverage } from '@/lib/holdings-coverage';
 import { useToast } from '@/contexts/ToastContext';
 import { InvestmentTransactionForm } from './InvestmentTransactionForm';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceArea, AreaChart, Area, ReferenceLine } from 'recharts';
