@@ -348,7 +348,7 @@ export function ReconciliationPanel({
                     Enter the statement ending balance to calculate the difference.
                 </p>
             )}
-            {hasStatementBalance && !isExactlyBalanced && selectedSplits.size > 0 && (
+            {hasStatementBalance && !isExactlyBalanced && selectedSplits.size > 0 && !isInvestment && (
                 <div className="border-t border-border pt-3 space-y-2">
                     <p aria-live="polite" className="text-xs text-warning">
                         Difference must be exactly zero to finish. Create an adjusting transaction to Imbalance to finish this reconciliation.
@@ -361,6 +361,9 @@ export function ReconciliationPanel({
                         Create adjustment and finish
                     </button>
                 </div>
+            )}
+            {hasStatementBalance && !isExactlyBalanced && selectedSplits.size > 0 && isInvestment && (
+                <p aria-live="polite" className="text-xs text-warning">Share adjustments must be entered manually.</p>
             )}
         </div>
     );

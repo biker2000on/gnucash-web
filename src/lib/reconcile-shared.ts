@@ -34,6 +34,7 @@ export interface ReconcileWorkspace {
         name: string;
         account_type: string;
         currency: string | null;
+        commodityScu: number;
     };
     /** Statement date the workspace was built for (ISO string). */
     statementDate: string;
@@ -43,6 +44,26 @@ export interface ReconcileWorkspace {
     reconciledBalance: number;
     /** 'n'/'c' splits posted on or before the statement date. */
     candidates: ReconcileCandidate[];
+}
+
+export function decimalToScuUnits(raw: string, scu: number): bigint | null {
+    let value = scu; let places = 0;
+    while (value > 1 && value % 10 === 0) { value /= 10; places++; }
+    if (value !== 1 || !/^-?\d+(?:\.\d+)?$/.test(raw)) return null;
+    const negative = raw.startsWith('-');
+    const [whole, fraction = ''] = (negative ? raw.slice(1) : raw).split('.');
+    if (fraction.length > places) return null;
+    const units = BigInt(whole) * BigInt(scu) + BigInt((fraction + '0'.repeat(places)).slice(0, places));
+    return negative ? -units : units;
+}
+
+export function computeDifferenceUnits(ending: string, reconciled: string | number, selected: Array<string | number>, scu: number): bigint | null {
+    const end = decimalToScuUnits(ending, scu);
+    const opening = decimalToScuUnits(String(reconciled), scu);
+    if (end === null || opening === null) return null;
+    let total = opening;
+    for (const amount of selected) { const units = decimalToScuUnits(String(amount), scu); if (units === null) return null; total += units; }
+    return end - total;
 }
 
 export interface FinalizeReconcileResult {

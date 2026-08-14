@@ -157,14 +157,16 @@ export async function getReconcileWorkspace(
             guid: true,
             name: true,
             account_type: true,
-            commodity: { select: { mnemonic: true } },
+            commodity_scu: true,
+            commodity: { select: { mnemonic: true, namespace: true } },
         },
     });
     if (!account) {
         throw new ManualReconcileError('Account not found', 'not_found');
     }
 
-    const { reconciledUnits: reconciledCents, lastReconcileDate } = await summarizeReconciled(prisma, accountGuid);
+    const commodityScu = account.commodity_scu || 100;
+    const { reconciledUnits: reconciledCents, lastReconcileDate } = await summarizeReconciled(prisma, accountGuid, commodityScu);
 
     const cutoff = statementDateCutoff(statementDate);
     const candidateRows = await prisma.$queryRaw<Array<{
@@ -211,10 +213,11 @@ export async function getReconcileWorkspace(
             name: account.name,
             account_type: account.account_type,
             currency: account.commodity?.mnemonic ?? null,
+            commodityScu,
         },
         statementDate: statementDate.toISOString(),
         lastReconcileDate: verifiedThrough ? verifiedThrough.toISOString() : null,
-        reconciledBalance: Number(reconciledCents) / 100,
+        reconciledBalance: Number(reconciledCents) / commodityScu,
         candidates: candidateRows.map((r) => ({
             guid: r.guid,
             transactionGuid: r.tx_guid,
@@ -376,7 +379,7 @@ export async function finalizeReconciliation(
         if (differenceUnits !== 0n && createAdjustment) {
             const source = await db.accounts.findUnique({
                 where: { guid: accountGuid },
-                select: { commodity_guid: true, commodity: { select: { mnemonic: true } } },
+                select: { commodity_guid: true, commodity: { select: { mnemonic: true, namespace: true } } },
             });
             const book = await db.books.findUnique({
                 where: { guid: completion?.bookGuid ?? '' },
@@ -384,6 +387,9 @@ export async function finalizeReconciliation(
             });
             if (!source?.commodity_guid || !book?.root_account_guid) {
                 throw new ManualReconcileError('Cannot create an adjustment without the account commodity and book root.', 'bad_request');
+            }
+            if (source.commodity?.namespace && source.commodity.namespace !== 'CURRENCY') {
+                throw new ManualReconcileError('Share adjustments must be entered manually.', 'bad_request');
             }
             const imbalanceAccountGuid = await findOrCreateAccount(
                 `Imbalance-${source.commodity?.mnemonic ?? 'Adjustment'}`,

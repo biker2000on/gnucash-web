@@ -257,6 +257,7 @@ describe('getReconcileWorkspace', () => {
             name: 'Checking',
             account_type: 'BANK',
             currency: 'USD',
+            commodityScu: 100,
         });
         expect(ws.reconciledBalance).toBe(115.5); // 100.00 + 25.50 − 10.00
         expect(ws.lastReconcileDate).toBe('2026-05-31T00:00:00.000Z');
