@@ -22,6 +22,7 @@ import {
     finalizeReconciliation,
     statementDateCutoff,
 } from '@/lib/reconcile';
+import { computeDifferenceUnits, decimalToScuUnits } from '@/lib/reconcile-shared';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const mockPrisma = prisma as any;
@@ -317,6 +318,11 @@ describe('getReconcileWorkspace', () => {
 /* ------------------------------------------------------------------ */
 
 describe('finalizeReconciliation', () => {
+    it('shares exact SCU units used by both reconciliation UIs', () => {
+        expect(computeDifferenceUnits('1.000', 1.234, [-0.234], 1000)).toBe(0n);
+        expect(computeDifferenceUnits('0.015', 0.005, [0.005, 0.005], 1000)).toBe(0n);
+        expect(decimalToScuUnits('1.234', 1000)).toBe(1234n);
+    });
     it('rejects with the recomputed difference when it is non-zero', async () => {
         // reconciled 100.00, selected 50.00, ending 175.00 → difference 25.00
         mockFinalize([selectedSplit(SPLIT_1, 5000)], 10000);
@@ -352,7 +358,7 @@ describe('finalizeReconciliation', () => {
         )).resolves.toMatchObject({ reconciledSplits: 2 });
     });
 
-    it('permits only the explicit discrepancy escape hatch and records the entered statement balance', async () => {
+    it('creates a balanced, reconciled Imbalance adjustment from the exact gate difference', async () => {
         mockFinalize([selectedSplit(SPLIT_1, 5000)], 10000);
         mockPrisma.splits.updateMany.mockResolvedValue({ count: 1 });
         mockPrisma.splits.createMany.mockResolvedValue({ count: 2 });
@@ -375,10 +381,35 @@ describe('finalizeReconciliation', () => {
         ).resolves.toMatchObject({ reconciledSplits: 1, endingBalance: 175 });
 
         expect(mockPrisma.splits.updateMany).toHaveBeenCalledOnce();
+        const adjustment = mockPrisma.splits.createMany.mock.calls[0][0].data;
+        expect(adjustment).toHaveLength(2);
+        const [accountSplit, imbalanceSplit] = adjustment;
+        expect(accountSplit).toMatchObject({ account_guid: ACCOUNT, reconcile_state: 'y', value_denom: 100n, quantity_denom: 100n });
+        expect(imbalanceSplit).toMatchObject({ account_guid: 'imbalance-account', reconcile_state: 'n', value_denom: 100n, quantity_denom: 100n });
+        expect(accountSplit.value_num).toBe(2500n);
+        expect(accountSplit.quantity_num).toBe(2500n);
+        expect(imbalanceSplit.value_num).toBe(-2500n);
+        expect(imbalanceSplit.quantity_num).toBe(-2500n);
         const sessionSql = mockPrisma.$executeRaw.mock.calls.map(sqlText).join('\n');
         expect(sessionSql).toContain("statementEndingBalance");
         expect(sessionSql).toContain('ending_difference');
         expect(mockPrisma.$executeRaw.mock.calls.some((call: unknown[]) => call.includes(175))).toBe(true);
+    });
+
+    it('refuses a stock adjustment before any ledger write', async () => {
+        mockFinalize([selectedSplit(SPLIT_1, 5000)], 10000);
+        mockPrisma.accounts.findUnique.mockResolvedValue({ commodity_guid: 'stock', commodity: { mnemonic: 'AAPL', namespace: 'NASDAQ' } });
+        await expect(finalizeReconciliation(ACCOUNT, STATEMENT_DATE, '175', [SPLIT_1], undefined, { bookGuid: 'book', userId: 1 }, true))
+            .rejects.toMatchObject({ code: 'bad_request', message: 'Share adjustments must be entered manually.' });
+        expect(mockPrisma.transactions.create).not.toHaveBeenCalled();
+        expect(mockPrisma.splits.createMany).not.toHaveBeenCalled();
+    });
+
+    it('uses a non-2dp SCU for a negative selected split', async () => {
+        mockFinalize([{ ...selectedSplit(SPLIT_1, -234), quantity_denom: 1000n }], 1234);
+        mockPrisma.splits.updateMany.mockResolvedValue({ count: 1 });
+        await expect(finalizeReconciliation(ACCOUNT, STATEMENT_DATE, '1.000', [SPLIT_1], undefined, undefined, false, 1000))
+            .resolves.toMatchObject({ reconciledSplits: 1 });
     });
 
     it('sets exactly the requested splits to y with the statement date', async () => {
