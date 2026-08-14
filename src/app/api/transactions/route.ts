@@ -22,39 +22,64 @@ import {
     periodLockedResponse,
 } from '@/lib/services/period-lock.service';
 
-/**
- * Parse a non-negative integer query param, falling back to `fallback` when the
- * value is absent, unparseable, or negative. LIMIT/OFFSET are now real SQL
- * clauses, and PostgreSQL rejects a negative or NaN bind there.
- */
-function nonNegativeIntParam(raw: string | null, fallback: number): number {
-    if (raw === null || raw.trim() === '') return fallback;
-    const parsed = Number.parseInt(raw, 10);
-    if (!Number.isFinite(parsed) || parsed < 0) return fallback;
-    return parsed;
-}
-
 /** Thrown for a malformed filter value; caught in GET and answered as a 400. */
 class BadFilterError extends Error {}
 
 const DECIMAL_RE = /^[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?$/;
 
 /**
+ * Every parser below shares one rule: a query param is ABSENT only when it is
+ * missing entirely or exactly empty. Anything else the user actually typed is
+ * either understood or rejected — never quietly treated as "no filter", because
+ * that turns a typo into a request for the whole ledger.
+ */
+const isAbsent = (raw: string | null): raw is null | '' => raw === null || raw === '';
+
+/**
+ * Parse a non-negative integer query param, falling back to `fallback` when the
+ * param is absent. LIMIT/OFFSET are real SQL clauses, and PostgreSQL rejects a
+ * negative or NaN bind there, so a malformed value is a 400 rather than a
+ * silent fallback to the default page.
+ */
+function nonNegativeIntParam(raw: string | null, fallback: number, name: string): number {
+    if (isAbsent(raw)) return fallback;
+    const trimmed = raw.trim();
+    if (!/^\d+$/.test(trimmed) || !Number.isSafeInteger(Number(trimmed))) {
+        throw new BadFilterError(`Invalid ${name}: "${raw}" is not a non-negative integer`);
+    }
+    return Number.parseInt(trimmed, 10);
+}
+
+/**
  * Parse an amount-bound query param into a decimal STRING for a `::numeric`
  * cast in SQL. Returned as text (not a JS number) so the bound reaches
  * PostgreSQL as an exact decimal rather than a binary float.
  *
- * A present-but-unparseable bound is REJECTED, never dropped. Dropping it would
- * turn a filter the user asked for into no filter at all, so a typo would answer
- * with the whole ledger instead of the nothing it used to return.
+ * A present-but-unparseable bound is REJECTED, never dropped — including one
+ * that is only whitespace. Dropping it would turn a filter the user asked for
+ * into no filter at all, answering with the whole ledger instead of the nothing
+ * it used to return.
  */
 function numericParam(raw: string | null, name: string): string | null {
-    if (raw === null || raw.trim() === '') return null;
+    if (isAbsent(raw)) return null;
     const trimmed = raw.trim();
     if (!DECIMAL_RE.test(trimmed)) {
         throw new BadFilterError(`Invalid ${name}: "${raw}" is not a number`);
     }
     return trimmed;
+}
+
+/**
+ * Parse a date query param. An unparseable date used to reach the driver as an
+ * Invalid Date and fail the whole request with a 500; it is a 400 now.
+ */
+function dateParam(raw: string | null, name: string): Date | null {
+    if (isAbsent(raw)) return null;
+    const date = new Date(raw);
+    if (Number.isNaN(date.getTime())) {
+        throw new BadFilterError(`Invalid ${name}: "${raw}" is not a date`);
+    }
+    return date;
 }
 
 /**
@@ -145,9 +170,13 @@ function listParam(raw: string | null, name: string): string[] {
  *                 $ref: '#/components/schemas/Transaction'
  *       400:
  *         description: >
- *           A filter value is malformed — a non-numeric minAmount/maxAmount, or
- *           an empty entry in accountTypes/reconcileStates. Rejected rather than
- *           ignored, so a malformed filter can never widen the result set.
+ *           A query parameter is present but malformed — a non-numeric
+ *           minAmount/maxAmount (whitespace included), an empty entry in
+ *           accountTypes/reconcileStates, an unparseable startDate/endDate, or a
+ *           limit/offset that is not a non-negative integer. Rejected rather
+ *           than ignored, so a malformed value can never quietly widen the
+ *           result set. A missing or exactly-empty parameter is still "no
+ *           filter".
  */
 export async function GET(request: Request) {
     try {
@@ -155,8 +184,8 @@ export async function GET(request: Request) {
         if (roleResult instanceof NextResponse) return roleResult;
 
         const { searchParams } = new URL(request.url);
-        const limit = nonNegativeIntParam(searchParams.get('limit'), 100);
-        const offset = nonNegativeIntParam(searchParams.get('offset'), 0);
+        const limit = nonNegativeIntParam(searchParams.get('limit'), 100, 'limit');
+        const offset = nonNegativeIntParam(searchParams.get('offset'), 0, 'offset');
         // '#tag' tokens in the search act as tag filters (AND semantics);
         // remaining text is the normal description/num/account search.
         const { text: search, tags: tagFilters } = parseSearchQuery(searchParams.get('search') || '');
@@ -201,11 +230,13 @@ export async function GET(request: Request) {
             )`);
 
         // Date filters
-        if (startDate) {
-            filters.push(Prisma.sql`t.post_date >= ${new Date(startDate)}`);
+        const from = dateParam(startDate, 'startDate');
+        const to = dateParam(endDate, 'endDate');
+        if (from) {
+            filters.push(Prisma.sql`t.post_date >= ${from}`);
         }
-        if (endDate) {
-            filters.push(Prisma.sql`t.post_date <= ${new Date(endDate)}`);
+        if (to) {
+            filters.push(Prisma.sql`t.post_date <= ${to}`);
         }
 
         // Search filter (description, num, or account name)
@@ -266,6 +297,12 @@ export async function GET(request: Request) {
         // bound as decimal text and cast to ::numeric, so no binary float
         // touches the comparison.
         //
+        // Note the cast happens INSIDE abs(): `abs(x::numeric)`, never
+        // `abs(x)::numeric`. bigint abs() overflows on INT64_MIN
+        // (-9223372036854775808 has no positive bigint counterpart) and raises
+        // "bigint out of range", which would blow up exactly the signed values
+        // this predicate exists to handle. numeric is unbounded.
+        //
         // "largest split >= min" is "some split reaches the floor"; "largest
         // split <= max" is "no split breaks the ceiling".
         const minVal = numericParam(minAmount, 'minAmount');
@@ -275,7 +312,7 @@ export async function GET(request: Request) {
                 SELECT 1 FROM splits s
                 WHERE s.tx_guid = t.guid
                   AND s.value_denom <> 0
-                  AND abs(s.value_num)::numeric >= ${minVal}::numeric * abs(s.value_denom)::numeric
+                  AND abs(s.value_num::numeric) >= ${minVal}::numeric * abs(s.value_denom::numeric)
             )`);
         }
         if (maxVal !== null) {
@@ -283,7 +320,7 @@ export async function GET(request: Request) {
                 SELECT 1 FROM splits s
                 WHERE s.tx_guid = t.guid
                   AND s.value_denom <> 0
-                  AND abs(s.value_num)::numeric > ${maxVal}::numeric * abs(s.value_denom)::numeric
+                  AND abs(s.value_num::numeric) > ${maxVal}::numeric * abs(s.value_denom::numeric)
             )`);
             if (minVal === null) {
                 // A ceiling alone would otherwise admit a transaction with no

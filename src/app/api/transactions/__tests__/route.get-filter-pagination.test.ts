@@ -252,13 +252,13 @@ function runPageQuery(text: string, values: unknown[]): { guid: string }[] {
     }
 
     // The cross-multiplied form: exact integer arithmetic, no division.
-    const crossMin = /abs\(s\.value_num\)::numeric >= \$(\d+)::numeric \* abs\(s\.value_denom\)::numeric/.exec(text);
+    const crossMin = /abs\(s\.value_num::numeric\) >= \$(\d+)::numeric \* abs\(s\.value_denom::numeric\)/.exec(text);
     if (crossMin) {
         const bound = String(bind(crossMin[1]));
         rows = applySplitPredicate(rows, text, crossMin.index, s =>
             s.value_denom !== 0n && compareAbsValue(s.value_num, s.value_denom, bound) >= 0);
     }
-    const crossMax = /abs\(s\.value_num\)::numeric > \$(\d+)::numeric \* abs\(s\.value_denom\)::numeric/.exec(text);
+    const crossMax = /abs\(s\.value_num::numeric\) > \$(\d+)::numeric \* abs\(s\.value_denom::numeric\)/.exec(text);
     if (crossMax) {
         const bound = String(bind(crossMax[1]));
         rows = applySplitPredicate(rows, text, crossMax.index, s =>
@@ -413,7 +413,7 @@ describe('GET /api/transactions — filtering happens before pagination', () => 
         const text = lastPageQuery!.text;
         expect(text).toContain('LIMIT');
         expect(text).toContain('OFFSET');
-        expect(text).toMatch(/abs\(s\.value_num\)::numeric >= \$\d+::numeric/);
+        expect(text).toMatch(/abs\(s\.value_num::numeric\) >= \$\d+::numeric/);
         expect(text).toMatch(/lower\(s\.reconcile_state\)/);
         // The bounds are bound as text for a ::numeric cast, never as a float.
         expect(lastPageQuery!.values).toContain('500');
@@ -427,8 +427,8 @@ describe('GET /api/transactions — amount semantics', () => {
         await get('minAmount=0.005&maxAmount=1000.5&limit=5');
 
         const text = lastPageQuery!.text;
-        expect(text).toMatch(/abs\(s\.value_num\)::numeric >= \$\d+::numeric \* abs\(s\.value_denom\)::numeric/);
-        expect(text).toMatch(/abs\(s\.value_num\)::numeric > \$\d+::numeric \* abs\(s\.value_denom\)::numeric/);
+        expect(text).toMatch(/abs\(s\.value_num::numeric\) >= \$\d+::numeric \* abs\(s\.value_denom::numeric\)/);
+        expect(text).toMatch(/abs\(s\.value_num::numeric\) > \$\d+::numeric \* abs\(s\.value_denom::numeric\)/);
         // No division anywhere in the amount comparison: `numeric / numeric`
         // rounds the quotient, `numeric * numeric` does not.
         expect(text).not.toContain('value_num::numeric /');
@@ -461,6 +461,46 @@ describe('GET /api/transactions — amount semantics', () => {
         await withExtraTx(negativeDenom, async () => {
             const body = await get('minAmount=1&maxAmount=10&limit=100');
             expect(body.map(tx => tx.guid)).toContain(negativeDenom.guid);
+        });
+    });
+
+    it('casts to numeric BEFORE taking the magnitude, so INT64_MIN cannot overflow', async () => {
+        // abs() on a bigint has no result for -9223372036854775808 — PostgreSQL
+        // raises "bigint out of range" — so the cast has to happen inside abs().
+        // The overflow itself cannot be reproduced without a real server; what
+        // is asserted here is that the emitted SQL never asks for it.
+        await get('minAmount=1&maxAmount=2&limit=1');
+
+        const text = lastPageQuery!.text;
+        expect(text).toContain('abs(s.value_num::numeric)');
+        expect(text).toContain('abs(s.value_denom::numeric)');
+        expect(text).not.toContain('abs(s.value_num)');
+        expect(text).not.toContain('abs(s.value_denom)');
+    });
+
+    it('compares an INT64_MIN numerator by its true magnitude', async () => {
+        // -9223372036854775808 / 100 = -92233720368547758.08.
+        const extreme = extraTx('5'.repeat(32), [{ num: -9223372036854775808n, denom: 100n }]);
+        await withExtraTx(extreme, async () => {
+            const found = await get('minAmount=92233720368547758.08&limit=100');
+            expect(found.map(tx => tx.guid)).toContain(extreme.guid);
+
+            // A hair above its magnitude excludes it — the bound is compared
+            // against the real value, not a saturated or wrapped one.
+            const missed = await get('minAmount=92233720368547758.09&limit=100');
+            expect(missed.map(tx => tx.guid)).not.toContain(extreme.guid);
+        });
+    });
+
+    it('compares an INT64_MIN denominator by its true magnitude', async () => {
+        // 500 / -9223372036854775808 is a vanishingly small positive amount.
+        const extreme = extraTx('6'.repeat(32), [{ num: 500n, denom: -9223372036854775808n }]);
+        await withExtraTx(extreme, async () => {
+            const capped = await get('maxAmount=1&limit=100');
+            expect(capped.map(tx => tx.guid)).toContain(extreme.guid);
+
+            const floored = await get('minAmount=1&limit=100');
+            expect(floored.map(tx => tx.guid)).not.toContain(extreme.guid);
         });
     });
 
@@ -532,11 +572,47 @@ describe('GET /api/transactions — a malformed filter must never widen the resu
         }
     });
 
+    it('rejects a whitespace-only amount bound instead of dropping the filter', async () => {
+        // "?minAmount=%20" is a value the user sent. Trimming it to "" and
+        // calling the filter absent answers with the whole ledger; it used to
+        // match nothing (parseFloat(" ") is NaN).
+        for (const query of ['minAmount=%20', 'maxAmount=%20', 'minAmount=%09%0A']) {
+            const res = await request(`${query}&limit=100`);
+            expect(res.status).toBe(400);
+            expect((await res.json()).error).toMatch(/Amount/i);
+        }
+    });
+
+    it('rejects a malformed limit or offset instead of silently paging by the default', async () => {
+        for (const query of ['limit=%20', 'limit=abc', 'limit=-5', 'limit=1.5', 'offset=abc', 'offset=%20']) {
+            const res = await request(query);
+            expect(res.status).toBe(400);
+        }
+    });
+
+    it('rejects an unparseable date instead of failing deep in the driver', async () => {
+        for (const query of ['startDate=%20', 'startDate=not-a-date', 'endDate=%20']) {
+            const res = await request(`${query}&limit=100`);
+            expect(res.status).toBe(400);
+        }
+        // A real date still reaches SQL as a bound Date.
+        await get('startDate=2025-06-01&endDate=2025-12-31&limit=5');
+        expect(lastPageQuery!.text).toContain('t.post_date >=');
+        expect(lastPageQuery!.text).toContain('t.post_date <=');
+        expect(lastPageQuery!.values.filter(v => v instanceof Date)).toHaveLength(2);
+    });
+
     it('never answers a malformed filter with the unfiltered ledger', async () => {
         // Control: with no filter at all, this request is the whole book.
         expect(await get('limit=100')).toHaveLength(DATASET.length);
 
-        for (const query of ['accountTypes=,', 'reconcileStates=,', 'minAmount=abc']) {
+        const malformed = [
+            'accountTypes=,', 'reconcileStates=,',
+            'minAmount=abc', 'maxAmount=abc',
+            'minAmount=%20', 'maxAmount=%20',
+            'startDate=%20', 'endDate=not-a-date',
+        ];
+        for (const query of malformed) {
             const res = await request(`${query}&limit=100`);
             const body = await res.json();
             expect(res.status).toBe(400);
