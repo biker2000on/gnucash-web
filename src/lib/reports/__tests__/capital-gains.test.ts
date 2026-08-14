@@ -137,6 +137,23 @@ describe('lotToRealizedSales', () => {
     expect(computeTerm(sales[0].dateAcquired, sales[0].dateSold)).toBe('long_term');
   });
 
+  it('uses carried basis rather than recorded value for a valued transfer-in', () => {
+    const incoming = lotSplit(10, 1000, '2025-03-01T12:00:00.000Z');
+    const outgoing = lotSplit(-10, -1500, '2025-09-15T12:00:00.000Z');
+    const lot = makeLot({
+      carriedBasis: 1010,
+      transferInSplitGuids: [incoming.guid],
+      splits: [incoming, outgoing],
+    });
+    const fees = new Map([[outgoing.guid, 12]]);
+
+    const [sale] = lotToRealizedSales(lot, 'AAPL', fees);
+
+    expect(sale.costBasis).toBe(1010);
+    expect(sale.proceeds).toBe(1488);
+    expect(sale.proceeds - sale.costBasis).toBe(478);
+  });
+
   it('skips $0-value disposals (transfer-outs / unvalued trades) — not sales', () => {
     const lot = makeLot({
       splits: [

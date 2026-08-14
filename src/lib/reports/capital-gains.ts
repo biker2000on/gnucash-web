@@ -240,10 +240,15 @@ export function lotToRealizedSales(
   const sells = lot.splits.filter(s => s.shares < -EPS);
   if (sells.length === 0) return [];
 
+  // A carried-basis transfer-in's recorded value was replaced by the source
+  // lot's basis. Keep this in lockstep with getLotsForAccounts so Form 8949
+  // never counts both representations.
+  const transferInSplitGuids = new Set(lot.transferInSplitGuids ?? []);
   const buys = lot.splits.filter(s => s.shares > EPS);
   const boughtShares = buys.reduce((sum, s) => sum + s.shares, 0);
-  const buyCost = buys.reduce((sum, s) => sum + Math.abs(s.value), 0);
-  const buyFees = buys.reduce((sum, s) => sum + (fees.get(s.guid) ?? 0), 0);
+  const basisBuys = buys.filter(s => !transferInSplitGuids.has(s.guid));
+  const buyCost = basisBuys.reduce((sum, s) => sum + Math.abs(s.value), 0);
+  const buyFees = basisBuys.reduce((sum, s) => sum + (fees.get(s.guid) ?? 0), 0);
   const basisPool = buyCost + (lot.carriedBasis ?? 0) + buyFees;
   const costPerShare = boughtShares > EPS ? basisPool / boughtShares : 0;
 

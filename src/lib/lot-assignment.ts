@@ -13,6 +13,7 @@ import { generateGuid, toDecimalNumber } from './gnucash';
 import { BookBusyError, bookLockKey, tryAcquireBookLock } from './book-lock';
 import { tryWithDatabaseAdvisoryLock } from './db';
 import { computeRealizedGain } from './lots';
+import { isOwnAccountCommodityTransfer } from './account-transfer';
 import {
   PARENT_SPLIT_SLOT,
   splitSellAcrossLots,
@@ -1347,34 +1348,12 @@ export async function detectWashSales(
       orderBy: { transaction: { post_date: 'asc' } },
     });
 
-    type WashSplit = (typeof allSplits)[number];
-    /** Transfer-in: shares arriving from the user's own other account — NOT replacement shares. */
-    const isTransferInSplit = (s: WashSplit): boolean => {
-      const siblings = s.transaction?.splits ?? [];
-      return siblings.some(o =>
-        o.account_guid !== s.account_guid &&
-        o.account?.commodity_guid === commodityGuid &&
-        o.account?.account_type !== 'TRADING' &&
-        toDecimalNumber(o.quantity_num, o.quantity_denom) < 0,
-      );
-    };
-    /** Transfer-out: shares leaving for the user's own other account — NOT a disposition. */
-    const isTransferOutSplit = (s: WashSplit): boolean => {
-      const siblings = s.transaction?.splits ?? [];
-      return siblings.some(o =>
-        o.account_guid !== s.account_guid &&
-        o.account?.commodity_guid === commodityGuid &&
-        o.account?.account_type !== 'TRADING' &&
-        toDecimalNumber(o.quantity_num, o.quantity_denom) > 0,
-      );
-    };
-
     // Identify sells and buys. Transfer-ins are excluded from BOTH the
     // replacement-share candidates and the loss heuristic: moving shares
     // between one's own accounts is not an acquisition under §1091.
     const buys = allSplits.filter(s =>
       toDecimalNumber(s.quantity_num, s.quantity_denom) > 0 &&
-      !isTransferInSplit(s)
+      !isOwnAccountCommodityTransfer(s, commodityGuid, 'in')
     );
 
     // A transfer-out can share a lot with actual sales. Excluding its split
@@ -1384,7 +1363,7 @@ export async function detectWashSales(
     // both the calculation and the wash-sale candidate set.
     const transferOutSplitGuids = new Set(allSplits
       .filter(s =>
-        toDecimalNumber(s.quantity_num, s.quantity_denom) < 0 && isTransferOutSplit(s)
+        isOwnAccountCommodityTransfer(s, commodityGuid, 'out')
       )
       .map(s => s.guid));
 
@@ -1410,6 +1389,12 @@ export async function detectWashSales(
       const parsed = slot.string_val ? Number.parseFloat(slot.string_val) : NaN;
       return [slot.obj_guid, Number.isFinite(parsed) ? parsed : 0] as const;
     }));
+    // Only newly scrubbed transfer lots have carried basis. Legacy lots retain
+    // their recorded value until a re-scrub supplies its replacement basis.
+    const transferInSplitGuids = new Set(allSplits
+      .filter(s => Boolean(s.lot_guid) && (carriedBasisByLot.get(s.lot_guid!) ?? 0) > 0)
+      .filter(s => isOwnAccountCommodityTransfer(s, commodityGuid, 'in'))
+      .map(s => s.guid));
 
     for (const s of allSplits) {
       const qty = toDecimalNumber(s.quantity_num, s.quantity_denom);
@@ -1427,6 +1412,7 @@ export async function detectWashSales(
           const lotSplits = lot.splits
             .filter(ls => !transferOutSplitGuids.has(ls.guid))
             .map(ls => ({
+              guid: ls.guid,
               shares: toDecimalNumber(ls.quantity_num, ls.quantity_denom),
               value: toDecimalNumber(ls.value_num, ls.value_denom),
             }));
@@ -1438,6 +1424,7 @@ export async function detectWashSales(
             lotSplits,
             isClosed,
             carriedBasisByLot.get(lot.guid) ?? 0,
+            transferInSplitGuids,
           );
           const totalSoldShares = lotSplits
             .filter(ls => ls.shares < -0.0001)

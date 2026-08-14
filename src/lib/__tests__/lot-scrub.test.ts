@@ -674,12 +674,22 @@ describe('splitTransferAcrossSourceLots', () => {
     mockSlotsCreate.mockResolvedValue({});
     mockSplitsUpdate.mockResolvedValue({});
     mockSplitsCreate.mockResolvedValue({});
-    // Return acquisition dates in order for each source lot
-    mockSlotsFindFirst
-      .mockResolvedValueOnce({ string_val: '2022-01-15T00:00:00.000Z' }) // lot 1
-      .mockResolvedValueOnce({ string_val: '2022-03-01T00:00:00.000Z' }) // lot 2
-      .mockResolvedValueOnce({ string_val: '2022-06-01T00:00:00.000Z' }) // lot 3
-      .mockResolvedValueOnce({ string_val: '2023-01-01T00:00:00.000Z' }); // lot 4
+    const acqDates: Record<string, string> = {
+      'src-lot-1-guid-00000000000000': '2022-01-15T00:00:00.000Z',
+      'src-lot-2-guid-00000000000000': '2022-03-01T00:00:00.000Z',
+      'src-lot-3-guid-00000000000000': '2022-06-01T00:00:00.000Z',
+      'src-lot-4-guid-00000000000000': '2023-01-01T00:00:00.000Z',
+    };
+    mockSlotsFindFirst.mockImplementation(async (args: { where?: { obj_guid?: string; name?: string } }) =>
+      args?.where?.name === 'acquisition_date'
+        ? { string_val: acqDates[args.where.obj_guid ?? ''] }
+        : null,
+    );
+    mockSplitsFindMany.mockImplementation(async (args: { where?: { lot_guid?: string } }) =>
+      args?.where?.lot_guid
+        ? [{ quantity_num: 100n, quantity_denom: 100n, value_num: 100n, value_denom: 100n }]
+        : [],
+    );
 
     const result = await splitTransferAcrossSourceLots(split.guid, runId, tx);
 
@@ -814,16 +824,25 @@ describe('splitTransferAcrossSourceLots', () => {
     mockSlotsCreate.mockResolvedValue({});
     mockSplitsUpdate.mockResolvedValue({});
     mockSplitsCreate.mockResolvedValue({});
-    // acquisition dates
-    mockSlotsFindFirst
-      .mockResolvedValueOnce({ string_val: '2023-01-01T00:00:00.000Z' })
-      .mockResolvedValueOnce({ string_val: '2023-06-01T00:00:00.000Z' });
-    // Transaction balance check — return splits that sum to zero
-    mockSplitsFindMany.mockResolvedValue([
-      { value_num: 70000n, value_denom: 100n },   // first alloc: 7 shares @ $100 = $700
-      { value_num: 30000n, value_denom: 100n },    // sub-split: 3 shares @ $100 = $300
-      { value_num: -100000n, value_denom: 100n },  // source out: -$1000
-    ]);
+    const acqDates: Record<string, string> = {
+      'src-lot-1-guid-00000000000000': '2023-01-01T00:00:00.000Z',
+      'src-lot-2-guid-00000000000000': '2023-06-01T00:00:00.000Z',
+    };
+    mockSlotsFindFirst.mockImplementation(async (args: { where?: { obj_guid?: string; name?: string } }) =>
+      args?.where?.name === 'acquisition_date'
+        ? { string_val: acqDates[args.where.obj_guid ?? ''] }
+        : null,
+    );
+    // Source-lot basis reads and the final transaction-balance read.
+    mockSplitsFindMany.mockImplementation(async (args: { where?: { lot_guid?: string } }) =>
+      args?.where?.lot_guid
+        ? [{ quantity_num: 1000n, quantity_denom: 100n, value_num: 100000n, value_denom: 100n }]
+        : [
+          { value_num: 70000n, value_denom: 100n },   // first alloc: 7 shares @ $100 = $700
+          { value_num: 30000n, value_denom: 100n },    // sub-split: 3 shares @ $100 = $300
+          { value_num: -100000n, value_denom: 100n },  // source out: -$1000
+        ],
+    );
 
     const result = await splitTransferAcrossSourceLots(split.guid, runId, tx);
 

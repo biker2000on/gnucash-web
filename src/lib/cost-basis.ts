@@ -10,6 +10,7 @@
 
 import prisma from './prisma';
 import { toDecimalNumber } from './gnucash';
+import { isOwnAccountCommodityTransfer } from './account-transfer';
 import { readCarriedBasis } from './lot-scrub';
 
 export type CostBasisMethod = 'fifo' | 'lifo' | 'average';
@@ -310,21 +311,11 @@ export function isTransferIn(
   allSplits: Array<{ quantity_num: bigint; quantity_denom: bigint; account_guid: string; account?: { commodity_guid?: string | null; account_type?: string | null; name?: string | null } | null }>,
   accountCommodityGuid: string
 ): boolean {
-  const qty = toDecimalNumber(split.quantity_num, split.quantity_denom);
-  if (qty <= 0) return false; // Only care about receiving shares
-
-  // Check if there's a matching split sending shares from another account
-  // with the same commodity (prevents false positives on cash splits).
-  // IMPORTANT: Exclude Trading account splits — GnuCash trading accounts
-  // create same-commodity splits for purchases that would falsely match.
-  const matchingSend = allSplits.find(s =>
-    s.account_guid !== split.account_guid &&
-    s.account?.commodity_guid === accountCommodityGuid &&
-    s.account?.account_type !== 'TRADING' &&
-    toDecimalNumber(s.quantity_num, s.quantity_denom) < 0
+  return isOwnAccountCommodityTransfer(
+    { ...split, transaction: { splits: allSplits } },
+    accountCommodityGuid,
+    'in',
   );
-
-  return !!matchingSend;
 }
 
 /**
@@ -773,11 +764,9 @@ function isTransferInSplit(
   currentAccountGuid: string,
   commodityGuid: string,
 ): boolean {
-  const txSplits = split.transaction?.splits || [];
-  return txSplits.some(
-    s => s.account_guid !== currentAccountGuid &&
-         s.account?.commodity_guid === commodityGuid &&
-         s.account?.account_type !== 'TRADING' &&
-         toDecimalNumber(s.quantity_num, s.quantity_denom) < 0
+  return isOwnAccountCommodityTransfer(
+    { ...split, account_guid: currentAccountGuid },
+    commodityGuid,
+    'in',
   );
 }

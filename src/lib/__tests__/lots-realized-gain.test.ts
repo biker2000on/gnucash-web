@@ -127,6 +127,10 @@ function carriedBasisSlot(lotGuid: string, amount: string) {
   return { obj_guid: lotGuid, name: 'carried_basis', string_val: amount };
 }
 
+function sourceLotSlot(lotGuid: string) {
+  return { obj_guid: lotGuid, name: 'source_lot_guid', string_val: 'source-lot' };
+}
+
 function transferOutSplit(guid: string, postDate: string, shares: number, value: number) {
   return {
     ...split(guid, postDate, shares, value),
@@ -136,6 +140,22 @@ function transferOutSplit(guid: string, postDate: string, shares: number, value:
       splits: [{
         account_guid: 'destination-account',
         quantity_num: BigInt(Math.round(Math.abs(shares) * 10_000)),
+        quantity_denom: 10_000n,
+        account: { commodity_guid: COMMODITY, account_type: 'STOCK' },
+      }],
+    },
+  };
+}
+
+function transferInSplit(guid: string, postDate: string, shares: number, value: number) {
+  return {
+    ...split(guid, postDate, shares, value),
+    transaction: {
+      post_date: new Date(`${postDate}T12:00:00.000Z`),
+      description: guid,
+      splits: [{
+        account_guid: 'source-account',
+        quantity_num: BigInt(Math.round(-Math.abs(shares) * 10_000)),
         quantity_denom: 10_000n,
         account: { commodity_guid: COMMODITY, account_type: 'STOCK' },
       }],
@@ -157,9 +177,12 @@ describe('carried basis feeds totalCost and unrealizedGain', () => {
     // 10 shares transferred in at $0 value, original basis $800 carried in the
     // slot. Latest price $100 -> market value $1,000.
     mockLotsFindMany.mockResolvedValue([
-      lot('xfer-open', 0, [split('in', '2024-02-01', 10, 0)]),
+      lot('xfer-open', 0, [transferInSplit('in', '2024-02-01', 10, 0)]),
     ]);
-    mockSlotsFindMany.mockResolvedValue([carriedBasisSlot('xfer-open', '800')]);
+    mockSlotsFindMany.mockResolvedValue([
+      carriedBasisSlot('xfer-open', '800'),
+      sourceLotSlot('xfer-open'),
+    ]);
     mockLatestPrice = 100;
 
     const [summary] = await getAccountLots(ACCT);
@@ -188,6 +211,41 @@ describe('carried basis feeds totalCost and unrealizedGain', () => {
     const [summary] = await getAccountLots(ACCT);
 
     expect(summary.unrealizedGain).toBeCloseTo(-200);
+  });
+
+  it('valued source-linked transfer counts carried basis, not transfer value, exactly once', async () => {
+    // $3,000 is a recorded own-account transfer value, not new purchase cost.
+    // Original basis is $1,000; sale at $3,500 realizes a $2,500 gain.
+    mockLotsFindMany.mockResolvedValue([
+      lot('valued-xfer', 1, [
+        transferInSplit('in', '2024-02-01', 100, 3_000),
+        split('sell', '2024-03-01', -100, -3_500),
+      ]),
+    ]);
+    mockSlotsFindMany.mockResolvedValue([
+      carriedBasisSlot('valued-xfer', '1000'),
+      sourceLotSlot('valued-xfer'),
+    ]);
+
+    const [summary] = await getAccountLots(ACCT);
+
+    expect(summary.totalCost).toBeCloseTo(1_000);
+    expect(summary.realizedGain).toBeCloseTo(2_500);
+  });
+
+  it('keeps a legacy source-linked lot without carried_basis on its recorded-value basis', async () => {
+    mockLotsFindMany.mockResolvedValue([
+      lot('legacy-valued-xfer', 1, [
+        transferInSplit('in', '2024-02-01', 100, 3_000),
+        split('sell', '2024-03-01', -100, -3_500),
+      ]),
+    ]);
+    mockSlotsFindMany.mockResolvedValue([sourceLotSlot('legacy-valued-xfer')]);
+
+    const [summary] = await getAccountLots(ACCT);
+
+    expect(summary.totalCost).toBeCloseTo(3_000);
+    expect(summary.realizedGain).toBeCloseTo(500);
   });
 
   it('partially-sold lot with BOTH real buy cost and carried basis pro-rates once', async () => {
