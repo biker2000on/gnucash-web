@@ -15,12 +15,14 @@ const db: {
   estimateRow: any;
   customerRow: any;
   profileRow: any;
+  invoiceView: any;
   findUniqueCalls: number;
 } = {
   shareRow: null,
   estimateRow: null,
   customerRow: null,
   profileRow: null,
+  invoiceView: null,
   findUniqueCalls: 0,
 };
 
@@ -41,7 +43,22 @@ vi.mock('@/lib/prisma', () => ({
     gnucash_web_entity_profiles: {
       findUnique: vi.fn(async () => db.profileRow),
     },
+    commodities: {
+      findUnique: vi.fn(async () => ({ mnemonic: 'USD' })),
+    },
+    jobs: {
+      findUnique: vi.fn(async () => null),
+    },
+    // Stripe connection + payment-event lookups in buildPublicInvoiceView.
+    $queryRaw: vi.fn(async () => []),
   },
+}));
+
+// The engine is exercised in invoice-engine.test.ts; here we only need to
+// control the ONE view the public builder consumes.
+vi.mock('../invoice-engine', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../invoice-engine')>()),
+  getInvoiceWithStatus: vi.fn(async () => db.invoiceView),
 }));
 
 // book-scope pulls in auth/session machinery — not needed for resolution.
@@ -72,11 +89,44 @@ function shareRow(overrides: Partial<Record<string, unknown>> = {}) {
   };
 }
 
+const INVOICE_GUID = '0123456789abcdef0123456789abcdef';
+
+/** A minimal posted, unpaid InvoiceDetailView for the public builder. */
+function invoiceView(overrides: Record<string, unknown> = {}) {
+  return {
+    guid: INVOICE_GUID,
+    id: '000007',
+    type: 'invoice',
+    ownerType: 'customer',
+    ownerGuid: 'cust-1',
+    ownerName: 'Acme Corp',
+    dateOpened: '2026-01-01',
+    datePosted: '2026-01-05',
+    dueDate: '2026-02-04',
+    dueDateInferred: false,
+    notes: '',
+    billingId: null,
+    termsGuid: null,
+    currencyGuid: 'usd',
+    active: true,
+    posted: true,
+    postTxnGuid: 'txn-1',
+    postAccountGuid: 'ar1',
+    postLotGuid: 'lot-1',
+    totals: { subtotal: 100, discountTotal: 0, taxTotal: 0, total: 100 },
+    amountDue: 100,
+    status: 'overdue',
+    entries: [],
+    ...overrides,
+  };
+}
+
 beforeEach(() => {
   db.shareRow = null;
   db.estimateRow = null;
   db.customerRow = null;
   db.profileRow = null;
+  db.invoiceView = null;
   db.findUniqueCalls = 0;
 });
 
@@ -179,6 +229,49 @@ describe('resolveShareToken — security', () => {
       expect(view!.lines[0].amount).toBe(300);
       expect(view!.total).toBe(300);
     }
+  });
+});
+
+describe('public invoice view — inferred due dates', () => {
+  beforeEach(() => {
+    db.shareRow = shareRow({ invoice_guid: INVOICE_GUID });
+    db.customerRow = null;
+    db.profileRow = null;
+  });
+
+  /** Resolve the token and assert it produced the public INVOICE payload. */
+  const publicInvoice = async () => {
+    const view = await resolveShareToken(TOKEN);
+    if (view?.type !== 'invoice') throw new Error('expected a public invoice view');
+    return view;
+  };
+
+  it('publishes a STORED due date and its overdue badge unchanged', async () => {
+    db.invoiceView = invoiceView();
+
+    const view = await publicInvoice();
+    expect(view.dueDate).toBe('2026-02-04');
+    expect(view.status).toBe('overdue');
+  });
+
+  it('withholds an INFERRED due date and its overdue badge from the customer', async () => {
+    db.invoiceView = invoiceView({ dueDate: '2026-01-05', dueDateInferred: true });
+
+    const view = await publicInvoice();
+    // We do not assert a deadline we inferred, and we do not leak the caveat
+    // either — the customer-facing payload carries no dueDateInferred field.
+    expect(view.dueDate).toBeNull();
+    expect(view.status).toBe('open');
+    expect('dueDateInferred' in view).toBe(false);
+    // The posting date is still published; only the DUE claim is withheld.
+    expect(view.datePosted).toBe('2026-01-05');
+  });
+
+  it('leaves a paid invoice paid even when the due date was inferred', async () => {
+    db.invoiceView = invoiceView({ dueDateInferred: true, amountDue: 0, status: 'paid' });
+
+    const view = await publicInvoice();
+    expect(view.status).toBe('paid');
   });
 });
 

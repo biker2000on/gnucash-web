@@ -194,6 +194,41 @@ describe('the 30-day window is measured in CALENDAR days', () => {
   });
 });
 
+describe('transfer-outs are not wash-sale dispositions', () => {
+  it('does not create an unmatched wash-sale row for a closed in-kind transfer-out', async () => {
+    mockAccountsFindMany.mockResolvedValue([
+      { guid: ACCT, name: 'Brokerage', commodity_guid: COMMODITY, commodity: { mnemonic: 'AAPL' } },
+    ]);
+    mockLotsFindMany.mockResolvedValue([{
+      guid: 'transfer-source-lot',
+      splits: [
+        { guid: 'buy', quantity_num: 1_000_000n, quantity_denom: 10_000n, value_num: 500_000n, value_denom: 100n },
+        { guid: 'transfer-out', quantity_num: -1_000_000n, quantity_denom: 10_000n, value_num: 0n, value_denom: 100n },
+      ],
+    }]);
+    const transferOut = {
+      ...raw('transfer-out', '2024-06-01T12:00:00.000Z', -100, 0, 'transfer-source-lot'),
+      transaction: {
+        post_date: new Date('2024-06-01T12:00:00.000Z'),
+        splits: [{
+          guid: 'transfer-in',
+          account_guid: 'acct-destination',
+          quantity_num: 1_000_000n,
+          quantity_denom: 10_000n,
+          account: { commodity_guid: COMMODITY, account_type: 'STOCK' },
+        }],
+      },
+    };
+    mockSplitsFindMany.mockResolvedValue([
+      raw('buy', '2024-01-01T12:00:00.000Z', 100, 5_000, 'transfer-source-lot'),
+      transferOut,
+      raw('buy-replacement', '2024-06-10T12:00:00.000Z', 100, 4_000),
+    ]);
+
+    expect(await detectWashSales([ACCT])).toEqual([]);
+  });
+});
+
 describe('false-positive exclusions', () => {
   it('a sale does not flag against its OWN lot-opening buy', async () => {
     // The purchase that opened the sold lot sits 12 days before the sale —

@@ -65,6 +65,10 @@ import {
   type BusinessEntityType,
   type EntityOwnershipClient,
 } from './entity-ownership';
+// Single source of truth for "what is this posted document's due date", shared
+// with the AR/AP aging report and the dunning job. business-reports.ts imports
+// only prisma + slot constants, so importing it here is cycle-free.
+import { resolveAgingDueDate } from './business-reports';
 import {
   computeInvoiceTotals,
   buildPostingSplits,
@@ -242,6 +246,12 @@ export interface InvoiceView {
   dateOpened: string | null;
   datePosted: string | null;
   dueDate: string | null;
+  /**
+   * True when the posting transaction carries no `trans-date-due` slot and the
+   * due date above is the POST DATE standing in for it. Same flag, same
+   * fallback, as the aging report's `AgingInvoice.dueDateInferred`.
+   */
+  dueDateInferred: boolean;
   notes: string;
   billingId: string | null;
   termsGuid: string | null;
@@ -1984,8 +1994,8 @@ interface InvoiceViewPreload {
   fraction: number;
   /** Decimal split values on invoice.post_lot (empty when unposted). */
   lotSplitValues: number[];
-  /** Resolved bill term for invoice.terms (null when none). */
-  billTerm: BillTermSpec | null;
+  /** Stored `trans-date-due` on invoice.post_txn (null when absent/unposted). */
+  storedDueDate: Date | null;
 }
 
 /**
@@ -2042,18 +2052,28 @@ export async function composeInvoiceView(
     amountDue = totals.total;
   }
 
-  // Due date from bill terms
-  let dueDate: Date | null = null;
-  if (posted && invoice.date_posted) {
-    let term: BillTermSpec | null = null;
+  // Due date — read from the posting transaction, NOT recomputed from the
+  // owner's CURRENT bill terms. Posting resolves the due date once (explicit
+  // override > bill terms > post date) and persists it as `trans-date-due`;
+  // recomputing here made this screen disagree with the aging report and the
+  // dunning job whenever an override was used or the terms were edited after
+  // posting. `resolveAgingDueDate` is the shared fallback policy: stored slot,
+  // else post date flagged inferred.
+  let storedDueDate: Date | null = null;
+  if (posted && invoice.post_txn) {
     if (preloaded) {
-      term = preloaded.billTerm;
-    } else if (invoice.terms) {
-      const t = await db.billterms.findUnique({ where: { guid: invoice.terms } });
-      if (t) term = { type: t.type, duedays: t.duedays, cutoff: t.cutoff };
+      storedDueDate = preloaded.storedDueDate;
+    } else {
+      const slot = await db.slots.findFirst({
+        where: { obj_guid: invoice.post_txn, name: 'trans-date-due', slot_type: SLOT_TIMESPEC },
+        orderBy: { id: 'desc' },
+      });
+      storedDueDate = slot?.timespec_val ?? null;
     }
-    dueDate = computeDueDate(invoice.date_posted, term);
   }
+  const { dueDate, dueDateInferred } = posted
+    ? resolveAgingDueDate({ datePosted: invoice.date_posted, dueDate: storedDueDate })
+    : { dueDate: null, dueDateInferred: false };
 
   const status = invoiceStatus(posted, amountDue, dueDate, new Date(), fraction);
 
@@ -2097,6 +2117,7 @@ export async function composeInvoiceView(
     dateOpened: toIsoDate(invoice.date_opened),
     datePosted: toIsoDate(invoice.date_posted),
     dueDate: toIsoDate(dueDate),
+    dueDateInferred,
     notes: invoice.notes,
     billingId: invoice.billing_id ?? null,
     termsGuid: invoice.terms ?? null,
@@ -2330,14 +2351,21 @@ export async function listInvoices(
     valuesByLot.set(s.lot_guid, arr);
   }
 
-  const termGuids = [...new Set(page.map(({ inv }) => inv.terms).filter((g): g is string => Boolean(g)))];
-  const termRows: Array<{ guid: string; type: string; duedays: number | null; cutoff: number | null }> =
-    termGuids.length
-      ? await prisma.billterms.findMany({ where: { guid: { in: termGuids } } })
-      : [];
-  const termByGuid = new Map<string, BillTermSpec>(
-    termRows.map((t) => [t.guid, { type: t.type, duedays: t.duedays, cutoff: t.cutoff }]),
-  );
+  // Stored due dates (`trans-date-due` on each posting txn) — one query for
+  // the page. Ordered ascending so the highest slot id wins in the map, which
+  // matches the single-invoice path's `orderBy: { id: 'desc' }`.
+  const postTxnGuids = page
+    .map(({ inv }) => inv.post_txn)
+    .filter((g): g is string => Boolean(g));
+  const dueSlots: Array<{ obj_guid: string; timespec_val: Date | null }> = postTxnGuids.length
+    ? await prisma.slots.findMany({
+        where: { obj_guid: { in: postTxnGuids }, name: 'trans-date-due', slot_type: SLOT_TIMESPEC },
+        select: { obj_guid: true, timespec_val: true },
+        orderBy: { id: 'asc' },
+      })
+    : [];
+  const dueByTxn = new Map<string, Date | null>();
+  for (const s of dueSlots) dueByTxn.set(s.obj_guid, s.timespec_val);
 
   // Compose views in memory (zero queries per invoice)
   const views: InvoiceView[] = [];
@@ -2349,7 +2377,7 @@ export async function listInvoices(
         taxTables,
         fraction: fractionByCurrency.get(inv.currency)!,
         lotSplitValues: inv.post_lot ? (valuesByLot.get(inv.post_lot) ?? []) : [],
-        billTerm: inv.terms ? (termByGuid.get(inv.terms) ?? null) : null,
+        storedDueDate: inv.post_txn ? (dueByTxn.get(inv.post_txn) ?? null) : null,
       });
       views.push(view);
     } catch {

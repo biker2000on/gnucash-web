@@ -127,6 +127,22 @@ function carriedBasisSlot(lotGuid: string, amount: string) {
   return { obj_guid: lotGuid, name: 'carried_basis', string_val: amount };
 }
 
+function transferOutSplit(guid: string, postDate: string, shares: number, value: number) {
+  return {
+    ...split(guid, postDate, shares, value),
+    transaction: {
+      post_date: new Date(`${postDate}T12:00:00.000Z`),
+      description: guid,
+      splits: [{
+        account_guid: 'destination-account',
+        quantity_num: BigInt(Math.round(Math.abs(shares) * 10_000)),
+        quantity_denom: 10_000n,
+        account: { commodity_guid: COMMODITY, account_type: 'STOCK' },
+      }],
+    },
+  };
+}
+
 beforeEach(() => {
   mockLatestPrice = null;
   mockLotsFindMany.mockReset();
@@ -219,5 +235,61 @@ describe('carried basis feeds totalCost and unrealizedGain', () => {
     expect(summary.carriedBasis).toBe(0);
     expect(summary.totalCost).toBeCloseTo(1_000);
     expect(summary.unrealizedGain).toBeCloseTo(200);
+  });
+});
+
+describe('transfer-out lot summaries', () => {
+  it('does not fabricate a realized loss when the transfer split closes the source lot', async () => {
+    mockLotsFindMany.mockResolvedValue([
+      lot('transfer-source', 1, [
+        split('buy', '2020-01-01', 10, 1_000),
+        transferOutSplit('transfer-out', '2024-02-01', -10, 0),
+      ]),
+    ]);
+
+    const [summary] = await getAccountLots(ACCT);
+
+    expect(summary.isClosed).toBe(true);
+    expect(summary.realizedGain).toBe(0);
+  });
+
+  it('keeps the real loss when a transfer-out and sale share a closed lot', async () => {
+    mockLotsFindMany.mockResolvedValue([
+      lot('mixed-close', 1, [
+        split('buy', '2020-01-01', 10, 1_000),
+        transferOutSplit('transfer-out', '2024-02-01', -4, 0),
+        split('sale', '2024-03-01', -6, -400),
+      ]),
+    ]);
+
+    const [summary] = await getAccountLots(ACCT);
+
+    expect(summary.realizedGain).toBe(-200);
+  });
+
+  it('does not treat a partial transfer-out in an open lot as a sale', async () => {
+    mockLotsFindMany.mockResolvedValue([
+      lot('open-transfer', 0, [
+        split('buy', '2020-01-01', 10, 1_000),
+        transferOutSplit('transfer-out', '2024-02-01', -4, 0),
+      ]),
+    ]);
+
+    const [summary] = await getAccountLots(ACCT);
+
+    expect(summary.realizedGain).toBe(0);
+  });
+
+  it('keeps a zero-value worthless-security write-off as a real loss', async () => {
+    mockLotsFindMany.mockResolvedValue([
+      lot('worthless', 1, [
+        split('buy', '2020-01-01', 10, 1_000),
+        split('write-off', '2024-12-31', -10, 0),
+      ]),
+    ]);
+
+    const [summary] = await getAccountLots(ACCT);
+
+    expect(summary.realizedGain).toBe(-1_000);
   });
 });

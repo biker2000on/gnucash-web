@@ -273,6 +273,7 @@ import {
   InvoiceStateError,
   InvoiceNotFoundError,
 } from '../invoice-engine';
+import { buildAgingReport } from '../business-reports';
 
 // ===========================================================================
 // Part 1 — pure math
@@ -1424,5 +1425,146 @@ describe('invoice engine — book scope', () => {
 
     expect(await listPayments(BOOK_A, 'customer', 'cust2')).toEqual([]);
     expect(await listPayments(BOOK_B, 'customer', 'cust2')).toHaveLength(1);
+  });
+});
+
+// ===========================================================================
+// Part 3 — the view's due date comes from the POSTING, not current terms
+// ===========================================================================
+
+describe('invoice view due date — stored, never recomputed', () => {
+  beforeEach(() => {
+    holder.db = seedDb();
+  });
+
+  const getView = async (guid: string) => req(await getInvoiceWithStatus(BOOK_A, guid));
+
+  const net30Invoice = () =>
+    createInvoice(BOOK_A, {
+      ownerType: 'customer',
+      ownerGuid: 'cust1',
+      dateOpened: '2026-01-05',
+      termsGuid: 'net30',
+      entries: [{ description: 'Consulting', quantity: 2, price: 50, accountGuid: 'inc1', taxable: false }],
+    });
+
+  /** The `trans-date-due` slot the posting engine wrote for this invoice. */
+  const storedDueSlot = (postTxnGuid: string) =>
+    holder.db!.slots.rows.find(
+      (s: Row) => s.obj_guid === postTxnGuid && s.name === 'trans-date-due',
+    );
+
+  /**
+   * The aging report's view of the same invoice, built the way
+   * loadOpenInvoices() builds it: post date + the stored slot + lot balance.
+   */
+  const agingRowFor = (view: { guid: string; id: string; postTxnGuid: string | null; postLotGuid: string | null }) => {
+    const invoiceRow = req(holder.db!.invoices.rows.find((i: Row) => i.guid === view.guid));
+    const lotBalance = holder.db!.splits.rows
+      .filter((s: Row) => s.lot_guid === view.postLotGuid)
+      .reduce((sum: number, s: Row) => sum + Number(s.value_num) / Number(s.value_denom), 0);
+    return {
+      guid: view.guid,
+      id: view.id,
+      ownerGuid: 'cust1',
+      ownerName: 'Acme Corp',
+      datePosted: invoiceRow.date_posted as Date,
+      dueDate: (storedDueSlot(view.postTxnGuid ?? '')?.timespec_val ?? null) as Date | null,
+      lotBalance,
+      currency: 'USD',
+    };
+  };
+
+  it('keeps the posted due date after the bill terms are edited', async () => {
+    const draft = await net30Invoice();
+    await postInvoice(BOOK_A, draft.guid, { postDate: '2026-01-05' });
+    expect((await getView(draft.guid)).dueDate).toBe('2026-02-04'); // net 30
+
+    // The vendor/customer renegotiates: Net 30 becomes Net 5. The ALREADY
+    // POSTED document keeps the due date it was posted with.
+    req(holder.db!.billterms.rows.find((t: Row) => t.guid === 'net30')).duedays = 5;
+
+    const view = await getView(draft.guid);
+    expect(view.dueDate).toBe('2026-02-04');
+    expect(view.dueDateInferred).toBe(false);
+  });
+
+  it('honours an explicit due-date override and agrees with the aging report', async () => {
+    const draft = await net30Invoice();
+    // Explicit override, deliberately EARLIER than the Net 30 terms would give.
+    const result = await postInvoice(BOOK_A, draft.guid, {
+      postDate: '2026-01-05',
+      dueDate: '2026-01-12',
+    });
+    expect(result.dueDate).toBe('2026-01-12');
+
+    const view = await getView(draft.guid);
+    expect(view.dueDate).toBe('2026-01-12');
+    expect(view.dueDateInferred).toBe(false);
+
+    // Same invoice, aging report's answer — the two screens must agree.
+    const asOf = new Date('2026-01-20T12:00:00Z');
+    const aging = buildAgingReport([agingRowFor(view)], 'ar', asOf);
+    const agingInvoice = aging.owners[0].invoices[0];
+    expect(agingInvoice.dueDate).toBe(view.dueDate);
+    expect(agingInvoice.dueDateInferred).toBe(view.dueDateInferred);
+    expect(agingInvoice.daysPastDue).toBe(8);
+    // ...and so must the badge: past due on the 20th under the override, but
+    // NOT under the Net 30 terms (which would have said 2026-02-04).
+    expect(invoiceStatus(true, view.amountDue, new Date(view.dueDate!), asOf)).toBe('overdue');
+    expect(view.status).toBe('overdue');
+  });
+
+  it('falls back to the post date, flagged inferred, when no due-date slot exists', async () => {
+    const draft = await net30Invoice();
+    const result = await postInvoice(BOOK_A, draft.guid, { postDate: '2026-01-05' });
+
+    // A posting made by something that never wrote `trans-date-due` (legacy
+    // import, hand-edited book).
+    holder.db!.slots.rows.splice(
+      holder.db!.slots.rows.indexOf(req(storedDueSlot(result.transactionGuid))),
+      1,
+    );
+
+    const view = await getView(draft.guid);
+    expect(view.dueDate).toBe('2026-01-05'); // the post date, not post + 30
+    expect(view.dueDateInferred).toBe(true);
+
+    const aging = buildAgingReport([agingRowFor(view)], 'ar', new Date('2026-01-20T12:00:00Z'));
+    expect(aging.owners[0].invoices[0].dueDate).toBe(view.dueDate);
+    expect(aging.owners[0].invoices[0].dueDateInferred).toBe(true);
+  });
+
+  it('reports drafts as neither due nor inferred', async () => {
+    const draft = await net30Invoice();
+    const view = await getView(draft.guid);
+    expect(view.status).toBe('draft');
+    expect(view.dueDate).toBeNull();
+    expect(view.dueDateInferred).toBe(false);
+  });
+
+  it('listInvoices reads the same stored due date as the detail view', async () => {
+    const draft = await net30Invoice();
+    await postInvoice(BOOK_A, draft.guid, { postDate: '2026-01-05', dueDate: '2026-01-12' });
+    req(holder.db!.billterms.rows.find((t: Row) => t.guid === 'net30')).duedays = 5;
+
+    const [listed] = await listInvoices(BOOK_A, { type: 'invoice' });
+    const detail = await getView(draft.guid);
+    expect(listed.dueDate).toBe('2026-01-12');
+    expect(listed.dueDate).toBe(detail.dueDate);
+    expect(listed.dueDateInferred).toBe(false);
+  });
+
+  it('listInvoices flags an inferred due date in the batch path too', async () => {
+    const draft = await net30Invoice();
+    const result = await postInvoice(BOOK_A, draft.guid, { postDate: '2026-01-05' });
+    holder.db!.slots.rows.splice(
+      holder.db!.slots.rows.indexOf(req(storedDueSlot(result.transactionGuid))),
+      1,
+    );
+
+    const [listed] = await listInvoices(BOOK_A, { type: 'invoice' });
+    expect(listed.dueDate).toBe('2026-01-05');
+    expect(listed.dueDateInferred).toBe(true);
   });
 });
