@@ -146,6 +146,13 @@ describe('parseStripeSettlementCsv', () => {
         expect(result.errors[0].message).toContain('do not reconcile');
     });
 
+    it('rejects a one-cent identity mismatch that the former 0.011 threshold accepted', () => {
+        const csv = [STRIPE_HEADER, 'txn_1,charge,2025-01-15,100.00,3.20,96.81,usd,One cent off'].join('\n');
+        const result = parseStripeSettlementCsv(csv);
+        expect(result.records).toEqual([]);
+        expect(result.errors[0].message).toContain('do not reconcile');
+    });
+
     it('fails cleanly when the header is missing', () => {
         const result = parseStripeSettlementCsv('a,b\n1,2');
         expect(result.records).toEqual([]);

@@ -28,6 +28,7 @@ import {
   calculateImbalances,
   type CommodityImbalance,
 } from '../trading-accounts';
+import { assertBalanced } from '../validation';
 
 // --- Helpers ----------------------------------------------------------------
 
@@ -295,6 +296,13 @@ describe('generateTradingSplits', () => {
     // USD trading: quantity should be -704.65 USD with denom 100
     expect(usdSplit.quantityNum).toBe(-70465);
     expect(usdSplit.quantityDenom).toBe(100);
+
+    // The generated trading legs are also accepted by the server's shared
+    // exact ledger-balance gate.
+    expect(() => assertBalanced(splits.map(split => ({
+      value_num: split.valueNum,
+      value_denom: split.valueDenom,
+    })))).not.toThrow();
   });
 
   it('preserves stock-share precision (regression: 2.2228 was being truncated to 2.22)', () => {

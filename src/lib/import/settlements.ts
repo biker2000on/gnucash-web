@@ -251,7 +251,7 @@ function headerError(source: SettlementSource, expected: string): SettlementPars
 }
 
 /**
- * Validate net = gross - fee (to the cent, with a 1-cent rounding tolerance)
+ * Validate the cent-rounded net = gross - fee identity exactly.
  * and push the record. Rows violating the identity cannot produce a balanced
  * transaction and are reported as errors.
  */
@@ -264,7 +264,7 @@ function pushChecked(ctx: RowContext, r: SettlementRecord): void {
     }
     if (r.kind !== 'payout') {
         const diff = round2(r.net + r.fee - r.gross);
-        if (Math.abs(diff) > 0.011) {
+        if (diff !== 0) {
             ctx.errors.push({
                 row: r.row,
                 message:

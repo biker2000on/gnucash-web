@@ -9,6 +9,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { assertBalanced } from '../validation';
 
 // ---------------------------------------------------------------------------
 // Mock Prisma
@@ -974,6 +975,10 @@ describe('generateCapitalGains', () => {
     const incomeCall = mockSplitsCreate.mock.calls[1][0] as { data: { value_num: bigint; quantity_num: bigint } };
     expect(incomeCall.data.value_num).toBe(-50000n);
     expect(incomeCall.data.quantity_num).toBe(0n);
+    expect(() => assertBalanced([
+      { value_num: investCall.data.value_num, value_denom: 100n },
+      { value_num: incomeCall.data.value_num, value_denom: 100n },
+    ])).not.toThrow();
     // Description reflects a GAIN
     expect(mockTransactionsCreate).toHaveBeenCalledWith(
       expect.objectContaining({

@@ -23,6 +23,7 @@ import {
     statementDateCutoff,
 } from '@/lib/reconcile';
 import { computeDifferenceUnits, decimalToScuUnits } from '@/lib/reconcile-shared';
+import { assertBalanced } from '@/lib/validation';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const mockPrisma = prisma as any;
@@ -390,6 +391,7 @@ describe('finalizeReconciliation', () => {
         expect(accountSplit.quantity_num).toBe(2500n);
         expect(imbalanceSplit.value_num).toBe(-2500n);
         expect(imbalanceSplit.quantity_num).toBe(-2500n);
+        expect(() => assertBalanced(adjustment)).not.toThrow();
         const sessionSql = mockPrisma.$executeRaw.mock.calls.map(sqlText).join('\n');
         expect(sessionSql).toContain("statementEndingBalance");
         expect(sessionSql).toContain('ending_difference');

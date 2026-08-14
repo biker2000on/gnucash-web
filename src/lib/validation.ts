@@ -28,25 +28,55 @@ export interface ValidationError {
     message: string;
 }
 
+export interface BalanceSplit {
+    value_num: number | bigint;
+    value_denom: number | bigint;
+}
+
+function gcd(a: bigint, b: bigint): bigint {
+    while (b !== 0n) [a, b] = [b, a % b];
+    return a < 0n ? -a : a;
+}
+
+function toBigInt(value: number | bigint, field: 'numerator' | 'denominator'): bigint {
+    if (typeof value === 'bigint') return value;
+    if (!Number.isSafeInteger(value)) {
+        throw new Error(`Split value ${field} must be a safe integer`);
+    }
+    return BigInt(value);
+}
+
 /**
- * Tolerance, in currency units, for the double-entry "splits sum to zero" check.
+ * Assert that rational split values sum to exactly zero.
  *
- * The check divides each split's `value_num / value_denom` in IEEE-754 double
- * precision, so an exactly-balanced transaction can still sum to a tiny
- * non-zero residue (e.g. 1/3 + 1/3 + 1/3 - 1 !== 0). The tolerance only exists
- * to absorb that representation error.
- *
- * 0.001 is a tenth of a cent: far above the ~1e-13 residue that accumulates
- * over a realistic split count, and still an order of magnitude below the
- * smallest imbalance a user could enter in a currency field (0.01). So it
- * cannot mask a real one-cent error.
- *
- * Used by `validateTransaction` (API routes) and `validateSplitsBalance`
- * (TransactionService) so both server-side create paths agree. Callers that
- * work in a different unit or precision (import parsers, the lot scrub engine)
- * deliberately keep their own thresholds and are not covered by this constant.
+ * GnuCash denominators are arbitrary integers, not decimal precision markers,
+ * so values are brought to their least common denominator with BigInt rather
+ * than converted to IEEE-754 numbers. This is the shared ledger-balance gate
+ * for both transaction write paths.
  */
-export const BALANCE_TOLERANCE = 0.001;
+export function assertBalanced(splits: readonly BalanceSplit[]): void {
+    let commonDenominator = 1n;
+    for (const split of splits) {
+        const denominator = toBigInt(split.value_denom, 'denominator');
+        if (denominator === 0n) throw new Error('Split value denominator must be non-zero');
+        const absoluteDenominator = denominator < 0n ? -denominator : denominator;
+        commonDenominator = (commonDenominator / gcd(commonDenominator, absoluteDenominator)) * absoluteDenominator;
+    }
+
+    let total = 0n;
+    for (const split of splits) {
+        const numerator = toBigInt(split.value_num, 'numerator');
+        const denominator = toBigInt(split.value_denom, 'denominator');
+        total += numerator * (commonDenominator / denominator);
+    }
+
+    if (total !== 0n) {
+        const divisor = gcd(total, commonDenominator);
+        throw new Error(
+            `Splits must sum to zero exactly (current sum: ${total / divisor}/${commonDenominator / divisor})`,
+        );
+    }
+}
 
 /**
  * Separator between messages in a multi-error summary. Messages do not end in
@@ -128,17 +158,15 @@ export function validateTransaction(tx: TransactionInput): ValidationResult {
             }
         });
 
-        // Check that splits sum to zero (double-entry accounting)
+        // Check that splits sum to zero (double-entry accounting).
         if (tx.splits.length >= 2) {
-            const sum = tx.splits.reduce((acc, split) => {
-                // Normalize to common denominator calculation
-                const value = (split.value_num || 0) / (split.value_denom || 1);
-                return acc + value;
-            }, 0);
-
-            // Allow only for floating-point representation error — see BALANCE_TOLERANCE.
-            if (Math.abs(sum) > BALANCE_TOLERANCE) {
-                errors.push({ field: 'splits', message: `Splits must sum to zero (current sum: ${sum.toFixed(2)})` });
+            try {
+                assertBalanced(tx.splits);
+            } catch (error) {
+                errors.push({
+                    field: 'splits',
+                    message: error instanceof Error ? error.message : 'Splits must sum to zero exactly',
+                });
             }
         }
     }
