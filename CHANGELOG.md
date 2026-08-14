@@ -166,6 +166,28 @@ Covers work landed since 0.23.2.0 (2026-07-29).
   carry-over **switched off**, where the app has deliberately not traced
   anything and so cannot claim the basis is complete. Previously both reported
   full coverage, which was simply untrue.
+- **Moving shares between your own accounts no longer deletes the gain.** When
+  a same-commodity transfer between two of your own accounts was recorded with
+  a value (rather than as a zero-value in-kind move), the source account's gain
+  was correctly suppressed — a transfer is not a disposition — but the
+  destination lot took the *transfer value* as its cost basis instead of the
+  original purchase cost. The difference between what you paid and what the
+  transfer was booked at was therefore recognised at **neither** end: it left
+  the book entirely, and a later sale under-reported the gain. The original
+  basis is now carried across the transfer, and any commission paid to acquire
+  those shares is carried with them (pro-rated when only part of a lot moves),
+  so a fee is no longer lost on transfer. The Investment Lots report and the
+  Form 8949 export now derive basis identically and agree to the cent.
+
+  **Lots that were already processed before this release keep their previous
+  figures until they are reprocessed.** Their original cost was never recorded
+  at the destination, so there is nothing yet for the reports to read. Nothing
+  regresses — those lots behave exactly as they did — but they are not yet
+  corrected either. **Order matters if you are regenerating tax reports:**
+  reprocess the affected investment accounts *first*, then regenerate. A
+  backfill that repairs these lots without a full reprocess is planned; if you
+  are deciding about a prior-year return, wait for it rather than regenerating
+  from partially-corrected data.
 - **Brokerage commissions are now included in cost basis and proceeds — your
   previously-generated Form 8949 output overstated gains.** GnuCash records a
   commission as a separate expense split on the trade transaction, and the lot
