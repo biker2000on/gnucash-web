@@ -1387,6 +1387,11 @@ export async function detectWashSales(
         toDecimalNumber(s.quantity_num, s.quantity_denom) < 0 && isTransferOutSplit(s)
       )
       .map(s => s.guid));
+    const transferInSplitGuids = new Set(allSplits
+      .filter(s =>
+        toDecimalNumber(s.quantity_num, s.quantity_denom) > 0 && isTransferInSplit(s)
+      )
+      .map(s => s.guid));
 
     // For sells, determine if they were at a loss using lot data or heuristic
     const sells: Array<typeof allSplits[0] & { realizedLoss: number }> = [];
@@ -1427,6 +1432,7 @@ export async function detectWashSales(
           const lotSplits = lot.splits
             .filter(ls => !transferOutSplitGuids.has(ls.guid))
             .map(ls => ({
+              guid: ls.guid,
               shares: toDecimalNumber(ls.quantity_num, ls.quantity_denom),
               value: toDecimalNumber(ls.value_num, ls.value_denom),
             }));
@@ -1438,6 +1444,7 @@ export async function detectWashSales(
             lotSplits,
             isClosed,
             carriedBasisByLot.get(lot.guid) ?? 0,
+            transferInSplitGuids,
           );
           const totalSoldShares = lotSplits
             .filter(ls => ls.shares < -0.0001)

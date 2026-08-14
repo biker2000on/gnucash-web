@@ -43,9 +43,10 @@ export interface LotSummary {
     acquisitionDate: string | null;     // from acquisition_date slot (original purchase date)
     /**
      * Cost basis carried into a transfer-destination lot via the
-     * `carried_basis` lot slot. The $0-value in-kind transfer-in split carries
-     * no value of its own, so the transferred shares' original basis lives
-     * here (written by the lot-scrub transfer linking). 0 when absent.
+     * `carried_basis` lot slot. A same-commodity own-account transfer's
+     * recorded value is not a new purchase, so the transferred shares'
+     * original basis lives here (written by the lot-scrub transfer linking).
+     * 0 when absent.
      */
     carriedBasis: number;
     splits: LotSplit[];
@@ -110,16 +111,21 @@ function buildLotSplits(
  * cost. Returns 0 when nothing has been sold.
  */
 export function computeRealizedGain(
-    splits: Array<{ shares: number; value: number }>,
+    splits: Array<{ guid?: string; shares: number; value: number }>,
     isClosed: boolean,
     carriedBasis = 0,
+    transferInSplitGuids: ReadonlySet<string> = new Set(),
 ): number {
     const EPS = 0.0001;
+    // A same-commodity own-account transfer-in is bookkeeping, not an
+    // acquisition: its true basis is the separately stored carried_basis.
+    const basisValue = (split: { guid?: string; shares: number; value: number }) =>
+        split.shares > EPS && transferInSplitGuids.has(split.guid ?? '') ? 0 : split.value;
     if (isClosed) {
         // Exclude zero-quantity gains offset splits, negate basis - proceeds
         return -splits
             .filter(s => Math.abs(s.shares) > EPS)
-            .reduce((sum, s) => sum + s.value, 0) - carriedBasis;
+            .reduce((sum, s) => sum + basisValue(s), 0) - carriedBasis;
     }
 
     // Open lot: realized portion only (shares sold so far)
@@ -128,7 +134,7 @@ export function computeRealizedGain(
     if (sells.length === 0) return 0;
 
     const boughtShares = buys.reduce((sum, s) => sum + s.shares, 0);
-    const buyCost = buys.reduce((sum, s) => sum + Math.abs(s.value), 0) + carriedBasis;
+    const buyCost = buys.reduce((sum, s) => sum + Math.abs(basisValue(s)), 0) + carriedBasis;
     const costPerShare = boughtShares > EPS ? buyCost / boughtShares : 0;
 
     const soldShares = sells.reduce((sum, s) => sum + Math.abs(s.shares), 0);
@@ -222,6 +228,7 @@ export async function getLotsForAccounts(accountGuids: string[]): Promise<Map<st
         lotNumberByAccount.set(accountGuid, index + 1);
         const title = slotValue.get(`${lot.guid}:title`) || `Lot ${index + 1}`;
         const lotSplits = buildLotSplits(lot.splits);
+        const sourceLotGuid = slotValue.get(`${lot.guid}:source_lot_guid`) || null;
         const carriedRaw = slotValue.get(`${lot.guid}:carried_basis`);
         const carriedParsed = carriedRaw ? parseFloat(carriedRaw) : NaN;
         const carriedBasis = Number.isFinite(carriedParsed) ? carriedParsed : 0;
@@ -245,6 +252,22 @@ export async function getLotsForAccounts(accountGuids: string[]): Promise<Map<st
                 );
             })
             .map(split => split.guid));
+        // A source_lot_guid means this lot was created for an own-account
+        // transfer. Confirm the positive split has the matching
+        // same-commodity, non-TRADING negative counterpart before excluding
+        // its recorded value from basis; genuine later buys remain purchases.
+        const transferInSplitGuids = new Set(lot.splits
+            .filter(split => {
+                const shares = toDecimalNumber(split.quantity_num, split.quantity_denom);
+                if (!sourceLotGuid || shares <= 0.0001) return false;
+                return (split.transaction?.splits ?? []).some(sibling =>
+                    sibling.account_guid !== accountGuid &&
+                    sibling.account?.commodity_guid === commodityGuid &&
+                    sibling.account?.account_type !== 'TRADING' &&
+                    toDecimalNumber(sibling.quantity_num, sibling.quantity_denom) < 0,
+                );
+            })
+            .map(split => split.guid));
 
         // Total shares = sum of all split quantities
         const computedShares = lotSplits.reduce((sum, s) => sum + s.shares, 0);
@@ -262,7 +285,7 @@ export async function getLotsForAccounts(accountGuids: string[]): Promise<Map<st
         // Total cost = sum of values where quantity > 0 (buys)
         const totalCost = lotSplits
             .filter(s => s.shares > 0)
-            .reduce((sum, s) => sum + Math.abs(s.value), 0) + carriedBasis;
+            .reduce((sum, s) => sum + (transferInSplitGuids.has(s.guid) ? 0 : Math.abs(s.value)), 0) + carriedBasis;
 
         // Exclude transfer-outs, split by split, before computing gain. A
         // transfer can coexist with an actual sale in the same lot; suppressing
@@ -271,7 +294,12 @@ export async function getLotsForAccounts(accountGuids: string[]): Promise<Map<st
         const taxableLotSplits = lotSplits.filter(split => !transferOutSplitGuids.has(split.guid));
         const taxableShares = taxableLotSplits.reduce((sum, split) => sum + split.shares, 0);
         const taxableLotIsClosed = Math.abs(taxableShares) < 0.0001;
-        const realizedGain = computeRealizedGain(taxableLotSplits, taxableLotIsClosed, carriedBasis);
+        const realizedGain = computeRealizedGain(
+            taxableLotSplits,
+            taxableLotIsClosed,
+            carriedBasis,
+            transferInSplitGuids,
+        );
 
         // Unrealized gain: (currentPrice * remaining shares) - cost basis of remaining shares
         let unrealizedGain: number | null = null;
@@ -314,7 +342,7 @@ export async function getLotsForAccounts(accountGuids: string[]): Promise<Map<st
             unrealizedGain,
             holdingPeriod,
             currentPrice: latestPrice,
-            sourceLotGuid: slotValue.get(`${lot.guid}:source_lot_guid`) || null,
+            sourceLotGuid,
             acquisitionDate,
             carriedBasis,
             splits: lotSplits,

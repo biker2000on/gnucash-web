@@ -434,6 +434,23 @@ function seedFullTransfer() {
   ]);
 }
 
+/** Buy 100 @ $10 in A, transfer at an overstated recorded value, then sell in B. */
+function seedValuedFullTransfer() {
+  seedBase(['A', 'B']);
+  addTx('tx-buy', '2022-01-10', [
+    ['a-buy', STOCK_A, 100, 1000],
+    ['a-buy-cash', CASH, -1000, -1000],
+  ]);
+  addTx('tx-xfer', '2024-06-15', [
+    ['a-out', STOCK_A, -100, -3000],
+    ['b-in', STOCK_B, 100, 3000],
+  ]);
+  addTx('tx-sell', '2024-11-02', [
+    ['b-sell', STOCK_B, -100, -3500],
+    ['b-sell-cash', CASH, 3500, 3500],
+  ]);
+}
+
 /** Buy 100 @ $10 in A, transfer 60 to B, sell 40 in A @ $12, sell 60 in B @ $12. */
 function seedPartialTransfer() {
   seedBase(['A', 'B']);
@@ -452,6 +469,27 @@ function seedPartialTransfer() {
   addTx('tx-sell-b', '2024-03-20', [
     ['b-sell', STOCK_B, -60, -720],
     ['b-sell-cash', CASH, 720, 720],
+  ]);
+}
+
+/** A source lot has both a valued transfer-out and a genuine sale. */
+function seedValuedPartialTransfer() {
+  seedBase(['A', 'B']);
+  addTx('tx-buy', '2023-01-05', [
+    ['a-buy', STOCK_A, 100, 1000],
+    ['a-buy-cash', CASH, -1000, -1000],
+  ]);
+  addTx('tx-xfer', '2024-01-10', [
+    ['a-out', STOCK_A, -60, -1800],
+    ['b-in', STOCK_B, 60, 1800],
+  ]);
+  addTx('tx-sell-a', '2024-02-15', [
+    ['a-sell', STOCK_A, -40, -480],
+    ['a-sell-cash', CASH, 480, 480],
+  ]);
+  addTx('tx-sell-b', '2024-03-20', [
+    ['b-sell', STOCK_B, -60, -2100],
+    ['b-sell-cash', CASH, 2100, 2100],
   ]);
 }
 
@@ -558,6 +596,22 @@ describe('cross-account lot scrubbing', () => {
     expect(db.t.lots.find(l => l.guid === bLot)?.is_closed).toBe(1);
   });
 
+  it('valued full transfer preserves the $1,000 original basis, not its $3,000 recorded value', async () => {
+    seedValuedFullTransfer();
+
+    const resA = await autoAssignLots(STOCK_A, 'fifo');
+    const resB = await autoAssignLots(STOCK_B, 'fifo');
+
+    // Regression proof: on main this reports $500 ($3,500 − $3,000).
+    // Correct result after preserving the original $1,000 basis is $2,500.
+    expect(resA.totalRealizedGain).toBeCloseTo(0);
+    expect(resB.totalRealizedGain).toBeCloseTo(2500);
+    expect(resA.totalRealizedGain + resB.totalRealizedGain).toBeCloseTo(2500);
+
+    const bLot = split('b-in').lot_guid as string;
+    expect(slotVal(bLot, 'carried_basis')).toBe('1000');
+  });
+
   it('partial transfer (60 of 100): sells in both A and B split basis without double counting', async () => {
     seedPartialTransfer();
 
@@ -578,6 +632,21 @@ describe('cross-account lot scrubbing', () => {
     const bLot = split('b-in').lot_guid as string;
     expect(slotVal(bLot, 'source_lot_guid')).toBe(split('a-buy').lot_guid);
     expect(slotVal(bLot, 'acquisition_date')).toBe('2023-01-05T00:00:00.000Z');
+  });
+
+  it('valued partial transfer carries the transferred shares basis while source sale remains taxable', async () => {
+    seedValuedPartialTransfer();
+
+    const resA = await autoAssignLots(STOCK_A, 'fifo');
+    const resB = await autoAssignLots(STOCK_B, 'fifo');
+
+    // Source sale: $480 − $400 = $80. Destination sale: $2,100 − $600 = $1,500.
+    expect(resA.totalRealizedGain).toBeCloseTo(80);
+    expect(resB.totalRealizedGain).toBeCloseTo(1500);
+    expect(resA.totalRealizedGain + resB.totalRealizedGain).toBeCloseTo(1580);
+
+    const bLot = split('b-in').lot_guid as string;
+    expect(slotVal(bLot, 'carried_basis')).toBe('600');
   });
 
   it('chained transfer A->B->C via scrubAllAccounts: topological order and basis trace to origin', async () => {
@@ -827,5 +896,4 @@ describe('getAccountLots transfer metadata', () => {
     expect(lot.realizedGain).toBeCloseTo(500);
   });
 });
-
 

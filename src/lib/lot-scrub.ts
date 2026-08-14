@@ -517,8 +517,8 @@ export async function splitSellAcrossLots(
 
 /**
  * Read a lot's `carried_basis` slot (decimal string). Returns 0 when absent.
- * The slot stores the cost basis carried into a transfer-destination lot when
- * the transfer transaction itself carries no value.
+ * The slot stores the original cost basis carried into a transfer-destination
+ * lot, regardless of the transfer transaction's recorded value.
  */
 export async function readCarriedBasis(lotGuid: string, tx: PrismaTx): Promise<number> {
   const slot = await tx.slots.findFirst({
@@ -533,8 +533,9 @@ export async function readCarriedBasis(lotGuid: string, tx: PrismaTx): Promise<n
  * Compute the cost basis carried by `transferredShares` leaving a source lot:
  * pro-rata share of (buy cost + the source lot's own carried basis) over the
  * shares that entered the lot. Chains correctly across repeated transfers —
- * a scrub-created destination lot has one zero-value transfer-in split plus a
- * carried_basis slot, so its basis-per-share is carried_basis / shares.
+ * a scrub-created destination lot has one transfer-in split plus a
+ * carried_basis slot, so its basis-per-share is carried_basis / shares. A
+ * recorded transfer value is not purchase cost and must not create a step-up.
  *
  * Returns null when the source lot has no incoming shares to derive a basis
  * from (nothing to carry).
@@ -553,13 +554,22 @@ export async function computeCarriedBasis(
       value_denom: true,
     },
   })) ?? [];
+  const sourceLotSlot = await tx.slots.findFirst({
+    where: { obj_guid: sourceLotGuid, name: 'source_lot_guid' },
+    select: { string_val: true },
+  });
   let boughtShares = 0;
   let buyCost = 0;
   for (const s of sourceLotSplits) {
     const qty = toDecimalNumber(s.quantity_num, s.quantity_denom);
     if (qty > 0) {
       boughtShares += qty;
-      buyCost += Math.abs(toDecimalNumber(s.value_num, s.value_denom));
+      // A lot linked to a source lot entered through an own-account transfer.
+      // Its positive split value is bookkeeping value, not a new acquisition
+      // cost; its actual basis is in carried_basis.
+      if (!sourceLotSlot?.string_val) {
+        buyCost += Math.abs(toDecimalNumber(s.value_num, s.value_denom));
+      }
     }
   }
   if (boughtShares <= 0) return null;
@@ -597,10 +607,10 @@ async function writeCarriedBasisSlot(
  *
  * Besides `source_lot_guid` and `acquisition_date`, the destination lot also
  * carries the transferred shares' remaining cost basis in a `carried_basis`
- * slot whenever the transfer split itself carries (approximately) zero value —
- * the common shape for in-kind transfers. generateCapitalGains consumes it so
- * the eventual real sale computes proceeds − original basis instead of
- * proceeds − 0.
+ * slot. This is written even when the transfer has a recorded value: an
+ * own-account transfer is not a disposition or a basis step-up.
+ * generateCapitalGains consumes it so the eventual real sale computes
+ * proceeds − original basis.
  *
  * Idempotency: if the split already has a lot_guid, returns the existing lot.
  *
@@ -682,13 +692,10 @@ export async function linkTransferToLot(
       },
     });
 
-    // Carry the transferred shares' cost basis when the transfer transaction
-    // itself has no value (a $0 in-kind transfer). If the transfer split DOES
-    // carry a value, that value already represents the shares' basis in the
-    // destination lot and adding carried_basis would double-count.
-    const transferValue = toDecimalNumber(split.value_num, split.value_denom);
+    // Carry original basis for every own-account transfer. A recorded value
+    // is not a taxable disposition and must not step up the destination lot.
     const transferQty = toDecimalNumber(split.quantity_num, split.quantity_denom);
-    if (Math.abs(transferValue) < 0.005 && transferQty > 0) {
+    if (transferQty > 0) {
       const carried = await computeCarriedBasis(sourceSplit.lot_guid, transferQty, tx);
       await writeCarriedBasisSlot(lotGuid, carried, tx);
     }
@@ -880,9 +887,9 @@ export async function splitTransferAcrossSourceLots(
       },
     });
 
-    // Carry the allocated shares' cost basis for zero-value transfers (see
+    // Carry original basis for every own-account transfer (see
     // linkTransferToLot — same rule, per source lot here).
-    if (Math.abs(transferVal) < 0.005 && allocShares > 0) {
+    if (allocShares > 0) {
       const carried = await computeCarriedBasis(sourceLotGuid, allocShares, tx);
       await writeCarriedBasisSlot(lotGuid, carried, tx);
     }
@@ -1514,9 +1521,8 @@ export async function generateCapitalGains(
     }
   }
 
-  // TRANSFER-CLOSED lot: not a taxable event. The basis was carried to the
-  // destination lot (carried_basis slot); booking proceeds − basis here would
-  // fabricate a phantom gain/loss. Close the lot and skip.
+  // TRANSFER-CLOSED lot: not a taxable event. Booking proceeds − basis here
+  // would fabricate a phantom gain/loss. Close the lot and skip.
   if (transferOutSplits.length > 0 && sellSplits.length === 0) {
     await tx.lots.update({
       where: { guid: lotGuid },
@@ -1524,7 +1530,7 @@ export async function generateCapitalGains(
     });
     return {
       gainsTransactionGuid: null,
-      skippedReason: 'Closed by transfer — not a taxable event (basis carried to destination lot)',
+      skippedReason: 'Closed by transfer — not a taxable event',
       gainLoss: 0,
       holdingPeriod: null,
       taxClassification: 'TAX_NORMAL',
@@ -1539,6 +1545,10 @@ export async function generateCapitalGains(
   // otherwise realize the sold shares' pro-rata share of the total basis
   // (buy cost + carried_basis).
   const carriedBasis = await readCarriedBasis(lotGuid, tx);
+  const sourceLotSlot = await tx.slots.findFirst({
+    where: { obj_guid: lotGuid, name: 'source_lot_guid' },
+    select: { string_val: true },
+  });
   const soldShares = sellSplits.reduce(
     (sum, s) => sum + Math.abs(toDecimalNumber(s.quantity_num, s.quantity_denom)), 0,
   );
@@ -1547,7 +1557,7 @@ export async function generateCapitalGains(
   );
 
   let gainLoss: number;
-  if (transferOutSplits.length === 0 && Math.abs(carriedBasis) < 0.005) {
+  if (transferOutSplits.length === 0 && !sourceLotSlot?.string_val && Math.abs(carriedBasis) < 0.005) {
     gainLoss = -lot.splits.reduce(
       (sum, s) => sum + toDecimalNumber(s.value_num, s.value_denom),
       0,
@@ -1556,9 +1566,14 @@ export async function generateCapitalGains(
     const boughtShares = buySplits.reduce(
       (sum, s) => sum + toDecimalNumber(s.quantity_num, s.quantity_denom), 0,
     );
-    const buyCost = buySplits.reduce(
-      (sum, s) => sum + Math.abs(toDecimalNumber(s.value_num, s.value_denom)), 0,
-    );
+    // A source-linked lot was created by an own-account transfer. Its positive
+    // transfer-in value is not a purchase and must not be added to the
+    // carried original basis.
+    const buyCost = sourceLotSlot?.string_val
+      ? 0
+      : buySplits.reduce(
+        (sum, s) => sum + Math.abs(toDecimalNumber(s.value_num, s.value_denom)), 0,
+      );
     const basisPerShare = boughtShares > qtyEps ? (buyCost + carriedBasis) / boughtShares : 0;
     gainLoss = saleProceeds - soldShares * basisPerShare;
   }
