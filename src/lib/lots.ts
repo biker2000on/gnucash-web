@@ -4,12 +4,25 @@
  * Provides functions for querying GnuCash lots and computing
  * summaries including realized/unrealized gains, holding periods,
  * and per-lot split details.
+ *
+ * BROKERAGE COMMISSIONS: GnuCash records a trade commission as a separate
+ * EXPENSE split of the trade transaction, so a lot's own splits cannot see it.
+ * Basis and proceeds derived purely from lot splits are therefore GROSS of
+ * every commission — which is exactly how this module reported them until the
+ * Form 8949 path (@/lib/reports/capital-gains) started applying the IRS
+ * treatment, leaving the two reports disagreeing about the same sale by the
+ * commission. `includeTradeFees` recovers the fees through the SAME allocator
+ * the 8949 path uses (@/lib/trade-fees) so the figures agree split for split:
+ * a classified fee is ALWAYS capitalized into basis / netted off proceeds and
+ * NEVER deducted, and anything not confidently classified changes nothing and
+ * is reported as a warning.
  */
 
 import prisma from './prisma';
 import { toDecimalNumber } from './gnucash';
 import { getLatestPrice } from './commodities';
 import { isLongTerm } from './reports/capital-gains';
+import { loadTradeFees, NO_TRADE_FEES, type TradeFeeBySplit } from './trade-fees';
 
 export interface LotSplit {
     guid: string;
@@ -49,7 +62,45 @@ export interface LotSummary {
      * 0 when absent.
      */
     carriedBasis: number;
+    /**
+     * Classified brokerage commissions/fees from the lot's trade transactions
+     * that were folded into `totalCost` (buy side) and `realizedGain` (both
+     * sides). 0 unless the caller asked for `includeTradeFees`, and 0 for any
+     * charge the allocator refused to classify. Reported so a report can
+     * explain the difference between the book's raw split values and the
+     * figures shown.
+     */
+    tradeFees?: number;
     splits: LotSplit[];
+}
+
+/** Options for the lot loaders. */
+export interface LotQueryOptions {
+    /**
+     * Fold classified brokerage commissions/fees into `totalCost`,
+     * `realizedGain` and `unrealizedGain`, matching Form 8949 (see
+     * @/lib/reports/capital-gains). Costs one extra batched query over the
+     * trade transactions' sibling splits, so it is opt-in: callers that only
+     * need share counts or dates keep their current query count, and callers
+     * that report money can ask for figures that agree with the tax forms.
+     */
+    includeTradeFees?: boolean;
+    /**
+     * Account GUID -> full account path ("Expenses:Investments:Commissions"),
+     * as built by buildAccountPathMap. Fee classification reads the PATH — the
+     * 8949 path passes the same map, and passing anything less (or nothing,
+     * which falls back to the bare account name) can classify a charge
+     * differently there than here, which is the disagreement this option
+     * exists to remove.
+     */
+    accountPaths?: ReadonlyMap<string, string>;
+    /**
+     * Sink for the allocator's warnings — charges deliberately NOT capitalized
+     * because they could not be classified confidently. A refusal is silent
+     * under-reporting unless it reaches the user, so a caller that displays
+     * money should pass this and surface it.
+     */
+    feeWarnings?: string[];
 }
 
 /**
@@ -109,23 +160,36 @@ function buildLotSplits(
  * For open (partial) lots, only the realized portion is returned:
  * proceeds from shares sold so far minus their pro-rata share of the buy
  * cost. Returns 0 when nothing has been sold.
+ *
+ * `fees` supplies the brokerage commission attributable to each split, keyed by
+ * split GUID, as recovered from the trade's sibling EXPENSE splits by
+ * @/lib/trade-fees. The IRS treatment (Pub. 550) is a single rule under
+ * GnuCash's native signs: a fee ALWAYS moves the split's value toward the
+ * positive — a buy-side fee is capitalized into basis, a sell-side fee reduces
+ * the amount realized — so either way it shrinks the gain by its own amount.
+ * A fee is never deducted, and a charge the allocator did not classify is
+ * simply absent from the map and changes nothing. Omit `fees` (existing
+ * callers, pure tests) and the gain is gross, exactly as before.
  */
 export function computeRealizedGain(
     splits: Array<{ guid?: string; shares: number; value: number }>,
     isClosed: boolean,
     carriedBasis = 0,
     transferInSplitGuids: ReadonlySet<string> = new Set(),
+    fees: TradeFeeBySplit = NO_TRADE_FEES,
 ): number {
     const EPS = 0.0001;
-    // A same-commodity own-account transfer-in is bookkeeping, not an
-    // acquisition: its true basis is the separately stored carried_basis.
+    const feeOf = (split: { guid?: string }) => (split.guid ? fees.get(split.guid) ?? 0 : 0);
+    // A confirmed same-commodity own-account transfer-in is bookkeeping, not
+    // an acquisition: its true basis is the separately stored carried_basis.
     const basisValue = (split: { guid?: string; shares: number; value: number }) =>
         split.shares > EPS && transferInSplitGuids.has(split.guid ?? '') ? 0 : split.value;
     if (isClosed) {
         // Exclude zero-quantity gains offset splits, negate basis - proceeds
-        return -splits
-            .filter(s => Math.abs(s.shares) > EPS)
-            .reduce((sum, s) => sum + basisValue(s), 0) - carriedBasis;
+        const traded = splits.filter(s => Math.abs(s.shares) > EPS);
+        return -traded.reduce((sum, s) => sum + basisValue(s), 0)
+            - carriedBasis
+            - traded.reduce((sum, s) => sum + feeOf(s), 0);
     }
 
     // Open lot: realized portion only (shares sold so far)
@@ -134,12 +198,15 @@ export function computeRealizedGain(
     if (sells.length === 0) return 0;
 
     const boughtShares = buys.reduce((sum, s) => sum + s.shares, 0);
-    const buyCost = buys.reduce((sum, s) => sum + Math.abs(basisValue(s)), 0) + carriedBasis;
+    // Buy-side fees join the basis pool before it is pro-rated, so the sold
+    // shares carry their share of the commission and the shares still held
+    // keep the rest (see totalCost / unrealizedGain below).
+    const buyCost = buys.reduce((sum, s) => sum + Math.abs(basisValue(s)) + feeOf(s), 0) + carriedBasis;
     const costPerShare = boughtShares > EPS ? buyCost / boughtShares : 0;
 
     const soldShares = sells.reduce((sum, s) => sum + Math.abs(s.shares), 0);
     // Native: sell values are negative, so proceeds = -(sum of sell values)
-    const proceeds = -sells.reduce((sum, s) => sum + s.value, 0);
+    const proceeds = -sells.reduce((sum, s) => sum + s.value + feeOf(s), 0);
 
     return proceeds - soldShares * costPerShare;
 }
@@ -148,8 +215,11 @@ export function computeRealizedGain(
  * Get all lots for an account with computed summaries.
  * Lots are sorted with open lots first, then by open date descending.
  */
-export async function getAccountLots(accountGuid: string): Promise<LotSummary[]> {
-    return (await getLotsForAccounts([accountGuid])).get(accountGuid) ?? [];
+export async function getAccountLots(
+    accountGuid: string,
+    options: LotQueryOptions = {},
+): Promise<LotSummary[]> {
+    return (await getLotsForAccounts([accountGuid], options)).get(accountGuid) ?? [];
 }
 
 /**
@@ -157,7 +227,10 @@ export async function getAccountLots(accountGuid: string): Promise<LotSummary[]>
  * call this once so lots, metadata slots, and account commodities are loaded
  * in set-based queries instead of repeating the same query group per account.
  */
-export async function getLotsForAccounts(accountGuids: string[]): Promise<Map<string, LotSummary[]>> {
+export async function getLotsForAccounts(
+    accountGuids: string[],
+    options: LotQueryOptions = {},
+): Promise<Map<string, LotSummary[]>> {
     const uniqueAccountGuids = [...new Set(accountGuids)];
     const result = new Map(uniqueAccountGuids.map(guid => [guid, [] as LotSummary[]]));
     if (uniqueAccountGuids.length === 0) return result;
@@ -218,6 +291,29 @@ export async function getLotsForAccounts(accountGuids: string[]): Promise<Map<st
         return [commodityGuid, priceData?.value ?? null] as const;
     }));
     const latestPriceByCommodity = new Map(latestPriceEntries);
+
+    // Brokerage commissions live on sibling EXPENSE splits of the trade
+    // transactions, which the lot query above never loads. Recover them ONCE
+    // for every transaction touching these lots, through the same allocator the
+    // Form 8949 path uses, so both reports charge the identical amount to the
+    // identical split. Allocation is per-TRANSACTION (a ticket's fee is shared
+    // across that ticket's security splits by value, so a sell scrubbed into
+    // one split per lot is charged the fee once in total, not once per lot),
+    // which is what makes the per-split amount independent of which lots each
+    // report happened to ask for.
+    //
+    // Tax mappings are deliberately not passed: they only select which
+    // neutralized-mapping warnings the allocator emits and never change an
+    // amount, so omitting them cannot move a figure away from the 8949's.
+    let fees: TradeFeeBySplit = NO_TRADE_FEES;
+    if (options.includeTradeFees) {
+        const allocation = await loadTradeFees(
+            lots.flatMap(lot => lot.splits.map(split => split.tx_guid)),
+            { accountPaths: options.accountPaths },
+        );
+        fees = allocation.fees;
+        options.feeWarnings?.push(...allocation.warnings);
+    }
 
     const nowIso = new Date().toISOString();
     const lotNumberByAccount = new Map<string, number>();
@@ -282,10 +378,16 @@ export async function getLotsForAccounts(accountGuids: string[]): Promise<Map<st
 
         const totalShares = computedShares;
 
-        // Total cost = sum of values where quantity > 0 (buys)
+        // Total cost = sum of values where quantity > 0 (buys), plus the
+        // commissions paid to acquire them: a buy-side fee is part of what the
+        // shares cost, so it belongs in basis (and therefore in the
+        // unrealized-gain and remaining-basis math derived from it below).
+        const tradeFees = lotSplits.reduce((sum, s) => sum + (fees.get(s.guid) ?? 0), 0);
         const totalCost = lotSplits
             .filter(s => s.shares > 0)
-            .reduce((sum, s) => sum + (transferInSplitGuids.has(s.guid) ? 0 : Math.abs(s.value)), 0) + carriedBasis;
+            .reduce((sum, s) => sum
+                + (transferInSplitGuids.has(s.guid) ? 0 : Math.abs(s.value))
+                + (fees.get(s.guid) ?? 0), 0) + carriedBasis;
 
         // Exclude transfer-outs, split by split, before computing gain. A
         // transfer can coexist with an actual sale in the same lot; suppressing
@@ -299,6 +401,7 @@ export async function getLotsForAccounts(accountGuids: string[]): Promise<Map<st
             taxableLotIsClosed,
             carriedBasis,
             transferInSplitGuids,
+            fees,
         );
 
         // Unrealized gain: (currentPrice * remaining shares) - cost basis of remaining shares
@@ -345,6 +448,7 @@ export async function getLotsForAccounts(accountGuids: string[]): Promise<Map<st
             sourceLotGuid,
             acquisitionDate,
             carriedBasis,
+            tradeFees,
             splits: lotSplits,
         };
         const summaries = result.get(accountGuid) ?? [];

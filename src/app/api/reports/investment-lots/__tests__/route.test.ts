@@ -36,6 +36,7 @@ const mocks = vi.hoisted(() => ({
     accountsFindMany: vi.fn(),
     lotsFindMany: vi.fn(),
     slotsFindMany: vi.fn(),
+    splitsFindMany: vi.fn(),
 }));
 
 vi.mock('@/lib/auth', () => ({ requireRole: mocks.requireRole }));
@@ -50,6 +51,9 @@ vi.mock('@/lib/prisma', async () => {
             accounts: { findMany: mocks.accountsFindMany },
             lots: { findMany: mocks.lotsFindMany },
             slots: { findMany: mocks.slotsFindMany },
+            // Sibling splits of the trade transactions — where GnuCash keeps
+            // the brokerage commission (@/lib/trade-fees).
+            splits: { findMany: mocks.splitsFindMany },
         },
         toDecimal: gnucash.toDecimal,
         fromDecimal: gnucash.fromDecimal,
@@ -163,6 +167,8 @@ describe('investment lots report', () => {
             lots: LOTS,
         }]);
         mocks.lotsFindMany.mockResolvedValue(LOTS);
+        // No commissions in the base fixture.
+        mocks.splitsFindMany.mockResolvedValue([]);
         mocks.slotsFindMany.mockImplementation(async (args: {
             where: { obj_guid: { in: string[] }; name: string | { in: string[] } };
         }) => {
@@ -336,5 +342,94 @@ describe('investment lots report', () => {
         const rows = new Map<string, Row>(body.rows.map((r: Row) => [r.lotGuid, r]));
         expect(rows.get(TRANSFER_LOT)!.marketValue).toBeCloseTo(1200, 6);
         expect(rows.get(LOT_B)!.marketValue).toBeNull();
+    });
+
+    /**
+     * A commission is a separate EXPENSE split of the trade transaction, so it
+     * is invisible to the lot's own splits. Form 8949 capitalizes it into basis
+     * and nets it off proceeds; this report has to do the same or the two
+     * disagree about the same sale by the commission.
+     */
+    describe('brokerage commissions', () => {
+        const COMMISSION_LOT = 'f'.repeat(32);
+        const COMMISSION_ACCOUNT = 'g'.repeat(32);
+
+        const buy = split({
+            guid: 'split-cbuy', quantity: 10n, valueCents: 100_000n,
+            postDate: '2023-01-10T12:00:00.000Z', description: 'Buy 10 VTSAX', lotGuid: COMMISSION_LOT,
+        });
+        const sell = split({
+            guid: 'split-csell', quantity: -10n, valueCents: -150_000n,
+            postDate: '2024-06-20T12:00:00.000Z', description: 'Sell 10 VTSAX', lotGuid: COMMISSION_LOT,
+        });
+
+        /** The trade's sibling splits, as the fee loader queries them. */
+        function feeSplit(guid: string, txGuid: string, cents: bigint, accountName: string) {
+            return {
+                guid, tx_guid: txGuid, account_guid: COMMISSION_ACCOUNT,
+                value_num: cents, value_denom: 100n,
+                quantity_num: 0n, quantity_denom: 1n,
+                account: { name: accountName, account_type: 'EXPENSE' },
+                transaction: { post_date: new Date('2024-06-20T12:00:00.000Z'), description: 'Trade' },
+            };
+        }
+        function securitySplit(s: ReturnType<typeof split>) {
+            return {
+                guid: s.guid, tx_guid: s.tx_guid, account_guid: ACCOUNT,
+                value_num: s.value_num, value_denom: s.value_denom,
+                quantity_num: s.quantity_num, quantity_denom: s.quantity_denom,
+                account: { name: 'VTSAX', account_type: 'MUTUAL' },
+                transaction: { post_date: s.transaction.post_date, description: s.transaction.description },
+            };
+        }
+
+        function installCommission(accountName: string, path: string) {
+            mocks.getBookAccountGuids.mockResolvedValue([ACCOUNT, COMMISSION_ACCOUNT]);
+            mocks.buildAccountPathMap.mockResolvedValue(new Map([
+                [ACCOUNT, 'Assets:Investments:VTSAX'],
+                [COMMISSION_ACCOUNT, path],
+            ]));
+            mocks.lotsFindMany.mockResolvedValue([{
+                guid: COMMISSION_LOT, account_guid: ACCOUNT, is_closed: 1, splits: [buy, sell],
+            }]);
+            mocks.splitsFindMany.mockResolvedValue([
+                securitySplit(buy), feeSplit('fee-buy', buy.tx_guid, 1_000n, accountName),
+                securitySplit(sell), feeSplit('fee-sell', sell.tx_guid, 1_200n, accountName),
+            ]);
+        }
+
+        it('capitalizes the buy fee into basis and nets the sell fee off proceeds', async () => {
+            // Bought $1,000.00 + $10.00 commission, sold $1,500.00 - $12.00
+            // commission. Gross (what this report used to say): basis $1,000.00,
+            // gain $500.00. Form 8949 says basis $1,010.00, proceeds $1,488.00,
+            // gain $478.00 — and now so does this report.
+            installCommission('Commissions', 'Expenses:Investments:Commissions');
+
+            const response = await GET(request('showClosed=true&endDate=2026-12-31'));
+            const body = await response.json();
+            const row = body.rows.find((r: Row) => r.lotGuid === COMMISSION_LOT);
+
+            expect(row.costBasis).toBeCloseTo(1010, 6);
+            expect(row.realizedGain).toBeCloseTo(478, 6);
+            expect(row.totalGain).toBeCloseTo(478, 6);
+            expect(body.summary.totalRealizedGain).toBeCloseTo(478, 6);
+            expect(body.warnings).toEqual([]);
+        });
+
+        it('leaves an unclassifiable charge out of the figures and reports it', async () => {
+            // Same $10/$12 charges, but posted somewhere that does not read as a
+            // commission. Nothing is guessed at: the gross $1,000.00 / $500.00
+            // stand, and the report says why.
+            installCommission('Sundry Charge', 'Expenses:Investments:Sundry Charge');
+
+            const response = await GET(request('showClosed=true&endDate=2026-12-31'));
+            const body = await response.json();
+            const row = body.rows.find((r: Row) => r.lotGuid === COMMISSION_LOT);
+
+            expect(row.costBasis).toBeCloseTo(1000, 6);
+            expect(row.realizedGain).toBeCloseTo(500, 6);
+            expect(body.warnings.length).toBeGreaterThan(0);
+            expect(body.warnings.join('\n')).toContain('Sundry Charge');
+        });
     });
 });
