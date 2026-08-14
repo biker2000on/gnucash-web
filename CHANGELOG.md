@@ -100,6 +100,31 @@ Covers work landed since 0.23.2.0 (2026-07-29).
   adjustment for assets whose quantity and transaction-currency value differ
   (multi-currency holdings and books imported from GnuCash desktop). Reports
   produced before this release should be regenerated.
+- **Transactions can no longer be written into a book you do not have access
+  to.** Creating or editing a transaction validated only that the account
+  identifiers you supplied *existed* — not that they belonged to your book — so
+  a user with edit access to one book could post entries into another book's
+  accounts. Editing and deleting a transaction were similarly addressed by
+  identifier alone. Both now resolve the accounts belonging to your book and
+  refuse anything outside it, and edit and delete act only on transactions
+  wholly contained in your book. Out-of-book identifiers are rejected exactly
+  as unknown ones are, so the API cannot be used to probe whether another
+  book's account exists.
+
+  A related fault in the same code path is fixed: the **currency trading
+  accounts** used to balance multi-currency entries were looked up globally
+  rather than per book, so the first `Trading` hierarchy in the database served
+  every book. On installations with more than one book, a multi-currency entry
+  in one book could place its balancing split in another book's trading
+  account. Each book now resolves — and if necessary creates — its own trading
+  hierarchy. **If your books share a single trading tree today, each will
+  create its own on first use after this upgrade.** Existing entries are not
+  rewritten.
+
+  `scripts/find-cross-book-transactions.ts` ships as a read-only check that
+  reports any transaction whose splits span more than one book. A transaction
+  in that state cannot be edited or deleted through the API by design and needs
+  manual repair; there are expected to be none.
 - **Cost basis for shares transferred in from another account is now traced,
   and where it genuinely cannot be established the app says so instead of
   showing zero.** A transfer-in split carries no value of its own, so shares
