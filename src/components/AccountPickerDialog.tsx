@@ -134,7 +134,7 @@ export default function AccountPickerDialog({
                     value={search}
                     onChange={e => setSearch(e.target.value)}
                     placeholder="Search accounts..."
-                    className="w-full px-3 py-2 bg-background-tertiary border border-border rounded-md text-sm text-foreground focus:border-accent focus:outline-none"
+                    className="w-full px-3 py-2 bg-background-tertiary border border-border rounded-md text-sm text-foreground focus:border-primary focus:ring-2 focus:ring-primary focus:outline-none"
                     autoFocus
                 />
 

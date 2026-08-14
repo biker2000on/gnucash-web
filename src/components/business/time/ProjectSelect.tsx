@@ -111,7 +111,7 @@ export function ProjectSelect({
             <div
                 className={`flex items-center bg-input-bg border rounded-lg ${compact ? 'px-2 py-1' : 'px-3 py-2'} ${
                     disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:border-border-hover'
-                } ${open ? 'border-primary/50 ring-1 ring-primary/20' : 'border-border'}`}
+                } ${open ? 'border-primary/50 ring-1 ring-primary/20' : 'border-border focus-within:border-primary/50 focus-within:ring-1 focus-within:ring-primary/20'}`}
                 onClick={() => !disabled && inputRef.current?.focus()}
             >
                 <input

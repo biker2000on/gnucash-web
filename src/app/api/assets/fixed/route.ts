@@ -11,6 +11,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { getBookAccountGuids } from '@/lib/book-scope';
 import { requireRole } from '@/lib/auth';
+import { getAssetBalances } from '@/lib/asset-transaction-service';
 
 interface FixedAssetAccount {
   guid: string;
@@ -97,20 +98,12 @@ export async function GET(request: NextRequest) {
     `;
     const pathMap = new Map(pathResults.map((r) => [r.guid, r.fullname]));
 
-    // Get balances for all fixed asset accounts
-    const balanceResults = await prisma.$queryRaw<
-      Array<{ account_guid: string; balance: string }>
-    >`
-      SELECT
-        account_guid,
-        COALESCE(SUM(CAST(value_num AS DOUBLE PRECISION) / CAST(value_denom AS DOUBLE PRECISION)), 0)::TEXT AS balance
-      FROM splits
-      WHERE account_guid = ANY(${fixedAssetGuids})
-      GROUP BY account_guid
-    `;
-    const balanceMap = new Map(
-      balanceResults.map((r) => [r.account_guid, parseFloat(r.balance)])
-    );
+    // Get balances for all fixed asset accounts. This must use the same
+    // quantity-based helper as the asset detail view: for a fixed asset the
+    // account-side quantity is the balance in the account's commodity, and a
+    // split's value can differ from it. Summing value here is what made the
+    // list and the detail page disagree.
+    const balanceMap = await getAssetBalances(fixedAssetGuids);
 
     // Get last transaction dates
     const lastTxResults = await prisma.$queryRaw<

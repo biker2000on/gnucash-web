@@ -348,7 +348,7 @@ export default function BudgetsPage() {
                                         setScenarioName(scenarioDefaultName(scenarioSource, factor, 'custom'));
                                     }}
                                     placeholder="±%"
-                                    className="w-14 bg-transparent text-sm font-mono tabular-nums text-right text-foreground focus:outline-none"
+                                    className="w-14 bg-transparent text-sm font-mono tabular-nums text-right text-foreground"
                                 />
                                 <span className="text-xs text-foreground-muted">%</span>
                             </div>

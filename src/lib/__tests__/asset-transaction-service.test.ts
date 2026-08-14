@@ -42,7 +42,7 @@ describe('adjustToTargetValue', () => {
   it('calculates an adjustment from account quantity when transaction value differs', async () => {
     // 10 asset units carried at $1,500 transaction value: target is 12 units.
     mocks.queryRaw.mockResolvedValue([
-      { quantity_num: 10n, quantity_denom: 1n, value_num: 150000n, value_denom: 100n },
+      { account_guid: 'asset-account', quantity_num: 10n, quantity_denom: 1n, value_num: 150000n, value_denom: 100n },
     ]);
 
     const result = await adjustToTargetValue({
@@ -62,7 +62,7 @@ describe('adjustToTargetValue', () => {
 
   it('keeps native-currency adjustments unchanged when value equals quantity', async () => {
     mocks.queryRaw.mockResolvedValue([
-      { quantity_num: 150000n, quantity_denom: 100n, value_num: 150000n, value_denom: 100n },
+      { account_guid: 'asset-account', quantity_num: 150000n, quantity_denom: 100n, value_num: 150000n, value_denom: 100n },
     ]);
 
     const result = await adjustToTargetValue({

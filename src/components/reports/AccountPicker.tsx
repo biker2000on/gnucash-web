@@ -309,7 +309,7 @@ export function AccountPicker({
                             placeholder="Search accounts..."
                             value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}
-                            className="w-full px-3 py-2 bg-input-bg border-0 text-sm text-foreground placeholder-foreground-muted focus:outline-none focus:ring-0"
+                            className="w-full px-3 py-2 bg-input-bg border-0 text-sm text-foreground placeholder-foreground-muted"
                             autoFocus
                         />
                     </div>
