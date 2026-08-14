@@ -6,12 +6,18 @@ import {
   addIngestSender,
   getEmailIngestConfig,
   INGEST_KINDS,
+  listIngestAttention,
   listIngestLog,
   listIngestSenders,
   type IngestDefaultKind,
+  type IngestAttentionEntry,
+  type IngestAttentionList,
   type IngestLogEntry,
   type IngestSender,
 } from '@/lib/email-ingest';
+
+/** Cap on the attention list. The response always reports the TRUE totals. */
+const ATTENTION_LIMIT = 50;
 
 function serializeSender(sender: IngestSender) {
   return {
@@ -32,8 +38,13 @@ function serializeLogEntry(entry: IngestLogEntry) {
     outcome: entry.outcome,
     detail: entry.detail,
     ingestedCount: entry.ingestedCount,
+    attempts: entry.attempts,
     processedAt: entry.processedAt.toISOString(),
   };
+}
+
+function serializeAttentionEntry(entry: IngestAttentionEntry) {
+  return { ...serializeLogEntry(entry), category: entry.category };
 }
 
 /**
@@ -46,9 +57,19 @@ export async function GET() {
     if (roleResult instanceof NextResponse) return roleResult;
 
     const config = getEmailIngestConfig();
-    const [senders, log] = config
-      ? await Promise.all([listIngestSenders(), listIngestLog(10)])
-      : [[] as IngestSender[], [] as IngestLogEntry[]];
+    // Items needing attention are queried separately from the capped
+    // recent-activity list, so later successes can never hide an outstanding
+    // failure by pushing it off the end — and they carry TRUE totals so a
+    // truncated list still reports the real size of the backlog.
+    const emptyAttention: IngestAttentionList =
+      { items: [], failedTotal: 0, stalledTotal: 0, truncated: false };
+    const [senders, log, attention] = config
+      ? await Promise.all([
+          listIngestSenders(),
+          listIngestLog(10),
+          listIngestAttention(roleResult.user.id, ATTENTION_LIMIT),
+        ])
+      : [[] as IngestSender[], [] as IngestLogEntry[], emptyAttention];
 
     return NextResponse.json({
       configured: config !== null,
@@ -57,6 +78,14 @@ export async function GET() {
       defaultBookGuid: config?.defaultBookGuid ?? null,
       senders: senders.map(serializeSender),
       log: log.map(serializeLogEntry),
+      attention: {
+        items: attention.items.map(serializeAttentionEntry),
+        failedTotal: attention.failedTotal,
+        stalledTotal: attention.stalledTotal,
+        shown: attention.items.length,
+        truncated: attention.truncated,
+        limit: ATTENTION_LIMIT,
+      },
     });
   } catch (error) {
     console.error('Error loading email-ingest settings:', error);

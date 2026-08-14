@@ -20,7 +20,22 @@ interface IngestLogEntry {
     outcome: string;
     detail: string | null;
     ingestedCount: number;
+    attempts: number;
     processedAt: string;
+}
+
+interface AttentionEntry extends IngestLogEntry {
+    category: 'failed' | 'stalled';
+}
+
+interface AttentionList {
+    items: AttentionEntry[];
+    /** True totals, independent of how many `items` were returned. */
+    failedTotal: number;
+    stalledTotal: number;
+    shown: number;
+    truncated: boolean;
+    limit: number;
 }
 
 interface BookOption {
@@ -34,6 +49,19 @@ interface IngestStatus {
     mailboxUser: string | null;
     senders: IngestSender[];
     log: IngestLogEntry[];
+    /** Items needing attention, independent of the capped activity list. */
+    attention: AttentionList;
+}
+
+function attentionSummary(attention: AttentionList): string {
+    const parts: string[] = [];
+    if (attention.failedTotal > 0) {
+        parts.push(`${attention.failedTotal} message${attention.failedTotal === 1 ? '' : 's'} not ingested`);
+    }
+    if (attention.stalledTotal > 0) {
+        parts.push(`${attention.stalledTotal} stalled`);
+    }
+    return parts.join(', ');
 }
 
 const KIND_OPTIONS: Array<{ value: IngestSender['defaultKind']; label: string }> = [
@@ -51,9 +79,45 @@ function outcomeBadge(outcome: string): { color: string; label: string } {
             return { color: 'bg-foreground-muted', label: 'Sender not allowed' };
         case 'no_attachments':
             return { color: 'bg-foreground-muted', label: 'No attachments' };
+        case 'processing':
+            return { color: 'bg-foreground-muted', label: 'In progress' };
+        case 'error':
+            // Transient failure — an automatic retry is still pending.
+            return { color: 'bg-warning', label: 'Retrying' };
+        case 'failed_permanent':
+            return { color: 'bg-error', label: 'Failed' };
         default:
             return { color: 'bg-error', label: 'Error' };
     }
+}
+
+interface LogRowProps {
+    entry: IngestLogEntry;
+    badge: { color: string; label: string };
+}
+
+function LogRow({ entry, badge }: LogRowProps) {
+    return (
+        <li className="flex items-start gap-3 text-sm border border-border rounded-lg px-3 py-2">
+            <span
+                className={`inline-block w-2.5 h-2.5 mt-1 rounded-full shrink-0 ${badge.color}`}
+                title={badge.label}
+            />
+            <div className="min-w-0 flex-1">
+                <div className="text-foreground truncate">
+                    {entry.subject || '(no subject)'}
+                    <span className="text-foreground-muted"> — {entry.fromEmail ?? 'unknown sender'}</span>
+                </div>
+                <div className="text-xs text-foreground-muted truncate" title={entry.detail ?? undefined}>
+                    {badge.label}
+                    {entry.attempts > 0 && ` · attempt ${entry.attempts}`}
+                    {entry.ingestedCount > 0 && ` · ${entry.ingestedCount} document${entry.ingestedCount === 1 ? '' : 's'}`}
+                    {' · '}{new Date(entry.processedAt).toLocaleString()}
+                    {entry.detail && ` · ${entry.detail}`}
+                </div>
+            </div>
+        </li>
+    );
 }
 
 export function EmailIngestSection() {
@@ -164,6 +228,7 @@ export function EmailIngestSection() {
     const configured = status?.configured === true;
     const senders = status?.senders ?? [];
     const log = status?.log ?? [];
+    const attention = status?.attention;
     const bookName = (guid: string | null) =>
         guid ? (books.find(b => b.guid === guid)?.name ?? guid.slice(0, 8)) : 'Default';
 
@@ -211,6 +276,38 @@ export function EmailIngestSection() {
                         >
                             {polling ? 'Polling…' : 'Poll now'}
                         </button>
+                    </div>
+                )}
+
+                {attention && attention.items.length > 0 && (
+                    <div className="space-y-2 border border-error/30 bg-error/5 rounded-lg p-3">
+                        <h4 className="text-sm font-medium text-error">
+                            Needs attention — {attentionSummary(attention)}
+                        </h4>
+                        <p className="text-xs text-foreground-secondary">
+                            No document was created for these emails. Fix the cause — sender
+                            allowlist, book configuration, or the attachment itself — and forward
+                            the email again. Outstanding items stay listed here regardless of how
+                            much newer activity there is.
+                        </p>
+                        {attention.truncated && (
+                            <p className="text-xs text-error">
+                                Showing the {attention.shown} most recent of{' '}
+                                {attention.failedTotal + attention.stalledTotal} — the rest are not
+                                listed here.
+                            </p>
+                        )}
+                        <ul className="space-y-1.5">
+                            {attention.items.map(entry => (
+                                <LogRow
+                                    key={entry.id}
+                                    entry={entry}
+                                    badge={entry.category === 'stalled'
+                                        ? { color: 'bg-warning', label: 'Stalled' }
+                                        : outcomeBadge(entry.outcome)}
+                                />
+                            ))}
+                        </ul>
                     </div>
                 )}
 
@@ -291,24 +388,7 @@ export function EmailIngestSection() {
                             {log.map(entry => {
                                 const badge = outcomeBadge(entry.outcome);
                                 return (
-                                    <li key={entry.id} className="flex items-start gap-3 text-sm border border-border rounded-lg px-3 py-2">
-                                        <span
-                                            className={`inline-block w-2.5 h-2.5 mt-1 rounded-full shrink-0 ${badge.color}`}
-                                            title={badge.label}
-                                        />
-                                        <div className="min-w-0 flex-1">
-                                            <div className="text-foreground truncate">
-                                                {entry.subject || '(no subject)'}
-                                                <span className="text-foreground-muted"> — {entry.fromEmail ?? 'unknown sender'}</span>
-                                            </div>
-                                            <div className="text-xs text-foreground-muted truncate">
-                                                {badge.label}
-                                                {entry.ingestedCount > 0 && ` · ${entry.ingestedCount} document${entry.ingestedCount === 1 ? '' : 's'}`}
-                                                {' · '}{new Date(entry.processedAt).toLocaleString()}
-                                                {entry.detail && ` · ${entry.detail}`}
-                                            </div>
-                                        </div>
-                                    </li>
+                                    <LogRow key={entry.id} entry={entry} badge={badge} />
                                 );
                             })}
                         </ul>

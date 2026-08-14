@@ -26,6 +26,15 @@ export async function handlePollEmailIngest(job: Job): Promise<void> {
   const result = await pollEmailIngest();
   console.log(
     `[${job.id}] Email ingest poll: ${result.checked} message(s) checked, ` +
-    `${result.ingested} document(s) ingested, ${result.skipped} skipped, ${result.errors} error(s)`,
+    `${result.ingested} document(s) ingested, ${result.skipped} skipped, ${result.errors} error(s) ` +
+    `(${result.retrying} awaiting retry, ${result.failedPermanently} failed permanently)`,
   );
+  if (result.failedPermanently > 0) {
+    // Per-message reasons are in the ingest log and in the owning user's
+    // notification feed; this line is the operator-side breadcrumb.
+    console.error(
+      `[${job.id}] ${result.failedPermanently} email message(s) failed permanently — ` +
+      'see Settings → Email ingest to inspect and retry',
+    );
+  }
 }
