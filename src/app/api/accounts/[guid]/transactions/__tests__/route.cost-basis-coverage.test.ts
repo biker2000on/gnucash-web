@@ -92,7 +92,13 @@ const POST_DATE: Record<string, Date> = {
 
 const ALL_SPLITS = [BUY, XFER, SELL];
 
-type LedgerRow = { guid: string; cost_basis: string; share_balance: string; cost_basis_uncovered_shares: string };
+type LedgerRow = {
+    guid: string;
+    cost_basis: string;
+    share_balance: string;
+    /** null = coverage unknown; NOT the same as '0'. */
+    cost_basis_uncovered_shares: string | null;
+};
 
 beforeEach(() => {
     vi.clearAllMocks();
@@ -124,6 +130,16 @@ beforeEach(() => {
         const query = Prisma.sql(strings, ...values);
         if (query.text.includes('gnucash_web_transaction_meta') || query.text.includes('gnucash_web_receipts')) return Promise.resolve([]);
         if (query.text.includes('account_transaction_deltas')) return Promise.resolve([]);
+        // The no-carry-over running-totals path reads splits directly in SQL.
+        // Match its projection, not `FROM splits s` — the page-GUID query has
+        // that same text inside its EXISTS predicate.
+        if (query.text.includes('SELECT s.tx_guid')) {
+            return Promise.resolve(ALL_SPLITS.map(s => ({
+                tx_guid: s.own.tx_guid,
+                quantity_num: s.own.quantity_num, quantity_denom: s.own.quantity_denom,
+                value_num: s.own.value_num, value_denom: s.own.value_denom,
+            })));
+        }
         return Promise.resolve([{ guid: SELL_TX }, { guid: XFER_TX }, { guid: BUY_TX }]);
     });
     prismaMock.transactions.findMany.mockImplementation(({ where }: { where: { guid: { in: string[] } } }) => {
@@ -217,6 +233,49 @@ describe('investment ledger running cost basis — coverage', () => {
         // Sell 100 of 200 at a $30 average -> $3,000 of basis left.
         expect(Number(rows[SELL_TX].cost_basis)).toBeCloseTo(3_000, 6);
         expect(Number(rows[SELL_TX].cost_basis_uncovered_shares)).toBe(0);
+    });
+
+    it('an oversell keeps the share balance negative and reports coverage as UNAVAILABLE', async () => {
+        // Buy 100, sell 150. Shorting is a real position this ledger must
+        // display, but the pool clamps at zero shares and cannot describe one.
+        prismaMock.splits.findMany.mockImplementation((args: { where: Record<string, unknown> }) => {
+            const rows = [
+                pair({ guid: 'buy', txGuid: BUY_TX, shares: 100, value: 1_000, counterAccount: CASH, counterShares: -1_000 }),
+                pair({ guid: 'sell', txGuid: SELL_TX, shares: -150, value: -12_000, counterAccount: CASH, counterShares: 12_000 }),
+            ];
+            if (typeof args.where.account_guid === 'string') {
+                return Promise.resolve(rows.map(s => ({
+                    ...s.own,
+                    transaction: { post_date: POST_DATE[s.own.tx_guid], enter_date: POST_DATE[s.own.tx_guid] },
+                })));
+            }
+            return Promise.resolve(rows.flatMap(s => [s.own, s.counter]));
+        });
+
+        const rows = await ledger();
+
+        // The share balance is the honest one, negative and all.
+        expect(Number(rows[SELL_TX].share_balance)).toBeCloseTo(-50, 6);
+        // Coverage is unknown — NOT "0 uncovered", which would invite a
+        // consumer to compute share_balance - uncovered = -50 covered shares.
+        expect(rows[SELL_TX].cost_basis_uncovered_shares).toBeNull();
+        // The long rows before the oversell still report coverage normally.
+        expect(rows[BUY_TX].cost_basis_uncovered_shares).toBe('0');
+    });
+
+    it('reports coverage as UNAVAILABLE when carry-over tracing is switched off', async () => {
+        partiallyCoveredTransfer();
+        const rows = await ledger('costBasisCarryOver=false&limit=100');
+
+        // This path does no transfer-in detection at all, so the $0 in-kind
+        // transfer enters at face value. Claiming 0 uncovered here would assert
+        // a completeness the branch never established.
+        expect(traceCostBasisMock).not.toHaveBeenCalled();
+        expect(rows[BUY_TX].cost_basis_uncovered_shares).toBeNull();
+        expect(rows[XFER_TX].cost_basis_uncovered_shares).toBeNull();
+        expect(rows[SELL_TX].cost_basis_uncovered_shares).toBeNull();
+        // The share balance and basis this path does compute are unchanged.
+        expect(Number(rows[XFER_TX].share_balance)).toBeCloseTo(200, 6);
     });
 
     it('the running totals replay full history, NOT the ledger filter', async () => {

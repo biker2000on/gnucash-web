@@ -29,14 +29,50 @@ import { cacheGet, cacheSet } from '@/lib/cache';
  * have no establishable basis (in-kind transfers whose origin is not in this
  * book). The two travel together deliberately: a running cost-basis column that
  * omitted the uncovered count would read as a complete basis and understate it.
+ *
+ * `costBasisUncoveredShares` is `null` when coverage is UNKNOWN, which is a
+ * different statement from `0` ("every share has a basis"). Two situations
+ * produce it, and both are cases where claiming full coverage would be a
+ * fabrication:
+ *
+ *  - Carry-over tracing is switched off (`costBasisCarryOver=false`). That path
+ *    deliberately does not detect transfer-ins, so an in-kind transfer lands at
+ *    its $0 split value; the basis it reports may be missing real cost. It is
+ *    not re-traced here — turning tracing off is the user's choice — but the
+ *    result no longer claims completeness.
+ *  - The share balance runs short/negative (an oversell). The pool clamps at
+ *    zero shares and cannot describe a short position, so it can no longer say
+ *    anything true about coverage. The share balance itself stays correct.
+ *
+ * `null` (never `undefined`) so the field survives the JSON round-trip through
+ * Redis instead of being dropped from the cached object.
  */
 type InvestmentRunningTotal = {
     shareBalance: number;
     costBasis: number;
-    costBasisUncoveredShares: number;
+    costBasisUncoveredShares: number | null;
 };
 
 type InvestmentTotals = Map<string, InvestmentRunningTotal>;
+
+/**
+ * Share-count tolerance for comparing the pool's share count against the raw
+ * running balance. Matches the epsilon the lot code uses; the pool's pro-rata
+ * arithmetic accumulates float drift that a tighter bound would misread as a
+ * short position.
+ */
+const COVERAGE_EPS = 0.0001;
+
+/**
+ * Serialize the uncovered-share count for the response: a decimal string when
+ * coverage is known, `null` when it is not. A transaction absent from the
+ * totals map is also unknown — never defaulted to '0', which would assert full
+ * coverage for a row nothing was computed for.
+ */
+function uncoveredShareText(total: InvestmentRunningTotal | undefined): string | null {
+    const uncovered = total?.costBasisUncoveredShares;
+    return uncovered == null ? null : uncovered.toString();
+}
 
 /** Thrown for a malformed filter value; caught in GET and answered as a 400. */
 class BadFilterError extends Error {}
@@ -371,10 +407,18 @@ export async function GET(
                         removeSharesFromPool(pool, Math.abs(shares));
                         runShares += shares;
                     }
+                    // The pool clamps removals at the shares it holds, so an
+                    // oversell (short position) leaves it empty while runShares
+                    // goes negative. runShares is the correct balance and stays
+                    // as-is; coverage becomes unknown rather than a "0
+                    // uncovered" claim that would hand consumers a negative
+                    // `shareBalance - uncovered` denominator.
+                    const poolShares = pool.coveredShares + pool.uncoveredShares;
+                    const coverageIsKnowable = Math.abs(runShares - poolShares) < COVERAGE_EPS;
                     totals.set(split.tx_guid, {
                         shareBalance: runShares,
                         costBasis: pool.basisOfCoveredShares,
-                        costBasisUncoveredShares: pool.uncoveredShares,
+                        costBasisUncoveredShares: coverageIsKnowable ? pool.uncoveredShares : null,
                     });
                 }
                 return totals;
@@ -418,9 +462,13 @@ export async function GET(
                     totals.set(split.tx_guid, {
                         shareBalance: runShares,
                         costBasis: runCostBasis,
-                        // Carry-over tracing is off on this path, so every share
-                        // is basised by its own split value: nothing uncovered.
-                        costBasisUncoveredShares: 0,
+                        // Carry-over tracing is off on this path, so it does no
+                        // transfer-in detection: an in-kind transfer-in enters
+                        // at its $0 split value and this basis may be missing
+                        // real cost. Re-adding tracing here would reimplement
+                        // the very feature the caller switched off, so instead
+                        // the result declines to claim coverage at all.
+                        costBasisUncoveredShares: null,
                     });
                 }
                 return totals;
@@ -693,10 +741,11 @@ export async function GET(
                 ...(investmentRunningTotals ? {
                     share_balance: investmentRunningTotals.get(tx.guid)?.shareBalance.toString() ?? '0',
                     // Basis of the shares that HAVE one; the companion field
-                    // says how many shares it does not cover.
+                    // says how many shares it does not cover — or `null` when
+                    // coverage is unknown, which is NOT the same as zero. A
+                    // client must not derive a per-share basis from a null.
                     cost_basis: investmentRunningTotals.get(tx.guid)?.costBasis.toString() ?? '0',
-                    cost_basis_uncovered_shares:
-                        investmentRunningTotals.get(tx.guid)?.costBasisUncoveredShares.toString() ?? '0',
+                    cost_basis_uncovered_shares: uncoveredShareText(investmentRunningTotals.get(tx.guid)),
                 } : {}),
             };
 
