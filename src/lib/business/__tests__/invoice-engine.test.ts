@@ -931,11 +931,10 @@ describe('invoice engine (fake prisma)', () => {
     ).rejects.toBeInstanceOf(InvoiceValidationError);
   });
 
-  it('unpost removes the transaction, lot and slots; refuses when paid', async () => {
+  it('unpost refuses while payments are applied', async () => {
     const inv = await createInvoice(BOOK_A, customerInvoiceInput());
     const posted = await postInvoice(BOOK_A, inv.guid, { postDate: '2026-01-05' });
 
-    // With a payment attached: refuse
     await applyPayment(BOOK_A, {
       ownerType: 'customer',
       ownerGuid: 'cust1',
@@ -944,28 +943,264 @@ describe('invoice engine (fake prisma)', () => {
       date: '2026-02-01',
     });
     await expect(unpostInvoice(BOOK_A, inv.guid)).rejects.toBeInstanceOf(InvoiceStateError);
+    await expect(unpostInvoice(BOOK_A, inv.guid)).rejects.toThrow(/payments are applied/);
 
-    // Fresh invoice with no payments: unpost cleans everything up
-    const inv2 = await createInvoice(BOOK_A, customerInvoiceInput());
-    const posted2 = await postInvoice(BOOK_A, inv2.guid, { postDate: '2026-01-06' });
-    await unpostInvoice(BOOK_A, inv2.guid);
+    // Refusal is total: nothing was reversed, the invoice is still posted.
+    expect(req(holder.db!.invoices.rows.find((i: Row) => i.guid === inv.guid)).post_txn).toBe(
+      posted.transactionGuid
+    );
+  });
 
-    expect(holder.db!.transactions.rows.find((t: Row) => t.guid === posted2.transactionGuid)).toBeUndefined();
-    expect(holder.db!.lots.rows.find((l: Row) => l.guid === posted2.lotGuid)).toBeUndefined();
-    expect(holder.db!.splits.rows.filter((s: Row) => s.tx_guid === posted2.transactionGuid)).toHaveLength(0);
-    expect(
-      holder.db!.slots.rows.filter(
-        (s: Row) => s.obj_guid === posted2.transactionGuid || s.obj_guid === posted2.lotGuid
-      )
-    ).toHaveLength(0);
+  // -------------------------------------------------------------------------
+  // Unpost REVERSES, it does not delete (H8)
+  //
+  // Deleting a posted transaction destroys the audit trail, silently restates
+  // whatever period it sat in, and can take a split that was reconciled
+  // against a statement with it. These cases pin the reversal down: the
+  // original survives untouched, an equal-and-opposite transaction cancels it,
+  // and every affected account nets to zero.
+  // -------------------------------------------------------------------------
 
-    const after = await getView(inv2.guid);
-    expect(after.posted).toBe(false);
-    expect(after.status).toBe('draft');
-    expect(after.postTxnGuid).toBeNull();
+  /** Net value per account across EVERY split in the book, in cents. */
+  const netByAccount = () => {
+    const net = new Map<string, bigint>();
+    for (const s of holder.db!.splits.rows) {
+      expect(s.value_denom).toBe(100n); // fixtures are USD cents throughout
+      net.set(s.account_guid, (net.get(s.account_guid) ?? 0n) + s.value_num);
+    }
+    return net;
+  };
 
-    // The first invoice's posting remains untouched
+  const splitsOf = (txGuid: string) =>
+    holder.db!.splits.rows.filter((s: Row) => s.tx_guid === txGuid);
+
+  const slotsOf = (objGuid: string) =>
+    holder.db!.slots.rows.filter((s: Row) => s.obj_guid === objGuid);
+
+  /** The one transaction that is not the invoice's posting transaction. */
+  const reversalOf = (postTxnGuid: string) =>
+    req(holder.db!.transactions.rows.find((t: Row) => t.guid !== postTxnGuid));
+
+  const today = () => new Date().toISOString().slice(0, 10);
+
+  it('unpost keeps the posting transaction and writes an equal-and-opposite reversal', async () => {
+    const inv = await createInvoice(BOOK_A, customerInvoiceInput());
+    const posted = await postInvoice(BOOK_A, inv.guid, { postDate: '2026-01-05' });
+    const before = splitsOf(posted.transactionGuid).map((s: Row) => ({ ...s }));
+
+    await unpostInvoice(BOOK_A, inv.guid);
+
+    // 1. The original posting transaction and its splits are still there,
+    //    byte for byte.
     expect(holder.db!.transactions.rows.find((t: Row) => t.guid === posted.transactionGuid)).toBeTruthy();
+    const after = splitsOf(posted.transactionGuid);
+    expect(after).toHaveLength(3);
+    for (const original of before) {
+      const still = req(after.find((s: Row) => s.guid === original.guid));
+      expect(still.account_guid).toBe(original.account_guid);
+      expect(still.value_num).toBe(original.value_num);
+      expect(still.quantity_num).toBe(original.quantity_num);
+      expect(still.reconcile_state).toBe(original.reconcile_state);
+    }
+
+    // 2. A reversing transaction exists: same accounts, negated values,
+    //    balanced on its own.
+    expect(holder.db!.transactions.rows).toHaveLength(2);
+    const reversal = reversalOf(posted.transactionGuid);
+    const reversalSplits = splitsOf(reversal.guid);
+    expect(reversalSplits).toHaveLength(3);
+    for (const original of before) {
+      const mirror = req(
+        reversalSplits.find((s: Row) => s.account_guid === original.account_guid)
+      );
+      expect(mirror.value_num).toBe(-original.value_num);
+      expect(mirror.value_denom).toBe(original.value_denom);
+      expect(mirror.quantity_num).toBe(-original.quantity_num);
+      expect(mirror.reconcile_state).toBe('n');
+    }
+    expect(reversalSplits.reduce((sum: bigint, s: Row) => sum + s.value_num, 0n)).toBe(0n);
+
+    // 3. Net effect on every affected account is exactly zero.
+    const net = netByAccount();
+    expect(net.get('ar1')).toBe(0n);
+    expect(net.get('inc1')).toBe(0n);
+    expect(net.get('tax1')).toBe(0n);
+
+    // 4. The invoice reads as a draft again.
+    const view = await getView(inv.guid);
+    expect(view.posted).toBe(false);
+    expect(view.status).toBe('draft');
+    expect(view.postTxnGuid).toBeNull();
+    const invRow = req(holder.db!.invoices.rows.find((i: Row) => i.guid === inv.guid));
+    expect(invRow.post_txn).toBeNull();
+    expect(invRow.post_acc).toBeNull();
+    expect(invRow.post_lot).toBeNull();
+    expect(invRow.date_posted).toBeNull();
+  });
+
+  it('unpost retires the native invoice linkage and records the reversal pair', async () => {
+    const inv = await createInvoice(BOOK_A, customerInvoiceInput());
+    const posted = await postInvoice(BOOK_A, inv.guid, { postDate: '2026-01-05' });
+    const postingFrame = req(
+      slotsOf(posted.transactionGuid).find((s: Row) => s.name === 'gncInvoice')
+    );
+
+    await unpostInvoice(BOOK_A, inv.guid);
+    const reversal = reversalOf(posted.transactionGuid);
+
+    // The 'this IS invoice X's posting' pointer is gone from the transaction
+    // and the lot — invoice and book agree that nothing is posted — and the
+    // frame's child row went with it.
+    const postingSlots = slotsOf(posted.transactionGuid);
+    expect(postingSlots.find((s: Row) => s.name === 'gncInvoice')).toBeUndefined();
+    expect(slotsOf(postingFrame.guid_val)).toHaveLength(0);
+    expect(slotsOf(posted.lotGuid).find((s: Row) => s.name === 'gncInvoice')).toBeUndefined();
+
+    // The history is kept in readable form on both transactions.
+    expect(postingSlots.find((s: Row) => s.name === 'gncweb-unposted-invoice-guid')?.string_val).toBe(inv.guid);
+    expect(postingSlots.find((s: Row) => s.name === 'gncweb-reversed-by-txn')?.string_val).toBe(reversal.guid);
+    expect(postingSlots.find((s: Row) => s.name === 'trans-read-only')?.string_val).toMatch(/audit trail/);
+    const reversalSlots = slotsOf(reversal.guid);
+    expect(reversalSlots.find((s: Row) => s.name === 'gncweb-reverses-txn')?.string_val).toBe(posted.transactionGuid);
+    expect(reversalSlots.find((s: Row) => s.name === 'trans-read-only')?.string_val).toMatch(/Reverses the posting/);
+
+    // The lot survives (the original split still references it) and closes,
+    // because posting + reversal sum to zero.
+    const lot = req(holder.db!.lots.rows.find((l: Row) => l.guid === posted.lotGuid));
+    expect(lot.is_closed).toBe(1);
+    const lotSplits = holder.db!.splits.rows.filter((s: Row) => s.lot_guid === posted.lotGuid);
+    expect(lotSplits).toHaveLength(2);
+    expect(lotSplits.reduce((sum: bigint, s: Row) => sum + s.value_num, 0n)).toBe(0n);
+
+    // ...and the reversal split in that lot is NOT mistaken for a payment.
+    expect(await listPayments(BOOK_A, 'customer', 'cust1')).toEqual([]);
+  });
+
+  it('dates the reversal today, leaving the original period as it was reported', async () => {
+    const inv = await createInvoice(BOOK_A, customerInvoiceInput());
+    const posted = await postInvoice(BOOK_A, inv.guid, { postDate: '2020-03-15' });
+
+    await unpostInvoice(BOOK_A, inv.guid);
+
+    const original = req(holder.db!.transactions.rows.find((t: Row) => t.guid === posted.transactionGuid));
+    expect(original.post_date.toISOString()).toBe('2020-03-15T12:00:00.000Z');
+    const reversal = reversalOf(posted.transactionGuid);
+    expect(reversal.post_date.toISOString().slice(0, 10)).toBe(today());
+    expect(reversal.description).toMatch(/^Unpost reversal —/);
+    expect(reversal.num).toBe(original.num);
+  });
+
+  it('never dates a reversal before the posting it reverses', async () => {
+    const future = new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 10);
+    const inv = await createInvoice(BOOK_A, customerInvoiceInput());
+    const posted = await postInvoice(BOOK_A, inv.guid, { postDate: future });
+
+    await unpostInvoice(BOOK_A, inv.guid);
+
+    const reversal = reversalOf(posted.transactionGuid);
+    expect(reversal.post_date.toISOString().slice(0, 10)).toBe(future);
+  });
+
+  it('post -> unpost -> repost leaves exactly one invoice on the books', async () => {
+    const inv = await createInvoice(BOOK_A, customerInvoiceInput());
+    const first = await postInvoice(BOOK_A, inv.guid, { postDate: '2026-01-05' });
+    await unpostInvoice(BOOK_A, inv.guid);
+    const second = await postInvoice(BOOK_A, inv.guid, { postDate: '2026-02-10' });
+
+    // Three transactions: the original, its reversal, the new posting.
+    expect(holder.db!.transactions.rows).toHaveLength(3);
+    expect(second.transactionGuid).not.toBe(first.transactionGuid);
+    for (const t of holder.db!.transactions.rows) {
+      expect(splitsOf(t.guid).reduce((sum: bigint, s: Row) => sum + s.value_num, 0n)).toBe(0n);
+    }
+
+    // No double count: the first pair cancelled, so the book carries exactly
+    // one invoice's worth.
+    const net = netByAccount();
+    expect(net.get('ar1')).toBe(10500n);
+    expect(net.get('inc1')).toBe(-10000n);
+    expect(net.get('tax1')).toBe(-500n);
+
+    // The re-post owns a fresh lot; the retired one stays closed.
+    expect(second.lotGuid).not.toBe(first.lotGuid);
+    expect(req(holder.db!.lots.rows.find((l: Row) => l.guid === first.lotGuid)).is_closed).toBe(1);
+    expect(req(holder.db!.lots.rows.find((l: Row) => l.guid === second.lotGuid)).is_closed).toBe(0);
+
+    const view = await getView(inv.guid);
+    expect(view.posted).toBe(true);
+    expect(view.postTxnGuid).toBe(second.transactionGuid);
+    expect(view.amountDue).toBe(105);
+
+    // And the re-posted invoice can still be paid in full.
+    await applyPayment(BOOK_A, {
+      ownerType: 'customer',
+      ownerGuid: 'cust1',
+      transferAccountGuid: 'bank1',
+      amount: 105,
+      date: '2026-03-01',
+    });
+    expect((await getView(inv.guid)).amountDue).toBe(0);
+  });
+
+  it('a reconciled posting split does not block unpost, and is left untouched', async () => {
+    // The reconciled-split guard (src/lib/services/reconciled-split.service.ts)
+    // blocks amount/account/date changes and deletions. A reversal does none
+    // of those — it only INSERTs new, unreconciled splits — so it must be
+    // allowed on a book whose A/R has already been reconciled, and the
+    // reconciled row must come through unchanged.
+    const inv = await createInvoice(BOOK_A, customerInvoiceInput());
+    const posted = await postInvoice(BOOK_A, inv.guid, { postDate: '2026-01-05' });
+    const arSplit = req(
+      splitsOf(posted.transactionGuid).find((s: Row) => s.account_guid === 'ar1')
+    );
+    arSplit.reconcile_state = 'y';
+    arSplit.reconcile_date = new Date('2026-01-31T00:00:00Z');
+
+    await unpostInvoice(BOOK_A, inv.guid);
+
+    const still = req(holder.db!.splits.rows.find((s: Row) => s.guid === arSplit.guid));
+    expect(still.reconcile_state).toBe('y');
+    expect(still.value_num).toBe(10500n);
+    expect(still.account_guid).toBe('ar1');
+    const reversal = reversalOf(posted.transactionGuid);
+    expect(req(splitsOf(reversal.guid).find((s: Row) => s.account_guid === 'ar1')).reconcile_state).toBe('n');
+    expect(netByAccount().get('ar1')).toBe(0n);
+  });
+
+  it('refuses to reverse a posting whose receivable split was moved elsewhere', async () => {
+    const inv = await createInvoice(BOOK_A, customerInvoiceInput());
+    const posted = await postInvoice(BOOK_A, inv.guid, { postDate: '2026-01-05' });
+    req(splitsOf(posted.transactionGuid).find((s: Row) => s.account_guid === 'ar1')).account_guid = 'bank1';
+
+    await expect(unpostInvoice(BOOK_A, inv.guid)).rejects.toBeInstanceOf(InvoiceStateError);
+    await expect(unpostInvoice(BOOK_A, inv.guid)).rejects.toThrow(/has moved from account ar1 to bank1/);
+
+    // Loud, not lossy: no reversal written, invoice still posted.
+    expect(holder.db!.transactions.rows).toHaveLength(1);
+    expect(req(holder.db!.invoices.rows.find((i: Row) => i.guid === inv.guid)).post_txn).toBe(
+      posted.transactionGuid
+    );
+  });
+
+  it('refuses to reverse a posting that no longer balances', async () => {
+    const inv = await createInvoice(BOOK_A, customerInvoiceInput());
+    const posted = await postInvoice(BOOK_A, inv.guid, { postDate: '2026-01-05' });
+    req(splitsOf(posted.transactionGuid).find((s: Row) => s.account_guid === 'inc1')).value_num = -9000n;
+
+    await expect(unpostInvoice(BOOK_A, inv.guid)).rejects.toThrow(/does not balance/);
+    expect(holder.db!.transactions.rows).toHaveLength(1);
+  });
+
+  it('refuses to reverse a posting transaction that has vanished', async () => {
+    const inv = await createInvoice(BOOK_A, customerInvoiceInput());
+    const posted = await postInvoice(BOOK_A, inv.guid, { postDate: '2026-01-05' });
+    holder.db!.transactions.rows.length = 0;
+    holder.db!.splits.rows.length = 0;
+
+    await expect(unpostInvoice(BOOK_A, inv.guid)).rejects.toThrow(/no longer exists/);
+    expect(req(holder.db!.invoices.rows.find((i: Row) => i.guid === inv.guid)).post_txn).toBe(
+      posted.transactionGuid
+    );
   });
 
   it('listInvoices filters by type and status', async () => {
