@@ -5,13 +5,38 @@ import { Prisma } from '@prisma/client';
 import { isAccountInActiveBook } from '@/lib/book-scope';
 import { requireRole } from '@/lib/auth';
 import { buildAccountPathMap } from '@/lib/reports/utils';
-import { traceCostBasis, isTransferIn, createCostBasisCache, preloadLotSplits, type CostBasisMethod } from '@/lib/cost-basis';
+import {
+    traceCostBasis,
+    isTransferIn,
+    createCostBasisCache,
+    preloadLotSplits,
+    createCostBasisPool,
+    addPurchaseToPool,
+    addTracedTransferToPool,
+    removeSharesFromPool,
+    type CostBasisMethod,
+} from '@/lib/cost-basis';
 import { parseSearchQuery } from '@/lib/tags';
 import { getTagsForTransactions } from '@/lib/services/tag.service';
 import { readTransactionNotes } from '@/lib/transaction-notes';
 import { cacheGet, cacheSet } from '@/lib/cache';
 
-type InvestmentTotals = Map<string, { shareBalance: number; costBasis: number }>;
+/**
+ * Running per-transaction totals for the investment ledger.
+ *
+ * `costBasis` is the basis of the shares whose basis could be established, NOT
+ * of `shareBalance`. `costBasisUncoveredShares` is how many of those shares
+ * have no establishable basis (in-kind transfers whose origin is not in this
+ * book). The two travel together deliberately: a running cost-basis column that
+ * omitted the uncovered count would read as a complete basis and understate it.
+ */
+type InvestmentRunningTotal = {
+    shareBalance: number;
+    costBasis: number;
+    costBasisUncoveredShares: number;
+};
+
+type InvestmentTotals = Map<string, InvestmentRunningTotal>;
 
 /** Thrown for a malformed filter value; caught in GET and answered as a 400. */
 class BadFilterError extends Error {}
@@ -89,10 +114,7 @@ async function loadInvestmentRunningTotals(
     cacheKey: string,
     compute: () => Promise<InvestmentTotals>,
 ): Promise<InvestmentTotals> {
-    const cached = await cacheGet<Array<[
-        string,
-        { shareBalance: number; costBasis: number },
-    ]>>(cacheKey);
+    const cached = await cacheGet<Array<[string, InvestmentRunningTotal]>>(cacheKey);
     if (cached) return new Map(cached);
 
     const inFlight = inFlightInvestmentTotals.get(cacheKey);
@@ -304,7 +326,12 @@ export async function GET(
                 });
 
                 let runShares = 0;
-                let runCostBasis = 0;
+                // A CostBasisPool, not a loose running total: traceCostBasis
+                // returns basis for only the shares whose basis it could
+                // establish, so adding that basis while counting EVERY share
+                // (and then dividing on each sale) understates the basis of the
+                // whole ledger column. The pool keeps the two counts in step.
+                const pool = createCostBasisPool();
                 const totals: InvestmentTotals = new Map();
                 const costBasisCache = createCostBasisCache();
 
@@ -329,21 +356,25 @@ export async function GET(
                         const txSplits = split.transaction?.splits || [];
                         if (isTransferIn(split, txSplits, accountCommodityGuid)) {
                             const traced = await traceCostBasis(split.guid, costBasisMethod, accountCommodityGuid, shares, costBasisCache);
-                            runCostBasis += traced.totalCost;
+                            // Carries the trace's covered/uncovered split, so a
+                            // partly-traceable transfer stays partly covered
+                            // instead of being credited as fully basised.
+                            addTracedTransferToPool(pool, traced);
                         } else {
-                            runCostBasis += value;
+                            addPurchaseToPool(pool, shares, value);
                         }
                     } else if (shares < 0) {
-                        const soldShares = Math.abs(shares);
-                        if (runShares > 0) {
-                            const avgCost = runCostBasis / runShares;
-                            runCostBasis -= avgCost * soldShares;
-                        }
+                        // Pro rata across covered and uncovered shares, giving
+                        // up basis at the COVERED average — the old
+                        // runCostBasis / runShares divided a partial basis by
+                        // the full share count on every sale.
+                        removeSharesFromPool(pool, Math.abs(shares));
                         runShares += shares;
                     }
                     totals.set(split.tx_guid, {
                         shareBalance: runShares,
-                        costBasis: runCostBasis,
+                        costBasis: pool.basisOfCoveredShares,
+                        costBasisUncoveredShares: pool.uncoveredShares,
                     });
                 }
                 return totals;
@@ -387,6 +418,9 @@ export async function GET(
                     totals.set(split.tx_guid, {
                         shareBalance: runShares,
                         costBasis: runCostBasis,
+                        // Carry-over tracing is off on this path, so every share
+                        // is basised by its own split value: nothing uncovered.
+                        costBasisUncoveredShares: 0,
                     });
                 }
                 return totals;
@@ -658,7 +692,11 @@ export async function GET(
                 // Investment running totals (only present for investment accounts)
                 ...(investmentRunningTotals ? {
                     share_balance: investmentRunningTotals.get(tx.guid)?.shareBalance.toString() ?? '0',
+                    // Basis of the shares that HAVE one; the companion field
+                    // says how many shares it does not cover.
                     cost_basis: investmentRunningTotals.get(tx.guid)?.costBasis.toString() ?? '0',
+                    cost_basis_uncovered_shares:
+                        investmentRunningTotals.get(tx.guid)?.costBasisUncoveredShares.toString() ?? '0',
                 } : {}),
             };
 
