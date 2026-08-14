@@ -100,6 +100,23 @@ Covers work landed since 0.23.2.0 (2026-07-29).
   adjustment for assets whose quantity and transaction-currency value differ
   (multi-currency holdings and books imported from GnuCash desktop). Reports
   produced before this release should be regenerated.
+- **Transaction balance is now checked exactly, not within a tolerance.**
+  Saving a transaction previously summed the split amounts in floating point
+  and accepted anything within a thousandth of a currency unit, so a
+  transaction that did not actually balance could be written and would sit in
+  the ledger uncorrected. Balance is now verified with exact whole-number
+  arithmetic — it either balances or it does not. For ordinary entries in
+  ordinary currencies nothing changes; the tolerance was already smaller than a
+  cent. What changes is that an imbalance the old check waved through is now
+  refused at save time with the amount named.
+
+  The same correction applies to **settlement imports** (Stripe, PayPal,
+  Shopify, Square). A row whose net, fee and gross did not agree to the cent
+  was previously imported anyway and produced an unbalanced transaction; such
+  rows are now reported as errors in the import preview, with the row number
+  and the discrepancy, and every other row still imports. If a file you
+  imported before was silently producing unbalanced entries, re-importing it
+  will now tell you which rows are wrong.
 - **Transactions can no longer be written into a book you do not have access
   to.** Creating or editing a transaction validated only that the account
   identifiers you supplied *existed* — not that they belonged to your book — so
