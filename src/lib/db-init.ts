@@ -1226,10 +1226,13 @@ async function createExtensionTables() {
           ADD COLUMN IF NOT EXISTS w9_requested_date DATE;
         ALTER TABLE gnucash_web_vendor_tax_info
           ADD COLUMN IF NOT EXISTS exempt_from_1099_override BOOLEAN;
+        ALTER TABLE gnucash_web_vendor_tax_info
+          ADD COLUMN IF NOT EXISTS exempt_from_1099_override_initialized BOOLEAN NOT NULL DEFAULT false;
         -- Preserve every existing checkbox value as an explicit decision.
         UPDATE gnucash_web_vendor_tax_info
-          SET exempt_from_1099_override = exempt_from_1099
-          WHERE exempt_from_1099_override IS NULL;
+          SET exempt_from_1099_override = exempt_from_1099,
+              exempt_from_1099_override_initialized = true
+          WHERE NOT exempt_from_1099_override_initialized;
 
         -- Per-vendor-year 1099-NEC filing status (dates only; no TINs here).
         CREATE TABLE IF NOT EXISTS gnucash_web_vendor_1099_filings (

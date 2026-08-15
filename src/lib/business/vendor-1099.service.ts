@@ -234,6 +234,7 @@ interface TaxInfoDbRow {
     w9_requested_date: Date | null;
     exempt_from_1099: boolean;
     exempt_from_1099_override?: boolean | null;
+    exempt_from_1099_override_initialized?: boolean;
     address: string | null;
     notes: string | null;
 }
@@ -584,6 +585,7 @@ export async function upsertVendorTaxInfo(
             // Kept populated for compatibility with old readers/migrations.
             exempt_from_1099: input.exemptFrom1099Override ?? false,
         }),
+        ...(ownership === null && { exempt_from_1099_override_initialized: true }),
         ...(input.address !== undefined && { address: input.address }),
         ...(input.notes !== undefined && { notes: input.notes }),
         updated_at: new Date(),

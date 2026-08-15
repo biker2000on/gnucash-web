@@ -1090,6 +1090,7 @@ model gnucash_web_vendor_tax_info {
   exempt_from_1099   Boolean   @default(false)
   /// null = default from tax classification; true/false = explicit user choice
   exempt_from_1099_override Boolean?
+  exempt_from_1099_override_initialized Boolean @default(false)
   address            String?   @db.Text
   notes              String?   @db.Text
   updated_at         DateTime  @default(now())
