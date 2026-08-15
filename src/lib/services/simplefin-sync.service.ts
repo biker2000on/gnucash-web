@@ -8,7 +8,7 @@
 import prisma, { generateGuid } from '@/lib/prisma';
 import { tryWithDatabaseAdvisoryLock } from '@/lib/db';
 import { getAccountGuidsForBook } from '@/lib/book-scope';
-import { acquireNamedXactLock, accountNameLockKey } from '@/lib/book-lock';
+import { acquireNamedXactLock, accountNameLockKey, commodityLockKey } from '@/lib/book-lock';
 import { decryptAccessUrl, fetchAccountsChunked, SimpleFinTransaction, SimpleFinAccessRevokedError, SimpleFinHolding } from './simplefin.service';
 import { toNumDenom } from '@/lib/validation';
 import { buildSymbolSet, parseSymbol } from './simplefin-symbol-parser';
@@ -269,6 +269,36 @@ export function isSimpleFinDuplicateViolation(err: unknown): boolean {
 }
 
 /**
+ * Markers identifying the DB-side arbiters of the two natural keys this
+ * service creates against. Both indexes are created by db-init
+ * (src/lib/db-init.ts) — `uq_accounts_parent_name` is PARTIAL, on
+ * accounts(parent_guid, name) WHERE parent_guid IS NOT NULL — and both are
+ * skipped with a warning on books that already carry duplicate rows, so the
+ * advisory lock below is what protects those books.
+ *
+ * Each entry lists both surface forms of the same violation: the index name
+ * (Prisma's driver-adapter error carries the Postgres text verbatim) and the
+ * conflicting column tuple (what a P2002 `meta.target` reports).
+ */
+const ACCOUNT_SIBLING_UNIQUE_MARKERS = ['uq_accounts_parent_name', '"parent_guid","name"'];
+const COMMODITY_UNIQUE_MARKERS = ['uq_commodities_namespace_mnemonic', '"namespace","mnemonic"'];
+
+/**
+ * True when `err` is a Postgres unique violation on one of `markers`.
+ *
+ * Same shape as `isSimpleFinDuplicateViolation` above: Prisma raises P2002,
+ * raw paths surface 23505 text, and the identifying detail lives in the
+ * message or in `meta`. Exported for tests.
+ */
+export function isUniqueViolationOn(err: unknown, markers: readonly string[]): boolean {
+  if (!err) return false;
+  const anyErr = err as { code?: unknown; meta?: unknown };
+  const text = `${err instanceof Error ? err.message : String(err)} ${JSON.stringify(anyErr.meta ?? {})}`;
+  if (!markers.some(marker => text.includes(marker))) return false;
+  return anyErr.code === 'P2002' || /duplicate key value|unique constraint/i.test(text);
+}
+
+/**
  * Sync all mapped accounts for a given connection.
  *
  * Guarded by a per-connection advisory lock: overlapping runs (manual click
@@ -508,7 +538,19 @@ export async function runSimpleFinSync(
             });
           }
         }
-        await getOrCreateCashChild(mappedAccount.gnucash_account_guid, bookGuid, bookAccountGuidSet, accountsCreated);
+        try {
+          await getOrCreateCashChild(mappedAccount.gnucash_account_guid, bookGuid, bookAccountGuidSet, accountsCreated);
+        } catch (err) {
+          // Named as a sync error like the symbol children above, rather than
+          // thrown: an unhandled throw here abandons every remaining mapped
+          // account. Recording it still forces status='failed' in
+          // finalizeSimpleFinSync, so a failed resolution can never be
+          // reported as a successful sync.
+          result.errors.push({
+            account: mappedAccount.simplefin_account_name || mappedAccount.simplefin_account_id,
+            error: `Failed to create Cash child account: ${err}`,
+          });
+        }
         result.accountsProcessed++;
       }
       continue;
@@ -1386,53 +1428,101 @@ export async function getOrCreateImbalanceAccount(
     throw new Error(`Currency ${currencyMnemonic} not found`);
   }
 
-  return prisma.$transaction(async tx => {
-    // The account-name key is sufficient to serialize this one natural key.
-    // Deliberately do not take the broader blocking book lock: an XML import
-    // can hold it longer than Prisma's interactive-transaction timeout,
-    // whereas unrelated book work cannot affect this (parent, name) race.
-    await acquireNamedXactLock(tx, accountNameLockKey(book.root_account_guid, imbalanceName));
+  const rootGuid = book.root_account_guid;
 
-    const existing = await tx.accounts.findFirst({
-      // The initial book scope admits pre-existing Imbalance accounts at any
-      // depth. The direct-root clause also sees an account a concurrent sync
-      // just created after that scope snapshot was read.
-      where: {
-        name: imbalanceName,
-        OR: [
-          { guid: { in: [...bookAccountGuids] } },
-          { parent_guid: book.root_account_guid },
-        ],
-      },
-      select: { guid: true },
-    });
-    if (existing) return existing.guid;
+  try {
+    return await prisma.$transaction(async tx => {
+      // The account-name key is sufficient to serialize this one natural key.
+      // Deliberately do not take the broader blocking book lock: an XML import
+      // can hold it longer than Prisma's interactive-transaction timeout,
+      // whereas unrelated book work cannot affect this (parent, name) race.
+      await acquireNamedXactLock(tx, accountNameLockKey(rootGuid, imbalanceName));
 
-    const guid = generateGuid();
-    await tx.accounts.create({
-      data: {
-        guid,
-        name: imbalanceName,
-        account_type: 'BANK',
-        commodity_guid: currency.guid,
-        commodity_scu: 100,
-        non_std_scu: 0,
-        parent_guid: book.root_account_guid,
-        code: '',
-        description: 'Auto-created for unmatched SimpleFin imports',
-        hidden: 0,
-        placeholder: 0,
-      },
+      const existing = await tx.accounts.findFirst({
+        // The initial book scope admits pre-existing Imbalance accounts at any
+        // depth. The direct-root clause also sees an account a concurrent sync
+        // just created after that scope snapshot was read.
+        where: {
+          name: imbalanceName,
+          OR: [
+            { guid: { in: [...bookAccountGuids] } },
+            { parent_guid: rootGuid },
+          ],
+        },
+        select: { guid: true },
+      });
+      if (existing) return existing.guid;
+
+      const guid = generateGuid();
+      await tx.accounts.create({
+        data: {
+          guid,
+          name: imbalanceName,
+          account_type: 'BANK',
+          commodity_guid: currency.guid,
+          commodity_scu: 100,
+          non_std_scu: 0,
+          parent_guid: rootGuid,
+          code: '',
+          description: 'Auto-created for unmatched SimpleFin imports',
+          hidden: 0,
+          placeholder: 0,
+        },
+      });
+      return guid;
     });
-    return guid;
-  });
+  } catch (err) {
+    // The lock only serializes callers that take it. `uq_accounts_parent_name`
+    // binds every writer, including ones that never heard of the lock (XML
+    // import, account routes), so treat its violation as "someone else created
+    // it" and adopt the winner rather than failing the import.
+    return adoptUniqueConflictWinner(err, ACCOUNT_SIBLING_UNIQUE_MARKERS, () =>
+      // Re-read on the CONSTRAINT's own key, never on the book-scope snapshot:
+      // that set is memoised for ~3s and is not invalidated by account
+      // creation, so testing a just-created guid against it would fail closed.
+      // (parent = this book's root) already implies membership.
+      prisma.accounts.findFirst({
+        where: { name: imbalanceName, parent_guid: rootGuid },
+        select: { guid: true },
+      }),
+    );
+  }
+}
+
+/**
+ * Recover from a lost create-if-missing race: when `err` is the unique
+ * violation named by `markers`, re-read the row the winner inserted and return
+ * its guid.
+ *
+ * The re-read runs OUTSIDE the aborted transaction (a 23505 poisons it, so
+ * nothing can be read back inside) and keys on the unique index's own columns,
+ * which is why it cannot be defeated by a stale book-scope snapshot.
+ *
+ * Anything else — a different constraint, or a violation with no surviving row
+ * to adopt (a same-named account created by something else, which is NOT a
+ * safe substitute) — rethrows, so the caller records a sync error instead of
+ * silently importing into the wrong account.
+ */
+async function adoptUniqueConflictWinner(
+  err: unknown,
+  markers: readonly string[],
+  reread: () => Promise<{ guid: string } | null>,
+): Promise<string> {
+  if (!isUniqueViolationOn(err, markers)) throw err;
+  const winner = await reread();
+  if (winner) return winner.guid;
+  throw err;
 }
 
 /**
  * Find or create a child account under the parent for a given stock symbol.
  * Creates the commodity if it doesn't exist, then creates a STOCK child account.
+ *
+ * Exported for tests: the create-if-missing race it guards is only observable
+ * by calling it concurrently, and a test that re-implemented the guard instead
+ * of exercising this function would prove nothing.
  */
-async function getOrCreateChildAccount(
+export async function getOrCreateChildAccount(
   parentGuid: string,
   symbol: string,
   holdingDescription: string,
@@ -1443,74 +1533,146 @@ async function getOrCreateChildAccount(
   if (!bookAccountGuids.has(parentGuid)) {
     throw new Error(`Parent account ${parentGuid} is not in book ${bookGuid}`);
   }
+  const mnemonic = symbol.toUpperCase();
+
   // Look for existing child with a commodity matching this symbol
-  const existingChildren = await prisma.$queryRaw<{
-    guid: string;
-    commodity_guid: string;
-  }[]>`
-    SELECT a.guid, a.commodity_guid
+  const existing = await findChildAccountBySymbol(prisma, parentGuid, mnemonic);
+  if (existing) return existing;
+
+  const commodity = await getOrCreateSymbolCommodity(mnemonic, holdingDescription);
+
+  // The child account is named for the symbol, so `uq_accounts_parent_name`
+  // covers exactly this create — but only where db-init could build it. The
+  // (parent, name) lock serializes concurrent syncs on books where it could
+  // not, and spares the winner-adoption path in the common case.
+  let outcome: { guid: string; createdNew: boolean };
+  try {
+    outcome = await prisma.$transaction(async tx => {
+      await acquireNamedXactLock(tx, accountNameLockKey(parentGuid, mnemonic));
+
+      const won = await findChildAccountBySymbol(tx, parentGuid, mnemonic);
+      if (won) return { guid: won, createdNew: false };
+
+      const childGuid = generateGuid();
+      await tx.accounts.create({
+        data: {
+          guid: childGuid,
+          name: mnemonic,
+          account_type: 'STOCK',
+          commodity_guid: commodity.guid,
+          commodity_scu: commodity.fraction,
+          non_std_scu: 0,
+          parent_guid: parentGuid,
+          code: '',
+          description: holdingDescription || `Auto-created for ${symbol}`,
+          hidden: 0,
+          placeholder: 0,
+        },
+      });
+      return { guid: childGuid, createdNew: true };
+    });
+  } catch (err) {
+    // Adopt on the SYMBOL, not on the name: a same-named sibling holding a
+    // different commodity is a different security, and routing this symbol's
+    // transactions into it would be a silent mis-import. When the re-read
+    // finds no symbol match the original error is rethrown and surfaces as a
+    // sync error, which is the correct outcome for a genuine name collision.
+    const winner = await adoptUniqueConflictWinner(
+      err,
+      ACCOUNT_SIBLING_UNIQUE_MARKERS,
+      async () => {
+        const guid = await findChildAccountBySymbol(prisma, parentGuid, mnemonic);
+        return guid ? { guid } : null;
+      },
+    );
+    return winner;
+  }
+
+  // Counted only after the transaction commits — a rolled-back create must not
+  // look like a new account to the cache-invalidation decision.
+  if (outcome.createdNew && created) created.count++;
+  return outcome.guid;
+}
+
+/**
+ * Guid of the child account under `parentGuid` whose commodity carries
+ * `mnemonic`, or null. Runs on whichever client is passed so the post-lock
+ * re-check happens inside the locking transaction.
+ */
+async function findChildAccountBySymbol(
+  client: Pick<typeof prisma, '$queryRaw'>,
+  parentGuid: string,
+  mnemonic: string,
+): Promise<string | null> {
+  const rows = await client.$queryRaw<{ guid: string }[]>`
+    SELECT a.guid
     FROM accounts a
     JOIN commodities c ON c.guid = a.commodity_guid
     WHERE a.parent_guid = ${parentGuid}
-      AND UPPER(c.mnemonic) = ${symbol.toUpperCase()}
+      AND UPPER(c.mnemonic) = ${mnemonic}
   `;
-
-  if (existingChildren.length > 0) {
-    return existingChildren[0].guid;
-  }
-
-  // Look up or create the commodity
-  let commodity = await prisma.commodities.findFirst({
-    where: { mnemonic: symbol.toUpperCase() },
-  });
-
-  if (!commodity) {
-    const commodityGuid = generateGuid();
-    await prisma.commodities.create({
-      data: {
-        guid: commodityGuid,
-        namespace: 'UNKNOWN',
-        mnemonic: symbol.toUpperCase(),
-        fullname: holdingDescription || symbol.toUpperCase(),
-        cusip: '',
-        fraction: 10000,
-        quote_flag: 1,
-        quote_source: 'yahoo_json',
-        quote_tz: '',
-      },
-    });
-    commodity = await prisma.commodities.findUnique({ where: { guid: commodityGuid } });
-  }
-
-  if (!commodity) throw new Error(`Failed to create commodity for ${symbol}`);
-
-  // Create the STOCK child account
-  const childGuid = generateGuid();
-  await prisma.accounts.create({
-    data: {
-      guid: childGuid,
-      name: symbol.toUpperCase(),
-      account_type: 'STOCK',
-      commodity_guid: commodity.guid,
-      commodity_scu: commodity.fraction,
-      non_std_scu: 0,
-      parent_guid: parentGuid,
-      code: '',
-      description: holdingDescription || `Auto-created for ${symbol}`,
-      hidden: 0,
-      placeholder: 0,
-    },
-  });
-
-  if (created) created.count++;
-  return childGuid;
+  return rows[0]?.guid ?? null;
 }
+
+/**
+ * Find or create the commodity for a ticker symbol.
+ *
+ * Its own create-if-missing race, with its own DB arbiter
+ * (`uq_commodities_namespace_mnemonic`): two syncs seeing the same new holding
+ * would otherwise insert the symbol twice, and duplicate commodities cannot be
+ * merged automatically afterwards — accounts, prices and splits all reference
+ * one by guid.
+ *
+ * The existence check stays deliberately namespace-agnostic (a symbol already
+ * tracked as NASDAQ/NYSE must be reused, not shadowed), while the lock and the
+ * insert use the UNKNOWN namespace this service creates under.
+ */
+async function getOrCreateSymbolCommodity(
+  mnemonic: string,
+  holdingDescription: string,
+): Promise<{ guid: string; fraction: number }> {
+  const existing = await prisma.commodities.findFirst({ where: { mnemonic } });
+  if (existing) return existing;
+
+  try {
+    return await prisma.$transaction(async tx => {
+      await acquireNamedXactLock(tx, commodityLockKey('UNKNOWN', mnemonic));
+
+      const won = await tx.commodities.findFirst({ where: { mnemonic } });
+      if (won) return won;
+
+      return await tx.commodities.create({
+        data: {
+          guid: generateGuid(),
+          namespace: 'UNKNOWN',
+          mnemonic,
+          fullname: holdingDescription || mnemonic,
+          cusip: '',
+          fraction: 10000,
+          quote_flag: 1,
+          quote_source: 'yahoo_json',
+          quote_tz: '',
+        },
+      });
+    });
+  } catch (err) {
+    if (!isUniqueViolationOn(err, COMMODITY_UNIQUE_MARKERS)) throw err;
+    const winner = await prisma.commodities.findFirst({ where: { mnemonic } });
+    if (!winner) throw err;
+    return winner;
+  }
+}
+
+/** Name of the brokerage sweep child account this service auto-creates. */
+const CASH_CHILD_NAME = 'Cash';
 
 /**
  * Find or create a Cash child account under the parent.
  * Uses the parent's commodity (USD) and account type.
+ *
+ * Exported for tests — see `getOrCreateChildAccount`.
  */
-async function getOrCreateCashChild(
+export async function getOrCreateCashChild(
   parentGuid: string,
   bookGuid: string,
   bookAccountGuids: ReadonlySet<string>,
@@ -1520,7 +1682,7 @@ async function getOrCreateCashChild(
     throw new Error(`Parent account ${parentGuid} is not in book ${bookGuid}`);
   }
   const existing = await prisma.accounts.findFirst({
-    where: { parent_guid: parentGuid, name: 'Cash' },
+    where: { parent_guid: parentGuid, name: CASH_CHILD_NAME },
   });
   if (existing) return existing.guid;
 
@@ -1529,25 +1691,49 @@ async function getOrCreateCashChild(
   });
   if (!parent) throw new Error(`Parent account ${parentGuid} not found`);
 
-  const childGuid = generateGuid();
-  await prisma.accounts.create({
-    data: {
-      guid: childGuid,
-      name: 'Cash',
-      account_type: parent.account_type,
-      commodity_guid: parent.commodity_guid!,
-      commodity_scu: parent.commodity_scu,
-      non_std_scu: 0,
-      parent_guid: parentGuid,
-      code: '',
-      description: 'Cash balance (auto-created for SimpleFin)',
-      hidden: 0,
-      placeholder: 0,
-    },
-  });
+  let outcome: { guid: string; createdNew: boolean };
+  try {
+    outcome = await prisma.$transaction(async tx => {
+      await acquireNamedXactLock(tx, accountNameLockKey(parentGuid, CASH_CHILD_NAME));
 
-  if (created) created.count++;
-  return childGuid;
+      const won = await tx.accounts.findFirst({
+        where: { parent_guid: parentGuid, name: CASH_CHILD_NAME },
+        select: { guid: true },
+      });
+      if (won) return { guid: won.guid, createdNew: false };
+
+      const childGuid = generateGuid();
+      await tx.accounts.create({
+        data: {
+          guid: childGuid,
+          name: CASH_CHILD_NAME,
+          account_type: parent.account_type,
+          commodity_guid: parent.commodity_guid!,
+          commodity_scu: parent.commodity_scu,
+          non_std_scu: 0,
+          parent_guid: parentGuid,
+          code: '',
+          description: 'Cash balance (auto-created for SimpleFin)',
+          hidden: 0,
+          placeholder: 0,
+        },
+      });
+      return { guid: childGuid, createdNew: true };
+    });
+  } catch (err) {
+    // (parent_guid, name) IS the unique index's key, and the parent was just
+    // confirmed to be in this book, so the adopted row is in-book by
+    // construction — no book-scope re-check, hence nothing to go stale.
+    return adoptUniqueConflictWinner(err, ACCOUNT_SIBLING_UNIQUE_MARKERS, () =>
+      prisma.accounts.findFirst({
+        where: { parent_guid: parentGuid, name: CASH_CHILD_NAME },
+        select: { guid: true },
+      }),
+    );
+  }
+
+  if (outcome.createdNew && created) created.count++;
+  return outcome.guid;
 }
 
 /**
