@@ -549,7 +549,7 @@ export async function loadInsightSource(bookGuid: string, now = new Date()): Pro
     }>>`
         SELECT to_char(t.post_date, 'YYYY-MM') AS month,
                COALESCE(ah.level2, ah.level1, a.name) AS category,
-               SUM(s.value_num::double precision / NULLIF(s.value_denom, 0)::double precision) AS total
+               SUM(s.value_num::numeric / NULLIF(s.value_denom, 0)::numeric)::float8 AS total
         FROM splits s
         JOIN transactions t ON t.guid = s.tx_guid
         JOIN accounts a ON a.guid = s.account_guid
@@ -592,7 +592,7 @@ export async function loadInsightSource(bookGuid: string, now = new Date()): Pro
             SELECT t.guid,
                    COALESCE(NULLIF(btrim(m.original_description), ''), t.description) AS description,
                    t.post_date,
-                   SUM(s.value_num::double precision / NULLIF(s.value_denom, 0)::double precision) AS amount
+                   SUM(s.value_num::numeric / NULLIF(s.value_denom, 0)::numeric)::float8 AS amount
             FROM transactions t
             JOIN splits s ON s.tx_guid = t.guid
             JOIN accounts a ON a.guid = s.account_guid
@@ -631,11 +631,11 @@ export async function loadInsightSource(bookGuid: string, now = new Date()): Pro
     }>>`
         SELECT to_char(t.post_date, 'YYYY-MM') AS month,
                SUM(CASE WHEN a.account_type = 'INCOME'
-                        THEN -s.value_num::double precision / NULLIF(s.value_denom, 0)::double precision
-                        ELSE 0 END) AS income,
+                        THEN -s.value_num::numeric / NULLIF(s.value_denom, 0)::numeric
+                        ELSE 0 END)::float8 AS income,
                SUM(CASE WHEN a.account_type = 'EXPENSE'
-                        THEN s.value_num::double precision / NULLIF(s.value_denom, 0)::double precision
-                        ELSE 0 END) AS expenses
+                        THEN s.value_num::numeric / NULLIF(s.value_denom, 0)::numeric
+                        ELSE 0 END)::float8 AS expenses
         FROM splits s
         JOIN transactions t ON t.guid = s.tx_guid
         JOIN accounts a ON a.guid = s.account_guid
@@ -689,11 +689,11 @@ export async function loadInsightSource(bookGuid: string, now = new Date()): Pro
         SELECT a.guid,
                a.name,
                COALESCE(SUM(CASE WHEN t.post_date <= ${now}
-                    THEN s.quantity_num::double precision / NULLIF(s.quantity_denom, 0)::double precision
-                    ELSE 0 END), 0) AS current,
+                    THEN s.quantity_num::numeric / NULLIF(s.quantity_denom, 0)::numeric
+                    ELSE 0 END), 0)::float8 AS current,
                COALESCE(SUM(CASE WHEN t.post_date <= ${weekAgo}
-                    THEN s.quantity_num::double precision / NULLIF(s.quantity_denom, 0)::double precision
-                    ELSE 0 END), 0) AS week_ago
+                    THEN s.quantity_num::numeric / NULLIF(s.quantity_denom, 0)::numeric
+                    ELSE 0 END), 0)::float8 AS week_ago
         FROM accounts a
         LEFT JOIN splits s ON s.account_guid = a.guid
         LEFT JOIN transactions t ON t.guid = s.tx_guid
