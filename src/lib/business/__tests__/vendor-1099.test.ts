@@ -31,6 +31,7 @@ const taxInfo = (overrides: Partial<VendorTaxInfo> = {}): VendorTaxInfo => ({
     w9ReceivedDate: null,
     w9RequestedDate: null,
     exemptFrom1099: false,
+    exemptFrom1099Override: null,
     address: null,
     notes: null,
     ...overrides,
@@ -68,6 +69,11 @@ describe('corporate classification exemption', () => {
         expect(isVendor1099Exempt(taxInfo({ taxClassification: 'c_corp' }))).toBe(true);
         expect(isVendor1099Exempt(taxInfo({ taxClassification: 's_corp' }))).toBe(true);
         expect(isVendor1099Exempt(taxInfo({ taxClassification: 'llc' }))).toBe(false);
+    });
+
+    it('honors an explicit false override for corporate carve-outs', () => {
+        expect(isVendor1099Exempt(taxInfo({ taxClassification: 'c_corp', exemptFrom1099Override: false }))).toBe(false);
+        expect(isVendor1099Exempt(taxInfo({ taxClassification: 's_corp', exemptFrom1099Override: true }))).toBe(true);
     });
 });
 

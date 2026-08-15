@@ -50,7 +50,10 @@ export const CORP_CLASSIFICATIONS: ReadonlySet<string> = new Set(['c_corp', 's_c
  * exceptions; they require payment classification support first.
  */
 export function isVendor1099Exempt(taxInfo: VendorTaxInfo | null | undefined): boolean {
-    return taxInfo?.exemptFrom1099 === true || CORP_CLASSIFICATIONS.has(taxInfo?.taxClassification ?? '');
+    if (taxInfo?.exemptFrom1099Override !== null && taxInfo?.exemptFrom1099Override !== undefined) {
+        return taxInfo.exemptFrom1099Override;
+    }
+    return CORP_CLASSIFICATIONS.has(taxInfo?.taxClassification ?? '');
 }
 
 export function isValidTaxClassification(value: unknown): value is TaxClassification {
@@ -120,6 +123,8 @@ export interface VendorTaxInfo {
     /** ISO date (YYYY-MM-DD) the W-9 was requested from the vendor, or null. */
     w9RequestedDate: string | null;
     exemptFrom1099: boolean;
+    /** null = corporation default; boolean = an explicit user decision. */
+    exemptFrom1099Override: boolean | null;
     address: string | null;
     notes: string | null;
 }
@@ -138,6 +143,7 @@ export interface Vendor1099Row {
 
 export interface Vendor1099Summary {
     year: number;
+    threshold: number;
     vendors: Vendor1099Row[];
     totals: {
         /** Vendors at/over the $600 threshold (exempt included in count). */
@@ -202,6 +208,7 @@ export function buildVendor1099Summary(
     const nonExempt = reportable.filter((r) => r.status !== 'exempt');
     return {
         year,
+        threshold,
         vendors: rows,
         totals: {
             reportableCount: reportable.length,
@@ -226,6 +233,7 @@ interface TaxInfoDbRow {
     w9_received_date: Date | null;
     w9_requested_date: Date | null;
     exempt_from_1099: boolean;
+    exempt_from_1099_override?: boolean | null;
     address: string | null;
     notes: string | null;
 }
@@ -238,7 +246,11 @@ function mapTaxInfo(row: TaxInfoDbRow): VendorTaxInfo {
         w9Received: row.w9_received,
         w9ReceivedDate: toIsoDate(row.w9_received_date),
         w9RequestedDate: toIsoDate(row.w9_requested_date),
-        exemptFrom1099: row.exempt_from_1099,
+        exemptFrom1099: isVendor1099Exempt({
+            exemptFrom1099Override: row.exempt_from_1099_override ?? null,
+            taxClassification: row.tax_classification,
+        } as VendorTaxInfo),
+        exemptFrom1099Override: row.exempt_from_1099_override ?? null,
         address: row.address,
         notes: row.notes,
     };
@@ -482,7 +494,8 @@ export interface UpsertVendorTaxInfoInput {
     w9ReceivedDate?: string | null;
     /** ISO date (YYYY-MM-DD) the W-9 was requested, or null. */
     w9RequestedDate?: string | null;
-    exemptFrom1099?: boolean;
+    /** Explicit override; null restores the corporation-default behavior. */
+    exemptFrom1099Override?: boolean | null;
     address?: string | null;
     notes?: string | null;
 }
@@ -566,7 +579,11 @@ export async function upsertVendorTaxInfo(
         ...(input.w9Received !== undefined && { w9_received: input.w9Received }),
         ...(w9Date !== undefined && { w9_received_date: w9Date }),
         ...(w9Requested !== undefined && { w9_requested_date: w9Requested }),
-        ...(input.exemptFrom1099 !== undefined && { exempt_from_1099: input.exemptFrom1099 }),
+        ...(input.exemptFrom1099Override !== undefined && {
+            exempt_from_1099_override: input.exemptFrom1099Override,
+            // Kept populated for compatibility with old readers/migrations.
+            exempt_from_1099: input.exemptFrom1099Override ?? false,
+        }),
         ...(input.address !== undefined && { address: input.address }),
         ...(input.notes !== undefined && { notes: input.notes }),
         updated_at: new Date(),

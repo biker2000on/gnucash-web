@@ -45,6 +45,7 @@ export async function GET(request: NextRequest) {
         const lines: string[] = [
             `1099-NEC PREP WORKSHEET — TAX YEAR ${year} — NOT AN OFFICIAL IRS FORM`,
             `Vendors paid at least $${threshold} in ${year}. Verify amounts and full TINs against your records before filing (only masked TINs are stored here).`,
+            'WARNING: attorneys\' fees and medical/health-care payments can be reportable even to corporations. This app cannot detect either payment type; review corporate vendors before filing.',
             '',
             [
                 'Payer Name',

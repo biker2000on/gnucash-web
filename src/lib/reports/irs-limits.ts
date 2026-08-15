@@ -26,6 +26,9 @@ export const NEC_THRESHOLD_OVERRIDE_ACCOUNT_TYPE = '1099_nec_threshold';
 // before 2026 and $2,000 for payments made in 2026.  Later years are omitted
 // intentionally: the IRS says they are inflation-adjusted.
 const NEC_THRESHOLD_DEFAULTS: Readonly<Record<number, number>> = {
+  2021: 600,
+  2022: 600,
+  2023: 600,
   2024: 600,
   2025: 600,
   2026: 2_000,

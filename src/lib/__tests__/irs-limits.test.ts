@@ -44,6 +44,9 @@ describe('IRS Contribution Limits', () => {
   describe('1099-NEC thresholds', () => {
     it('uses verified year-keyed defaults and leaves future inflation adjustments unknown', () => {
       expect(getDefaultNecThreshold(2024)).toBe(600);
+      expect(getDefaultNecThreshold(2021)).toBe(600);
+      expect(getDefaultNecThreshold(2022)).toBe(600);
+      expect(getDefaultNecThreshold(2023)).toBe(600);
       expect(getDefaultNecThreshold(2025)).toBe(600);
       expect(getDefaultNecThreshold(2026)).toBe(2_000);
       expect(getDefaultNecThreshold(2027)).toBeNull();

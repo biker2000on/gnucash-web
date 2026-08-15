@@ -31,7 +31,7 @@ const STATUS_META: Record<Vendor1099Status, { label: string; className: string }
     missing_w9: { label: 'Missing W-9', className: 'bg-warning/10 text-warning border-warning/30' },
     exempt: { label: 'Exempt', className: 'bg-background-tertiary text-foreground-secondary border-border' },
     below_threshold: {
-        label: 'Below $600',
+        label: 'Below threshold',
         className: 'bg-background-tertiary text-foreground-muted border-border',
     },
 };
@@ -61,6 +61,7 @@ interface EditFormState {
     w9ReceivedDate: string;
     w9RequestedDate: string;
     exemptFrom1099: boolean;
+    exemptFrom1099Override: boolean | null;
     address: string;
 }
 
@@ -73,6 +74,7 @@ function formFromRow(row: Vendor1099Row): EditFormState {
         w9ReceivedDate: row.taxInfo?.w9ReceivedDate ?? '',
         w9RequestedDate: row.taxInfo?.w9RequestedDate ?? '',
         exemptFrom1099: row.taxInfo?.exemptFrom1099 ?? false,
+        exemptFrom1099Override: row.taxInfo?.exemptFrom1099Override ?? null,
         address: row.taxInfo?.address ?? '',
     };
 }
@@ -108,11 +110,14 @@ export default function Nec1099Page() {
     const load = useCallback(async (y: number, signal?: { cancelled: boolean }) => {
         try {
             const res = await fetch(`/api/business/1099?year=${y}`);
-            if (!res.ok) throw new Error(`Request failed (${res.status})`);
+            if (!res.ok) {
+                const json = await res.json().catch(() => null);
+                throw new Error(json?.error ?? `Request failed (${res.status})`);
+            }
             const json: Vendor1099Summary = await res.json();
             if (!signal?.cancelled) setSummary(json);
-        } catch {
-            if (!signal?.cancelled) setError('Failed to load the 1099 summary.');
+        } catch (err) {
+            if (!signal?.cancelled) setError(err instanceof Error ? err.message : 'Failed to load the 1099 summary.');
         }
     }, []);
 
@@ -167,7 +172,7 @@ export default function Nec1099Page() {
                 w9Received: form.w9Received,
                 w9ReceivedDate: form.w9Received && form.w9ReceivedDate ? form.w9ReceivedDate : null,
                 w9RequestedDate: form.w9RequestedDate || null,
-                exemptFrom1099: form.exemptFrom1099,
+                exemptFrom1099Override: form.exemptFrom1099Override,
                 address: form.address.trim() || null,
             });
             toast.success('Vendor tax info saved');
@@ -184,7 +189,7 @@ export default function Nec1099Page() {
     const handleExemptToggle = async (row: Vendor1099Row) => {
         try {
             await saveTaxInfo(row.vendorGuid, {
-                exemptFrom1099: !(row.taxInfo?.exemptFrom1099 ?? false),
+                exemptFrom1099Override: !(row.taxInfo?.exemptFrom1099 ?? false),
             });
             await load(year);
         } catch {
@@ -282,6 +287,11 @@ export default function Nec1099Page() {
                 .
             </div>
 
+            <div className="rounded-xl border border-warning/30 bg-surface/30 px-4 py-3 text-sm text-foreground-secondary">
+                <span className="font-medium text-foreground">Corporate-payment review required.</span>{' '}
+                Corporations are generally exempt, but attorneys&apos; fees and medical/health-care payments can still be reportable. This tracker cannot detect either payment type; explicitly set each vendor&apos;s Exempt checkbox after review.
+            </div>
+
             {loading && (
                 <div className="flex items-center justify-center py-12">
                     <div className="flex items-center gap-3">
@@ -301,7 +311,7 @@ export default function Nec1099Page() {
                 <>
                     <StatGrid cols={4}>
                         <StatCard
-                            label={`Vendors ≥ $600 in ${summary.year}`}
+                            label={`Vendors ≥ $${summary.threshold.toLocaleString()} in ${summary.year}`}
                             value={summary.totals.reportableCount}
                             size="compact"
                         />
@@ -379,7 +389,7 @@ export default function Nec1099Page() {
                                                         </td>
                                                         <td className="px-4 py-2.5">
                                                             {row.crosses600 ? (
-                                                                <Chip label="≥ $600" className="bg-primary-light text-primary border-primary/30" />
+                                                                <Chip label={`≥ $${summary.threshold.toLocaleString()}`} className="bg-primary-light text-primary border-primary/30" />
                                                             ) : (
                                                                 <Chip label="Below" className="bg-background-tertiary text-foreground-muted border-border" />
                                                             )}
@@ -464,8 +474,8 @@ export default function Nec1099Page() {
                                                                                 setForm({
                                                                                     ...form,
                                                                                     taxClassification: v,
-                                                                                    // Auto-suggest exempt when a corp is picked.
-                                                                                    exemptFrom1099: corp ? true : form.exemptFrom1099,
+                                                                                    // Classification supplies the default only; preserve an explicit choice.
+                                                                                    exemptFrom1099: form.exemptFrom1099Override ?? corp,
                                                                                 });
                                                                             }}
                                                                             className={inputClass}
@@ -592,7 +602,7 @@ export default function Nec1099Page() {
                                                                             type="checkbox"
                                                                             checked={form.exemptFrom1099}
                                                                             onChange={(e) =>
-                                                                                setForm({ ...form, exemptFrom1099: e.target.checked })
+                                                                                setForm({ ...form, exemptFrom1099: e.target.checked, exemptFrom1099Override: e.target.checked })
                                                                             }
                                                                             className="accent-[var(--primary)]"
                                                                         />

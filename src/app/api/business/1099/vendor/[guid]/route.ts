@@ -35,8 +35,12 @@ export async function PUT(request: Request, { params }: RouteParams) {
             w9Received: body.w9Received === undefined ? undefined : Boolean(body.w9Received),
             w9ReceivedDate: optionalString(body.w9ReceivedDate),
             w9RequestedDate: optionalString(body.w9RequestedDate),
-            exemptFrom1099:
-                body.exemptFrom1099 === undefined ? undefined : Boolean(body.exemptFrom1099),
+            exemptFrom1099Override:
+                body.exemptFrom1099Override === undefined
+                    ? undefined
+                    : body.exemptFrom1099Override === null
+                        ? null
+                        : Boolean(body.exemptFrom1099Override),
             address: optionalString(body.address),
             notes: optionalString(body.notes),
         };
