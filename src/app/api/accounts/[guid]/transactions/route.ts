@@ -661,7 +661,7 @@ export async function GET(
             ? await prisma.$queryRaw<{ guid: string; running_balance: number }[]>`
                 WITH account_transaction_deltas AS (
                     SELECT t.guid, t.post_date, t.enter_date,
-                        SUM(s.quantity_num::float8 / s.quantity_denom::float8) AS delta
+                        SUM(s.quantity_num::numeric / NULLIF(s.quantity_denom, 0)::numeric) AS delta
                     FROM transactions t
                     JOIN splits s ON s.tx_guid = t.guid
                     WHERE s.account_guid = ANY(${targetAccountGuids}::text[])

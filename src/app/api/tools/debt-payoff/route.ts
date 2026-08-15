@@ -88,10 +88,7 @@ export async function GET() {
              a.name,
              a.account_type,
              c.mnemonic AS currency,
-             COALESCE(SUM(
-               CAST(s.value_num AS DOUBLE PRECISION) /
-               NULLIF(CAST(s.value_denom AS DOUBLE PRECISION), 0)
-             ), 0) AS balance
+             COALESCE(SUM(s.value_num::numeric / NULLIF(s.value_denom, 0)::numeric), 0)::float8 AS balance
       FROM accounts a
       LEFT JOIN splits s ON s.account_guid = a.guid
       LEFT JOIN commodities c ON c.guid = a.commodity_guid

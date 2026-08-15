@@ -238,7 +238,7 @@ export async function generateNetWorthByOwner(
   const balanceRows = accountGuids.length > 0
     ? await prisma.$queryRaw<Array<{ account_guid: string; quantity: number }>>`
         SELECT s.account_guid,
-               COALESCE(SUM(s.quantity_num::float8 / s.quantity_denom::float8), 0)::float8 AS quantity
+               COALESCE(SUM(s.quantity_num::numeric / NULLIF(s.quantity_denom, 0)::numeric), 0)::float8 AS quantity
         FROM splits s
         JOIN transactions t ON t.guid = s.tx_guid
         WHERE s.account_guid = ANY(${accountGuids}::text[])
