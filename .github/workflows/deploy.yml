@@ -16,6 +16,33 @@ jobs:
     permissions:
       contents: read
 
+    # Real PostgreSQL for the integration tier. The concurrency guarantees this
+    # codebase depends on - FOR UPDATE, lock ordering, advisory locks - are not
+    # observable through a mocked pool, so a regression that drops a parent
+    # lock passes a mock-only suite. Matches the 17 in docker-compose.prod.yml
+    # so CI cannot pass on behaviour production does not have.
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: gnucash
+          # Throwaway credentials for a container that lives for one job and is
+          # reachable only from it. Nothing here is a secret.
+          POSTGRES_PASSWORD: gnucash
+          POSTGRES_DB: gnucash_test
+        ports:
+          - 5432:5432
+        # Without a healthcheck the first step to connect races the server's
+        # initdb and fails with ECONNREFUSED.
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      TEST_DATABASE_URL: postgresql://gnucash:gnucash@localhost:5432/gnucash_test
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -38,8 +65,18 @@ jobs:
       - name: Verify documentation coverage
         run: npm run docs:check
 
-      - name: Run unit and integration tests
+      - name: Run unit tests
         run: npm run test:run
+
+      # Split from the run above so a red build says which half broke. The
+      # schema step comes first and separately for the same reason: "the
+      # database was never built" and "the code is wrong" are different
+      # problems and should not share a step name.
+      - name: Create integration database schema
+        run: npm run test:integration:schema
+
+      - name: Run integration tests
+        run: npm run test:integration
 
       - name: Run lint
         run: npm run lint

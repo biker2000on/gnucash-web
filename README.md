@@ -102,6 +102,58 @@ npm run build
 npm run start
 ```
 
+## 🧪 Testing
+
+The suite is split into two tiers by filename. They do not overlap, and CI runs
+both as separate steps so a failure names the tier that broke.
+
+| Command | Runs | Needs a database |
+| --- | --- | --- |
+| `npm run test:run` | everything except `*.integration.test.ts` | no |
+| `npm run test:integration` | only `*.integration.test.ts` | yes |
+
+### Unit tier
+
+```bash
+npm run test:run        # or `npm test` for watch mode
+```
+
+Runs in jsdom with mocked data access. No environment setup, no database.
+
+### Integration tier
+
+These tests talk to a real PostgreSQL server, because the guarantees they
+cover — `FOR UPDATE`, lock ordering, advisory locks — are only observable
+across two live connections and cannot be asserted against a mocked pool.
+
+```bash
+# 1. Put the URL of a THROWAWAY database in .env.test.local at the repo root.
+#    That filename is gitignored; never commit credentials.
+echo 'TEST_DATABASE_URL=postgresql://user:password@localhost:5432/gnucash_test' > .env.test.local
+
+# 2. Create the schema (idempotent — re-running is safe).
+npm run test:integration:schema
+
+# 3. Run the tier.
+npm run test:integration
+```
+
+Use a database you are willing to lose. The harness overwrites `DATABASE_URL`
+with `TEST_DATABASE_URL` for the duration of the run, so application code under
+test writes there and cannot reach a real book.
+
+`test:integration:schema` does two things, and both are required: `prisma db
+push` creates the tables modelled in `prisma/schema.prisma`, then
+`initializeDatabase()` creates the `account_hierarchy` view and the extension
+tables that exist only as idempotent DDL in `src/lib/db-init.ts`. A further set
+of tables is created lazily by per-feature `ensureXTable()` helpers the first
+time a feature is used, exactly as in production.
+
+**If `TEST_DATABASE_URL` is missing, the tier fails with instructions — it does
+not skip.** A skipped tier reports green while asserting nothing, which reads
+as coverage that does not exist. In CI the `quality` job's `postgres` service
+supplies the variable.
+
 ## 🐳 Docker
 
 The project includes a multi-stage Docker build that generates a highly optimized `standalone` bundle.
