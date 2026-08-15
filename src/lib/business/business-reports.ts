@@ -25,6 +25,11 @@
  * Structure mirrors `src/lib/data-health.ts`: per-report SQL loaders plus
  * PURE aggregation logic (exported, unit-tested in
  * `src/lib/business/__tests__/business-reports.test.ts`).
+ *
+ * Money aggregates stay in PostgreSQL `numeric` through `SUM` and cast to
+ * `float8` only at the query boundary. The number-valued report contract is
+ * therefore unchanged, without accumulating a floating-point quotient for
+ * every split. Keep the zero-denominator `NULLIF` in every such expression.
  */
 
 import prisma from '@/lib/prisma';
