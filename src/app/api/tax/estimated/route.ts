@@ -13,6 +13,7 @@ import { summarizeTaxPayments } from '@/lib/tax/payments';
 import { applyHouseholdTaxDetails, buildFederalInputsFromBookData } from '@/lib/tax/estimator-inputs';
 import { getContributionLimit } from '@/lib/reports/irs-limits';
 import { computeQuarterStatuses, quarterForPaymentDate, type EstimatedPayment } from '@/lib/tax/estimated-quarters';
+import { resolveFarmerEstimatedTaxElection } from '@/lib/tax/farmer-estimated-tax';
 import {
   ANNUALIZATION_FACTORS,
   ANNUALIZATION_PERIOD_ENDS,
@@ -216,6 +217,13 @@ export async function GET(request: NextRequest) {
     const pinned = await loadPinnedPriorYear(user.id, bookGuid);
     const priorYearTax = parseMoney(searchParams.get('priorYearTax')) ?? pinned.priorYearTax ?? null;
     const priorYearAgi = parseMoney(searchParams.get('priorYearAgi')) ?? pinned.priorYearAgi ?? null;
+    // Farm activity alone never establishes the IRC §6654(i) two-thirds
+    // gross-income test. The tracker does not have gross farm/fishing income
+    // data, so require an explicit request assertion and expose it below.
+    const isQualifyingFarmer = resolveFarmerEstimatedTaxElection({
+      businessActivity: entity.businessActivity,
+      qualifyingFarmerAsserted: searchParams.get('qualifyingFarmer') === 'true',
+    });
 
     const safeHarbor = computeSafeHarbor({
       year,
@@ -224,6 +232,7 @@ export async function GET(request: NextRequest) {
       priorYearTax,
       priorYearAgi,
       withholding: annualized.withholding,
+      isQualifyingFarmer,
     });
 
     /* --- Form 2210 Schedule AI annualized installments ------------------ */
@@ -285,6 +294,7 @@ export async function GET(request: NextRequest) {
     const annualizedMethod = computeAnnualizedInstallments({
       requiredAnnualPayment: safeHarbor.requiredAnnualPayment,
       annualizedTaxByColumn,
+      isQualifyingFarmer,
     });
 
     /* --- Quarterly progress --------------------------------------------- */
@@ -322,6 +332,12 @@ export async function GET(request: NextRequest) {
         pinned: pinned.priorYearTax !== undefined || pinned.priorYearAgi !== undefined,
       },
       safeHarbor,
+      farmerQualification: {
+        bookMarkedFarm: entity.businessActivity === 'farm',
+        assertedQualifyingFarmer: isQualifyingFarmer,
+        // The tracker cannot test the statutory 2/3 gross-income condition.
+        qualifyingIncomeTestAvailable: false,
+      },
       withholding: {
         ytd: ytd.withholding,
         annualized: annualized.withholding,

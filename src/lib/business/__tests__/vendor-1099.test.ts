@@ -11,14 +11,17 @@
 
 import { describe, it, expect } from 'vitest';
 import {
-    NEC_THRESHOLD,
     derive1099Status,
     maskTin,
     buildVendor1099Summary,
+    isVendor1099Exempt,
     isValidTaxClassification,
     Vendor1099ValidationError,
     type VendorTaxInfo,
 } from '../vendor-1099.service';
+import { getDefaultNecThreshold } from '../../reports/irs-limits';
+
+const NEC_THRESHOLD = getDefaultNecThreshold(2025)!;
 
 const taxInfo = (overrides: Partial<VendorTaxInfo> = {}): VendorTaxInfo => ({
     legalName: null,
@@ -39,24 +42,32 @@ const taxInfo = (overrides: Partial<VendorTaxInfo> = {}): VendorTaxInfo => ({
 
 describe('derive1099Status', () => {
     it('is ready when paid >= $600 with a W-9 on file', () => {
-        expect(derive1099Status({ totalPaid: 600, exempt: false, w9Received: true })).toBe('ready');
-        expect(derive1099Status({ totalPaid: 12_000, exempt: false, w9Received: true })).toBe('ready');
+        expect(derive1099Status({ totalPaid: 600, exempt: false, w9Received: true, threshold: NEC_THRESHOLD })).toBe('ready');
+        expect(derive1099Status({ totalPaid: 12_000, exempt: false, w9Received: true, threshold: NEC_THRESHOLD })).toBe('ready');
     });
 
     it('flags missing W-9 only for reportable vendors', () => {
-        expect(derive1099Status({ totalPaid: 600, exempt: false, w9Received: false })).toBe('missing_w9');
+        expect(derive1099Status({ totalPaid: 600, exempt: false, w9Received: false, threshold: NEC_THRESHOLD })).toBe('missing_w9');
         // Below threshold no W-9 is needed — below_threshold wins.
-        expect(derive1099Status({ totalPaid: 100, exempt: false, w9Received: false })).toBe('below_threshold');
+        expect(derive1099Status({ totalPaid: 100, exempt: false, w9Received: false, threshold: NEC_THRESHOLD })).toBe('below_threshold');
     });
 
     it('treats the $600 threshold as inclusive', () => {
-        expect(derive1099Status({ totalPaid: 599.99, exempt: false, w9Received: true })).toBe('below_threshold');
-        expect(derive1099Status({ totalPaid: NEC_THRESHOLD, exempt: false, w9Received: true })).toBe('ready');
+        expect(derive1099Status({ totalPaid: 599.99, exempt: false, w9Received: true, threshold: NEC_THRESHOLD })).toBe('below_threshold');
+        expect(derive1099Status({ totalPaid: NEC_THRESHOLD, exempt: false, w9Received: true, threshold: NEC_THRESHOLD })).toBe('ready');
     });
 
     it('exempt wins regardless of amount or W-9 status', () => {
-        expect(derive1099Status({ totalPaid: 50_000, exempt: true, w9Received: false })).toBe('exempt');
-        expect(derive1099Status({ totalPaid: 0, exempt: true, w9Received: true })).toBe('exempt');
+        expect(derive1099Status({ totalPaid: 50_000, exempt: true, w9Received: false, threshold: NEC_THRESHOLD })).toBe('exempt');
+        expect(derive1099Status({ totalPaid: 0, exempt: true, w9Received: true, threshold: NEC_THRESHOLD })).toBe('exempt');
+    });
+});
+
+describe('corporate classification exemption', () => {
+    it('exempts C- and S-corporations even when the manual exemption flag is absent', () => {
+        expect(isVendor1099Exempt(taxInfo({ taxClassification: 'c_corp' }))).toBe(true);
+        expect(isVendor1099Exempt(taxInfo({ taxClassification: 's_corp' }))).toBe(true);
+        expect(isVendor1099Exempt(taxInfo({ taxClassification: 'llc' }))).toBe(false);
     });
 });
 
@@ -132,8 +143,10 @@ describe('buildVendor1099Summary', () => {
             ]),
             new Map([
                 [G1, taxInfo({ w9Received: true })],
-                [G3, taxInfo({ exemptFrom1099: true, taxClassification: 's_corp' })],
+                [G3, taxInfo({ taxClassification: 's_corp' })],
             ]),
+            new Map(),
+            NEC_THRESHOLD,
         );
 
         const byGuid = new Map(summary.vendors.map((v) => [v.vendorGuid, v]));
@@ -159,6 +172,8 @@ describe('buildVendor1099Summary', () => {
             ],
             new Map([[G2, 700]]),
             new Map(),
+            new Map(),
+            NEC_THRESHOLD,
         );
         expect(summary.vendors.map((v) => v.vendorGuid)).toEqual([G2]);
         expect(summary.vendors[0].status).toBe('missing_w9');
@@ -178,6 +193,8 @@ describe('buildVendor1099Summary', () => {
                 [G3, 900],
             ]),
             new Map(),
+            new Map(),
+            NEC_THRESHOLD,
         );
         expect(summary.vendors.map((v) => v.name)).toEqual(['Mid', 'Alpha', 'Zeta']);
     });

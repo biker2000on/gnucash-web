@@ -21,17 +21,14 @@ import prisma from '@/lib/prisma';
 import { getAccountGuidsForBook } from '@/lib/book-scope';
 import { OWNER_TYPE_JOB, OWNER_TYPE_VENDOR } from '@/lib/business/business-reports';
 import {
-    NEC_THRESHOLD,
     summarizeVendor1099Compliance,
     type Vendor1099ComplianceSummary,
 } from '@/lib/business/vendor-1099-compliance';
+import { getNecThreshold } from '@/lib/reports/irs-limits';
 
 /* ------------------------------------------------------------------ */
 /* Constants + pure helpers (unit-tested)                              */
 /* ------------------------------------------------------------------ */
-
-/** 1099-NEC reporting threshold — canonical value lives in the pure engine. */
-export { NEC_THRESHOLD } from '@/lib/business/vendor-1099-compliance';
 
 export const TAX_CLASSIFICATIONS = [
     'individual/sole_prop',
@@ -45,6 +42,16 @@ export type TaxClassification = (typeof TAX_CLASSIFICATIONS)[number];
 
 /** Classifications that are generally exempt from 1099-NEC reporting. */
 export const CORP_CLASSIFICATIONS: ReadonlySet<string> = new Set(['c_corp', 's_corp']);
+
+/**
+ * The general 1099-NEC corporate exemption. This tracker has no payment-type
+ * field, so it cannot represent the attorney-fee or medical-payment carve-outs
+ * that remain reportable to corporations. Do not use this result to file those
+ * exceptions; they require payment classification support first.
+ */
+export function isVendor1099Exempt(taxInfo: VendorTaxInfo | null | undefined): boolean {
+    return taxInfo?.exemptFrom1099 === true || CORP_CLASSIFICATIONS.has(taxInfo?.taxClassification ?? '');
+}
 
 export function isValidTaxClassification(value: unknown): value is TaxClassification {
     return typeof value === 'string' && (TAX_CLASSIFICATIONS as readonly string[]).includes(value);
@@ -90,9 +97,10 @@ export function derive1099Status(input: {
     totalPaid: number;
     exempt: boolean;
     w9Received: boolean;
+    threshold: number;
 }): Vendor1099Status {
     if (input.exempt) return 'exempt';
-    if (input.totalPaid < NEC_THRESHOLD) return 'below_threshold';
+    if (input.totalPaid < input.threshold) return 'below_threshold';
     if (!input.w9Received) return 'missing_w9';
     return 'ready';
 }
@@ -163,6 +171,7 @@ export function buildVendor1099Summary(
     paidByVendor: ReadonlyMap<string, number>,
     taxInfoByVendor: ReadonlyMap<string, VendorTaxInfo>,
     filedByVendor: ReadonlyMap<string, string> = new Map(),
+    threshold: number,
 ): Vendor1099Summary {
     const rows: Vendor1099Row[] = [];
 
@@ -175,12 +184,13 @@ export function buildVendor1099Summary(
             vendorGuid: vendor.guid,
             name: vendor.name,
             totalPaid,
-            crosses600: totalPaid >= NEC_THRESHOLD,
+            crosses600: totalPaid >= threshold,
             taxInfo,
             status: derive1099Status({
                 totalPaid,
-                exempt: taxInfo?.exemptFrom1099 ?? false,
+                exempt: isVendor1099Exempt(taxInfo),
                 w9Received: taxInfo?.w9Received ?? false,
+                threshold,
             }),
             filedDate: filedByVendor.get(vendor.guid) ?? null,
         });
@@ -247,7 +257,7 @@ export async function get1099Summary(
     const start = new Date(Date.UTC(year, 0, 1));
     const end = new Date(Date.UTC(year, 11, 31, 23, 59, 59, 999));
 
-    const [vendorRows, paidRows] = await Promise.all([
+    const [vendorRows, paidRows, threshold] = await Promise.all([
         // Vendors with any bill posted into this book (jobs resolved to owner).
         prisma.$queryRaw<{ guid: string; name: string; active: number }[]>`
             SELECT DISTINCT v.guid, v.name, v.active
@@ -284,7 +294,14 @@ export async function get1099Summary(
               AND t.post_date >= ${start} AND t.post_date <= ${end}
             GROUP BY inv.eff_owner_guid
         `,
+        getNecThreshold(year),
     ]);
+
+    if (threshold === null) {
+        throw new Vendor1099ValidationError(
+            `No verified 1099-NEC threshold is configured for tax year ${year}`,
+        );
+    }
 
     const paidByVendor = new Map(paidRows.map((r) => [r.vendor_guid, r.paid]));
 
@@ -313,6 +330,7 @@ export async function get1099Summary(
         paidByVendor,
         taxInfoByVendor,
         filedByVendor,
+        threshold,
     );
 }
 
@@ -331,20 +349,29 @@ export async function get1099Compliance(
     taxYear: number,
     asOf: Date = new Date(),
 ): Promise<Vendor1099ComplianceSummary> {
-    const summary = await get1099Summary(bookGuid, bookAccountGuids, taxYear);
+    const [summary, threshold] = await Promise.all([
+        get1099Summary(bookGuid, bookAccountGuids, taxYear),
+        getNecThreshold(taxYear),
+    ]);
+    if (threshold === null) {
+        throw new Vendor1099ValidationError(
+            `No verified 1099-NEC threshold is configured for tax year ${taxYear}`,
+        );
+    }
     return summarizeVendor1099Compliance(
         taxYear,
         summary.vendors.map((row) => ({
             vendorGuid: row.vendorGuid,
             name: row.name,
             totalPaid: row.totalPaid,
-            exemptFrom1099: row.taxInfo?.exemptFrom1099 ?? false,
+            exemptFrom1099: isVendor1099Exempt(row.taxInfo),
             w9Received: row.taxInfo?.w9Received ?? false,
             w9RequestedDate: row.taxInfo?.w9RequestedDate ?? null,
             tinOnFile: (row.taxInfo?.taxIdMasked ?? null) !== null,
             filedDate: row.filedDate,
         })),
         asOf,
+        threshold,
     );
 }
 

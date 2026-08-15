@@ -6,8 +6,8 @@ import { escapeCSVField } from '@/lib/reports/csv-export';
 import {
     get1099Summary,
     parseYearParam,
-    NEC_THRESHOLD,
 } from '@/lib/business/vendor-1099.service';
+import { getNecThreshold } from '@/lib/reports/irs-limits';
 
 /**
  * 1099-NEC prep worksheet (CSV) — one row per vendor at/over the $600
@@ -27,17 +27,24 @@ export async function GET(request: NextRequest) {
         }
 
         const bookAccountGuids = await getBookAccountGuids();
-        const [summary, profile] = await Promise.all([
+        const [summary, profile, threshold] = await Promise.all([
             get1099Summary(bookGuid, bookAccountGuids, year),
             getEntityProfile(bookGuid, user.id),
+            getNecThreshold(year),
         ]);
+        if (threshold === null) {
+            return NextResponse.json(
+                { error: `No verified 1099-NEC threshold is configured for tax year ${year}` },
+                { status: 400 },
+            );
+        }
 
         const payerName = profile.entityName ?? '';
         const payerState = profile.taxState ?? '';
 
         const lines: string[] = [
             `1099-NEC PREP WORKSHEET — TAX YEAR ${year} — NOT AN OFFICIAL IRS FORM`,
-            `Vendors paid at least $${NEC_THRESHOLD} in ${year}. Verify amounts and full TINs against your records before filing (only masked TINs are stored here).`,
+            `Vendors paid at least $${threshold} in ${year}. Verify amounts and full TINs against your records before filing (only masked TINs are stored here).`,
             '',
             [
                 'Payer Name',

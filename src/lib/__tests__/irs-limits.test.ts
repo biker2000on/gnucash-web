@@ -12,7 +12,7 @@ vi.mock('../prisma', () => ({
   },
 }));
 
-import { getContributionLimit, getDefaultLimits, calculateAge, RETIREMENT_ACCOUNT_TYPES } from '../reports/irs-limits';
+import { getContributionLimit, getDefaultLimits, getDefaultNecThreshold, getNecThreshold, calculateAge, RETIREMENT_ACCOUNT_TYPES, NEC_THRESHOLD_OVERRIDE_ACCOUNT_TYPE } from '../reports/irs-limits';
 
 describe('IRS Contribution Limits', () => {
   beforeEach(() => {
@@ -38,6 +38,23 @@ describe('IRS Contribution Limits', () => {
 
     it('should include the family-coverage HSA type', () => {
       expect(RETIREMENT_ACCOUNT_TYPES).toContain('hsa_family');
+    });
+  });
+
+  describe('1099-NEC thresholds', () => {
+    it('uses verified year-keyed defaults and leaves future inflation adjustments unknown', () => {
+      expect(getDefaultNecThreshold(2024)).toBe(600);
+      expect(getDefaultNecThreshold(2025)).toBe(600);
+      expect(getDefaultNecThreshold(2026)).toBe(2_000);
+      expect(getDefaultNecThreshold(2027)).toBeNull();
+    });
+
+    it('accepts the existing annual-limit-table override for a reviewed threshold', async () => {
+      mockContributionLimitsFindFirst.mockResolvedValue({ base_limit: 2_125 });
+      await expect(getNecThreshold(2027)).resolves.toBe(2_125);
+      expect(mockContributionLimitsFindFirst).toHaveBeenCalledWith({
+        where: { tax_year: 2027, account_type: NEC_THRESHOLD_OVERRIDE_ACCOUNT_TYPE },
+      });
     });
   });
 
