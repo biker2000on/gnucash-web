@@ -76,6 +76,7 @@ export default function ExpandableChart({
             <button
                 onClick={openExpanded}
                 className="absolute top-2 right-2 p-1.5 rounded-lg bg-surface/80 backdrop-blur-sm border border-border opacity-0 group-hover:opacity-100 transition-opacity hover:bg-surface-hover z-10"
+                aria-label="Expand chart"
                 title="Expand chart"
             >
                 {/* Expand SVG icon */}

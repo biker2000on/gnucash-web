@@ -128,7 +128,7 @@ export default function SaveReportDialog({
         </div>
 
         {error && (
-          <div className="px-3 py-2 bg-error/10 border border-error/30 rounded-lg text-sm text-error">
+          <div role="alert" className="px-3 py-2 bg-error/10 border border-error/30 rounded-lg text-sm text-error">
             {error}
           </div>
         )}

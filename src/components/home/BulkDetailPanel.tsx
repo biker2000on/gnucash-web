@@ -72,7 +72,7 @@ export function BulkDetailPanel({ rooms, onBack, onChanged }: BulkDetailPanelPro
             </div>
 
             {error && (
-                <div className="border border-error/30 bg-surface/30 rounded-xl p-4">
+                <div role="alert" className="border border-error/30 bg-surface/30 rounded-xl p-4">
                     <p className="text-sm text-error">{error}</p>
                 </div>
             )}

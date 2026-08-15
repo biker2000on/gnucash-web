@@ -155,7 +155,7 @@ export function CreateBookWizard({ onBookCreated, isOnboarding = false }: Create
         </p>
 
         {error && (
-          <div className="mb-4 p-3 bg-negative/10 border border-negative/30 rounded-lg text-negative text-sm">
+          <div role="alert" className="mb-4 p-3 bg-negative/10 border border-negative/30 rounded-lg text-negative text-sm">
             {error}
           </div>
         )}
@@ -212,7 +212,7 @@ export function CreateBookWizard({ onBookCreated, isOnboarding = false }: Create
         </p>
 
         {error && (
-          <div className="mb-4 p-3 bg-negative/10 border border-negative/30 rounded-lg text-negative text-sm">
+          <div role="alert" className="mb-4 p-3 bg-negative/10 border border-negative/30 rounded-lg text-negative text-sm">
             {error}
           </div>
         )}

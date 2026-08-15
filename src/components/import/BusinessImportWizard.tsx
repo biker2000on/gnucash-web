@@ -340,7 +340,7 @@ export default function BusinessImportWizard({ config }: { config: BusinessImpor
                     </div>
 
                     {error && !preview && (
-                        <div className="bg-negative/10 border border-negative/30 rounded-lg p-4 text-sm text-negative">
+                        <div role="alert" className="bg-negative/10 border border-negative/30 rounded-lg p-4 text-sm text-negative">
                             {error}
                         </div>
                     )}
@@ -562,7 +562,7 @@ export default function BusinessImportWizard({ config }: { config: BusinessImpor
                     )}
 
                     {error && (
-                        <div className="bg-negative/10 border border-negative/30 rounded-lg p-4 text-sm text-negative">
+                        <div role="alert" className="bg-negative/10 border border-negative/30 rounded-lg p-4 text-sm text-negative">
                             {error}
                         </div>
                     )}

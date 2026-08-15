@@ -102,7 +102,7 @@ export function BatchEditModal({
                         />
                     </div>
                     {error && (
-                        <p className="mt-1 text-sm text-negative">{error}</p>
+                        <p role="alert" className="mt-1 text-sm text-negative">{error}</p>
                     )}
                 </div>
 

@@ -341,7 +341,7 @@ export function AccountForm({ mode, accountGuid, initialData, parentGuid, onSave
     return (
         <form onSubmit={handleSubmit} className="space-y-6">
             {error && (
-                <div className="bg-negative/10 border border-negative/30 rounded-lg p-4 text-negative text-sm">
+                <div role="alert" className="bg-negative/10 border border-negative/30 rounded-lg p-4 text-negative text-sm">
                     {error}
                 </div>
             )}

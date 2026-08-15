@@ -214,7 +214,7 @@ export function TransactionDrilldownModal({ target, onClose, endpoint = '/api/re
                 <div className="flex-1 overflow-y-auto">
                     {isLoading && <DrilldownSkeleton />}
                     {error && (
-                        <div className="px-4 py-6 text-sm text-negative">
+                        <div role="alert" className="px-4 py-6 text-sm text-negative">
                             {error}
                         </div>
                     )}

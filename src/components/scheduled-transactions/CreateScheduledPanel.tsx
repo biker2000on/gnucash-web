@@ -449,7 +449,7 @@ export function CreateScheduledPanel({
 
           {/* Error message */}
           {error && (
-            <p className="text-negative text-sm">{error}</p>
+            <p role="alert" className="text-negative text-sm">{error}</p>
           )}
 
           {command && (

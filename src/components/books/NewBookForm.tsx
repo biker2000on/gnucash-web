@@ -222,7 +222,7 @@ export default function NewBookForm({
       </div>
 
       {error && (
-        <div className="px-3 py-2 bg-negative/10 border border-negative/30 rounded-lg text-sm text-negative">
+        <div role="alert" className="px-3 py-2 bg-negative/10 border border-negative/30 rounded-lg text-sm text-negative">
           {error}
         </div>
       )}

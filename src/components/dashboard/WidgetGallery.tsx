@@ -207,6 +207,7 @@ export default function WidgetGallery({
                                     <div className="flex items-center gap-1 shrink-0">
                                         <button
                                             onClick={() => onEditCustom(def)}
+                                            aria-label="Edit widget"
                                             title="Edit widget"
                                             className="p-1.5 rounded-md text-foreground-muted hover:text-primary hover:bg-surface-hover transition-colors"
                                         >
@@ -216,6 +217,7 @@ export default function WidgetGallery({
                                         </button>
                                         <button
                                             onClick={() => onDeleteCustom(def)}
+                                            aria-label="Delete widget"
                                             title="Delete widget"
                                             className="p-1.5 rounded-md text-foreground-muted hover:text-negative hover:bg-surface-hover transition-colors"
                                         >

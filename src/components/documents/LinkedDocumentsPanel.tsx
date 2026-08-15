@@ -442,7 +442,7 @@ export function LinkedDocumentsPanel({
             )}
 
             {error && (
-                <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-negative/30 bg-negative/10 px-3 py-2 text-xs text-negative">
+                <div role="alert" className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-negative/30 bg-negative/10 px-3 py-2 text-xs text-negative">
                     <span>{error}</span>
                     <button type="button" onClick={() => void load()} className="font-medium underline underline-offset-2">
                         Retry

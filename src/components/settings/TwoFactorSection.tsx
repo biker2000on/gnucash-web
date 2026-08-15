@@ -321,7 +321,7 @@ export function TwoFactorSection() {
 
                         <form onSubmit={confirmEnroll} className="space-y-2">
                             <div className="text-sm font-medium text-foreground">2. Enter the 6-digit code it shows</div>
-                            {formError && <p className="text-xs text-negative">{formError}</p>}
+                            {formError && <p role="alert" className="text-xs text-negative">{formError}</p>}
                             <div className="flex items-center gap-2">
                                 {codeInput(confirmCode, setConfirmCode, false)}
                                 <button
@@ -383,7 +383,7 @@ export function TwoFactorSection() {
                                 ? 'Enter a current authenticator code (or an unused recovery code) to confirm. Password-only sign-in will be restored.'
                                 : 'Enter a current authenticator code (or an unused recovery code). All previous recovery codes stop working.'}
                         </p>
-                        {formError && <p className="text-xs text-negative">{formError}</p>}
+                        {formError && <p role="alert" className="text-xs text-negative">{formError}</p>}
                         <div className="flex items-center gap-2">
                             {codeInput(actionCode, setActionCode, true)}
                             <button

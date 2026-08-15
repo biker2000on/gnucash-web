@@ -169,7 +169,7 @@ export function ScrubAllButton() {
                 </label>
 
                 {error && (
-                  <div className="mb-4 bg-error-light border border-error/50 rounded-lg px-4 py-3 text-sm text-error">
+                  <div role="alert" className="mb-4 bg-error-light border border-error/50 rounded-lg px-4 py-3 text-sm text-error">
                     {error}
                   </div>
                 )}

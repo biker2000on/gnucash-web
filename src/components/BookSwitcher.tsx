@@ -185,6 +185,7 @@ export default function BookSwitcher({ collapsed = false }: BookSwitcherProps) {
                 onClick={() => setOpen(!open)}
                 className={`flex items-center w-full rounded-xl transition-all duration-200 text-sidebar-text hover:bg-sidebar-hover hover:text-foreground
                     ${collapsed ? 'justify-center px-0 py-3' : 'px-4 py-2.5 gap-2'}`}
+                aria-label={activeBook?.name || 'Select Book'}
                 title={collapsed ? (activeBook?.name || 'Select Book') : undefined}
             >
                 <IconBook className="w-4 h-4 shrink-0" />
@@ -255,6 +256,7 @@ export default function BookSwitcher({ collapsed = false }: BookSwitcherProps) {
                                             setOpen(false);
                                         }}
                                         className="p-2 hover:bg-surface-hover/50 transition-colors"
+                                        aria-label="Edit book"
                                         title="Edit book"
                                     >
                                         <IconPencil className="w-3.5 h-3.5" />

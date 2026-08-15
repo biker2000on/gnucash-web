@@ -151,7 +151,7 @@ export function LoginForm({ mode, onToggleMode, redirectTo = '/dashboard', oidcP
                     </div>
 
                     {error && (
-                        <div className="mb-6 p-4 bg-negative/10 border border-negative/30 rounded-lg text-negative text-sm">
+                        <div role="alert" className="mb-6 p-4 bg-negative/10 border border-negative/30 rounded-lg text-negative text-sm">
                             {error}
                         </div>
                     )}
@@ -245,7 +245,7 @@ export function LoginForm({ mode, onToggleMode, redirectTo = '/dashboard', oidcP
                 )}
 
                 {(error || flowError) && (
-                    <div className="mb-6 p-4 bg-negative/10 border border-negative/30 rounded-lg text-negative text-sm">
+                    <div role="alert" className="mb-6 p-4 bg-negative/10 border border-negative/30 rounded-lg text-negative text-sm">
                         {error || flowError}
                     </div>
                 )}
