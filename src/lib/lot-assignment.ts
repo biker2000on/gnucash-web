@@ -17,7 +17,13 @@ import { isOwnAccountCommodityTransfer } from './account-transfer';
 import {
   PARENT_SPLIT_SLOT,
   AVG_COST_BASIS_SLOT,
+  AVG_COST_BASIS_RUN_SLOT,
   AVG_BASIS_REMAINING_SLOT,
+  AVG_BASIS_REMAINING_RUN_SLOT,
+  AVG_BASIS_REMAINING_PREV_SLOT,
+  AVG_BASIS_REMAINING_PREV_RUN_SLOT,
+  AVG_SPLIT_SLOT_NAMES,
+  AVG_LOT_SLOT_NAMES,
   splitSellAcrossLots,
   splitTransferAcrossSourceLots,
   generateCapitalGains,
@@ -188,14 +194,22 @@ export function sortScrubEvents(events: ScrubEvent[]): ScrubEvent[] {
 }
 
 /**
- * Delete every average-cost artefact this engine wrote for an account.
+ * Delete every average-cost artefact this engine wrote for an account,
+ * WHICHEVER run wrote it.
  *
- * Called when the account is scrubbed under FIFO/LIFO: those slots record an
- * election that is no longer in force, and a stale `avg_cost_basis` left on a
- * sell split would keep generateCapitalGains, the lot summaries and Form 8949
- * reporting average basis for a book the user has since moved to FIFO. Under
- * the average election the slots are deliberately KEPT — they price disposals
- * from earlier runs and seed the pool for lots this run does not re-touch.
+ * This is the ELECTION-WIDE sweep, and account scope is the correct scope for
+ * it. Its two callers are the two places where no average-cost number may
+ * survive under any owner:
+ *
+ *  - a FIFO/LIFO re-scrub of the account (the election is no longer in force,
+ *    so a slot left by ANY earlier average run would keep Form 8949 reporting
+ *    a pooled basis on a FIFO return);
+ *  - clearLotAssignments, which destroys the account's whole lot structure.
+ *
+ * Reverting ONE run is a different question with a different answer — see
+ * clearAverageCostArtifactsForRun. Under an average re-scrub nothing is
+ * cleared at all: earlier runs' slots price their own disposals and seed the
+ * pool for lots this run does not re-touch.
  */
 async function clearAverageCostArtifacts(accountGuid: string, tx: PrismaTx): Promise<void> {
   const accountSplitGuids = (await tx.splits.findMany({
@@ -204,7 +218,7 @@ async function clearAverageCostArtifacts(accountGuid: string, tx: PrismaTx): Pro
   })).map(s => s.guid);
   if (accountSplitGuids.length > 0) {
     await tx.slots.deleteMany({
-      where: { obj_guid: { in: accountSplitGuids }, name: AVG_COST_BASIS_SLOT },
+      where: { obj_guid: { in: accountSplitGuids }, name: { in: [...AVG_SPLIT_SLOT_NAMES] } },
     });
   }
   const accountLotGuids = (await tx.lots.findMany({
@@ -213,7 +227,138 @@ async function clearAverageCostArtifacts(accountGuid: string, tx: PrismaTx): Pro
   })).map(l => l.guid);
   if (accountLotGuids.length > 0) {
     await tx.slots.deleteMany({
-      where: { obj_guid: { in: accountLotGuids }, name: AVG_BASIS_REMAINING_SLOT },
+      where: { obj_guid: { in: accountLotGuids }, name: { in: [...AVG_LOT_SLOT_NAMES] } },
+    });
+  }
+}
+
+/** The average-cost slots one scrub run owns, located by their run companions. */
+interface RunAverageArtifacts {
+  /** Disposal splits whose `avg_cost_basis` this run wrote. */
+  splitGuids: string[];
+  /** Lots whose `avg_cost_basis_remaining` this run wrote. */
+  lotGuids: string[];
+  /** Lots holding a stash of a value THIS run wrote that a later run displaced. */
+  stashLotGuids: string[];
+}
+
+const hasRunAverageArtifacts = (a: RunAverageArtifacts): boolean =>
+  a.splitGuids.length > 0 || a.lotGuids.length > 0 || a.stashLotGuids.length > 0;
+
+/**
+ * Locate every average-cost slot stamped with this run id.
+ *
+ * Keyed on the run companion slots, never on the account: an account
+ * accumulates slots from every run that ever scrubbed it, and deleting by
+ * account is precisely the bug this provenance exists to close.
+ */
+async function findAverageCostArtifactsForRun(
+  runId: string,
+  tx: PrismaTx,
+): Promise<RunAverageArtifacts> {
+  const ownedBy = async (name: string): Promise<string[]> => {
+    // `?? []` for the reason the rest of this engine carries it: mocked Prisma
+    // clients in tests return undefined for queries they do not stub.
+    const rows = (await tx.slots.findMany({
+      where: { name, string_val: runId },
+      select: { obj_guid: true },
+    })) ?? [];
+    return [...new Set(rows.map(r => r.obj_guid))];
+  };
+  return {
+    splitGuids: await ownedBy(AVG_COST_BASIS_RUN_SLOT),
+    lotGuids: await ownedBy(AVG_BASIS_REMAINING_RUN_SLOT),
+    stashLotGuids: await ownedBy(AVG_BASIS_REMAINING_PREV_RUN_SLOT),
+  };
+}
+
+/**
+ * Undo ONLY this run's average-cost slots, leaving every other run's standing.
+ *
+ * Three moves, in order:
+ *
+ *  1. Disposal slots this run wrote are deleted. Another run's disposal slot
+ *     is never touched, so reverting a later run cannot rewrite the basis on a
+ *     sale an earlier run already priced and the user already filed.
+ *  2. Open-lot slots this run wrote are deleted, and the value this run
+ *     displaced is put back with its own owner. Without the restore the lot
+ *     would fall back to its per-lot buy cost while an earlier run's disposal
+ *     slot still says part of that cost was spent — double-counted basis.
+ *  3. Stashes THIS run wrote that a later run has since displaced are dropped,
+ *     so reverting this run and then the later one cannot resurrect a number
+ *     from a run that has already been reverted.
+ *
+ * Only slot rows are deleted. No split, lot, or transaction is removed on this
+ * path, which is what makes it safe to point at the user's own sell split.
+ */
+async function clearAverageCostArtifactsForRun(
+  runId: string,
+  artifacts: RunAverageArtifacts,
+  tx: PrismaTx,
+): Promise<void> {
+  if (artifacts.splitGuids.length > 0) {
+    await tx.slots.deleteMany({
+      where: { obj_guid: { in: artifacts.splitGuids }, name: { in: [...AVG_SPLIT_SLOT_NAMES] } },
+    });
+  }
+
+  if (artifacts.lotGuids.length > 0) {
+    // A lot the revert has already deleted (this run created it) gets its
+    // slots dropped, never a restored value re-attached to a dead guid.
+    const survivingLots = new Set(
+      ((await tx.lots.findMany({
+        where: { guid: { in: artifacts.lotGuids } },
+        select: { guid: true },
+      })) ?? []).map(l => l.guid),
+    );
+
+    for (const lotGuid of artifacts.lotGuids) {
+      const prevRow = await tx.slots.findFirst({
+        where: { obj_guid: lotGuid, name: AVG_BASIS_REMAINING_PREV_SLOT },
+        select: { string_val: true },
+      });
+      const prevRunRow = await tx.slots.findFirst({
+        where: { obj_guid: lotGuid, name: AVG_BASIS_REMAINING_PREV_RUN_SLOT },
+        select: { string_val: true },
+      });
+      await tx.slots.deleteMany({
+        where: { obj_guid: lotGuid, name: { in: [...AVG_LOT_SLOT_NAMES] } },
+      });
+
+      const prevValue = prevRow?.string_val ?? null;
+      const prevRun = prevRunRow?.string_val ?? null;
+      // Restore only a value belonging to some OTHER run. A stash naming this
+      // run is this run's own earlier write, which the revert is undoing too.
+      if (prevValue === null || prevRun === runId || !survivingLots.has(lotGuid)) continue;
+
+      await tx.slots.create({
+        data: {
+          obj_guid: lotGuid,
+          name: AVG_BASIS_REMAINING_SLOT,
+          slot_type: 4,
+          string_val: prevValue,
+        },
+      });
+      if (prevRun !== null) {
+        await tx.slots.create({
+          data: {
+            obj_guid: lotGuid,
+            name: AVG_BASIS_REMAINING_RUN_SLOT,
+            slot_type: 4,
+            string_val: prevRun,
+          },
+        });
+      }
+    }
+  }
+
+  const orphanedStashes = artifacts.stashLotGuids.filter(g => !artifacts.lotGuids.includes(g));
+  if (orphanedStashes.length > 0) {
+    await tx.slots.deleteMany({
+      where: {
+        obj_guid: { in: orphanedStashes },
+        name: { in: [AVG_BASIS_REMAINING_PREV_SLOT, AVG_BASIS_REMAINING_PREV_RUN_SLOT] },
+      },
     });
   }
 }
@@ -560,7 +705,7 @@ async function assignWithStrategy(
           // no gain for a transfer-closed lot.
           let consumed = 0;
           for (const allocation of result.allocations) {
-            await writeAvgCostBasis(allocation.splitGuid, avgPerShare * allocation.shares, tx);
+            await writeAvgCostBasis(allocation.splitGuid, avgPerShare * allocation.shares, runId, tx);
             consumed += allocation.shares;
           }
           poolShares -= consumed;
@@ -600,7 +745,7 @@ async function assignWithStrategy(
       // average, NOT what this particular lot happened to pay. Recording it
       // keeps totalCost / unrealizedGain in @/lib/lots consistent with the
       // realized figures instead of silently reverting to per-lot cost.
-      await writeAvgBasisRemaining(lot.guid, finalAveragePerShare * lot.shares, tx);
+      await writeAvgBasisRemaining(lot.guid, finalAveragePerShare * lot.shares, runId, tx);
     }
   }
 
@@ -1028,11 +1173,13 @@ export async function clearLotAssignments(
       });
     }
 
-    // Average-cost metadata is NOT tagged with the runId (tagging a user's own
-    // sell split would make revertScrubRun delete it as if it were a generated
-    // sub-split), so it is removed explicitly here. Leaving it behind would
-    // keep every downstream reader — generateCapitalGains, lot summaries,
-    // Form 8949 — pricing disposals at a pooled basis for a cleared account.
+    // Average-cost metadata is never carried by the `gnucash_web_generated`
+    // marker (that marker means "delete this row", and these slots sit on the
+    // user's own sell splits), so the tagged sweep above cannot reach it.
+    // Clearing an account destroys its whole lot structure, so EVERY run's
+    // slots go, not just one run's — leaving any behind would keep
+    // generateCapitalGains, the lot summaries and Form 8949 pricing disposals
+    // at a pooled basis for an account that no longer has lots.
     await clearAverageCostArtifacts(accountGuid, tx);
 
     // 2. Unassign all remaining splits from lots
@@ -1054,7 +1201,7 @@ export async function clearLotAssignments(
       await tx.slots.deleteMany({
         where: {
           obj_guid: { in: deleteGuids },
-          name: { in: ['title', 'source_lot_guid', 'acquisition_date', 'carried_basis', AVG_BASIS_REMAINING_SLOT, 'gnucash_web_generated'] },
+          name: { in: ['title', 'source_lot_guid', 'acquisition_date', 'carried_basis', ...AVG_LOT_SLOT_NAMES, 'gnucash_web_generated'] },
         },
       });
       await tx.lots.deleteMany({
@@ -1098,7 +1245,18 @@ export async function revertScrubRun(
       select: { obj_guid: true },
     });
     const taggedGuids = taggedSlots.map(s => s.obj_guid);
-    if (taggedGuids.length === 0) return { reverted: 0 };
+
+    // Average-cost slots are found by their OWN run companions, not by the
+    // generated-entity marker — a one-lot sale is assigned straight to the
+    // user's split, so an average run can write slots without tagging a single
+    // entity. Enumerated BEFORE the early return below: exiting on
+    // `taggedGuids.length === 0` used to leave such a run's pooled basis live
+    // for computeCarriedBasis and Form 8949 to read, while the caller was told
+    // the run had been reverted.
+    const avgArtifacts = await findAverageCostArtifactsForRun(runId, tx);
+    if (taggedGuids.length === 0 && !hasRunAverageArtifacts(avgArtifacts)) {
+      return { reverted: 0 };
+    }
 
     // ── Enumerate everything the run touched BEFORE deleting anything ──
     //
@@ -1129,6 +1287,25 @@ export async function revertScrubRun(
       select: { guid: true, account_guid: true },
     });
 
+    // Owners of this run's average-cost slots. These rows are NOT tagged, so
+    // they are enumerated separately — and they are the user's own splits and
+    // pre-existing lots, which means they carry accounts the tagged sweep may
+    // not mention at all. Both the book-scope check and the token bump below
+    // need them.
+    const avgSplitOwners = avgArtifacts.splitGuids.length > 0
+      ? ((await tx.splits.findMany({
+          where: { guid: { in: avgArtifacts.splitGuids } },
+          select: { guid: true, account_guid: true, tx_guid: true },
+        })) ?? [])
+      : [];
+    const avgLotOwnerGuids = [...new Set([...avgArtifacts.lotGuids, ...avgArtifacts.stashLotGuids])];
+    const avgLotOwners = avgLotOwnerGuids.length > 0
+      ? ((await tx.lots.findMany({
+          where: { guid: { in: avgLotOwnerGuids } },
+          select: { guid: true, account_guid: true },
+        })) ?? [])
+      : [];
+
     // Book-scope check: run IDs are returned in API responses, so an editor
     // of one book must not be able to destroy another book's scrub run by
     // replaying a runId. Abort before any deletion when the run touches
@@ -1138,7 +1315,8 @@ export async function revertScrubRun(
       const affectedAccounts = new Set<string>();
       for (const s of txSplits) affectedAccounts.add(s.account_guid);
       for (const s of taggedSplits) affectedAccounts.add(s.account_guid);
-      for (const l of taggedLots) {
+      for (const s of avgSplitOwners) affectedAccounts.add(s.account_guid);
+      for (const l of [...taggedLots, ...avgLotOwners]) {
         if (l.account_guid) affectedAccounts.add(l.account_guid);
       }
       for (const accountGuid of affectedAccounts) {
@@ -1153,7 +1331,7 @@ export async function revertScrubRun(
     // restored or removed — taken BEFORE the reconcile-state read below and
     // before the first write. Ordered by guid inside the helper.
     await lockTransactionsForUpdate(
-      [...txGuids, ...taggedSplits.map(s => s.tx_guid)],
+      [...txGuids, ...taggedSplits.map(s => s.tx_guid), ...avgSplitOwners.map(s => s.tx_guid)],
       tx,
     );
 
@@ -1243,25 +1421,38 @@ export async function revertScrubRun(
       data: { is_closed: 0 },
     });
 
+    // Undo THIS RUN's average-cost slots. Scoped by run, never by account:
+    // an investment account accumulates slots from every run that ever
+    // scrubbed it, so the account-wide sweep used here before deleted the
+    // basis an EARLIER run had recorded on an already-filed sale — a
+    // reversible action on one run rewriting another run's tax number, with
+    // no error and nothing visible in the UI.
+    await clearAverageCostArtifactsForRun(runId, avgArtifacts, tx);
+
     // Bump the concurrency token on every account the revert rewrote
-    // (restored sell splits, detached lots) so stale editors 409 instead of
-    // silently re-applying pre-revert state.
+    // (restored sell splits, detached lots, dropped average-cost slots) so
+    // stale editors 409 instead of silently re-applying pre-revert state.
     const revertedAccounts = new Set<string>();
-    for (const s of taggedSplits) revertedAccounts.add(s.account_guid);
-    for (const l of taggedLots) {
+    for (const s of [...taggedSplits, ...avgSplitOwners]) revertedAccounts.add(s.account_guid);
+    for (const l of [...taggedLots, ...avgLotOwners]) {
       if (l.account_guid) revertedAccounts.add(l.account_guid);
     }
     for (const accountGuid of Array.from(revertedAccounts).sort()) {
-      // Average-cost metadata carries no runId tag (see clearLotAssignments),
-      // so the tagged-guid sweep above cannot reach the `avg_cost_basis` slots
-      // sitting on the user's own sell splits. Drop them per affected account
-      // or the reverted book keeps reporting pooled basis for disposals whose
-      // lot assignment no longer exists.
-      await clearAverageCostArtifacts(accountGuid, tx);
       await bumpAccountTransactionTokens(tx, accountGuid);
     }
 
-    return { reverted: taggedGuids.length };
+    // Count entities this revert actually undid. Averaged books reach here
+    // with untagged owners (the user's own one-lot sale, a pre-existing lot
+    // re-priced by the pool), so they are unioned in rather than added —
+    // a generated sub-split that also carried a basis slot is one entity.
+    const revertedGuids = new Set<string>([
+      ...taggedGuids,
+      ...avgArtifacts.splitGuids,
+      ...avgArtifacts.lotGuids,
+      ...avgArtifacts.stashLotGuids,
+    ]);
+
+    return { reverted: revertedGuids.size };
   }, { timeout: 120_000, maxWait: 15_000 });
 }
 

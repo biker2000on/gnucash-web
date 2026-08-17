@@ -92,36 +92,206 @@ export const AVG_COST_BASIS_SLOT = 'avg_cost_basis';
  */
 export const AVG_BASIS_REMAINING_SLOT = 'avg_cost_basis_remaining';
 
-/** Write (or overwrite) a disposal split's average-cost basis slot. */
+/**
+ * RUN PROVENANCE for the two slots above — companion rows naming the scrub run
+ * that wrote the value they sit beside.
+ *
+ * ## Why provenance is needed at all
+ *
+ * `avg_cost_basis` records a FILED tax number: the basis of the shares one
+ * disposal sold. Without an owner recorded on the row, the only handle a
+ * cleanup has is the ACCOUNT — so reverting run B deleted run A's slots too,
+ * and run A's historic Form 8949 sale silently fell back to per-lot basis.
+ * A reversible action on an unrelated run rewrote a filed return, with no
+ * error and no visible symptom.
+ *
+ * ## Why the run id lives in a SEPARATE slot NAME, not on the artefact's owner
+ *
+ * The obvious fix — tag the disposal split with `gnucash_web_generated =
+ * runId`, the marker the rest of the engine uses — is WRONG and must never be
+ * reintroduced: revertScrubRun treats every `gnucash_web_generated` row as a
+ * generated entity and DELETES it, so tagging the user's own sell split would
+ * delete the user's transaction data on revert. (A one-lot sale is assigned
+ * directly to the user's split — see splitSellAcrossLots — so the average-cost
+ * slot genuinely does land on user-authored rows.)
+ *
+ * The discriminator is therefore the slot NAME. `avg_cost_basis_run` is in a
+ * namespace nothing else queries: the generated-entity sweep looks up
+ * `name: 'gnucash_web_generated'`, never matches these rows, and so can never
+ * mistake their owner for a generated row. Only the average-cost cleanup reads
+ * them, and it deletes slots — never splits, lots, or transactions.
+ *
+ * That gives all three required properties:
+ *   (a) identifies the writing run — the companion's string_val IS the runId;
+ *   (b) scopes cleanup to one run — `where name = <run slot>, string_val =
+ *       runId` enumerates exactly that run's slots, so a revert leaves every
+ *       other run's numbers standing;
+ *   (c) cannot promote a user row to "generated" — the marker is a different
+ *       slot name from the generated-entity marker, and its consumers only
+ *       ever delete slot rows.
+ */
+export const AVG_COST_BASIS_RUN_SLOT = 'avg_cost_basis_run';
+
+/** Run that wrote a lot's `avg_cost_basis_remaining`. See AVG_COST_BASIS_RUN_SLOT. */
+export const AVG_BASIS_REMAINING_RUN_SLOT = 'avg_cost_basis_remaining_run';
+
+/**
+ * The `avg_cost_basis_remaining` value a later run DISPLACED, plus its owner.
+ *
+ * The disposal slot is written once and never re-priced (a run only processes
+ * UNASSIGNED splits, so a disposal an earlier run already assigned is never
+ * revisited). A still-open lot is different: every average-cost run re-prices
+ * every open lot it can see, so run B overwrites run A's number on a lot run A
+ * created.
+ *
+ * Deleting on revert is then not enough. If reverting B merely dropped the
+ * lot's slot, the lot would fall back to `computeCarriedBasis` — its own buy
+ * cost — while run A's surviving disposal slot still says the pool already
+ * spent part of that cost. The two would double-count basis and understate
+ * every future gain, again with no symptom. So the displaced value is stashed
+ * here and restored when its displacer is reverted.
+ *
+ * The owner is a separate row rather than packed into the value because a
+ * revert must be able to FIND stashes belonging to the run being reverted
+ * (`where name = ..._prev_run, string_val = runId`) and drop them, so that
+ * reverting B and then C never resurrects B's number.
+ */
+export const AVG_BASIS_REMAINING_PREV_SLOT = 'avg_cost_basis_remaining_prev';
+
+/** Owning run of the stashed value. See AVG_BASIS_REMAINING_PREV_SLOT. */
+export const AVG_BASIS_REMAINING_PREV_RUN_SLOT = 'avg_cost_basis_remaining_prev_run';
+
+/** Every slot name the average-cost election writes onto a disposal split. */
+export const AVG_SPLIT_SLOT_NAMES = [
+  AVG_COST_BASIS_SLOT,
+  AVG_COST_BASIS_RUN_SLOT,
+] as const;
+
+/** Every slot name the average-cost election writes onto a lot. */
+export const AVG_LOT_SLOT_NAMES = [
+  AVG_BASIS_REMAINING_SLOT,
+  AVG_BASIS_REMAINING_RUN_SLOT,
+  AVG_BASIS_REMAINING_PREV_SLOT,
+  AVG_BASIS_REMAINING_PREV_RUN_SLOT,
+] as const;
+
+/** Slot value formatting shared by both average-cost writers. */
+const formatBasis = (basis: number): string => String(Math.round(basis * 1e6) / 1e6);
+
+/** First matching slot's string value, or null. */
+async function readSlotString(
+  objGuid: string,
+  name: string,
+  tx: PrismaTx,
+): Promise<string | null> {
+  const row = await tx.slots.findFirst({
+    where: { obj_guid: objGuid, name },
+    select: { string_val: true },
+  });
+  return row?.string_val ?? null;
+}
+
+/**
+ * Write (or overwrite) a disposal split's average-cost basis slot, stamped
+ * with the run that computed it.
+ */
 export async function writeAvgCostBasis(
   splitGuid: string,
   basis: number,
+  runId: string,
   tx: PrismaTx,
 ): Promise<void> {
-  await tx.slots.deleteMany({ where: { obj_guid: splitGuid, name: AVG_COST_BASIS_SLOT } });
+  await tx.slots.deleteMany({
+    where: { obj_guid: splitGuid, name: { in: [...AVG_SPLIT_SLOT_NAMES] } },
+  });
   await tx.slots.create({
     data: {
       obj_guid: splitGuid,
       name: AVG_COST_BASIS_SLOT,
       slot_type: 4,
-      string_val: String(Math.round(basis * 1e6) / 1e6),
+      string_val: formatBasis(basis),
+    },
+  });
+  await tx.slots.create({
+    data: {
+      obj_guid: splitGuid,
+      name: AVG_COST_BASIS_RUN_SLOT,
+      slot_type: 4,
+      string_val: runId,
     },
   });
 }
 
-/** Write (or overwrite) an open lot's remaining pooled-basis slot. */
+/**
+ * Write (or overwrite) an open lot's remaining pooled-basis slot, stamped with
+ * the run that computed it and stashing whatever value it displaced.
+ */
 export async function writeAvgBasisRemaining(
   lotGuid: string,
   basis: number,
+  runId: string,
   tx: PrismaTx,
 ): Promise<void> {
-  await tx.slots.deleteMany({ where: { obj_guid: lotGuid, name: AVG_BASIS_REMAINING_SLOT } });
+  const priorValue = await readSlotString(lotGuid, AVG_BASIS_REMAINING_SLOT, tx);
+  const priorRun = await readSlotString(lotGuid, AVG_BASIS_REMAINING_RUN_SLOT, tx);
+
+  // Which value this write should stash as "the state before this run".
+  //  - displacing ANOTHER run's value (or an untagged legacy one): stash it;
+  //  - re-writing our OWN value (this run touching the lot twice): the
+  //    pre-run state is the stash that is already there — keep it, or the
+  //    second write would erase the only record of it;
+  //  - nothing there: nothing to stash.
+  let prevValue: string | null;
+  let prevRun: string | null;
+  if (priorRun !== null && priorRun === runId) {
+    prevValue = await readSlotString(lotGuid, AVG_BASIS_REMAINING_PREV_SLOT, tx);
+    prevRun = await readSlotString(lotGuid, AVG_BASIS_REMAINING_PREV_RUN_SLOT, tx);
+  } else {
+    prevValue = priorValue;
+    prevRun = priorValue === null ? null : priorRun;
+  }
+
+  await tx.slots.deleteMany({
+    where: { obj_guid: lotGuid, name: { in: [...AVG_LOT_SLOT_NAMES] } },
+  });
+
+  if (prevValue !== null) {
+    await tx.slots.create({
+      data: {
+        obj_guid: lotGuid,
+        name: AVG_BASIS_REMAINING_PREV_SLOT,
+        slot_type: 4,
+        string_val: prevValue,
+      },
+    });
+    // A legacy value written before provenance existed has no owner; the stash
+    // then restores the number without an owner, exactly as it was found.
+    if (prevRun !== null) {
+      await tx.slots.create({
+        data: {
+          obj_guid: lotGuid,
+          name: AVG_BASIS_REMAINING_PREV_RUN_SLOT,
+          slot_type: 4,
+          string_val: prevRun,
+        },
+      });
+    }
+  }
+
   await tx.slots.create({
     data: {
       obj_guid: lotGuid,
       name: AVG_BASIS_REMAINING_SLOT,
       slot_type: 4,
-      string_val: String(Math.round(basis * 1e6) / 1e6),
+      string_val: formatBasis(basis),
+    },
+  });
+  await tx.slots.create({
+    data: {
+      obj_guid: lotGuid,
+      name: AVG_BASIS_REMAINING_RUN_SLOT,
+      slot_type: 4,
+      string_val: runId,
     },
   });
 }

@@ -164,8 +164,19 @@ const { db, fakePrisma, resetDb } = vi.hoisted(() => {
       Object.assign(row, args.data as Row);
       return row;
     },
-    updateMany: async () => ({ count: 0 }),
-    deleteMany: async () => ({ count: 0 }),
+    // Real implementations (not stubs): the revert-provenance tests below
+    // drive revertScrubRun, which deletes run-created lots and reopens the
+    // ones it closed. A no-op here would let those assertions pass vacuously.
+    updateMany: async (args: Row) => {
+      const rows = db.lots.filter(r => matchesWhere(r, args.where as Row));
+      for (const r of rows) Object.assign(r, args.data as Row);
+      return { count: rows.length };
+    },
+    deleteMany: async (args: Row) => {
+      const doomed = db.lots.filter(r => matchesWhere(r, args.where as Row));
+      db.lots = db.lots.filter(r => !doomed.includes(r));
+      return { count: doomed.length };
+    },
   };
 
   const slotsApi = {
@@ -200,7 +211,11 @@ const { db, fakePrisma, resetDb } = vi.hoisted(() => {
         return args.data;
       },
       findMany: async (args: Row = {}) => db.transactions.filter(r => matchesWhere(r, args.where as Row)),
-      deleteMany: async () => ({ count: 0 }),
+      deleteMany: async (args: Row) => {
+        const doomed = db.transactions.filter(r => matchesWhere(r, args.where as Row));
+        db.transactions = db.transactions.filter(r => !doomed.includes(r));
+        return { count: doomed.length };
+      },
     },
     commodities: {
       findUnique: async (args: Row) => db.commodities.find(c => c.guid === (args.where as Row).guid) ?? null,
@@ -232,7 +247,7 @@ vi.mock('../book-lock', () => ({
 }));
 vi.mock('../commodities', () => ({ getLatestPrice: vi.fn(async () => null) }));
 
-import { autoAssignLots } from '../lot-assignment';
+import { autoAssignLots, revertScrubRun } from '../lot-assignment';
 import { getAccountLots, computeRealizedGain, remainingCostBasis } from '../lots';
 import { loadTradeFees } from '../trade-fees';
 import { lotToRealizedSales } from '../reports/capital-gains';
@@ -353,6 +368,34 @@ const slotOf = (objGuid: string | null, name: string): number | undefined => {
 
 /** Average-cost basis recorded on one disposal split. */
 const avgBasisOf = (splitGuid: string) => slotOf(splitGuid, 'avg_cost_basis');
+
+/** Every slot name the average-cost election can write. */
+const AVG_SLOT_NAMES = [
+  'avg_cost_basis',
+  'avg_cost_basis_run',
+  'avg_cost_basis_remaining',
+  'avg_cost_basis_remaining_run',
+  'avg_cost_basis_remaining_prev',
+  'avg_cost_basis_remaining_prev_run',
+] as const;
+
+/** Raw (unparsed) slot value — provenance slots hold run ids, not numbers. */
+const rawSlotOf = (objGuid: string, name: string): string | undefined =>
+  db.slots.find(s => s.obj_guid === objGuid && s.name === name)?.string_val as string | undefined;
+
+/** The run that wrote a disposal split's pooled basis. */
+const avgRunOf = (splitGuid: string) => rawSlotOf(splitGuid, 'avg_cost_basis_run');
+/** An open lot's remaining pooled basis, and the run that wrote it. */
+const remainingOf = (lotGuid: string) => slotOf(lotGuid, 'avg_cost_basis_remaining');
+const remainingRunOf = (lotGuid: string) => rawSlotOf(lotGuid, 'avg_cost_basis_remaining_run');
+/** The displaced value stashed on a lot, and the run it belonged to. */
+const stashOf = (lotGuid: string) => slotOf(lotGuid, 'avg_cost_basis_remaining_prev');
+const stashRunOf = (lotGuid: string) => rawSlotOf(lotGuid, 'avg_cost_basis_remaining_prev_run');
+
+const allLotGuids = (): string[] => db.lots.map(l => l.guid as string);
+const slotsNamed = (name: string) => db.slots.filter(s => s.name === name);
+const generatedFor = (runId: string) =>
+  db.slots.filter(s => s.name === 'gnucash_web_generated' && s.string_val === runId);
 
 /** All generated "Realized Gain/Loss" postings, with their income account. */
 function gainsPostings(): Array<{ amount: number; incomeAccount: string }> {
@@ -822,20 +865,344 @@ describe('average-cost artifacts are removed when the election changes', () => {
     addTrade('2024-06-01', 10, 300);
     const sellGuid = addTrade('2024-07-01', -10, 400);
 
-    await autoAssignLots(STOCK_ACCT, 'average');
+    const runA = await autoAssignLots(STOCK_ACCT, 'average');
     expect(avgBasisOf(sellGuid)).toBeCloseTo(200, 6);
+    expect(avgRunOf(sellGuid)).toBe(runA.runId);
 
     // Re-scrub the same account under FIFO without clearing first.
     await autoAssignLots(STOCK_ACCT, 'fifo');
 
     expect(avgBasisOf(sellGuid)).toBeUndefined();
-    expect(db.slots.some(s => s.name === 'avg_cost_basis')).toBe(false);
-    expect(db.slots.some(s => s.name === 'avg_cost_basis_remaining')).toBe(false);
+    // EVERY average-cost slot name, provenance companions included. A run
+    // stamp left behind on a FIFO book is not itself a wrong number, but it
+    // would let a later run-scoped revert believe it still owns a value here.
+    for (const name of AVG_SLOT_NAMES) {
+      expect(slotsNamed(name)).toHaveLength(0);
+    }
 
     // ...and the lots report falls straight back to per-lot FIFO basis.
     const lots = await getAccountLots(STOCK_ACCT);
     const closed = lots.find(l => l.isClosed)!;
     expect(closed.averageBasisRemaining ?? null).toBeNull();
     expect(closed.splits.every(s => s.avgCostBasis === undefined)).toBe(true);
+  });
+
+  it('average → FIFO → average leaves nothing owned by the ABANDONED run', async () => {
+    addTrade('2024-01-01', 10, 100);
+    addTrade('2024-06-01', 10, 300);
+    const sellGuid = addTrade('2024-07-01', -10, 400);
+
+    const runA = await autoAssignLots(STOCK_ACCT, 'average');
+    await autoAssignLots(STOCK_ACCT, 'fifo');
+
+    // Elect average again, with a new purchase for the run to process.
+    addTrade('2025-01-05', 10, 500);
+    const runC = await autoAssignLots(STOCK_ACCT, 'average');
+
+    // Every surviving average-cost slot belongs to run C. A row still stamped
+    // runA would be a value computed under a pool that FIFO already dissolved.
+    const ownerSlots = db.slots.filter(
+      s => s.name === 'avg_cost_basis_run' || s.name === 'avg_cost_basis_remaining_run',
+    );
+    expect(ownerSlots.length).toBeGreaterThan(0);
+    expect(ownerSlots.every(s => s.string_val === runC.runId)).toBe(true);
+    expect(ownerSlots.some(s => s.string_val === runA.runId)).toBe(false);
+
+    // The July sale was priced by FIFO and never re-priced (it is no longer
+    // unassigned), so it must still report FIFO's $100 basis / $300 gain —
+    // a resurrected pooled basis here is a wrong number on a FIFO Form 8949.
+    expect(avgBasisOf(sellGuid)).toBeUndefined();
+    const closed = (await getAccountLots(STOCK_ACCT)).find(l => l.isClosed)!;
+    const sale = lotToRealizedSales(closed, 'AAPL')[0];
+    expect(sale.costBasis).toBeCloseTo(100, 6);
+    expect(sale.proceeds - sale.costBasis).toBeCloseTo(300, 6);
+  });
+});
+
+/**
+ * RUN PROVENANCE ON THE AVERAGE-COST SLOTS.
+ *
+ * `avg_cost_basis` records a filed tax number, and until these tests it
+ * carried no record of WHICH scrub run wrote it. Cleanup could therefore only
+ * key on the account, and an account accumulates slots from every run that
+ * ever scrubbed it — so reverting one run rewrote another run's numbers, and a
+ * run that tagged no entity at all could not be reverted from these slots
+ * whatsoever. Neither failure raises an error or changes anything visible in
+ * the UI; the only symptom is a different number on a return.
+ *
+ * The design under test: a companion slot (`avg_cost_basis_run` /
+ * `avg_cost_basis_remaining_run`) naming the writing run, plus a stash of the
+ * value each write displaces (`avg_cost_basis_remaining_prev` and its `_run`).
+ * The marker is a distinct slot NAME from `gnucash_web_generated`, so it can
+ * sit on the user's own sell split without the revert ever mistaking that
+ * split for a generated row to delete.
+ */
+describe('average-cost run provenance', () => {
+  /**
+   * DEFECT A — reverting an unrelated later run rewrote a filed sale.
+   *
+   * Run A  buy 10 @ $10.00, buy 10 @ $30.00, sell 10 @ $40.00
+   *        pool 20 sh / $400 ⇒ $20.00/sh ⇒ basis $200, gain $200.
+   * Run B  buy 10 for $500 — a later, unrelated purchase.
+   * Revert B.
+   *
+   * Run B's new lot names the ACCOUNT, so the old account-wide sweep deleted
+   * run A's $200 slot too. Run A's lots and sale survived, so lots.ts found no
+   * average marker and fell back to per-lot basis: that historic Form 8949
+   * sale silently became $100 basis / $300 gain.
+   */
+  it('reverting a later run leaves the earlier run’s sale at $200 basis / $200 gain', async () => {
+    addTrade('2024-01-01', 10, 100);
+    addTrade('2024-06-01', 10, 300);
+    const sellGuid = addTrade('2024-07-01', -10, 400);
+
+    const runA = await autoAssignLots(STOCK_ACCT, 'average');
+    expect(avgBasisOf(sellGuid)).toBeCloseTo(200, 6);
+    expect(avgRunOf(sellGuid)).toBe(runA.runId);
+
+    const closedLot = lotOfSplit(sellGuid)!;
+    const juneLot = allLotGuids().find(g => g !== closedLot)!;
+    expect(remainingOf(juneLot)).toBeCloseTo(200, 6);
+    expect(remainingRunOf(juneLot)).toBe(runA.runId);
+
+    // ── Run B: an unrelated later purchase ────────────────────────────────
+    const lotsBeforeB = new Set(allLotGuids());
+    addTrade('2025-02-01', 10, 500);
+    const runB = await autoAssignLots(STOCK_ACCT, 'average');
+    expect(runB.runId).not.toBe(runA.runId);
+    const runBLot = allLotGuids().find(g => !lotsBeforeB.has(g))!;
+
+    // Run B re-averages the pool: 20 sh / $700 ⇒ $35.00/sh, so it OVERWRITES
+    // the June lot's open-side number and stashes run A's underneath.
+    expect(remainingOf(juneLot)).toBeCloseTo(350, 6);
+    expect(remainingRunOf(juneLot)).toBe(runB.runId);
+    expect(stashOf(juneLot)).toBeCloseTo(200, 6);
+    expect(stashRunOf(juneLot)).toBe(runA.runId);
+
+    // ── Revert run B ──────────────────────────────────────────────────────
+    const result = await revertScrubRun(runB.runId);
+    expect(result.reverted).toBeGreaterThan(0);
+
+    // THE ASSERTION: run A's already-filed sale is untouched.
+    expect(avgBasisOf(sellGuid)).toBeCloseTo(200, 6);
+    expect(avgRunOf(sellGuid)).toBe(runA.runId);
+
+    const closed = (await getAccountLots(STOCK_ACCT)).find(l => l.isClosed)!;
+    expect(closed.realizedGain).toBeCloseTo(200, 6);
+    const sale = lotToRealizedSales(closed, 'AAPL')[0];
+    expect(sale.proceeds).toBeCloseTo(400, 6);
+    expect(sale.costBasis).toBeCloseTo(200, 6);
+    expect(sale.proceeds - sale.costBasis).toBeCloseTo(200, 6);
+    // ...and specifically NOT the per-lot fallback the old sweep produced.
+    expect(sale.costBasis).not.toBeCloseTo(100, 2);
+
+    // Run B's own artefacts are gone: its lot, and its number on the June lot
+    // — which is restored to run A's value, under run A's ownership.
+    expect(allLotGuids()).not.toContain(runBLot);
+    expect(remainingOf(juneLot)).toBeCloseTo(200, 6);
+    expect(remainingRunOf(juneLot)).toBe(runA.runId);
+    expect(stashOf(juneLot)).toBeUndefined();
+    expect(slotsNamed('avg_cost_basis_remaining').every(
+      s => s.string_val !== '350',
+    )).toBe(true);
+  });
+
+  /**
+   * DEFECT B — the mirror: a run that tags NOTHING.
+   *
+   * A sale that fits inside one lot is assigned straight to the user's own
+   * split (splitSellAcrossLots creates no sub-split), and a lot that does not
+   * close generates no gains posting. Such a run therefore stamps
+   * `gnucash_web_generated` on nothing at all — so revertScrubRun's early
+   * return fired, the caller was told `{reverted: 0}`, and the run's pooled
+   * basis stayed live for computeCarriedBasis and Form 8949 to read.
+   */
+  it('reverts a run whose only trace is an average-cost slot', async () => {
+    addTrade('2024-01-01', 20, 400);          // 20 sh @ $20.00
+    const runA = await autoAssignLots(STOCK_ACCT, 'average');
+    const lot = allLotGuids()[0];
+    expect(remainingOf(lot)).toBeCloseTo(400, 6);
+    expect(remainingRunOf(lot)).toBe(runA.runId);
+
+    const sellGuid = addTrade('2024-09-01', -5, 200);
+    const runB = await autoAssignLots(STOCK_ACCT, 'average');
+
+    // The shape that makes this run invisible to the tagged sweep.
+    expect(runB.lotsCreated).toBe(0);
+    expect(runB.splitsCreated).toBe(0);
+    expect(runB.gainsTransactions).toBe(0);
+    expect(generatedFor(runB.runId)).toHaveLength(0);
+    // It did write a tax number, though: 5 sh × $20.00.
+    expect(avgBasisOf(sellGuid)).toBeCloseTo(100, 6);
+    expect(avgRunOf(sellGuid)).toBe(runB.runId);
+
+    const result = await revertScrubRun(runB.runId);
+
+    // Previously {reverted: 0} with the slot left standing.
+    expect(result.reverted).toBeGreaterThan(0);
+    expect(avgBasisOf(sellGuid)).toBeUndefined();
+    expect(avgRunOf(sellGuid)).toBeUndefined();
+    // Run A's open-side number is back, under run A's ownership.
+    expect(remainingOf(lot)).toBeCloseTo(400, 6);
+    expect(remainingRunOf(lot)).toBe(runA.runId);
+  });
+
+  it('reports {reverted: 0} and touches nothing for a run id that owns nothing', async () => {
+    addTrade('2024-01-01', 10, 100);
+    const sellGuid = addTrade('2024-07-01', -10, 400);
+    const runA = await autoAssignLots(STOCK_ACCT, 'average');
+    const before = db.slots.length;
+
+    expect(await revertScrubRun('a-run-that-never-existed')).toEqual({ reverted: 0 });
+    expect(db.slots).toHaveLength(before);
+    expect(avgBasisOf(sellGuid)).toBeCloseTo(100, 6);
+    expect(avgRunOf(sellGuid)).toBe(runA.runId);
+  });
+
+  /**
+   * PARTIAL SCRUB: two average runs, each pricing its own disposal. Reverting
+   * the second must leave the first sale's basis — and the report built from
+   * it — exactly as filed.
+   */
+  it('keeps each disposal priced by the run that priced it', async () => {
+    addTrade('2024-01-01', 10, 100);
+    addTrade('2024-06-01', 10, 300);
+    const firstSell = addTrade('2024-07-01', -10, 400);
+    const runA = await autoAssignLots(STOCK_ACCT, 'average');
+
+    // Run B: another buy and another sale. Pool at the 2025 sale is the June
+    // lot's carried $200 plus $500 ⇒ 20 sh / $700 ⇒ $35.00/sh ⇒ basis $350.
+    addTrade('2025-02-01', 10, 500);
+    const secondSell = addTrade('2025-03-01', -10, 600);
+    const runB = await autoAssignLots(STOCK_ACCT, 'average');
+
+    expect(avgBasisOf(firstSell)).toBeCloseTo(200, 6);
+    expect(avgRunOf(firstSell)).toBe(runA.runId);
+    expect(avgBasisOf(secondSell)).toBeCloseTo(350, 6);
+    expect(avgRunOf(secondSell)).toBe(runB.runId);
+
+    await revertScrubRun(runB.runId);
+
+    expect(avgBasisOf(secondSell)).toBeUndefined();
+    expect(avgRunOf(secondSell)).toBeUndefined();
+    expect(avgBasisOf(firstSell)).toBeCloseTo(200, 6);
+    expect(avgRunOf(firstSell)).toBe(runA.runId);
+    expect(slotsNamed('avg_cost_basis')).toHaveLength(1);
+  });
+
+  /**
+   * INTERRUPTED RUN: a run that wrote basis slots and got no further (no lot,
+   * no gains posting, no tag anywhere). Reverting it must remove exactly its
+   * own rows.
+   */
+  it('cleans up a run that left only average-cost slots behind', async () => {
+    addTrade('2024-01-01', 10, 100);
+    const sellGuid = addTrade('2024-07-01', -10, 400);
+    const runA = await autoAssignLots(STOCK_ACCT, 'average');
+    const survivor = avgBasisOf(sellGuid);
+
+    // A second disposal priced by a run that then died.
+    const orphanSell = addTrade('2024-08-01', -1, 50);
+    db.slots.push(
+      { obj_guid: orphanSell, name: 'avg_cost_basis', slot_type: 4, string_val: '12.5' },
+      { obj_guid: orphanSell, name: 'avg_cost_basis_run', slot_type: 4, string_val: 'run-interrupted' },
+    );
+
+    const result = await revertScrubRun('run-interrupted');
+
+    expect(result.reverted).toBe(1);
+    expect(avgBasisOf(orphanSell)).toBeUndefined();
+    expect(avgRunOf(orphanSell)).toBeUndefined();
+    // The completed run beside it is untouched.
+    expect(avgBasisOf(sellGuid)).toBeCloseTo(survivor!, 6);
+    expect(avgRunOf(sellGuid)).toBe(runA.runId);
+  });
+
+  /**
+   * MID-FLIGHT LOT DELETION: the lot a run stamped is gone by the time the
+   * revert runs. The restore must not re-attach a value to a dead guid.
+   */
+  it('does not resurrect a slot on a lot that no longer exists', async () => {
+    addTrade('2024-01-01', 10, 100);
+    const runA = await autoAssignLots(STOCK_ACCT, 'average');
+    const lot = allLotGuids()[0];
+    expect(remainingRunOf(lot)).toBe(runA.runId);
+
+    addTrade('2024-06-01', 10, 300);
+    const runB = await autoAssignLots(STOCK_ACCT, 'average');
+    expect(remainingRunOf(lot)).toBe(runB.runId);
+    expect(stashRunOf(lot)).toBe(runA.runId);
+
+    // The lot disappears underneath the run's slots.
+    db.lots = db.lots.filter(l => l.guid !== lot);
+
+    await expect(revertScrubRun(runB.runId)).resolves.toMatchObject({
+      reverted: expect.any(Number),
+    });
+
+    for (const name of AVG_SLOT_NAMES) {
+      expect(slotsNamed(name).some(s => s.obj_guid === lot)).toBe(false);
+    }
+  });
+
+  /**
+   * OUT-OF-ORDER REVERT: three runs re-price the same lot, then the MIDDLE one
+   * is reverted, then the last. Reverting C must not resurrect B's number —
+   * B has already been reverted, and a stash is not a licence to bring a
+   * reverted run's figure back.
+   */
+  it('never restores a value belonging to an already-reverted run', async () => {
+    addTrade('2024-01-01', 10, 100);           // pool 10 sh / $100 ⇒ $10.00
+    const runA = await autoAssignLots(STOCK_ACCT, 'average');
+    const lot1 = allLotGuids()[0];
+    expect(remainingOf(lot1)).toBeCloseTo(100, 6);
+
+    addTrade('2024-06-01', 10, 300);           // pool 20 sh / $400 ⇒ $20.00
+    const runB = await autoAssignLots(STOCK_ACCT, 'average');
+    expect(remainingOf(lot1)).toBeCloseTo(200, 6);
+    expect(remainingRunOf(lot1)).toBe(runB.runId);
+    expect(stashOf(lot1)).toBeCloseTo(100, 6);
+    expect(stashRunOf(lot1)).toBe(runA.runId);
+
+    addTrade('2024-09-01', 20, 800);           // pool 40 sh / $1200 ⇒ $30.00
+    const runC = await autoAssignLots(STOCK_ACCT, 'average');
+    expect(remainingOf(lot1)).toBeCloseTo(300, 6);
+    expect(remainingRunOf(lot1)).toBe(runC.runId);
+    expect(stashOf(lot1)).toBeCloseTo(200, 6);
+    expect(stashRunOf(lot1)).toBe(runB.runId);
+
+    // Revert the MIDDLE run. It no longer owns lot1's live value (run C does),
+    // so lot1's number must not change — but B's stash must be invalidated.
+    await revertScrubRun(runB.runId);
+    expect(remainingOf(lot1)).toBeCloseTo(300, 6);
+    expect(remainingRunOf(lot1)).toBe(runC.runId);
+    expect(stashOf(lot1)).toBeUndefined();
+    expect(stashRunOf(lot1)).toBeUndefined();
+
+    // Now revert C. With B's stash correctly invalidated there is nothing to
+    // restore, so the lot falls back to its own cost rather than to a figure
+    // computed by a run that has already been undone.
+    await revertScrubRun(runC.runId);
+    expect(remainingOf(lot1)).toBeUndefined();
+    expect(remainingRunOf(lot1)).toBeUndefined();
+  });
+
+  it('run-scoped cleanup only ever deletes SLOTS, never the user’s split', async () => {
+    addTrade('2024-01-01', 20, 400);
+    await autoAssignLots(STOCK_ACCT, 'average');
+    const sellGuid = addTrade('2024-09-01', -5, 200);
+    const runB = await autoAssignLots(STOCK_ACCT, 'average');
+
+    // The property the whole design hangs on: the run id sits in a slot NAME
+    // the generated-entity sweep never queries, so the user's own sell split
+    // is never enumerated as a generated row to delete.
+    expect(generatedFor(runB.runId).some(s => s.obj_guid === sellGuid)).toBe(false);
+
+    await revertScrubRun(runB.runId);
+
+    const survivor = db.splits.find(s => s.guid === sellGuid);
+    expect(survivor).toBeDefined();
+    expect(Number(survivor!.quantity_num)).toBe(-500);
+    expect(Number(survivor!.value_num)).toBe(-20000);
   });
 });
