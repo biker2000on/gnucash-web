@@ -173,8 +173,19 @@ export interface PortfolioHolding {
    * the browser would have to hold both to the looser one. Optional because a
    * report payload cached before this existed has no namespace to offer, and the
    * fallback in `stalenessDaysFor` is the safe direction.
+   *
+   * A hint, not an authority: the column is free text, so it may say `CRYPTO`,
+   * `Coinbase`, a wallet name, or nothing. `priceWeekendQuoteDays` is what
+   * settles the question when the namespace cannot.
    */
   commodityNamespace?: string | null;
+  /**
+   * Distinct weekend days carrying a quote for this commodity in the recent
+   * window — evidence that its venue does not close, and the one signal a
+   * made-up namespace cannot defeat. Optional for the same cached-payload reason
+   * as the namespace above.
+   */
+  priceWeekendQuoteDays?: number | null;
   marketValue: number;
   /** Basis of the shares `costBasisCoverage` describes, not always all of them. */
   costBasis: number;

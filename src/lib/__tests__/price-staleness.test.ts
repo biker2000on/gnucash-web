@@ -9,10 +9,13 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
-    CRYPTO_STALENESS_DAYS,
+    CONTINUOUS_STALENESS_DAYS,
+    CONTINUOUS_WEEKEND_QUOTE_DAYS,
     PRICE_STALENESS_DAYS,
+    isContinuousMarket,
     isPriceStale,
     priceAgeDays,
+    stalePriceMark,
     stalePriceMessage,
     stalenessDaysFor,
 } from '../price-staleness';
@@ -88,52 +91,156 @@ describe('isPriceStale', () => {
  * for the calendar. A market that never closes has no such span, and holding it
  * to seven days hands back a week of silence on the asset class most able to
  * move inside it.
+ *
+ * The tighter bound has to be liveable for BOTH populations this app has: books
+ * on the daily worker schedule (`refresh_enabled`, default 21:00 UTC) and books
+ * that only get quotes when someone presses "Refresh All Prices". Three days is
+ * the smallest number that is quiet for both on an ordinary week — two missed
+ * scheduled runs, or a Friday refresh still reading clean on Monday.
  */
 describe('stalenessDaysFor', () => {
     it('holds a continuously-traded commodity to a tighter bound', () => {
-        expect(stalenessDaysFor('CRYPTO')).toBe(CRYPTO_STALENESS_DAYS);
-        expect(CRYPTO_STALENESS_DAYS).toBeLessThan(PRICE_STALENESS_DAYS);
+        expect(stalenessDaysFor({ namespace: 'CRYPTO' })).toBe(CONTINUOUS_STALENESS_DAYS);
+        expect(CONTINUOUS_STALENESS_DAYS).toBeLessThan(PRICE_STALENESS_DAYS);
     });
 
     it('reads the namespace case-insensitively, as the rest of the app does', () => {
         // `yahoo-symbol.ts` and `commodity-metadata.ts` both upper-case before
         // comparing, because namespace is free text in the GnuCash schema.
-        expect(stalenessDaysFor('crypto')).toBe(CRYPTO_STALENESS_DAYS);
-        expect(stalenessDaysFor('Crypto')).toBe(CRYPTO_STALENESS_DAYS);
+        expect(stalenessDaysFor({ namespace: 'crypto' })).toBe(CONTINUOUS_STALENESS_DAYS);
+        expect(stalenessDaysFor({ namespace: 'Crypto' })).toBe(CONTINUOUS_STALENESS_DAYS);
     });
 
     it('keeps the exchange-traded bound for every namespace that closes', () => {
-        for (const ns of ['CURRENCY', 'NASDAQ', 'NYSE', 'AMEX', 'FUND', 'ETF', 'BOND']) {
-            expect(stalenessDaysFor(ns)).toBe(PRICE_STALENESS_DAYS);
+        for (const ns of ['CURRENCY', 'ISO4217', 'NASDAQ', 'NYSE', 'AMEX', 'FUND', 'ETF', 'BOND',
+            'INDEX', 'DEMO', 'PRIVATE', 'template']) {
+            expect(stalenessDaysFor({ namespace: ns })).toBe(PRICE_STALENESS_DAYS);
         }
     });
 
-    it('falls back to the looser bound when the namespace is unknown or absent', () => {
+    it('falls back to the looser bound when nothing is known', () => {
         // Late beats crying wolf: an unrecognised instrument may legitimately
         // quote weekly, and a warning nobody believes protects nobody.
         expect(stalenessDaysFor(undefined)).toBe(PRICE_STALENESS_DAYS);
         expect(stalenessDaysFor(null)).toBe(PRICE_STALENESS_DAYS);
-        expect(stalenessDaysFor('SOMETHING_NEW')).toBe(PRICE_STALENESS_DAYS);
+        expect(stalenessDaysFor({})).toBe(PRICE_STALENESS_DAYS);
+        expect(stalenessDaysFor({ namespace: 'SOMETHING_NEW' })).toBe(PRICE_STALENESS_DAYS);
     });
 
-    it('splits on a gap that spans a weekend, which only one of the two closed for', () => {
-        // Friday's close read on Tuesday. For a listed security that is the
-        // newest quote that could exist and warning would be noise; for crypto
-        // it is three days of trading nobody recorded.
-        const fridayClose = new Date('2026-08-14T20:00:00.000Z');
+    it('splits on a gap that only one of the two markets closed for', () => {
+        // Thursday's close read the Tuesday after a long weekend. For a listed
+        // security that is the newest quote that could exist and warning would
+        // be noise; for a market that never shut it is four days of trading
+        // nobody recorded.
+        const thursdayClose = new Date('2026-08-13T20:00:00.000Z');
         const tuesday = new Date('2026-08-18T13:00:00.000Z');
-        expect(priceAgeDays(fridayClose, tuesday)).toBe(3);
-        expect(isPriceStale(fridayClose, tuesday, stalenessDaysFor('NASDAQ'))).toBe(false);
-        expect(isPriceStale(fridayClose, tuesday, stalenessDaysFor('CRYPTO'))).toBe(true);
+        expect(priceAgeDays(thursdayClose, tuesday)).toBe(4);
+        expect(isPriceStale(thursdayClose, tuesday, stalenessDaysFor({ namespace: 'NASDAQ' })))
+            .toBe(false);
+        expect(isPriceStale(thursdayClose, tuesday, stalenessDaysFor({ namespace: 'CRYPTO' })))
+            .toBe(true);
     });
 
-    it('gives crypto one day of margin for a fetch that ran late, and no more', () => {
-        const bound = stalenessDaysFor('CRYPTO');
-        const onTheBound = new Date(MONDAY.getTime() - CRYPTO_STALENESS_DAYS * 86_400_000);
-        const pastIt = new Date(MONDAY.getTime() - (CRYPTO_STALENESS_DAYS + 1) * 86_400_000);
+    it('stays quiet across the weekend a manual refresher is away for', () => {
+        // The population without the worker schedule gets a quote only when
+        // they ask for one. Friday evening's refresh read on Monday morning is
+        // the ordinary case, and a warning already firing on arrival — about a
+        // condition only the reader can clear — is what teaches them to ignore
+        // it.
+        const fridayEvening = new Date('2026-08-14T22:00:00.000Z');
+        const mondayMorning = new Date('2026-08-17T15:00:00.000Z');
+        const bound = stalenessDaysFor({ namespace: 'CRYPTO' });
+
+        expect(priceAgeDays(fridayEvening, mondayMorning)).toBe(2);
+        expect(isPriceStale(fridayEvening, mondayMorning, bound)).toBe(false);
+    });
+
+    it('absorbs two missed scheduled runs and speaks on the third', () => {
+        // A book with refresh_enabled has a quote every calendar day, so any
+        // gap past the bound means the daily job has failed repeatedly rather
+        // than run late once.
+        const bound = stalenessDaysFor({ namespace: 'CRYPTO' });
+        const onTheBound = new Date(MONDAY.getTime() - CONTINUOUS_STALENESS_DAYS * 86_400_000);
+        const pastIt = new Date(MONDAY.getTime() - (CONTINUOUS_STALENESS_DAYS + 1) * 86_400_000);
 
         expect(isPriceStale(onTheBound, MONDAY, bound)).toBe(false);
         expect(isPriceStale(pastIt, MONDAY, bound)).toBe(true);
+    });
+});
+
+/**
+ * Why the classification is not `namespace === 'CRYPTO'`.
+ *
+ * Nothing enforces that string. `commodities.namespace` is a 2048-character
+ * free-text column, the commodities API accepts any string on creation, and the
+ * namespace field in settings offers a suggestion list rather than an enum. Books
+ * arrive by import and by hand, so crypto in a real book may be filed under
+ * anything — and every spelling that is not exactly `CRYPTO` would otherwise
+ * inherit the seven-day exchange bound, which is the defect, merely narrowed.
+ */
+describe('isContinuousMarket', () => {
+    it('recognises the namespace however it was spelled', () => {
+        for (const ns of ['CRYPTO', 'crypto', 'Cryptocurrency', 'CRYPTO:BTC', 'crypto-assets',
+            'Coinbase', 'COIN', 'coins', 'BITCOIN', 'stablecoin', 'KRAKEN', 'Binance',
+            'digital currency', 'Virtual Assets']) {
+            expect(isContinuousMarket({ namespace: ns }), ns).toBe(true);
+        }
+    });
+
+    it('is settled by the price history when the namespace says nothing useful', () => {
+        // The only limb that survives a namespace nobody has ever seen: quotes
+        // on days an exchange would be shut are what "never closes" MEANS.
+        expect(isContinuousMarket({
+            namespace: 'my-ledger-import',
+            mnemonic: 'WHO-KNOWS',
+            weekendQuoteDays: CONTINUOUS_WEEKEND_QUOTE_DAYS,
+        })).toBe(true);
+    });
+
+    it('takes weekend evidence over a namespace that names a closing venue', () => {
+        // Evidence beats naming in both directions. A commodity filed under
+        // NASDAQ that is nonetheless quoted every weekend is not doing what the
+        // label says.
+        expect(isContinuousMarket({
+            namespace: 'NASDAQ',
+            weekendQuoteDays: CONTINUOUS_WEEKEND_QUOTE_DAYS,
+        })).toBe(true);
+    });
+
+    it('does not read one stray weekend price as a continuous market', () => {
+        // A hand-typed Saturday price is not a venue. The threshold is what
+        // separates it from the ~26 weekend days a real one produces.
+        expect(isContinuousMarket({
+            namespace: 'NASDAQ',
+            weekendQuoteDays: CONTINUOUS_WEEKEND_QUOTE_DAYS - 1,
+        })).toBe(false);
+    });
+
+    it('falls back to the mnemonic for an imported book with a wallet namespace', () => {
+        expect(isContinuousMarket({ namespace: 'Ledger Nano', mnemonic: 'BTC' })).toBe(true);
+        expect(isContinuousMarket({ namespace: '', mnemonic: 'eth' })).toBe(true);
+        expect(isContinuousMarket({ namespace: null, mnemonic: 'USDC' })).toBe(true);
+    });
+
+    it('does not let the mnemonic re-label something that demonstrably closes', () => {
+        // A spot-crypto ETF trades on an exchange with a weekend; its ticker is
+        // not the point. The namespace names a venue that closes, so the
+        // mnemonic limb is never consulted.
+        expect(isContinuousMarket({ namespace: 'NASDAQ', mnemonic: 'BTC' })).toBe(false);
+        expect(isContinuousMarket({ namespace: 'ETF', mnemonic: 'ETH' })).toBe(false);
+    });
+
+    it('leaves an ordinary security alone', () => {
+        for (const c of [
+            { namespace: 'NASDAQ', mnemonic: 'AAPL' },
+            { namespace: 'NYSE', mnemonic: 'BRK.B' },
+            { namespace: 'FUND', mnemonic: 'VTSAX' },
+            { namespace: 'CURRENCY', mnemonic: 'EUR' },
+            { namespace: 'SOMETHING_NEW', mnemonic: 'ZZZZ' },
+            {},
+        ]) {
+            expect(isContinuousMarket(c), JSON.stringify(c)).toBe(false);
+        }
     });
 });
 
@@ -149,8 +256,8 @@ describe('stalePriceMessage', () => {
     it('states the bound it was judged against, since that is not one number', () => {
         // Two commodities in one statement can be held to different bounds, so
         // the line has to carry its own rather than lean on a shared heading.
-        const crypto = stalePriceMessage('BTC', '2026-08-10', 7, CRYPTO_STALENESS_DAYS);
-        expect(crypto).toContain(`older than ${CRYPTO_STALENESS_DAYS} days`);
+        const crypto = stalePriceMessage('BTC', '2026-08-10', 7, CONTINUOUS_STALENESS_DAYS);
+        expect(crypto).toContain(`older than ${CONTINUOUS_STALENESS_DAYS} days`);
         expect(crypto).not.toContain(`older than ${PRICE_STALENESS_DAYS} days`);
     });
 
@@ -158,5 +265,16 @@ describe('stalePriceMessage', () => {
         // The value IS in the total; refusing to value the position would be a
         // worse outcome than valuing it out loud.
         expect(stalePriceMessage('AAPL', '2026-08-01', 16)).not.toContain('excluded');
+    });
+});
+
+describe('stalePriceMark', () => {
+    it('carries both numbers, because one table can apply two bounds', () => {
+        // The compact form for a table cell. A row marked "stale" beside an
+        // unmarked row of the same age is unexplainable without the limit.
+        const mark = stalePriceMark(4, CONTINUOUS_STALENESS_DAYS);
+        expect(mark).toContain('4d old');
+        expect(mark).toContain(`limit ${CONTINUOUS_STALENESS_DAYS}d`);
+        expect(mark).toContain('stale');
     });
 });

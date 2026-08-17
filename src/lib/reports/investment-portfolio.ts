@@ -15,6 +15,7 @@ import {
     UNTRACED_BASIS_COVERAGE,
 } from '@/lib/commodities';
 import { getBaseCurrency } from '@/lib/currency';
+import { WEEKEND_EVIDENCE_DAYS } from '@/lib/price-staleness';
 import { ReportType, ReportFilters, InvestmentPortfolioData, PortfolioHolding } from './types';
 import { sumSplitsByAccount, toDecimal } from './utils';
 
@@ -71,23 +72,46 @@ export async function generateInvestmentPortfolio(
             date: Date;
             value_num: bigint;
             value_denom: bigint;
+            weekend_quote_days: bigint | number | null;
         }>>`
-            SELECT DISTINCT ON (commodity_guid)
-                   commodity_guid, date, value_num, value_denom
-            FROM prices
-            WHERE commodity_guid = ANY(${commodityGuids}::text[])
-              AND date <= ${endDate}
-              -- GnuCash's split register records implied $0 prices for
-              -- zero-value transfer transactions; never value holdings with them
-              AND value_num > 0
-              ${baseCurrency ? Prisma.sql`AND currency_guid = ${baseCurrency.guid}` : Prisma.empty}
-            ORDER BY commodity_guid, date DESC
+            WITH latest AS (
+                SELECT DISTINCT ON (commodity_guid)
+                       commodity_guid, date, value_num, value_denom
+                FROM prices
+                WHERE commodity_guid = ANY(${commodityGuids}::text[])
+                  AND date <= ${endDate}
+                  -- GnuCash's split register records implied $0 prices for
+                  -- zero-value transfer transactions; never value holdings with them
+                  AND value_num > 0
+                  ${baseCurrency ? Prisma.sql`AND currency_guid = ${baseCurrency.guid}` : Prisma.empty}
+                ORDER BY commodity_guid, date DESC
+            ),
+            -- Quotes on days an exchange would be shut: the observed evidence
+            -- that a commodity's venue never closes, which is what decides how
+            -- old its price may be before the table says so. Read from the price
+            -- history rather than from the commodity namespace, which is free
+            -- text and carries whatever an importer wrote.
+            weekend AS (
+                SELECT commodity_guid, COUNT(DISTINCT date::date) AS weekend_quote_days
+                FROM prices
+                WHERE commodity_guid = ANY(${commodityGuids}::text[])
+                  AND date <= ${endDate}
+                  AND date > ${endDate}::timestamp - make_interval(days => ${WEEKEND_EVIDENCE_DAYS})
+                  AND value_num > 0
+                  AND EXTRACT(ISODOW FROM date) >= 6
+                GROUP BY commodity_guid
+            )
+            SELECT latest.*, COALESCE(weekend.weekend_quote_days, 0) AS weekend_quote_days
+            FROM latest
+            LEFT JOIN weekend ON weekend.commodity_guid = latest.commodity_guid
         `
         : [];
     const priceByCommodity = new Map(
         priceRows.map(p => [p.commodity_guid, {
             value: toDecimal(p.value_num, p.value_denom),
             date: p.date,
+            // COUNT() crosses the wire as a bigint.
+            weekendQuoteDays: Number(p.weekend_quote_days ?? 0),
         }])
     );
 
@@ -136,9 +160,13 @@ export async function generateInvestmentPortfolio(
             shares: effectiveShares,
             latestPrice,
             priceDate,
-            // Travels with the quote date it qualifies: the table needs both to
-            // judge whether this price is too old to stand for "current".
+            // Travel with the quote date they qualify: the table needs all three
+            // to judge whether this price is too old to stand for "current".
+            // Namespace alone would not do it — it is free text, so the crypto in
+            // an imported book may be filed under anything at all; the weekend
+            // count is the evidence that settles it either way.
             commodityNamespace: account.commodity?.namespace ?? null,
+            priceWeekendQuoteDays: priceData?.weekendQuoteDays ?? 0,
             marketValue,
             costBasis,
             costBasisCoverage,

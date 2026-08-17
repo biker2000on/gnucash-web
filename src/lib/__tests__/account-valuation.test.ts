@@ -20,7 +20,11 @@ import {
   collectValuationCoverage,
   mergeValuationCoverage,
 } from '../account-valuation';
-import { CRYPTO_STALENESS_DAYS, PRICE_STALENESS_DAYS } from '../price-staleness';
+import {
+  CONTINUOUS_STALENESS_DAYS,
+  CONTINUOUS_WEEKEND_QUOTE_DAYS,
+  PRICE_STALENESS_DAYS,
+} from '../price-staleness';
 
 const mockPrisma = prisma as unknown as {
   $queryRaw: Mock;
@@ -53,7 +57,7 @@ function pricePair(
   commodityGuid: string,
   currencyGuid: string,
   value: number,
-  opts: { date?: Date; commodityMnemonic?: string } = {},
+  opts: { date?: Date; commodityMnemonic?: string; weekendQuoteDays?: number } = {},
 ) {
   const denom = 1000000;
   return {
@@ -64,6 +68,8 @@ function pricePair(
     value_num: BigInt(Math.round(value * denom)),
     value_denom: BigInt(denom),
     date: opts.date ?? null,
+    // COUNT() arrives from Postgres as a bigint, so the double sends one.
+    weekend_quote_days: BigInt(opts.weekendQuoteDays ?? 0),
   };
 }
 
@@ -361,10 +367,10 @@ describe('buildAccountValuationContext', () => {
     });
 
     it('holds a continuously-traded commodity to its own, tighter bound', async () => {
-      // Same quote date, same as-of date, two verdicts. Three days back: the
-      // newest quote a closed exchange could have produced, and three days of
-      // trading nobody recorded on a market that never shut.
-      const friday = new Date('2026-08-13T20:00:00.000Z');
+      // Same quote date, same as-of date, two verdicts. Four days back: within
+      // the gap a closed exchange can explain over a long weekend, and four days
+      // of trading nobody recorded on a market that never shut.
+      const friday = new Date('2026-08-12T20:00:00.000Z');
       const btc = {
         accountType: 'STOCK',
         commodityGuid: 'btc-guid',
@@ -389,8 +395,58 @@ describe('buildAccountValuationContext', () => {
         expect.objectContaining({ commodityGuid: 'btc-guid', label: 'BTC' }),
       ]);
       expect(valuation.stalePrices?.[0].message).toContain(
-        `older than ${CRYPTO_STALENESS_DAYS} days`,
+        `older than ${CONTINUOUS_STALENESS_DAYS} days`,
       );
+    });
+
+    it('applies the tighter bound to crypto filed under a made-up namespace', async () => {
+      // `commodities.namespace` is free text and the commodities API accepts
+      // any string, so an imported book's crypto may be filed under a wallet
+      // name. Its own price history — quotes on days every exchange is shut —
+      // is what says the venue never closes, and no namespace can contradict
+      // it.
+      const btc = {
+        accountType: 'STOCK',
+        commodityGuid: 'btc-guid',
+        commodityNamespace: 'Ledger Nano X',
+      };
+      mockPrisma.$queryRaw.mockResolvedValue([
+        pricePair('btc-guid', 'usd-guid', 61000, {
+          date: new Date(ASOF.getTime() - 4 * 86_400_000),
+          commodityMnemonic: 'BTC',
+          weekendQuoteDays: CONTINUOUS_WEEKEND_QUOTE_DAYS,
+        }),
+      ]);
+
+      const valuation = await buildAccountValuationContext([btc], ASOF, USD);
+
+      expect(valuation.stalePrices).toEqual([
+        expect.objectContaining({ commodityGuid: 'btc-guid', label: 'BTC', ageDays: 4 }),
+      ]);
+      expect(valuation.stalePrices?.[0].message).toContain(
+        `older than ${CONTINUOUS_STALENESS_DAYS} days`,
+      );
+    });
+
+    it('keeps the exchange bound for a security with no weekend quotes', async () => {
+      // The same four-day gap, on an instrument whose history shows it stops
+      // for the weekend: within what the calendar explains, so nothing is said.
+      const stockAcct = {
+        accountType: 'STOCK',
+        commodityGuid: 'stock-guid',
+        commodityNamespace: 'Fidelity Import',
+      };
+      mockPrisma.$queryRaw.mockResolvedValue([
+        pricePair('stock-guid', 'usd-guid', 123.45, {
+          date: new Date(ASOF.getTime() - 4 * 86_400_000),
+          commodityMnemonic: 'AAPL',
+          weekendQuoteDays: 0,
+        }),
+      ]);
+
+      const valuation = await buildAccountValuationContext([stockAcct], ASOF, USD);
+
+      expect(valuation.stalePrices).toEqual([]);
     });
 
     it('leaves a crypto quote inside the tighter bound alone', async () => {
@@ -401,7 +457,7 @@ describe('buildAccountValuationContext', () => {
       };
       mockPrisma.$queryRaw.mockResolvedValue([
         pricePair('btc-guid', 'usd-guid', 61000, {
-          date: new Date(ASOF.getTime() - CRYPTO_STALENESS_DAYS * 86_400_000),
+          date: new Date(ASOF.getTime() - CONTINUOUS_STALENESS_DAYS * 86_400_000),
           commodityMnemonic: 'BTC',
         }),
       ]);

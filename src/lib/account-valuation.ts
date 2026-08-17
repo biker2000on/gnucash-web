@@ -5,6 +5,7 @@ import {
   describeStalePrice,
   isPriceStale,
   stalenessDaysFor,
+  WEEKEND_EVIDENCE_DAYS,
   type StalePriceDisclosure,
 } from '@/lib/price-staleness';
 
@@ -173,7 +174,14 @@ interface PricePairRow {
   value_denom: bigint | number | string;
   /** Quote date of the selected row, for the staleness bound. */
   date: Date | string | null;
+  /**
+   * Distinct weekend days carrying a quote for this commodity in the sampled
+   * window — the observed evidence that its venue does not close. See
+   * `isContinuousMarket`.
+   */
+  weekend_quote_days: bigint | number | null;
 }
+
 
 /**
  * A rate together with the date of the oldest quote it was built from. The date
@@ -211,33 +219,64 @@ async function loadLatestPricePairs(
   commodityGuids: string[],
   asOfDate: Date,
   mnemonics?: Map<string, string>,
+  weekendQuoteDays?: Map<string, number>,
 ): Promise<Map<string, DatedRate>> {
   const uniqueGuids = [...new Set(commodityGuids.filter(Boolean))];
   if (uniqueGuids.length === 0) return new Map();
 
+  // One round trip, two facts per pair: the newest quote, and whether this
+  // commodity is quoted on days an exchange would be shut. The second is what
+  // lets the staleness bound be chosen from what the venue DOES rather than from
+  // what someone typed in the namespace column.
   const rows = await prisma.$queryRaw<PricePairRow[]>`
-    SELECT DISTINCT ON (p.commodity_guid, p.currency_guid)
-      p.commodity_guid,
-      p.currency_guid,
-      pc.mnemonic AS commodity_mnemonic,
-      cc.mnemonic AS currency_mnemonic,
-      p.value_num,
-      p.value_denom,
-      p.date
-    FROM prices p
-    JOIN commodities pc ON pc.guid = p.commodity_guid
-    JOIN commodities cc ON cc.guid = p.currency_guid
-    WHERE p.date <= ${asOfDate}
-      AND p.commodity_guid = ANY(${uniqueGuids}::text[])
-      AND p.currency_guid = ANY(${uniqueGuids}::text[])
-      AND p.value_num > 0
-    ORDER BY p.commodity_guid, p.currency_guid, p.date DESC
+    WITH latest AS (
+      SELECT DISTINCT ON (p.commodity_guid, p.currency_guid)
+        p.commodity_guid,
+        p.currency_guid,
+        pc.mnemonic AS commodity_mnemonic,
+        cc.mnemonic AS currency_mnemonic,
+        p.value_num,
+        p.value_denom,
+        p.date
+      FROM prices p
+      JOIN commodities pc ON pc.guid = p.commodity_guid
+      JOIN commodities cc ON cc.guid = p.currency_guid
+      WHERE p.date <= ${asOfDate}
+        AND p.commodity_guid = ANY(${uniqueGuids}::text[])
+        AND p.currency_guid = ANY(${uniqueGuids}::text[])
+        AND p.value_num > 0
+      ORDER BY p.commodity_guid, p.currency_guid, p.date DESC
+    ),
+    weekend AS (
+      SELECT p.commodity_guid, COUNT(DISTINCT p.date::date) AS weekend_quote_days
+      FROM prices p
+      WHERE p.commodity_guid = ANY(${uniqueGuids}::text[])
+        AND p.date <= ${asOfDate}
+        AND p.date > ${asOfDate}::timestamp - make_interval(days => ${WEEKEND_EVIDENCE_DAYS})
+        AND p.value_num > 0
+        -- ISO day-of-week 6/7 = Saturday/Sunday. Read off the stored timestamp
+        -- without a zone conversion, which is how the rest of this file treats
+        -- the price date.
+        AND EXTRACT(ISODOW FROM p.date) >= 6
+      GROUP BY p.commodity_guid
+    )
+    SELECT latest.*, COALESCE(weekend.weekend_quote_days, 0) AS weekend_quote_days
+    FROM latest
+    LEFT JOIN weekend ON weekend.commodity_guid = latest.commodity_guid
   `;
 
   if (mnemonics) {
     for (const row of rows) {
       mnemonics.set(row.commodity_guid, row.commodity_mnemonic);
       mnemonics.set(row.currency_guid, row.currency_mnemonic);
+    }
+  }
+
+  if (weekendQuoteDays) {
+    for (const row of rows) {
+      // COUNT() arrives as bigint over the wire, and an older cached test
+      // double may not send the column at all.
+      weekendQuoteDays.set(row.commodity_guid, Number(row.weekend_quote_days ?? 0));
     }
   }
 
@@ -366,7 +405,13 @@ export async function buildAccountValuationContext(
   }
 
   const mnemonics = new Map<string, string>();
-  const pricePairs = await loadLatestPricePairs([...commodityGuids], asOf, mnemonics);
+  // Weekend quote days per commodity — the observed half of the continuous-market
+  // determination, and the half that survives a namespace nobody anticipated.
+  // Comes back on the same query as the prices.
+  const weekendQuoteDays = new Map<string, number>();
+  const pricePairs = await loadLatestPricePairs(
+    [...commodityGuids], asOf, mnemonics, weekendQuoteDays,
+  );
   const gapReasons = new Map<string, ValuationGapReason>();
   // Quote date behind each commodity's multiplier, for the staleness bound.
   // Absent when the multiplier rests on no quote (report currency, or an
@@ -413,8 +458,15 @@ export async function buildAccountValuationContext(
 
   // The bound is per instrument, not per book: seven days of silence is the
   // ordinary shape of a market week for a listed security and is a week of
-  // undisclosed exposure for something that trades through the weekend.
-  const boundFor = (guid: string) => stalenessDaysFor(namespaces.get(guid));
+  // undisclosed exposure for something that trades through the weekend. Which
+  // one an instrument is gets decided from its own price history first and its
+  // namespace second — `commodities.namespace` is free text, so `=== 'CRYPTO'`
+  // would answer for only the subset that happens to be spelled that way.
+  const boundFor = (guid: string) => stalenessDaysFor({
+    namespace: namespaces.get(guid),
+    mnemonic: mnemonics.get(guid),
+    weekendQuoteDays: weekendQuoteDays.get(guid),
+  });
 
   // A stale quote names the commodity the same way a gap does, so both need the
   // mnemonic backfill. A fully priced, fully current book still triggers

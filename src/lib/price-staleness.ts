@@ -39,51 +39,223 @@
 export const PRICE_STALENESS_DAYS = 7;
 
 /**
- * The same bound for a CONTINUOUSLY-TRADED instrument — GnuCash namespace
- * `CRYPTO`.
+ * The same bound for a CONTINUOUSLY-TRADED instrument — one whose venue never
+ * closes, crypto being the case this book actually holds.
  *
- * Two days. Everything the seven above buys is room for a gap in which no quote
- * CAN exist: the exchange is shut, so nobody could have published a price and a
- * warning would be blaming the book for the calendar. Crypto venues do not
- * close. They quote every calendar day, weekends and holidays included, so that
- * unavoidable gap is zero days rather than four, and the entire justification
- * for seven evaporates — leaving seven days in which a position that trades
- * around the clock, and that has repeatedly moved double digits inside
- * forty-eight hours, would be carried into a total at a price nobody was told
- * was old.
+ * Three days, and the reasoning has two halves: what the market allows, and what
+ * this app's own quote cadence allows.
  *
- * What is left to absorb is this app's own quote cadence, not the market's.
- * Prices land one calendar day at a time and are fetched on demand rather than
- * by a scheduler, so on a book whose quotes are arriving normally the newest one
- * on file is yesterday's: a bound of one day would already be silent. Two adds
- * exactly one day of margin — enough for a refresh that ran late or was skipped
- * once, and for a quote stamped at a venue's UTC day boundary being read late in
- * the following day — and no more. A crypto quote from yesterday or the day
- * before is therefore silent; the third day is disclosed.
+ * THE MARKET. Everything the seven above buys is room for a gap in which no
+ * quote CAN exist: the exchange is shut, so nobody could have published a price
+ * and a warning would be blaming the book for the calendar. Continuous venues do
+ * not close. They quote every calendar day, weekends and holidays included, so
+ * that unavoidable gap is zero days rather than four, and the market half of the
+ * justification for seven evaporates — leaving seven days in which a position
+ * that trades around the clock, and that has repeatedly moved double digits
+ * inside forty-eight hours, would be carried into a total at a price nobody was
+ * told was old.
+ *
+ * THIS APP'S CADENCE, which is not one number, because there are two populations
+ * and they refresh at different rates:
+ *
+ *   - SCHEDULED. `worker.ts` (`recoverSchedules`) reads the per-user
+ *     `refresh_enabled` / `refresh_time` preferences — settable through
+ *     `api/settings/schedules` — and runs `refresh-prices` once every calendar
+ *     day, defaulting to 21:00 UTC. A book on that schedule has a quote for
+ *     every day, so its newest quote is between a few hours and just under two
+ *     days old at any moment a page is opened.
+ *
+ *   - MANUAL. `refresh_enabled` defaults to false, and nothing else fetches:
+ *     opening the app does not pull prices, so the newest quote on file is from
+ *     whenever someone last chose "Refresh All Prices". Quote age here is
+ *     literally days-since-the-user-last-asked.
+ *
+ * Three days is the smallest bound that is quiet for BOTH on an ordinary week.
+ * For the scheduled book it absorbs two consecutive failed or skipped runs
+ * before it says anything — a real outage, not a hiccup. For the manual book it
+ * is what lets a Friday refresh still read clean on Monday: after the ordinary
+ * weekend away, age is 3 and this is silent, so the reader is not greeted by a
+ * warning that was already firing before they could act on it. That greeting is
+ * precisely the cry-wolf failure the seven-day bound exists to avoid for
+ * equities, and a two-day bound reproduced it for every manual crypto holder.
+ *
+ * What three deliberately does NOT do is stretch to cover a reader who refreshes
+ * weekly. At day four this speaks, and it should: on a market that quoted
+ * continuously for four days, the price in the total is genuinely out of date,
+ * and no bound can make that untrue. What makes it informative rather than
+ * nagging is that the disclosure states the age, the bound it was judged
+ * against, and — on the live surfaces, where it is true — how to fix it. A
+ * warning you can act on is not a wolf.
+ *
+ * The bound is NOT made conditional on whether the scheduler is enabled, though
+ * that was available. Doing so inverts the risk: it would relax the disclosure
+ * for exactly the population whose quotes actually go stale, and tighten it for
+ * the one that is already covered. How old a price is, and how far the asset can
+ * have moved since, does not depend on why nobody fetched a newer one.
  */
-export const CRYPTO_STALENESS_DAYS = 2;
+export const CONTINUOUS_STALENESS_DAYS = 3;
 
 /**
- * The bound that applies to one commodity, decided from its GnuCash namespace.
+ * How many distinct weekend days must carry a quote before the price history is
+ * taken as proof that the venue does not close.
  *
- * The namespace is the classification this codebase ALREADY uses to tell crypto
- * apart from everything else — `yahoo-symbol.ts` routes namespace `CRYPTO` to
- * Yahoo's `{MNEMONIC}-USD` pair form, and `commodity-metadata.ts` skips the
- * sector-profile refresh on the same test — so staleness asks the same question
- * the same way instead of introducing a second scheme that could disagree with
- * those two. Compared case-insensitively for the reason they do it: namespace is
- * free text in the GnuCash schema.
- *
- * Anything unrecognised falls back to the exchange-traded bound. That is the
- * right answer for the namespaces that actually occur (CURRENCY, NASDAQ, NYSE,
- * AMEX, FUND, ETF, BOND — see the namespace list in settings/commodities), and
- * the safe direction for one that does not: a disclosure that arrives a few days
- * late on an unknown instrument is a smaller failure than one that cries wolf
- * every week on something which legitimately quotes weekly.
+ * Three, over the window the caller samples. A genuinely continuous instrument
+ * produces about twenty-six weekend days in ninety; a hand-typed price that
+ * happened to land on a Saturday produces one. Three separates those without
+ * needing to know anything about the namespace at all.
  */
-export function stalenessDaysFor(namespace?: string | null): number {
-    return (namespace ?? '').toUpperCase() === 'CRYPTO'
-        ? CRYPTO_STALENESS_DAYS
+export const CONTINUOUS_WEEKEND_QUOTE_DAYS = 3;
+
+/**
+ * How far back the weekend-quote evidence is sampled, in days.
+ *
+ * Ninety: long enough that a continuous instrument accumulates about twenty-six
+ * weekend days and clears the threshold above many times over, short enough that
+ * a commodity which USED to be fetched daily and has since gone quiet is judged
+ * on what its venue does now. Bounded rather than open-ended so the scan cannot
+ * grow with the length of a book's price history.
+ *
+ * Lives here, beside the threshold it feeds, so the two query paths that gather
+ * the evidence (`account-valuation.ts`, `reports/investment-portfolio.ts`) cannot
+ * sample different windows and reach different verdicts about one commodity.
+ */
+export const WEEKEND_EVIDENCE_DAYS = 90;
+
+/**
+ * What is known about a commodity when the bound has to be chosen for it.
+ *
+ * All fields optional: callers supply what they have. The classification degrades
+ * to the exchange-traded default rather than failing.
+ */
+export interface CommodityMarketInput {
+    /** GnuCash `commodities.namespace`. Free text — see below. */
+    namespace?: string | null;
+    /** GnuCash `commodities.mnemonic`, e.g. `BTC`. */
+    mnemonic?: string | null;
+    /**
+     * Distinct Saturday/Sunday dates that carry a quote for this commodity in a
+     * recent window. Supplied by the server paths that already query `prices`;
+     * absent in a Client Component reading a payload that predates it.
+     */
+    weekendQuoteDays?: number | null;
+}
+
+/**
+ * Namespaces that name a venue which CLOSES. Recognising these is what stops the
+ * mnemonic heuristic below from re-labelling a spot-crypto ETF — namespace
+ * NASDAQ, ticker IBIT — as continuous when it demonstrably trades on an exchange
+ * with a weekend.
+ */
+const EXCHANGE_TRADED_NAMESPACES = new Set([
+    'CURRENCY', 'ISO4217', 'NASDAQ', 'NYSE', 'AMEX', 'ARCA', 'BATS', 'OTC',
+    'FUND', 'MUTUAL', 'ETF', 'BOND', 'INDEX', 'TEMPLATE', 'DEMO', 'PRIVATE',
+    'LSE', 'TSX', 'TSXV', 'ASX', 'XETRA', 'EURONEXT', 'SIX', 'HKEX', 'TSE',
+    'NSE', 'BSE', 'JPX', 'KRX', 'SGX', 'B3',
+]);
+
+/**
+ * Namespace tokens that name a continuous venue without containing "CRYPTO" or
+ * "COIN". Exchanges, mostly — an importer commonly writes the venue it pulled
+ * from rather than an asset class.
+ */
+const CONTINUOUS_NAMESPACE_TOKENS = new Set([
+    'BINANCE', 'KRAKEN', 'GEMINI', 'BITSTAMP', 'BITFINEX', 'BITTREX', 'OKX',
+    'BYBIT', 'HUOBI', 'UPBIT', 'DEFI', 'TOKEN', 'TOKENS', 'WEB3',
+]);
+
+/** Uppercase alphanumeric words of a free-text namespace. */
+function namespaceTokens(namespace: string): string[] {
+    return namespace.toUpperCase().split(/[^A-Z0-9]+/).filter(Boolean);
+}
+
+/**
+ * Mnemonics of continuously-traded assets, consulted ONLY when the namespace
+ * neither says "continuous" nor names a venue that closes.
+ *
+ * A convenience for imported books whose namespace is a wallet name, an account
+ * label, or blank — not the authority. Deliberately short and unambiguous: every
+ * entry is a major continuous-market asset whose ticker is not in use as a US
+ * listed equity, so the list cannot quietly re-bound a stock.
+ */
+const CONTINUOUS_MNEMONICS = new Set([
+    'BTC', 'XBT', 'ETH', 'LTC', 'XRP', 'BCH', 'ADA', 'SOL', 'DOT', 'DOGE',
+    'USDT', 'USDC', 'DAI', 'MATIC', 'AVAX', 'LINK', 'XMR', 'XLM', 'TRX',
+    'SHIB', 'BNB', 'ATOM', 'ALGO', 'ETC', 'FIL', 'UNI', 'AAVE',
+]);
+
+/**
+ * Whether a commodity trades on a venue that never closes.
+ *
+ * The reason this is not `namespace === 'CRYPTO'`: nothing enforces that.
+ * `commodities.namespace` is a 2048-character free-text column (schema.prisma),
+ * `api/commodities` accepts whatever string a client sends, and the namespace
+ * box in settings offers a SUGGESTION list, not an enum. Books arrive by import
+ * from GnuCash desktop, from other tools, and from hand entry, so the crypto
+ * actually in a book may be namespaced `Crypto`, `CRYPTOCURRENCY`, `Coinbase`,
+ * `crypto:BTC`, or something nobody anticipated — and every one of those would
+ * have silently kept the seven-day exchange bound, which is the defect this
+ * function exists to close rather than narrow.
+ *
+ * So the question is asked three ways, strongest evidence first:
+ *
+ *   1. THE PRICE HISTORY. Quotes on distinct weekend days are what "the venue
+ *      does not close" MEANS, observed rather than inferred, and no namespace
+ *      can contradict it. This is the only limb that survives a namespace nobody
+ *      has ever seen. It is deliberately one-directional: weekend quotes prove
+ *      continuous trading, but their absence proves nothing — a book with four
+ *      quotes total has no weekend evidence either way — so a negative falls
+ *      through to the naming limbs rather than settling the question.
+ *
+ *   2. THE NAMESPACE, read as words rather than compared whole, so `CRYPTO`,
+ *      `Cryptocurrency`, `crypto:BTC`, `Coinbase`, `KRAKEN` and `BITCOIN` all
+ *      answer the same. A namespace that names a venue which closes (NASDAQ,
+ *      FUND, CURRENCY …) settles the question the other way and stops here.
+ *
+ *   3. THE MNEMONIC, for the imported book whose namespace is a wallet name.
+ *
+ * Every limb errs toward "continuous", i.e. toward the TIGHTER bound and more
+ * disclosure, because the two failure directions are not symmetric: a few extra
+ * days of "this quote is four days old" on an instrument that quotes weekly is
+ * noise, while seven silent days on something that trades all night is a total
+ * presented as current that is not.
+ */
+export function isContinuousMarket(commodity: CommodityMarketInput | null | undefined): boolean {
+    if (!commodity) return false;
+
+    const weekendDays = commodity.weekendQuoteDays ?? 0;
+    if (weekendDays >= CONTINUOUS_WEEKEND_QUOTE_DAYS) return true;
+
+    const tokens = namespaceTokens(commodity.namespace ?? '');
+    for (const token of tokens) {
+        if (token.includes('CRYPTO')) return true;
+        // COIN as a word or as either end of one: COIN, COINS, COINBASE,
+        // BITCOIN, ALTCOIN, STABLECOIN, LITECOIN.
+        if (token.startsWith('COIN') || token.endsWith('COIN') || token.endsWith('COINS')) return true;
+        if (CONTINUOUS_NAMESPACE_TOKENS.has(token)) return true;
+    }
+    // "DIGITAL CURRENCY" and "VIRTUAL ASSET" only read as one thing once the
+    // separator is gone; the token loop above sees a harmless `CURRENCY`.
+    const joined = tokens.join('');
+    if (joined.includes('DIGITALCURRENC') || joined.includes('DIGITALASSET')
+        || joined.includes('VIRTUALCURRENC') || joined.includes('VIRTUALASSET')) return true;
+
+    if (tokens.some(token => EXCHANGE_TRADED_NAMESPACES.has(token))) return false;
+
+    return CONTINUOUS_MNEMONICS.has((commodity.mnemonic ?? '').toUpperCase());
+}
+
+/**
+ * The bound that applies to one commodity.
+ *
+ * Anything not determined to be continuous gets the exchange-traded bound. That
+ * is right for the namespaces that actually occur (CURRENCY, NASDAQ, NYSE, AMEX,
+ * FUND, ETF, BOND …) and the safe direction for one that does not: a disclosure
+ * arriving a few days late on an unknown instrument is a smaller failure than one
+ * crying wolf every week on something which legitimately quotes weekly.
+ */
+export function stalenessDaysFor(commodity: CommodityMarketInput | null | undefined): number {
+    return isContinuousMarket(commodity)
+        ? CONTINUOUS_STALENESS_DAYS
         : PRICE_STALENESS_DAYS;
 }
 
@@ -191,6 +363,22 @@ export function stalePriceMessage(
 ): string {
     return `${label} valued from a quote ${ageDays} days old (${priceDateText}); `
         + `prices older than ${maxAgeDays} days may not reflect current value.`;
+}
+
+/**
+ * The same disclosure compressed to fit beside a date in a table cell.
+ *
+ * It carries the two numbers a reader needs to make sense of a MIXED table, and
+ * the reason it carries both: on one screen a three-day-old crypto quote is
+ * marked and a three-day-old equity quote is not, and without the bound printed
+ * on the row that difference looks arbitrary — or worse, like a bug. The word
+ * "stale" alone says a verdict was reached and hides the rule that reached it.
+ *
+ * Purely visual; the row also carries `stalePriceMessage` for assistive
+ * technology, which has room for the sentence.
+ */
+export function stalePriceMark(ageDays: number, maxAgeDays: number): string {
+    return `stale · ${ageDays}d old, limit ${maxAgeDays}d`;
 }
 
 /**

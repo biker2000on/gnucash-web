@@ -20,7 +20,7 @@ import { isPriceStale, priceAgeDays, stalenessDaysFor } from './price-staleness'
  * crypto is a non-CURRENCY commodity priced through `account-valuation.ts`,
  * where the tighter continuous-market bound applies.
  */
-const FX_STALENESS_DAYS = stalenessDaysFor('CURRENCY');
+const FX_STALENESS_DAYS = stalenessDaysFor({ namespace: 'CURRENCY' });
 
 export interface ExchangeRate {
     fromCurrency: string;

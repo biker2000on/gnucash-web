@@ -398,11 +398,27 @@ export default function KPIGrid({ data, loading }: KPIGridProps) {
                         </p>
                     )}
                     {stalePrices.length > 0 && (
-                        <ul className="mt-1.5 space-y-1 text-xs">
-                            {stalePrices.map(stale => (
-                                <li key={stale.commodityGuid}>{stale.message}</li>
-                            ))}
-                        </ul>
+                        <>
+                            <ul className="mt-1.5 space-y-1 text-xs">
+                                {stalePrices.map(stale => (
+                                    <li key={stale.commodityGuid}>{stale.message}</li>
+                                ))}
+                            </ul>
+                            {/*
+                              * The dashboard always values as of now, and nothing
+                              * on this page fetches a price -- a book without the
+                              * daily refresh schedule enabled only gets newer
+                              * quotes when someone asks for them. So the notice
+                              * says who can clear it and how, rather than
+                              * reporting a condition and leaving the reader to
+                              * guess. A warning that recurs and cannot be acted
+                              * on is the one that gets ignored.
+                              */}
+                            <p className="mt-1.5 text-xs">
+                                Refresh All Prices, from the menu on the Investments page, fetches
+                                newer quotes.
+                            </p>
+                        </>
                     )}
                 </div>
             )}
