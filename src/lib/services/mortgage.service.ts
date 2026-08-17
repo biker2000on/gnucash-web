@@ -20,6 +20,11 @@ export interface PaymentSplit {
   total: number;
 }
 
+/** Why a dynamic payment split could not be safely calculated. */
+export interface PaymentComputationFailure {
+  reason: string;
+}
+
 /**
  * Result of interest rate detection via Newton-Raphson
  */
@@ -176,6 +181,19 @@ export class MortgageService {
       (s) => s.post_date.getTime() === firstDate
     );
 
+    // More than one credit means the ledger records more than one draw against
+    // this liability. Summing the credits is the best representation of the
+    // amount drawn, but the splits alone cannot prove that every draw belongs
+    // to one original loan (rather than a later advance or adjustment). Do not
+    // present that amount as an established opening principal.
+    const creditSplits = mortgageSplits.filter((s) => s.value < 0);
+    if (creditSplits.length > 1) {
+      return {
+        amount: creditSplits.reduce((sum, s) => sum + Math.abs(s.value), 0),
+        estimated: true,
+      };
+    }
+
     // Find the largest absolute value on the first date
     let maxAbsValue = 0;
     for (const s of openingSplits) {
@@ -318,13 +336,14 @@ export class MortgageService {
    * Compute the principal/interest split for a mortgage payment at a given date.
    * Uses the current account balance and detected interest rate.
    *
-   * Returns null if computation fails (balance zero, rate not detected).
+   * Returns a reason if detection data is not reliable enough to split a
+   * scheduled payment; returns null for a transient computation failure.
    */
   static async computePaymentForDate(
     liabilityAccountGuid: string,
     interestAccountGuid: string,
     totalPayment: number,
-  ): Promise<{ principal: number; interest: number } | null> {
+  ): Promise<{ principal: number; interest: number } | PaymentComputationFailure | null> {
     try {
       // Get current balance of the liability account
       const balanceRows = await prisma.$queryRaw<{ balance: string }[]>`
@@ -342,7 +361,19 @@ export class MortgageService {
         interestAccountGuid,
       );
 
-      if (details.interestRate <= 0 || details.paymentsAnalyzed < 3) return null;
+      // A rate inferred from an estimated principal or insufficient payment
+      // history must not be used to create a real transaction split.
+      if (
+        details.interestRate <= 0 ||
+        details.paymentsAnalyzed < 3 ||
+        details.confidence === 'low' ||
+        details.warnings.length > 0
+      ) {
+        return {
+          reason: details.warnings[0] ??
+            'Mortgage rate confidence is too low to split this payment safely',
+        };
+      }
 
       const monthlyRate = details.interestRate / 100 / 12;
       const interest = Math.round(balance * monthlyRate * 100) / 100;

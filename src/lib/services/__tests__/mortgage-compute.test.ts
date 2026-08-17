@@ -1,4 +1,13 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+import prisma from '@/lib/prisma';
+import { MortgageService } from '../mortgage.service';
+
+vi.mock('@/lib/prisma', () => ({
+  default: {
+    $queryRaw: vi.fn(),
+    splits: { findMany: vi.fn() },
+  },
+}));
 
 describe('Mortgage Payment Computation', () => {
   it('should compute correct principal/interest for standard amortization', () => {
@@ -46,5 +55,24 @@ describe('Mortgage Payment Computation', () => {
 
     expect(interest).toBe(2000);
     expect(principal).toBe(-500);
+  });
+
+  it('refuses to split a payment using a low-confidence 40% inferred rate', async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (prisma.$queryRaw as any).mockResolvedValue([{ balance: '-100000' }]);
+    vi.spyOn(MortgageService, 'detectMortgageDetails').mockResolvedValue({
+      originalAmount: 0,
+      interestRate: 40,
+      monthlyPayment: 0,
+      paymentsAnalyzed: 3,
+      confidence: 'low',
+      warnings: ['Original principal not determinable from ledger — estimated'],
+      paymentHistory: [],
+    });
+
+    // Before this regression fix, this returned { interest: 3333.33, principal: 1666.67 }.
+    await expect(MortgageService.computePaymentForDate('mortgage', 'interest', 5000)).resolves.toEqual({
+      reason: 'Original principal not determinable from ledger — estimated',
+    });
   });
 });

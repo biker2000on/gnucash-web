@@ -15,6 +15,7 @@ import { MortgageService } from '../mortgage.service';
 vi.mock('@/lib/prisma', () => ({
   default: {
     splits: { findMany: vi.fn() },
+    $queryRaw: vi.fn(),
   },
 }));
 
@@ -100,7 +101,9 @@ describe('MortgageService.detectOriginalAmount', () => {
       )),
     ];
 
-    expect(MortgageService.detectOriginalAmount(splits, MORTGAGE_GUID)).toBe(100000);
+    // Two draws establish $85,000 advanced; the later $15,000 consists of
+    // repayments and must not be added to the amount borrowed.
+    expect(MortgageService.detectOriginalAmount(splits, MORTGAGE_GUID)).toBe(85000);
   });
 
   it('T2c: does not mistake a small first credit for an opening balance', () => {
@@ -122,6 +125,42 @@ describe('MortgageService.detectOriginalAmount', () => {
     ];
 
     expect(MortgageService.detectOriginalAmount(splits, MORTGAGE_GUID)).toBe(120000);
+  });
+
+  it('does not confidently treat the first HELOC draw as the entire principal', () => {
+    const splits = [
+      makeSplit('draw-1', MORTGAGE_GUID, -5_000_000, 100, new Date('2020-01-15')),
+      makeSplit('draw-2', MORTGAGE_GUID, -8_000_000, 100, new Date('2022-06-15')),
+      ...Array.from({ length: 30 }, (_, i) => makeSplit(
+        `pay-${i}`, MORTGAGE_GUID, 50_000, 100, new Date(2022, 6 + i, 15),
+      )),
+    ];
+
+    // Before this regression fix, strategy 1 returned the first draw: $50,000.
+    expect(MortgageService.detectOriginalAmount(splits, MORTGAGE_GUID)).not.toBe(50_000);
+    expect(MortgageService.detectOriginalAmount(splits, MORTGAGE_GUID)).toBe(130_000);
+  });
+
+  it('sums same-date opening credits but treats them as an estimate', async () => {
+    const date = new Date('2020-01-15');
+    const paymentDate = new Date('2020-02-15');
+    const splits = [
+      makeSplit('opening-a', MORTGAGE_GUID, -100_000, 100, date),
+      makeSplit('opening-b', MORTGAGE_GUID, -80_000, 100, date),
+      makeSplit('payment', MORTGAGE_GUID, 90_000, 100, paymentDate),
+      makeSplit('payment', INTEREST_GUID, 10_000, 100, paymentDate),
+    ].map((split) => ({ ...split, transaction: { post_date: split.post_date } }));
+
+    // Before this regression fix, the max() path returned $1,000 as certain.
+    expect(MortgageService.detectOriginalAmount(splits, MORTGAGE_GUID)).not.toBe(1_000);
+    expect(MortgageService.detectOriginalAmount(splits, MORTGAGE_GUID)).toBe(1_800);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (mockPrisma.splits.findMany as any).mockResolvedValue(splits);
+
+    const result = await MortgageService.detectMortgageDetails(MORTGAGE_GUID, INTEREST_GUID);
+    expect(result.originalAmount).toBe(1_800);
+    expect(result.confidence).toBe('low');
+    expect(result.warnings).toContain('Original principal not determinable from ledger — estimated');
   });
 });
 
@@ -302,6 +341,39 @@ describe('MortgageService.separateSplits', () => {
 });
 
 describe('MortgageService.detectMortgageDetails', () => {
+  it('downgrades a multi-draw HELOC instead of producing a high-confidence first-draw rate', async () => {
+    const splits: Array<{
+      tx_guid: string;
+      account_guid: string;
+      value_num: bigint;
+      value_denom: bigint;
+      transaction: { post_date: Date };
+    }> = [
+      { tx_guid: 'draw-1', account_guid: MORTGAGE_GUID, value_num: BigInt(-5_000_000), value_denom: BigInt(100), transaction: { post_date: new Date('2020-01-15') } },
+      { tx_guid: 'draw-2', account_guid: MORTGAGE_GUID, value_num: BigInt(-8_000_000), value_denom: BigInt(100), transaction: { post_date: new Date('2022-06-15') } },
+    ];
+    for (let i = 0; i < 30; i++) {
+      const date = new Date(2022, 6 + i, 15);
+      splits.push(
+        { tx_guid: `pay-${i}`, account_guid: MORTGAGE_GUID, value_num: BigInt(50_000), value_denom: BigInt(100), transaction: { post_date: date } },
+        // $250 interest yields the reviewer's pre-fix 7.06% median rate when
+        // the service incorrectly starts from the $50,000 first draw.
+        { tx_guid: `pay-${i}`, account_guid: INTEREST_GUID, value_num: BigInt(25_000), value_denom: BigInt(100), transaction: { post_date: date } },
+      );
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (mockPrisma.splits.findMany as any).mockResolvedValue(splits);
+
+    const result = await MortgageService.detectMortgageDetails(MORTGAGE_GUID, INTEREST_GUID);
+
+    expect(result.originalAmount).not.toBe(50_000);
+    expect(result.originalAmount).toBe(130_000);
+    expect(result.interestRate).not.toBeCloseTo(7.06, 2);
+    expect(result.interestRate).toBeCloseTo(2.45, 2);
+    expect(result.confidence).toBe('low');
+    expect(result.warnings).toContain('Original principal not determinable from ledger — estimated');
+  });
+
   it('marks a principal-sum fallback as estimated and low confidence', async () => {
     const splits: Array<{
       tx_guid: string;
