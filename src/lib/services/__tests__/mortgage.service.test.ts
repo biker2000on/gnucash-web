@@ -143,10 +143,10 @@ describe('MortgageService.detectOriginalAmount', () => {
     expect(MortgageService.detectOriginalAmount(splits, MORTGAGE_GUID)).toBe(openingAmount);
   });
 
-  it('treats secondary credits totaling exactly 5% as immaterial', () => {
+  it('treats secondary credits totaling exactly 2% as immaterial', () => {
     const splits = [
       makeSplit('opening', MORTGAGE_GUID, -200_000 * 100, 100, new Date('2020-01-15')),
-      makeSplit('adjustment', MORTGAGE_GUID, -10_000 * 100, 100, new Date('2021-01-15')),
+      makeSplit('adjustment', MORTGAGE_GUID, -4_000 * 100, 100, new Date('2021-01-15')),
       makeSplit('pay', MORTGAGE_GUID, 50_000, 100, new Date('2021-02-15')),
     ];
 
@@ -404,6 +404,67 @@ describe('MortgageService.detectMortgageDetails', () => {
     expect(result.interestRate).toBeCloseTo(4.5, 1);
     expect(result.confidence).toBe('high');
     expect(result.warnings).toEqual([]);
+  });
+
+  it('discloses a material absorbed credit without downgrading confidence', async () => {
+    const openingAmount = 300_000;
+    const splits: Array<{
+      tx_guid: string;
+      account_guid: string;
+      value_num: bigint;
+      value_denom: bigint;
+      transaction: { post_date: Date };
+    }> = [
+      { tx_guid: 'opening', account_guid: MORTGAGE_GUID, value_num: BigInt(-30_000_000), value_denom: BigInt(100), transaction: { post_date: new Date('2020-01-15') } },
+      { tx_guid: 'adjustment', account_guid: MORTGAGE_GUID, value_num: BigInt(-500_000), value_denom: BigInt(100), transaction: { post_date: new Date('2021-01-15') } },
+    ];
+    let balance = openingAmount;
+    const monthlyRate = 0.045 / 12;
+    const payment = openingAmount * monthlyRate * Math.pow(1 + monthlyRate, 360) /
+      (Math.pow(1 + monthlyRate, 360) - 1);
+    for (let i = 0; i < 12; i++) {
+      const date = new Date(2021, i + 1, 15);
+      const interest = Math.round(balance * monthlyRate * 100);
+      const principal = Math.round(payment * 100) - interest;
+      balance -= principal / 100;
+      splits.push(
+        { tx_guid: `pay-${i}`, account_guid: MORTGAGE_GUID, value_num: BigInt(principal), value_denom: BigInt(100), transaction: { post_date: date } },
+        { tx_guid: `pay-${i}`, account_guid: INTEREST_GUID, value_num: BigInt(interest), value_denom: BigInt(100), transaction: { post_date: date } },
+      );
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (mockPrisma.splits.findMany as any).mockResolvedValue(splits);
+
+    const result = await MortgageService.detectMortgageDetails(MORTGAGE_GUID, INTEREST_GUID);
+    expect(result.originalAmount).toBe(300_000);
+    expect(result.confidence).toBe('high');
+    expect(result.warnings).toContain('Secondary liability credits of $5,000 absorbed into the opening balance');
+  });
+
+  it('sums many individually small credits when they are material in aggregate', async () => {
+    const splits: Array<{
+      tx_guid: string;
+      account_guid: string;
+      value_num: bigint;
+      value_denom: bigint;
+      transaction: { post_date: Date };
+    }> = [
+      { tx_guid: 'opening', account_guid: MORTGAGE_GUID, value_num: BigInt(-30_000_000), value_denom: BigInt(100), transaction: { post_date: new Date('2020-01-15') } },
+      ...Array.from({ length: 10 }, (_, i) => ({
+        tx_guid: `credit-${i}`,
+        account_guid: MORTGAGE_GUID,
+        value_num: BigInt(-200_000),
+        value_denom: BigInt(100),
+        transaction: { post_date: new Date(2021, i, 15) },
+      })),
+    ];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (mockPrisma.splits.findMany as any).mockResolvedValue(splits);
+
+    const result = await MortgageService.detectMortgageDetails(MORTGAGE_GUID, INTEREST_GUID);
+    expect(result.originalAmount).toBe(320_000);
+    expect(result.confidence).toBe('low');
+    expect(result.warnings).toContain('Original principal not determinable from ledger — estimated');
   });
 
   it('downgrades a multi-draw HELOC instead of producing a high-confidence first-draw rate', async () => {

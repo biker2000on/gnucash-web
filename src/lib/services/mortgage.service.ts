@@ -54,6 +54,7 @@ export interface MortgageDetectionResult {
 interface OriginalAmountDetection {
   amount: number;
   estimated: boolean;
+  warnings?: string[];
 }
 
 /**
@@ -184,18 +185,28 @@ export class MortgageService {
     // Material additional credits indicate more than one draw against this
     // liability. Small later credits are commonly fees, escrow adjustments, or
     // prepaid escrow and must not override a clearly dominant opening balance.
-    // Five percent keeps the 6.25% secondary draw in T2b conservative while
-    // allowing ordinary servicing adjustments to retain high confidence.
+    // Two percent leaves more than twice the headroom of the largest known
+    // benign adjustment (0.833%), while still treating T2b's 6.25% draw as
+    // uncertain. Credits of at least one percent but below this threshold are
+    // disclosed without lowering confidence.
     const creditSplits = mortgageSplits.filter((s) => s.value < 0);
+    let absorbedCreditWarnings: string[] | undefined;
     if (creditSplits.length > 1) {
       const creditAmounts = creditSplits.map((s) => Math.abs(s.value));
       const largestCredit = Math.max(...creditAmounts);
       const otherCredits = creditAmounts.reduce((sum, amount) => sum + amount, 0) - largestCredit;
-      if (otherCredits > largestCredit * 0.05) {
+      if (otherCredits > largestCredit * 0.02) {
         return {
           amount: largestCredit + otherCredits,
           estimated: true,
         };
+      }
+      if (otherCredits >= largestCredit * 0.01) {
+        absorbedCreditWarnings = [
+          `Secondary liability credits of $${otherCredits.toLocaleString('en-US', {
+            maximumFractionDigits: 2,
+          })} absorbed into the opening balance`,
+        ];
       }
     }
 
@@ -221,14 +232,14 @@ export class MortgageService {
 
         // If opening is at least 3x the average subsequent payment, use it
         if (maxAbsValue > avgSubsequent * 3) {
-          return { amount: maxAbsValue, estimated: false };
+          return { amount: maxAbsValue, estimated: false, warnings: absorbedCreditWarnings };
         }
       } else {
         // Only one date of transactions, return the max
-        return { amount: maxAbsValue, estimated: false };
+        return { amount: maxAbsValue, estimated: false, warnings: absorbedCreditWarnings };
       }
     } else {
-      return { amount: maxAbsValue, estimated: false };
+      return { amount: maxAbsValue, estimated: false, warnings: absorbedCreditWarnings };
     }
 
     // At the 3x boundary, a first-date credit only identifies opening principal
@@ -241,7 +252,7 @@ export class MortgageService {
       .filter((s) => s.post_date.getTime() !== firstDate)
       .reduce((sum, s) => sum + Math.abs(s.value), 0);
     if (openingCredit > 0 && openingCredit >= subsequentPrincipal) {
-      return { amount: openingCredit, estimated: false };
+      return { amount: openingCredit, estimated: false, warnings: absorbedCreditWarnings };
     }
 
     // No opening credit is available, so retain the existing best-effort
@@ -447,6 +458,7 @@ export class MortgageService {
       mortgageAccountGuid
     );
     const originalAmount = originalAmountDetection.amount;
+    warnings.push(...(originalAmountDetection.warnings ?? []));
 
     // Calculate interest rate directly from interest/balance ratios.
     // This avoids contamination from escrow splits that also post to the mortgage account.

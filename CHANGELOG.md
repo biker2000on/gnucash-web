@@ -8,6 +8,12 @@ Covers work landed since 0.23.2.0 (2026-07-29).
 
 ### ⚠️ Behavior changes you should read before upgrading
 
+- **Mortgage detection now treats material multi-draw and HELOC activity as an
+  estimate.** A book with a $50,000 initial draw followed by an $80,000 draw
+  previously reported a $50,000 original amount, 7.06% rate, and high
+  confidence. It now reports $130,000, 2.45%, and low confidence with an
+  explanation, preventing the first draw from being treated as the whole loan.
+
 - **Unposting an invoice or bill now records a reversing transaction instead of
   deleting the original posting.** The ledger keeps both entries — the original
   and its reversal, which cancel out — and the invoice returns to draft. The
