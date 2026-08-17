@@ -214,8 +214,10 @@ export async function findOrCreateAccount(
 
     if (!existing) {
       // Guard the check-then-create: take a per-(parent, name) advisory
-      // lock and re-check, so concurrent callers cannot create duplicate
-      // sibling accounts (no unique index on (parent_guid, name) yet).
+      // lock and re-check, so concurrent callers reach the create one at a
+      // time instead of colliding on `uq_accounts_parent_name` (db-init
+      // creates that index unconditionally, so the collision would be a hard
+      // error rather than a duplicate row).
       // Only effective inside a transaction (pass `tx`); test doubles
       // without $queryRaw skip the lock and keep legacy behavior.
       const locked = await acquireNamedXactLock(db, accountNameLockKey(parentGuid, segment));

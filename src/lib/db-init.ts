@@ -12,7 +12,12 @@ import {
     LEGACY_DOCUMENT_BACKFILL_SQL,
 } from './documents/schema';
 
-const SCHEMA_META_DDL = `
+/**
+ * The bookkeeping tables every migration/guard below leans on. Exported so a
+ * test can stand them up in an isolated schema and run a guard against a real
+ * server without touching the real tables.
+ */
+export const SCHEMA_META_DDL = `
     CREATE TABLE IF NOT EXISTS gnucash_web_schema_meta (
         step_name TEXT PRIMARY KEY,
         applied_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -2636,15 +2641,138 @@ async function tuneAutovacuum() {
 }
 
 /**
+ * H4/H7 — `accounts(parent_guid, name)`, the sibling-name uniqueness guarantee.
+ * Partial, because parent_guid is NULL for root accounts (one per book).
+ *
+ * UNCONDITIONAL, unlike every other guard here, and that is the whole point.
+ * Sibling-name uniqueness is not just a nice-to-have index: `findOrCreateAccount`,
+ * `AccountService.create`, the XML/QBO importers and the SimpleFin sync all run
+ * check-then-insert against this natural key, and only the database can bind
+ * writers to each other. An advisory lock binds only the callers that take it,
+ * so a skipped index leaves every non-locking writer free to insert a duplicate
+ * inside another writer's uncommitted window.
+ *
+ * The old version skipped creation whenever ANY duplicate sibling pair existed
+ * anywhere in the database, which made one unrelated historical duplicate — in
+ * some other book, from some other tool — silently disable the guarantee for
+ * every book, on every restart, forever. That failure mode is worse than the
+ * duplicates it was avoiding, so this block resolves them instead:
+ *
+ *   - Deterministic: within each (parent_guid, name) group the row with the
+ *     most splits keeps the name (ties broken by guid), so the account the user
+ *     actually posts to is the one left alone.
+ *   - Non-destructive: losers are RENAMED, never deleted, moved or merged.
+ *     Nothing references an account by name — splits, lots, prices, budgets and
+ *     the app's own mapping tables all key on guid — so a rename cannot break a
+ *     reference. The new name embeds the row's own guid prefix, so it is stable
+ *     across runs and cannot collide with a sibling.
+ *   - Logged twice over: every rename RAISEs a WARNING and the complete original
+ *     row is copied into gnucash_web_migration_backups first, so the operator
+ *     can see what changed and put any name back by hand.
+ *   - Idempotent: the whole block no-ops once the index exists, and the rename
+ *     pass is a no-op on clean data.
+ *   - Safe under concurrent instances: the same advisory lock the other guards
+ *     use serializes Docker replicas, and LOCK TABLE keeps a concurrent writer
+ *     from slipping a fresh duplicate in between the rename pass and the index
+ *     build. SHARE ROW EXCLUSIVE, not ACCESS EXCLUSIVE: readers are never
+ *     blocked, and CREATE INDEX would take a write-blocking lock regardless.
+ *
+ * Exported so tests can exercise the remediation against a real server.
+ */
+export const ACCOUNTS_SIBLING_NAME_GUARD_DDL = `
+    DO $$
+    DECLARE
+        v_dup RECORD;
+        v_base text;
+        v_candidate text;
+        v_attempt integer;
+        v_renamed integer := 0;
+    BEGIN
+        PERFORM pg_advisory_xact_lock(hashtext('gnucash_web_accounts_sibling_name_guard'));
+        IF to_regclass('uq_accounts_parent_name') IS NOT NULL THEN
+            RETURN;
+        END IF;
+
+        LOCK TABLE accounts IN SHARE ROW EXCLUSIVE MODE;
+
+        FOR v_dup IN
+            WITH dup_groups AS (
+                SELECT parent_guid, name
+                FROM accounts
+                WHERE parent_guid IS NOT NULL AND name IS NOT NULL
+                GROUP BY parent_guid, name
+                HAVING COUNT(*) > 1
+            ), members AS (
+                SELECT a.guid, a.parent_guid, a.name,
+                       (SELECT COUNT(*) FROM splits s WHERE s.account_guid = a.guid) AS split_count
+                FROM accounts a
+                JOIN dup_groups d
+                  ON d.parent_guid = a.parent_guid AND d.name = a.name
+            ), ranked AS (
+                SELECT guid, parent_guid, name,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY parent_guid, name
+                           ORDER BY split_count DESC, guid ASC
+                       ) AS rn
+                FROM members
+            )
+            SELECT guid, parent_guid, name
+            FROM ranked
+            WHERE rn > 1
+            ORDER BY parent_guid, name, guid
+        LOOP
+            v_base := v_dup.name || ' (dup ' || left(v_dup.guid, 8) || ')';
+            v_candidate := v_base;
+            v_attempt := 1;
+            WHILE EXISTS (
+                SELECT 1 FROM accounts
+                WHERE parent_guid = v_dup.parent_guid AND name = v_candidate
+            ) LOOP
+                v_attempt := v_attempt + 1;
+                v_candidate := v_base || ' ' || v_attempt;
+            END LOOP;
+
+            INSERT INTO gnucash_web_migration_backups
+                (step_name, source_table, row_key, row_data)
+            SELECT
+                'accounts-sibling-name-disambiguate',
+                'accounts',
+                a.guid,
+                to_jsonb(a) || jsonb_build_object('gnucash_web_renamed_to', v_candidate)
+            FROM accounts a
+            WHERE a.guid = v_dup.guid
+            ON CONFLICT (step_name, source_table, row_key) DO NOTHING;
+
+            UPDATE accounts SET name = v_candidate WHERE guid = v_dup.guid;
+            v_renamed := v_renamed + 1;
+
+            RAISE WARNING 'gnucash-web: renamed duplicate sibling account % under parent % from "%" to "%"', v_dup.guid, v_dup.parent_guid, v_dup.name, v_candidate;
+        END LOOP;
+
+        IF v_renamed > 0 THEN
+            RAISE WARNING 'gnucash-web: disambiguated % duplicate sibling account name(s) so accounts(parent_guid, name) could be made unique; nothing was deleted, moved or merged and every original row is in gnucash_web_migration_backups (step_name = accounts-sibling-name-disambiguate) — rename them to taste from the accounts UI', v_renamed;
+        END IF;
+
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_accounts_parent_name
+            ON accounts (parent_guid, name)
+            WHERE parent_guid IS NOT NULL;
+    END $$;
+`;
+
+/**
  * Creates unique indexes that turn silent duplicate races into clean errors
  * (concurrency audit Phase 3: H3/H4/H5/H6/H7 and the C4 funding sweep).
  *
  * db-init runs at startup on live databases, so every guard here must be
  * duplicate-safe: each block first checks whether existing rows already
- * violate the candidate key. Where deduping is provably safe (prices,
- * reconciliation sessions) the block cleans up in place; everywhere else it
- * RAISEs a WARNING with a count and skips index creation — user data is
- * never deleted or renamed automatically.
+ * violate the candidate key. Where a resolution is provably safe (prices,
+ * reconciliation sessions, sibling account names) the block resolves it in
+ * place; everywhere else it RAISEs a WARNING with a count and skips index
+ * creation.
+ *
+ * Only `accounts(parent_guid, name)` is UNCONDITIONAL — see
+ * ACCOUNTS_SIBLING_NAME_GUARD_DDL for why that one cannot be allowed to skip.
+ * No guard ever deletes, moves or merges user rows.
  *
  * Deliberately NOT constrained: slots(obj_guid, name). GnuCash KVP list
  * slots legitimately store repeated (obj_guid, name) rows (a list's elements
@@ -2661,8 +2789,15 @@ interface UniqueGuardSkipDiagnostic {
     findSql: string;
     /** What breaks in the app while the index is missing. */
     impact: string;
-    /** How to clean up (never done automatically — this is user data). */
+    /** How to clean up. */
     advice: string;
+    /**
+     * Set for the guards that resolve their own duplicates. For those, a
+     * missing index does NOT mean "dirty data blocked it" — the remediation
+     * would have handled that — so the message must not tell the operator to
+     * go clean up rows that are probably already clean.
+     */
+    selfRemediating?: boolean;
 }
 
 interface UniqueGuard {
@@ -2704,9 +2839,13 @@ async function reportSkippedUniqueGuard(
             // Fall through with the "unknown" wording.
         }
 
+        const cause = diagnostic.selfRemediating
+            ? `the automatic remediation did not complete (${dupes} duplicate group(s) remain)`
+            : `${dupes} duplicate group(s) block it`;
+
         console.error(
             `ERROR: unique index ${diagnostic.indexName} on ${label} was NOT created — ` +
-            `${dupes} duplicate group(s) block it. Until this is fixed and the app restarted, ` +
+            `${cause}. Until this is fixed and the app restarted, ` +
             `${diagnostic.impact}. ${diagnostic.advice} ` +
             `List the offending rows with: ${diagnostic.findSql}`,
         );
@@ -2764,34 +2903,6 @@ async function createUniqueConstraintGuards() {
                 ELSE
                     CREATE UNIQUE INDEX IF NOT EXISTS uq_commodities_namespace_mnemonic
                         ON commodities (namespace, mnemonic);
-                END IF;
-            END IF;
-        END $$;
-    `;
-
-    // H4/H7: duplicate sibling accounts. parent_guid is NULL for root
-    // accounts (one per book), so the index is scoped to non-root rows.
-    // Merging/renaming accounts automatically is NOT safe — skip+warn.
-    const accountsUniqueDDL = `
-        DO $$
-        DECLARE
-            v_dirty integer;
-        BEGIN
-            PERFORM pg_advisory_xact_lock(hashtext('gnucash_web_accounts_sibling_name_guard'));
-            IF to_regclass('uq_accounts_parent_name') IS NULL THEN
-                SELECT COUNT(*) INTO v_dirty FROM (
-                    SELECT parent_guid, name
-                    FROM accounts
-                    WHERE parent_guid IS NOT NULL
-                    GROUP BY parent_guid, name
-                    HAVING COUNT(*) > 1
-                ) dupes;
-                IF v_dirty > 0 THEN
-                    RAISE WARNING 'gnucash-web: skipping unique index on accounts(parent_guid, name): % duplicate sibling group(s) exist; rename or merge the duplicate accounts manually, then restart', v_dirty;
-                ELSE
-                    CREATE UNIQUE INDEX IF NOT EXISTS uq_accounts_parent_name
-                        ON accounts (parent_guid, name)
-                        WHERE parent_guid IS NOT NULL;
                 END IF;
             END IF;
         END $$;
@@ -2907,15 +3018,16 @@ async function createUniqueConstraintGuards() {
         },
         {
             label: 'accounts(parent_guid, name)',
-            ddl: accountsUniqueDDL,
+            ddl: ACCOUNTS_SIBLING_NAME_GUARD_DDL,
             skipDiagnostic: {
                 indexName: 'uq_accounts_parent_name',
                 countSql: `SELECT COUNT(*)::int AS dupes FROM (
                     SELECT parent_guid, name FROM accounts WHERE parent_guid IS NOT NULL
                     GROUP BY parent_guid, name HAVING COUNT(*) > 1) d`,
                 findSql: `SELECT parent_guid, name, COUNT(*) FROM accounts WHERE parent_guid IS NOT NULL GROUP BY 1, 2 HAVING COUNT(*) > 1;`,
-                impact: 'findOrCreateAccount falls back to a racy SELECT-then-INSERT',
-                advice: 'Rename or merge the duplicate sibling accounts manually, then restart.',
+                impact: 'every account writer is back on a racy SELECT-then-INSERT — findOrCreateAccount, AccountService.create, the XML/QBO importers and the SimpleFin sync can each create a duplicate sibling inside another writer\'s uncommitted window',
+                advice: 'This guard resolves its own duplicates, so a missing index means the DDL itself failed — look for the "Error creating unique constraint guard for accounts(parent_guid, name)" line above (typically a lock timeout, or the app role lacking rights on accounts), fix that, and restart.',
+                selfRemediating: true,
             },
         },
         {

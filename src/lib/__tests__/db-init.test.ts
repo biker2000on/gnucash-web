@@ -58,7 +58,9 @@ describe('initializeDatabase', () => {
         expect(commodities).not.toContain('DELETE FROM');
 
         // H4/H7: sibling account names — partial (root accounts have NULL
-        // parent_guid), skip+warn on dirty data.
+        // parent_guid), and UNCONDITIONAL: this is the one guarantee that must
+        // hold on every database, because it is the only thing binding the
+        // account writers that never take the advisory lock.
         const accounts = sqls.find((s) => s.includes('uq_accounts_parent_name'));
         expect(accounts).toBeDefined();
         expect(accounts).toContain('WHERE parent_guid IS NOT NULL');
@@ -92,6 +94,48 @@ describe('initializeDatabase', () => {
         // Deliberately absent: a unique on slots(obj_guid, name) would break
         // GnuCash KVP list slots, which legitimately repeat names.
         expect(sqls.some((s) => /CREATE UNIQUE INDEX[^;]*\bslots\b/i.test(s))).toBe(false);
+    });
+
+    it('makes the sibling-account uniqueness guarantee unconditional', async () => {
+        await initializeDatabase();
+
+        const sqls = mocks.query.mock.calls.map((c) => String(c[0]));
+        const accounts = sqls.find((s) => s.includes('uq_accounts_parent_name'));
+        expect(accounts).toBeDefined();
+
+        // No skip branch. The previous version counted duplicate groups and
+        // skipped the index if ANY existed anywhere in the database, so one
+        // unrelated historical duplicate silently disabled the guarantee for
+        // every book on every restart — leaving AccountService.create, the XML
+        // importer and the SimpleFin sync racing each other unprotected.
+        expect(accounts).not.toMatch(/skipping unique index on accounts/);
+        expect(accounts).not.toMatch(/IF v_dirty > 0 THEN/);
+        expect(accounts).toMatch(
+            /CREATE UNIQUE INDEX IF NOT EXISTS uq_accounts_parent_name[\s\S]*END \$\$/,
+        );
+
+        // Remediation, not deletion: losers are renamed, and the whole original
+        // row is preserved first.
+        expect(accounts).toContain('UPDATE accounts SET name = v_candidate');
+        expect(accounts).toContain('gnucash_web_migration_backups');
+        expect(accounts).toContain("'accounts-sibling-name-disambiguate'");
+        expect(accounts).not.toMatch(/DELETE FROM|DROP |MERGE /);
+
+        // Deterministic winner: the most-posted-to row keeps the name.
+        expect(accounts).toContain('ORDER BY split_count DESC, guid ASC');
+
+        // Idempotent: nothing runs once the index exists.
+        expect(accounts).toMatch(
+            /IF to_regclass\('uq_accounts_parent_name'\) IS NOT NULL THEN\s+RETURN;/,
+        );
+
+        // Concurrency-safe on both axes: the advisory lock serializes Docker
+        // replicas, LOCK TABLE stops a writer inserting a fresh duplicate
+        // between the rename pass and the index build.
+        expect(accounts).toContain(
+            "pg_advisory_xact_lock(hashtext('gnucash_web_accounts_sibling_name_guard'))",
+        );
+        expect(accounts).toContain('LOCK TABLE accounts IN SHARE ROW EXCLUSIVE MODE');
     });
 
     it('creates the new performance indexes and no longer creates retired ones', async () => {

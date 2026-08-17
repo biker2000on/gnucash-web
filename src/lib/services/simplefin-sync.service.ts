@@ -271,10 +271,17 @@ export function isSimpleFinDuplicateViolation(err: unknown): boolean {
 /**
  * Markers identifying the DB-side arbiters of the two natural keys this
  * service creates against. Both indexes are created by db-init
- * (src/lib/db-init.ts) — `uq_accounts_parent_name` is PARTIAL, on
- * accounts(parent_guid, name) WHERE parent_guid IS NOT NULL — and both are
- * skipped with a warning on books that already carry duplicate rows, so the
- * advisory lock below is what protects those books.
+ * (src/lib/db-init.ts).
+ *
+ * `uq_accounts_parent_name` is PARTIAL, on accounts(parent_guid, name) WHERE
+ * parent_guid IS NOT NULL, and its guard is UNCONDITIONAL: pre-existing
+ * duplicate siblings are renamed (logged and backed up) rather than allowed to
+ * skip the index, so the account-side guarantee holds on every database and
+ * binds writers that never take the advisory lock — the XML importer and
+ * AccountService.create among them. `uq_commodities_namespace_mnemonic` still
+ * skips on dirty data (duplicate commodities cannot be resolved automatically:
+ * accounts, prices and splits reference one by guid), so for commodities the
+ * lock below is the only serializer on such a database.
  *
  * Each entry lists both surface forms of the same violation: the index name
  * (Prisma's driver-adapter error carries the Postgres text verbatim) and the
@@ -1542,9 +1549,9 @@ export async function getOrCreateChildAccount(
   const commodity = await getOrCreateSymbolCommodity(mnemonic, holdingDescription);
 
   // The child account is named for the symbol, so `uq_accounts_parent_name`
-  // covers exactly this create — but only where db-init could build it. The
-  // (parent, name) lock serializes concurrent syncs on books where it could
-  // not, and spares the winner-adoption path in the common case.
+  // covers exactly this create. The (parent, name) lock serializes concurrent
+  // syncs ahead of the index, which keeps the common case off the
+  // winner-adoption path (and off Postgres' error log).
   let outcome: { guid: string; createdNew: boolean };
   try {
     outcome = await prisma.$transaction(async tx => {
