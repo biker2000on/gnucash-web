@@ -7,7 +7,16 @@
  *   - staleness / aging threshold helpers
  */
 
-import { describe, it, expect } from 'vitest';
+import { beforeEach, describe, it, expect, vi } from 'vitest';
+
+const mockQueryRaw = vi.fn();
+
+vi.mock('../prisma', () => ({
+    default: {
+        $queryRaw: (...args: unknown[]) => mockQueryRaw(...args),
+    },
+}));
+
 import {
     detectUnbalancedTransactions,
     computeHealthScore,
@@ -16,9 +25,14 @@ import {
     daysBetween,
     cutoffDate,
     SEVERITY_WEIGHT,
+    runDataHealth,
     type RawSplitForBalance,
     type Severity,
 } from '../data-health';
+
+beforeEach(() => {
+    mockQueryRaw.mockReset();
+});
 
 /* ------------------------------------------------------------------ */
 /* Unbalanced detection                                                 */
@@ -209,5 +223,50 @@ describe('cutoffDate', () => {
     it('returns the date N days before the reference', () => {
         const asOf = new Date('2026-07-08T00:00:00Z');
         expect(cutoffDate(90, asOf).toISOString().slice(0, 10)).toBe('2026-04-09');
+    });
+});
+
+/* ------------------------------------------------------------------ */
+/* Zero denominators                                                   */
+/* ------------------------------------------------------------------ */
+
+describe('runDataHealth — zero denominators', () => {
+    it('reports a corrupt split as an error and explains its excluded balance', async () => {
+        mockQueryRaw.mockImplementation((strings: TemplateStringsArray) => {
+            const sql = strings.join(' ');
+            if (!sql.includes('s.quantity_denom = 0 OR s.value_denom = 0')) return [];
+            if (sql.includes('COUNT(*)::int')) return [{ n: 1 }];
+            return [{
+                guid: 'split-guid',
+                account_guid: 'account-guid',
+                account_name: 'Checking',
+                tx_guid: 'transaction-guid',
+                description: 'Corrupt import',
+                post_date: new Date('2026-08-14T00:00:00Z'),
+                quantity_zero: true,
+                value_zero: false,
+            }];
+        });
+
+        const report = await runDataHealth(['account-guid'], {
+            asOf: new Date('2026-08-14T00:00:00Z'),
+        });
+        const check = report.checks.find(candidate => candidate.id === 'zero-denominators');
+
+        expect(check).toMatchObject({
+            id: 'zero-denominators',
+            label: 'Zero split denominators',
+            severity: 'error',
+            count: 1,
+            truncated: false,
+            items: [{
+                guid: 'split-guid',
+                name: 'Checking',
+                href: '/accounts/account-guid',
+            }],
+        });
+        expect(check?.items[0]?.detail).toContain('transaction Corrupt import');
+        expect(check?.items[0]?.detail).toContain('zero quantity denominator');
+        expect(check?.items[0]?.detail).toContain('excluded from NULLIF-protected balances');
     });
 });

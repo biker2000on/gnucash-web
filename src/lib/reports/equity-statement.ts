@@ -72,11 +72,11 @@ export async function generateEquityStatement(filters: ReportFilters): Promise<R
             closing_sum: number;
         }>>`
             SELECT s.account_guid,
-                   COALESCE(SUM(s.quantity_num::float8 / NULLIF(s.quantity_denom, 0)::float8)
+                   COALESCE(SUM(s.quantity_num::numeric / NULLIF(s.quantity_denom, 0)::numeric)
                        FILTER (WHERE t.post_date < ${startDate}), 0)::float8 AS opening_sum,
-                   COALESCE(SUM(s.quantity_num::float8 / NULLIF(s.quantity_denom, 0)::float8)
+                   COALESCE(SUM(s.quantity_num::numeric / NULLIF(s.quantity_denom, 0)::numeric)
                        FILTER (WHERE t.post_date >= ${startDate} AND t.post_date <= ${endDate}), 0)::float8 AS period_sum,
-                   COALESCE(SUM(s.quantity_num::float8 / NULLIF(s.quantity_denom, 0)::float8)
+                   COALESCE(SUM(s.quantity_num::numeric / NULLIF(s.quantity_denom, 0)::numeric)
                        FILTER (WHERE t.post_date <= ${endDate}), 0)::float8 AS closing_sum
             FROM splits s
             JOIN transactions t ON t.guid = s.tx_guid

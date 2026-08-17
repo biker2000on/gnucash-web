@@ -15,6 +15,7 @@
 // original response back) instead of recording a second dues payment.
 
 import { NextResponse } from 'next/server';
+import prisma from '@/lib/prisma';
 import { requireRole } from '@/lib/auth';
 import { withPeriodLockCheck } from '@/lib/services/period-lock.service';
 import {
@@ -25,9 +26,11 @@ import { inboundMembershipPaymentSchema, parseInbound } from '@/lib/inbound-webh
 import {
     claimWebhookIdempotency,
     completeWebhookIdempotency,
+    lockWebhookIdempotencyAttempt,
     readIdempotencyKey,
     releaseWebhookIdempotency,
     validateIdempotencyKey,
+    WebhookClaimSupersededError,
 } from '@/lib/webhook-idempotency';
 
 export async function POST(request: Request) {
@@ -57,6 +60,7 @@ export async function POST(request: Request) {
 
         // Claim the idempotency key BEFORE the write. The UNIQUE index picks
         // the winner, so a concurrent replay can never also reach recordPayment.
+        let claimAttempt: number | null = null;
         if (idempotencyKey) {
             const claim = await claimWebhookIdempotency(
                 bookGuid,
@@ -75,11 +79,23 @@ export async function POST(request: Request) {
                     { status: 409 }
                 );
             }
+            if (claim.status === 'terminal') {
+                return NextResponse.json(
+                    {
+                        error: 'This idempotency key exhausted its retry budget and needs operator attention',
+                        idempotencyState: claim.state,
+                        attempts: claim.attempts,
+                        detail: claim.detail,
+                    },
+                    { status: 409 }
+                );
+            }
+            claimAttempt = claim.attempt;
         }
 
         let result;
         try {
-            result = await recordPayment(bookGuid, input.memberId, {
+            const paymentInput = {
                 membershipTypeId: null,
                 amount: input.amount ?? null,
                 paidDate: input.paidDate,
@@ -88,30 +104,54 @@ export async function POST(request: Request) {
                 notes: 'Recorded via inbound webhook',
                 periodStart: null,
                 periodEnd: null,
-            });
+            };
+            if (idempotencyKey) {
+                result = await prisma.$transaction(async (database) => {
+                    // Lock the attempt before recording payment. Completion is
+                    // in this same transaction, so no successful payment can
+                    // be reclaimed solely because its response was not saved.
+                    await lockWebhookIdempotencyAttempt(
+                        bookGuid, 'membership-payment', idempotencyKey, claimAttempt!, database
+                    );
+                    const recorded = await recordPayment(
+                        bookGuid, input.memberId, paymentInput, database
+                    );
+                    if (!recorded) {
+                        await releaseWebhookIdempotency(
+                            bookGuid, 'membership-payment', idempotencyKey, claimAttempt!, database
+                        );
+                        return null;
+                    }
+                    const completed = await completeWebhookIdempotency(
+                        bookGuid, 'membership-payment', idempotencyKey, claimAttempt!,
+                        { success: true, ...recorded }, database
+                    );
+                    if (!completed) throw new WebhookClaimSupersededError();
+                    return recorded;
+                });
+            } else {
+                result = await recordPayment(bookGuid, input.memberId, paymentInput);
+            }
         } catch (writeError) {
+            if (writeError instanceof WebhookClaimSupersededError) {
+                return NextResponse.json(
+                    { error: 'A newer request with this idempotencyKey is already in progress' },
+                    { status: 409 }
+                );
+            }
             // Nothing was recorded — free the key so a genuine retry works.
             if (idempotencyKey) {
-                await releaseWebhookIdempotency(bookGuid, 'membership-payment', idempotencyKey);
+                await releaseWebhookIdempotency(
+                    bookGuid, 'membership-payment', idempotencyKey, claimAttempt!
+                );
             }
             throw writeError;
         }
         if (!result) {
-            if (idempotencyKey) {
-                await releaseWebhookIdempotency(bookGuid, 'membership-payment', idempotencyKey);
-            }
             return NextResponse.json({ error: 'Member not found' }, { status: 404 });
         }
 
         const payload = { success: true, ...result };
-        if (idempotencyKey) {
-            await completeWebhookIdempotency(
-                bookGuid,
-                'membership-payment',
-                idempotencyKey,
-                payload
-            );
-        }
 
         return NextResponse.json(payload, { status: 201 });
     } catch (error) {

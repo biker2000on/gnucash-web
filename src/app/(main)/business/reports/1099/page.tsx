@@ -31,7 +31,7 @@ const STATUS_META: Record<Vendor1099Status, { label: string; className: string }
     missing_w9: { label: 'Missing W-9', className: 'bg-warning/10 text-warning border-warning/30' },
     exempt: { label: 'Exempt', className: 'bg-background-tertiary text-foreground-secondary border-border' },
     below_threshold: {
-        label: 'Below $600',
+        label: 'Below threshold',
         className: 'bg-background-tertiary text-foreground-muted border-border',
     },
 };
@@ -61,6 +61,8 @@ interface EditFormState {
     w9ReceivedDate: string;
     w9RequestedDate: string;
     exemptFrom1099: boolean;
+    exemptFrom1099Override: boolean | null;
+    attorneyOrMedicalPayments: boolean;
     address: string;
 }
 
@@ -73,6 +75,8 @@ function formFromRow(row: Vendor1099Row): EditFormState {
         w9ReceivedDate: row.taxInfo?.w9ReceivedDate ?? '',
         w9RequestedDate: row.taxInfo?.w9RequestedDate ?? '',
         exemptFrom1099: row.taxInfo?.exemptFrom1099 ?? false,
+        exemptFrom1099Override: row.taxInfo?.exemptFrom1099Override ?? null,
+        attorneyOrMedicalPayments: row.taxInfo?.attorneyOrMedicalPayments ?? false,
         address: row.taxInfo?.address ?? '',
     };
 }
@@ -83,6 +87,7 @@ const labelClass = 'block text-xs text-foreground-secondary mb-1';
 
 export default function Nec1099Page() {
     const currentYear = new Date().getUTCFullYear();
+    const newestVerifiedYear = 2026;
     const toast = useToast();
     // Deep links from the Action Center / Timeline carry ?year=<taxYear>.
     const [year, setYear] = useState(() => {
@@ -93,7 +98,7 @@ export default function Nec1099Page() {
             );
             if (Number.isInteger(fromUrl) && fromUrl >= 1990 && fromUrl <= 2100) return fromUrl;
         }
-        return currentYear;
+        return Math.min(currentYear, newestVerifiedYear);
     });
     const years = Array.from(
         new Set([year, ...Array.from({ length: 6 }, (_, i) => currentYear - i)]),
@@ -108,11 +113,14 @@ export default function Nec1099Page() {
     const load = useCallback(async (y: number, signal?: { cancelled: boolean }) => {
         try {
             const res = await fetch(`/api/business/1099?year=${y}`);
-            if (!res.ok) throw new Error(`Request failed (${res.status})`);
+            if (!res.ok) {
+                const json = await res.json().catch(() => null);
+                throw new Error(json?.error ?? `Request failed (${res.status})`);
+            }
             const json: Vendor1099Summary = await res.json();
             if (!signal?.cancelled) setSummary(json);
-        } catch {
-            if (!signal?.cancelled) setError('Failed to load the 1099 summary.');
+        } catch (err) {
+            if (!signal?.cancelled) setError(err instanceof Error ? err.message : 'Failed to load the 1099 summary.');
         }
     }, []);
 
@@ -167,7 +175,8 @@ export default function Nec1099Page() {
                 w9Received: form.w9Received,
                 w9ReceivedDate: form.w9Received && form.w9ReceivedDate ? form.w9ReceivedDate : null,
                 w9RequestedDate: form.w9RequestedDate || null,
-                exemptFrom1099: form.exemptFrom1099,
+                exemptFrom1099Override: form.exemptFrom1099Override,
+                attorneyOrMedicalPayments: form.attorneyOrMedicalPayments,
                 address: form.address.trim() || null,
             });
             toast.success('Vendor tax info saved');
@@ -184,7 +193,7 @@ export default function Nec1099Page() {
     const handleExemptToggle = async (row: Vendor1099Row) => {
         try {
             await saveTaxInfo(row.vendorGuid, {
-                exemptFrom1099: !(row.taxInfo?.exemptFrom1099 ?? false),
+                exemptFrom1099Override: !(row.taxInfo?.exemptFrom1099 ?? false),
             });
             await load(year);
         } catch {
@@ -282,6 +291,11 @@ export default function Nec1099Page() {
                 .
             </div>
 
+            <div className="rounded-xl border border-warning/30 bg-surface/30 px-4 py-3 text-sm text-foreground-secondary">
+                <span className="font-medium text-foreground">Corporate-payment review required.</span>{' '}
+                Corporations are generally exempt, but attorneys&apos; fees and medical/health-care payments can still be reportable. This tracker cannot detect either payment type; explicitly set each vendor&apos;s Exempt checkbox after review.
+            </div>
+
             {loading && (
                 <div className="flex items-center justify-center py-12">
                     <div className="flex items-center gap-3">
@@ -301,7 +315,7 @@ export default function Nec1099Page() {
                 <>
                     <StatGrid cols={4}>
                         <StatCard
-                            label={`Vendors ≥ $600 in ${summary.year}`}
+                            label={`Vendors ≥ $${summary.threshold.toLocaleString()} in ${summary.year}`}
                             value={summary.totals.reportableCount}
                             size="compact"
                         />
@@ -379,7 +393,7 @@ export default function Nec1099Page() {
                                                         </td>
                                                         <td className="px-4 py-2.5">
                                                             {row.crosses600 ? (
-                                                                <Chip label="≥ $600" className="bg-primary-light text-primary border-primary/30" />
+                                                                <Chip label={`≥ $${summary.threshold.toLocaleString()}`} className="bg-primary-light text-primary border-primary/30" />
                                                             ) : (
                                                                 <Chip label="Below" className="bg-background-tertiary text-foreground-muted border-border" />
                                                             )}
@@ -464,8 +478,8 @@ export default function Nec1099Page() {
                                                                                 setForm({
                                                                                     ...form,
                                                                                     taxClassification: v,
-                                                                                    // Auto-suggest exempt when a corp is picked.
-                                                                                    exemptFrom1099: corp ? true : form.exemptFrom1099,
+                                                                                    // Classification supplies the default only; preserve an explicit choice.
+                                                                                    exemptFrom1099: form.exemptFrom1099Override ?? corp,
                                                                                 });
                                                                             }}
                                                                             className={inputClass}
@@ -479,7 +493,7 @@ export default function Nec1099Page() {
                                                                         {isCorp && (
                                                                             <p className="mt-1 text-[11px] text-foreground-muted">
                                                                                 Corporations are generally exempt from 1099-NEC
-                                                                                (attorney fees are a notable exception).
+                                                                                Attorney and medical / health-care payments are notable exceptions.
                                                                             </p>
                                                                         )}
                                                                     </div>
@@ -592,11 +606,20 @@ export default function Nec1099Page() {
                                                                             type="checkbox"
                                                                             checked={form.exemptFrom1099}
                                                                             onChange={(e) =>
-                                                                                setForm({ ...form, exemptFrom1099: e.target.checked })
+                                                                                setForm({ ...form, exemptFrom1099: e.target.checked, exemptFrom1099Override: e.target.checked })
                                                                             }
                                                                             className="accent-[var(--primary)]"
                                                                         />
                                                                         Exempt from 1099
+                                                                    </label>
+                                                                    <label className="flex items-center gap-2 text-sm text-foreground-secondary cursor-pointer">
+                                                                        <input
+                                                                            type="checkbox"
+                                                                            checked={form.attorneyOrMedicalPayments}
+                                                                            onChange={(e) => setForm({ ...form, attorneyOrMedicalPayments: e.target.checked })}
+                                                                            className="accent-[var(--primary)]"
+                                                                        />
+                                                                        Attorney or medical / health-care payments
                                                                     </label>
                                                                 </div>
                                                             </td>
@@ -613,8 +636,11 @@ export default function Nec1099Page() {
 
                     <p className="text-xs text-foreground-muted">
                         Totals are CASH PAID during {summary.year} — payments applied to each vendor&apos;s
-                        posted bills (1099-NEC is cash basis), not amounts billed. Credit-note applications
-                        net against payments. The CSV is a prep worksheet, not an official IRS form; file
+                        posted bills (1099-NEC is cash basis), not amounts billed. Card and third-party-network
+                        payments are excluded only when their funding account is marked in Account settings. Credit-note applications
+                        net against payments. Attorney and medical / health-care vendors must be marked so corporate payees remain reportable.
+                        The CSV total is a cash-paid worksheet total, not a payment-type classification: review goods, materials,
+                        rent, and any payments not applied to posted A/P bills before selecting a form box. The CSV is a prep worksheet, not an official IRS form; file
                         with your tax software or the IRS IRIS portal.
                     </p>
                 </>
