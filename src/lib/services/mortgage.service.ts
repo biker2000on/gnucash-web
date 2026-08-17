@@ -125,7 +125,8 @@ export class MortgageService {
    *
    * Strategy 1: Look for the first/largest posting to the liability account
    * (opening balance transaction).
-   * Strategy 2 (fallback): Sum all principal postings.
+   * Strategy 2 (fallback): Preserve an opening liability credit on the first
+   * date, then sum principal postings only when no opening credit is available.
    */
   static detectOriginalAmount(
     splits: Array<{
@@ -189,7 +190,17 @@ export class MortgageService {
       return maxAbsValue;
     }
 
-    // Strategy 2 (fallback): Sum all principal postings
+    // The size heuristic above can be inconclusive at its 3x boundary. A
+    // negative posting on the earliest date is still direct evidence of an
+    // opening liability balance; summing it with later positive paydowns would
+    // double-count principal and corrupt downstream rate/projection estimates.
+    const openingCredit = openingSplits
+      .filter((s) => s.value < 0)
+      .reduce((max, s) => Math.max(max, Math.abs(s.value)), 0);
+    if (openingCredit > 0) return openingCredit;
+
+    // No opening credit is available, so retain the existing best-effort
+    // behavior for partial/imported payment history.
     const totalPrincipal = mortgageSplits.reduce(
       (sum, s) => sum + Math.abs(s.value),
       0

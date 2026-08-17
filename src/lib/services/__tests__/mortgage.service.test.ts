@@ -76,6 +76,20 @@ describe('MortgageService.detectOriginalAmount', () => {
     // Sum: 500 + 510 + 490 = 1500
     expect(result).toBe(1500);
   });
+
+  it('T2a: fallback preserves an opening liability credit instead of double-counting later paydowns', () => {
+    const splits = [
+      // The opening amount is exactly 3x the average paydown, so the original
+      // strict `> 3x` heuristic falls through to the fallback.
+      makeSplit('tx-open', MORTGAGE_GUID, -150000, 100, new Date('2020-01-15')),
+      makeSplit('tx-pay1', MORTGAGE_GUID, 50000, 100, new Date('2020-02-15')),
+      makeSplit('tx-pay2', MORTGAGE_GUID, 50000, 100, new Date('2020-03-15')),
+      makeSplit('tx-pay3', MORTGAGE_GUID, 50000, 100, new Date('2020-04-15')),
+    ];
+
+    // Before the fix, the fallback sums $1,500 + $500 + $500 + $500 = $3,000.
+    expect(MortgageService.detectOriginalAmount(splits, MORTGAGE_GUID)).toBe(1500);
+  });
 });
 
 describe('MortgageService.detectInterestRate', () => {
