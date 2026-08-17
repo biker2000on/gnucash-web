@@ -174,18 +174,20 @@ export interface PortfolioHolding {
    * report payload cached before this existed has no namespace to offer, and the
    * fallback in `stalenessDaysFor` is the safe direction.
    *
-   * A hint, not an authority: the column is free text, so it may say `CRYPTO`,
-   * `Coinbase`, a wallet name, or nothing. `priceWeekendQuoteDays` is what
-   * settles the question when the namespace cannot.
+   * Authoritative in ONE direction: when it names a venue that closes (NASDAQ,
+   * FUND, CURRENCY …) that settles the bound at the looser figure and nothing
+   * else is consulted. When it names no venue this app recognises — free text, so
+   * it may say `Coinbase`, a wallet name, or nothing — `priceContinuousWeekends`
+   * is consulted instead.
    */
   commodityNamespace?: string | null;
   /**
-   * Distinct weekend days carrying a quote for this commodity in the recent
-   * window — evidence that its venue does not close, and the one signal a
-   * made-up namespace cannot defeat. Optional for the same cached-payload reason
-   * as the namespace above.
+   * Complete weekends — a Saturday and the Sunday after it, both carrying a
+   * fetched quote — in the recent window. Evidence that the venue stayed open,
+   * used only when the namespace names nothing recognisable. Optional for the
+   * same cached-payload reason as the namespace above.
    */
-  priceWeekendQuoteDays?: number | null;
+  priceContinuousWeekends?: number | null;
   marketValue: number;
   /** Basis of the shares `costBasisCoverage` describes, not always all of them. */
   costBasis: number;

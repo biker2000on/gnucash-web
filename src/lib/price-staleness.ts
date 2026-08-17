@@ -96,21 +96,75 @@ export const PRICE_STALENESS_DAYS = 7;
 export const CONTINUOUS_STALENESS_DAYS = 3;
 
 /**
- * How many distinct weekend days must carry a quote before the price history is
- * taken as proof that the venue does not close.
+ * How many COMPLETE weekends must carry fetched quotes before the price history
+ * is taken as evidence that the venue does not close.
  *
- * Three, over the window the caller samples. A genuinely continuous instrument
- * produces about twenty-six weekend days in ninety; a hand-typed price that
- * happened to land on a Saturday produces one. Three separates those without
- * needing to know anything about the namespace at all.
+ * A complete weekend means a Saturday AND the Sunday immediately following it,
+ * each carrying an automatically-fetched quote (see `CONTINUOUS_EVIDENCE_SOURCE`).
+ * Four of them, inside the window below.
+ *
+ * WHY A PAIR AND NOT A COUNT OF WEEKEND DAYS. An earlier version of this asked
+ * only for three weekend-dated rows of any provenance, which is a much weaker
+ * question than it looks, because a weekend-dated price row is not rare:
+ *
+ *   - A week-ending series imported from a spreadsheet or a custodian statement
+ *     is dated Saturday or Sunday BY CONSTRUCTION. Weekly, that is about
+ *     thirteen weekend-dated rows in ninety days for an ordinary listed fund.
+ *   - Monthly or quarterly valuations land on a weekend roughly two times in
+ *     seven, so three of them inside a year is unremarkable.
+ *   - A hand-typed price, a historical backfill, or a timestamp that drifted
+ *     across midnight in another zone each contribute one.
+ *
+ * None of those say anything about whether a venue closes, and a bare count
+ * cannot tell them from a market that genuinely trades on a Saturday.
+ *
+ * A pair can. "The venue did not close for the weekend" means, literally, that
+ * it quoted on the Saturday and again on the Sunday. A week-ending series never
+ * produces that — it has one dated day per week, so zero pairs, however many
+ * weekend-dated rows it accumulates. A monthly valuation needs both days of the
+ * SAME weekend, which a once-a-month cadence cannot do at all. A drifting
+ * timestamp gives one day, not two adjacent ones.
+ *
+ * Meanwhile a genuinely continuous instrument on this app's daily refresh
+ * produces a quote every calendar day, so it clears twelve or thirteen complete
+ * weekends in ninety. Requiring four leaves that case a factor of three of
+ * headroom while putting the accidental patterns above at zero.
  */
-export const CONTINUOUS_WEEKEND_QUOTE_DAYS = 3;
+export const CONTINUOUS_WEEKEND_EVIDENCE = 4;
 
 /**
- * How far back the weekend-quote evidence is sampled, in days.
+ * The only `prices.source` the evidence limb counts.
  *
- * Ninety: long enough that a continuous instrument accumulates about twenty-six
- * weekend days and clears the threshold above many times over, short enough that
+ * Provenance matters because the evidence question is about a VENUE, and only a
+ * fetched quote is a venue's own statement about a day. The rows deliberately
+ * left out:
+ *
+ *   - `user:price` and the other `user:` sources GnuCash desktop writes — a
+ *     person typing a number, which proves the person was awake on a Saturday
+ *     and nothing about the market.
+ *   - `user:split-register`, the implied price `implied-price.service.ts` derives
+ *     from a trade's own splits. That is a record of when someone entered a
+ *     transaction, and transactions get entered at weekends constantly.
+ *   - NULL and empty sources, which is what an import leaves when the origin was
+ *     never recorded.
+ *   - Any source string this app has never seen, which is the same unknown
+ *     handled the same way everywhere else in this module: excluded, so the
+ *     verdict falls toward the looser bound.
+ *
+ * `Finance::Quote` is the label this app writes for every fetched quote
+ * (`yahoo-price-service.ts`, which also keys its upsert on it) and the label
+ * GnuCash desktop writes for the same thing, so an imported book's fetched
+ * history carries it too. Matching one exact string rather than a deny-list is
+ * the direction that fails safe: an automated source under some other name is
+ * merely not counted, and the commodity keeps the seven-day bound.
+ */
+export const CONTINUOUS_EVIDENCE_SOURCE = 'Finance::Quote';
+
+/**
+ * How far back the weekend evidence is sampled, in days.
+ *
+ * Ninety: long enough to hold about thirteen weekends, so a continuous
+ * instrument clears the threshold above three times over, and short enough that
  * a commodity which USED to be fetched daily and has since gone quiet is judged
  * on what its venue does now. Bounded rather than open-ended so the scan cannot
  * grow with the length of a book's price history.
@@ -133,18 +187,31 @@ export interface CommodityMarketInput {
     /** GnuCash `commodities.mnemonic`, e.g. `BTC`. */
     mnemonic?: string | null;
     /**
-     * Distinct Saturday/Sunday dates that carry a quote for this commodity in a
-     * recent window. Supplied by the server paths that already query `prices`;
-     * absent in a Client Component reading a payload that predates it.
+     * Complete weekends — a Saturday and its following Sunday, both carrying a
+     * `Finance::Quote` row — inside the last `WEEKEND_EVIDENCE_DAYS`. Supplied by
+     * the server paths that already query `prices`; absent in a Client Component
+     * reading a payload that predates it, in which case the naming limbs decide
+     * and the bound falls back to the looser one.
+     *
+     * Consulted ONLY for a namespace that names no known venue: see
+     * `isContinuousMarket`.
      */
-    weekendQuoteDays?: number | null;
+    continuousWeekends?: number | null;
 }
 
 /**
- * Namespaces that name a venue which CLOSES. Recognising these is what stops the
- * mnemonic heuristic below from re-labelling a spot-crypto ETF — namespace
- * NASDAQ, ticker IBIT — as continuous when it demonstrably trades on an exchange
- * with a weekend.
+ * Namespaces that name a venue which CLOSES, and the AUTHORITATIVE limb of the
+ * classification: matching one of these settles the bound at
+ * `PRICE_STALENESS_DAYS` and nothing later is consulted.
+ *
+ * Authoritative because these are the only names in the whole classification
+ * that are hard facts rather than inference. `NASDAQ` is not a guess about a
+ * venue; it IS the venue, and that venue has a weekend. Every other limb below
+ * reasons from something softer — a substring, a ticker, a pattern in a price
+ * table — and none of them can be right about a market that is known by name to
+ * close. This is what keeps a spot-crypto ETF (namespace NASDAQ, ticker IBIT,
+ * and a custodian series that may well carry weekend-dated rows) on the
+ * seven-day bound.
  */
 const EXCHANGE_TRADED_NAMESPACES = new Set([
     'CURRENCY', 'ISO4217', 'NASDAQ', 'NYSE', 'AMEX', 'ARCA', 'BATS', 'OTC',
@@ -196,36 +263,69 @@ const CONTINUOUS_MNEMONICS = new Set([
  * have silently kept the seven-day exchange bound, which is the defect this
  * function exists to close rather than narrow.
  *
- * So the question is asked three ways, strongest evidence first:
+ * So the question is asked in a fixed order, and the ordering principle is
+ * SPECIFICITY OF THE NAME, not strength of evidence: a name that identifies a
+ * venue outranks any pattern inferred from the price table, because the price
+ * table records what this book happens to hold about a commodity, while the
+ * namespace records what the commodity IS.
  *
- *   1. THE PRICE HISTORY. Quotes on distinct weekend days are what "the venue
- *      does not close" MEANS, observed rather than inferred, and no namespace
- *      can contradict it. This is the only limb that survives a namespace nobody
- *      has ever seen. It is deliberately one-directional: weekend quotes prove
- *      continuous trading, but their absence proves nothing — a book with four
- *      quotes total has no weekend evidence either way — so a negative falls
- *      through to the naming limbs rather than settling the question.
+ *   1. AN EXPLICIT CONTINUOUS PHRASE — "digital currency", "virtual asset".
+ *      First only because each of these CONTAINS a token that limb 2 would
+ *      otherwise match (`CURRENCY`, `ASSET`), and the two-word phrase is the more
+ *      specific reading of the same text. Nothing else jumps the queue.
  *
- *   2. THE NAMESPACE, read as words rather than compared whole, so `CRYPTO`,
- *      `Cryptocurrency`, `crypto:BTC`, `Coinbase`, `KRAKEN` and `BITCOIN` all
- *      answer the same. A namespace that names a venue which closes (NASDAQ,
- *      FUND, CURRENCY …) settles the question the other way and stops here.
+ *   2. A NAMESPACE THAT NAMES A VENUE WHICH CLOSES — NASDAQ, NYSE, FUND, ETF,
+ *      CURRENCY, ISO4217, a foreign exchange. AUTHORITATIVE: seven days, full
+ *      stop, and neither the price history nor the mnemonic is consulted. See
+ *      `EXCHANGE_TRADED_NAMESPACES` for why this outranks the evidence.
  *
- *   3. THE MNEMONIC, for the imported book whose namespace is a wallet name.
+ *   3. A NAMESPACE THAT NAMES A CONTINUOUS VENUE, read as words rather than
+ *      compared whole, so `CRYPTO`, `Cryptocurrency`, `crypto:BTC`, `Coinbase`,
+ *      `KRAKEN` and `BITCOIN` all answer the same. Three days.
  *
- * Every limb errs toward "continuous", i.e. toward the TIGHTER bound and more
- * disclosure, because the two failure directions are not symmetric: a few extra
- * days of "this quote is four days old" on an instrument that quotes weekly is
- * noise, while seven silent days on something that trades all night is a total
- * presented as current that is not.
+ * Only when the namespace names NO venue this module recognises — a wallet name,
+ * an account label, a bare `Assets`, an empty string — is anything softer
+ * consulted:
+ *
+ *   4. THE PRICE HISTORY, as complete weekends of fetched quotes. Not a count of
+ *      weekend-dated rows: see `CONTINUOUS_WEEKEND_EVIDENCE` for the several
+ *      ordinary ways a listed instrument accumulates those. One-directional —
+ *      the presence of the pattern proves a venue that stayed open, its absence
+ *      proves nothing, since a book with four quotes in it has no evidence
+ *      either way.
+ *
+ *   5. THE MNEMONIC, for the imported book whose namespace is a wallet name and
+ *      whose price history is too thin to show a cadence.
+ *
+ * WHICH WAY EACH LIMB FAILS. Uncertainty resolves toward the LOOSER seven-day
+ * bound throughout: an unrecognised namespace, an unreadable source, a thin
+ * history and an unlisted ticker all end at seven. That is the safe direction
+ * because the two errors are not symmetric in the way an earlier version of this
+ * comment assumed. A wrong THREE nags a healthy book every week — a listed fund
+ * reporting a four-day-old quote as a problem, which is the cry-wolf failure the
+ * seven-day figure exists to prevent, and which teaches the reader to ignore the
+ * disclosure on the holdings where it is real. A wrong SEVEN merely delays a
+ * disclosure by a few days on an instrument nobody could name. Losing a warning
+ * late is recoverable; losing the reader's belief in the warning is not.
  */
 export function isContinuousMarket(commodity: CommodityMarketInput | null | undefined): boolean {
     if (!commodity) return false;
 
-    const weekendDays = commodity.weekendQuoteDays ?? 0;
-    if (weekendDays >= CONTINUOUS_WEEKEND_QUOTE_DAYS) return true;
-
     const tokens = namespaceTokens(commodity.namespace ?? '');
+
+    // 1. "DIGITAL CURRENCY" and "VIRTUAL ASSET" only read as one thing once the
+    // separator is gone, and each contains a token the limbs below would match
+    // on its own — so the compound phrase is tested before its parts.
+    const joined = tokens.join('');
+    if (joined.includes('DIGITALCURRENC') || joined.includes('DIGITALASSET')
+        || joined.includes('VIRTUALCURRENC') || joined.includes('VIRTUALASSET')) return true;
+
+    // 2. A named venue with a weekend settles it. Before the history, not after:
+    // this is the limb that keeps a spot-crypto ETF on the exchange bound no
+    // matter what its custodian's price series looks like.
+    if (tokens.some(token => EXCHANGE_TRADED_NAMESPACES.has(token))) return false;
+
+    // 3. A named venue without one.
     for (const token of tokens) {
         if (token.includes('CRYPTO')) return true;
         // COIN as a word or as either end of one: COIN, COINS, COINBASE,
@@ -233,13 +333,9 @@ export function isContinuousMarket(commodity: CommodityMarketInput | null | unde
         if (token.startsWith('COIN') || token.endsWith('COIN') || token.endsWith('COINS')) return true;
         if (CONTINUOUS_NAMESPACE_TOKENS.has(token)) return true;
     }
-    // "DIGITAL CURRENCY" and "VIRTUAL ASSET" only read as one thing once the
-    // separator is gone; the token loop above sees a harmless `CURRENCY`.
-    const joined = tokens.join('');
-    if (joined.includes('DIGITALCURRENC') || joined.includes('DIGITALASSET')
-        || joined.includes('VIRTUALCURRENC') || joined.includes('VIRTUALASSET')) return true;
 
-    if (tokens.some(token => EXCHANGE_TRADED_NAMESPACES.has(token))) return false;
+    // 4 and 5. The namespace named nothing recognisable, so fall back.
+    if ((commodity.continuousWeekends ?? 0) >= CONTINUOUS_WEEKEND_EVIDENCE) return true;
 
     return CONTINUOUS_MNEMONICS.has((commodity.mnemonic ?? '').toUpperCase());
 }

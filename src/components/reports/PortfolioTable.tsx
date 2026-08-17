@@ -87,9 +87,11 @@ export function PortfolioTable({ data, onAccountClick }: PortfolioTableProps) {
     // newest possible price is routinely a few days back because the exchange
     // was shut, while a continuously-traded one has no such excuse.
     //
-    // Which the holding is comes from its price history first (quotes on days an
-    // exchange would be shut) and its namespace second, because the namespace is
-    // free text and the crypto in an imported book may be filed under anything.
+    // Which the holding is comes from its namespace first — a name that
+    // identifies a venue with a weekend settles it — and from its price history
+    // (complete weekends of fetched quotes) only when the namespace names no
+    // venue this app recognises, since the column is free text and the crypto in
+    // an imported book may be filed under anything.
     //
     // And because two rows in one table can be judged by different bounds, each
     // marked row prints BOTH its age and the bound applied to it. Without that,
@@ -100,7 +102,7 @@ export function PortfolioTable({ data, onAccountClick }: PortfolioTableProps) {
     const boundFor = (h: PortfolioHolding) => stalenessDaysFor({
         namespace: h.commodityNamespace,
         mnemonic: h.symbol,
-        weekendQuoteDays: h.priceWeekendQuoteDays,
+        continuousWeekends: h.priceContinuousWeekends,
     });
     const isStale = (h: PortfolioHolding) => isPriceStale(h.priceDate, asOfDate, boundFor(h));
     const staleCount = holdings.filter(isStale).length;
@@ -108,6 +110,12 @@ export function PortfolioTable({ data, onAccountClick }: PortfolioTableProps) {
      * The mark, the age, and the bound — plus the whole sentence for a screen
      * reader, which has room for it. The compact form is hidden from assistive
      * technology so the two are not read one after the other.
+     *
+     * The sentence already NAMES the quote date, so on a stale row the visible
+     * date beside it is hidden from assistive technology too (`dateForReader`
+     * below). Otherwise a reader hears the date, then hears the same date again
+     * inside the disclosure — the row's one fact announced twice, which reads as
+     * two findings about two quotes.
      */
     const staleMark = (h: PortfolioHolding) => {
         const bound = boundFor(h);
@@ -121,6 +129,15 @@ export function PortfolioTable({ data, onAccountClick }: PortfolioTableProps) {
             </span>
         );
     };
+    /**
+     * The visible quote date, hidden from assistive technology exactly when the
+     * sr-only disclosure beside it will speak the same date. A non-stale row has
+     * no disclosure, so its date is announced normally.
+     */
+    const dateForReader = (h: PortfolioHolding) => (
+        <span aria-hidden={isStale(h) || undefined}>{h.priceDate || '-'}</span>
+    );
+
     // Refreshing only helps a statement about the present. A report drawn as of
     // a past date is showing the newest quote that existed then, and no fetch
     // changes that — so the pointer appears only where it is true.
@@ -189,7 +206,7 @@ export function PortfolioTable({ data, onAccountClick }: PortfolioTableProps) {
                                         label: 'Price Date',
                                         value: (
                                             <span className={isStale(h) ? 'text-warning' : undefined}>
-                                                {h.priceDate || '-'}
+                                                {dateForReader(h)}
                                                 {isStale(h) && staleMark(h)}
                                             </span>
                                         ),
@@ -328,7 +345,7 @@ export function PortfolioTable({ data, onAccountClick }: PortfolioTableProps) {
                             <td className="py-2 px-3 text-sm text-right font-mono text-foreground">{fmtShares(h.shares)}</td>
                             <td className="py-2 px-3 text-sm text-right font-mono text-foreground">{fmtCurrency(h.latestPrice)}</td>
                             <td className={`py-2 px-3 text-sm text-center ${isStale(h) ? 'text-warning' : 'text-foreground-secondary'}`}>
-                                {h.priceDate || '-'}
+                                {dateForReader(h)}
                                 {isStale(h) && staleMark(h)}
                             </td>
                             <td className="py-2 px-3 text-sm text-right font-mono text-foreground">{fmtCurrency(h.marketValue)}</td>

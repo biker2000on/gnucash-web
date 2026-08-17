@@ -25,7 +25,7 @@ function holding(
     symbol: string,
     priceDate: string,
     commodityNamespace: string | null = 'NASDAQ',
-    priceWeekendQuoteDays = 0,
+    priceContinuousWeekends = 0,
 ): PortfolioHolding {
     return {
         guid: `acct-${symbol}`,
@@ -35,7 +35,7 @@ function holding(
         latestPrice: 120,
         priceDate,
         commodityNamespace,
-        priceWeekendQuoteDays,
+        priceContinuousWeekends,
         marketValue: 12000,
         costBasis: 10000,
         costBasisCoverage: COMPLETE,
@@ -154,12 +154,26 @@ describe('PortfolioTable price staleness', () => {
          */
         it('marks crypto filed under a namespace nobody anticipated', () => {
             render(<PortfolioTable data={report([
-                // Namespace is a wallet name; the price history is what says
-                // this venue never closes.
-                holding('BTC', '2026-08-13', 'Ledger Nano X', 3),
+                // Namespace is a wallet name, so it names no venue and the price
+                // history decides: four complete weekends of fetched quotes.
+                holding('BTC', '2026-08-13', 'Ledger Nano X', 4),
             ])} />);
 
             expect(within(rowFor('BTC')).getByText(/stale/i)).toBeTruthy();
+        });
+
+        it('leaves a listed holding alone however its history is dated', () => {
+            // A namespace that names a venue with a weekend is authoritative:
+            // weekend-dated rows in the price table — a week-ending custodian
+            // import, a monthly valuation, a timezone-shifted row — are a fact
+            // about this book, not about NASDAQ. Reading them as proof of a
+            // continuous market would put a recurring four-day warning on a
+            // perfectly healthy equity.
+            render(<PortfolioTable data={report([
+                holding('AAPL', '2026-08-13', 'NASDAQ', 13),
+            ])} />);
+
+            expect(screen.queryByText(/stale/i)).toBeNull();
         });
 
         it('marks crypto whose namespace merely spells it differently', () => {
@@ -207,6 +221,31 @@ describe('PortfolioTable price staleness', () => {
             // The compact form is hidden from screen readers so the two are not
             // read one after the other.
             expect(spoken.className).toContain('sr-only');
+        });
+
+        it('announces the quote date once, not either side of the disclosure', () => {
+            // The cell shows the date and, beside it, a sentence that names the
+            // same date. Left visible to assistive technology, both are read: the
+            // date, then "BTC valued from a quote 77 days old (2026-06-01)" —
+            // one fact delivered twice, which sounds like two quotes.
+            render(<PortfolioTable data={report([holding('BTC', '2026-06-01', 'CRYPTO')])} />);
+
+            const row = rowFor('BTC');
+            const visibleDate = within(row).getByText('2026-06-01');
+            expect(visibleDate.getAttribute('aria-hidden')).toBe('true');
+            // And the sr-only sentence is still there to carry it.
+            expect(within(row).getByText(/valued from a quote 77 days old/).textContent)
+                .toContain('2026-06-01');
+        });
+
+        it('still announces the date normally on a row that is not stale', () => {
+            // The suppression is scoped to the duplication that causes it. With
+            // no disclosure beside it, the date is the only thing that can say
+            // when the holding was priced.
+            render(<PortfolioTable data={report([holding('AAPL', '2026-08-14')])} />);
+
+            const visibleDate = within(rowFor('AAPL')).getByText('2026-08-14');
+            expect(visibleDate.getAttribute('aria-hidden')).toBeNull();
         });
 
         it('points at the refresh that would fix it, on a present-day report', () => {

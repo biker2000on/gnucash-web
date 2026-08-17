@@ -15,7 +15,7 @@ import {
     UNTRACED_BASIS_COVERAGE,
 } from '@/lib/commodities';
 import { getBaseCurrency } from '@/lib/currency';
-import { WEEKEND_EVIDENCE_DAYS } from '@/lib/price-staleness';
+import { CONTINUOUS_EVIDENCE_SOURCE, WEEKEND_EVIDENCE_DAYS } from '@/lib/price-staleness';
 import { ReportType, ReportFilters, InvestmentPortfolioData, PortfolioHolding } from './types';
 import { sumSplitsByAccount, toDecimal } from './utils';
 
@@ -72,7 +72,7 @@ export async function generateInvestmentPortfolio(
             date: Date;
             value_num: bigint;
             value_denom: bigint;
-            weekend_quote_days: bigint | number | null;
+            continuous_weekends: bigint | number | null;
         }>>`
             WITH latest AS (
                 SELECT DISTINCT ON (commodity_guid)
@@ -86,22 +86,35 @@ export async function generateInvestmentPortfolio(
                   ${baseCurrency ? Prisma.sql`AND currency_guid = ${baseCurrency.guid}` : Prisma.empty}
                 ORDER BY commodity_guid, date DESC
             ),
-            -- Quotes on days an exchange would be shut: the observed evidence
-            -- that a commodity's venue never closes, which is what decides how
-            -- old its price may be before the table says so. Read from the price
-            -- history rather than from the commodity namespace, which is free
-            -- text and carries whatever an importer wrote.
-            weekend AS (
-                SELECT commodity_guid, COUNT(DISTINCT date::date) AS weekend_quote_days
+            -- Weekend days carrying an AUTOMATICALLY FETCHED quote. Only
+            -- 'Finance::Quote' rows count: a hand-typed price, a backfill, or an
+            -- implied split-register price records when a person was active, not
+            -- whether a venue was open.
+            weekend_days AS (
+                SELECT DISTINCT commodity_guid, date::date AS quote_day
                 FROM prices
                 WHERE commodity_guid = ANY(${commodityGuids}::text[])
                   AND date <= ${endDate}
                   AND date > ${endDate}::timestamp - make_interval(days => ${WEEKEND_EVIDENCE_DAYS})
                   AND value_num > 0
+                  AND source = ${CONTINUOUS_EVIDENCE_SOURCE}
                   AND EXTRACT(ISODOW FROM date) >= 6
-                GROUP BY commodity_guid
+            ),
+            -- COMPLETE weekends: a Saturday joined to the Sunday right after it.
+            -- A week-ending series is weekend-dated by construction yet yields
+            -- none of these, having one dated day per week; only a venue that
+            -- stayed open quotes both days. This is the evidence the bound may
+            -- rest on, and only for a namespace that names no known venue.
+            weekend AS (
+                SELECT sat.commodity_guid, COUNT(*) AS continuous_weekends
+                FROM weekend_days sat
+                JOIN weekend_days sun
+                  ON sun.commodity_guid = sat.commodity_guid
+                 AND sun.quote_day = sat.quote_day + 1
+                WHERE EXTRACT(ISODOW FROM sat.quote_day) = 6
+                GROUP BY sat.commodity_guid
             )
-            SELECT latest.*, COALESCE(weekend.weekend_quote_days, 0) AS weekend_quote_days
+            SELECT latest.*, COALESCE(weekend.continuous_weekends, 0) AS continuous_weekends
             FROM latest
             LEFT JOIN weekend ON weekend.commodity_guid = latest.commodity_guid
         `
@@ -111,7 +124,7 @@ export async function generateInvestmentPortfolio(
             value: toDecimal(p.value_num, p.value_denom),
             date: p.date,
             // COUNT() crosses the wire as a bigint.
-            weekendQuoteDays: Number(p.weekend_quote_days ?? 0),
+            continuousWeekends: Number(p.continuous_weekends ?? 0),
         }])
     );
 
@@ -166,7 +179,7 @@ export async function generateInvestmentPortfolio(
             // an imported book may be filed under anything at all; the weekend
             // count is the evidence that settles it either way.
             commodityNamespace: account.commodity?.namespace ?? null,
-            priceWeekendQuoteDays: priceData?.weekendQuoteDays ?? 0,
+            priceContinuousWeekends: priceData?.continuousWeekends ?? 0,
             marketValue,
             costBasis,
             costBasisCoverage,

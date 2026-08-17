@@ -5,6 +5,7 @@ import {
   describeStalePrice,
   isPriceStale,
   stalenessDaysFor,
+  CONTINUOUS_EVIDENCE_SOURCE,
   WEEKEND_EVIDENCE_DAYS,
   type StalePriceDisclosure,
 } from '@/lib/price-staleness';
@@ -175,11 +176,11 @@ interface PricePairRow {
   /** Quote date of the selected row, for the staleness bound. */
   date: Date | string | null;
   /**
-   * Distinct weekend days carrying a quote for this commodity in the sampled
-   * window — the observed evidence that its venue does not close. See
-   * `isContinuousMarket`.
+   * Complete weekends of fetched quotes for this commodity in the sampled
+   * window — the observed evidence that its venue does not close, consulted only
+   * when the namespace names no known venue. See `isContinuousMarket`.
    */
-  weekend_quote_days: bigint | number | null;
+  continuous_weekends: bigint | number | null;
 }
 
 
@@ -219,7 +220,7 @@ async function loadLatestPricePairs(
   commodityGuids: string[],
   asOfDate: Date,
   mnemonics?: Map<string, string>,
-  weekendQuoteDays?: Map<string, number>,
+  continuousWeekends?: Map<string, number>,
 ): Promise<Map<string, DatedRate>> {
   const uniqueGuids = [...new Set(commodityGuids.filter(Boolean))];
   if (uniqueGuids.length === 0) return new Map();
@@ -247,20 +248,36 @@ async function loadLatestPricePairs(
         AND p.value_num > 0
       ORDER BY p.commodity_guid, p.currency_guid, p.date DESC
     ),
-    weekend AS (
-      SELECT p.commodity_guid, COUNT(DISTINCT p.date::date) AS weekend_quote_days
+    -- The distinct weekend DAYS carrying an automatically-fetched quote. Only
+    -- 'Finance::Quote' rows: a hand-typed price or an implied split-register
+    -- price says a person was active on a Saturday, not that a venue was.
+    weekend_days AS (
+      SELECT DISTINCT p.commodity_guid, p.date::date AS quote_day
       FROM prices p
       WHERE p.commodity_guid = ANY(${uniqueGuids}::text[])
         AND p.date <= ${asOfDate}
         AND p.date > ${asOfDate}::timestamp - make_interval(days => ${WEEKEND_EVIDENCE_DAYS})
         AND p.value_num > 0
+        AND p.source = ${CONTINUOUS_EVIDENCE_SOURCE}
         -- ISO day-of-week 6/7 = Saturday/Sunday. Read off the stored timestamp
         -- without a zone conversion, which is how the rest of this file treats
         -- the price date.
         AND EXTRACT(ISODOW FROM p.date) >= 6
-      GROUP BY p.commodity_guid
+    ),
+    -- COMPLETE weekends: a Saturday joined to the Sunday immediately after it.
+    -- The pair is the point — a week-ending import is weekend-dated by
+    -- construction and still yields none of these, because it has one dated day
+    -- per week. Only a venue that stayed open produces both.
+    weekend AS (
+      SELECT sat.commodity_guid, COUNT(*) AS continuous_weekends
+      FROM weekend_days sat
+      JOIN weekend_days sun
+        ON sun.commodity_guid = sat.commodity_guid
+       AND sun.quote_day = sat.quote_day + 1
+      WHERE EXTRACT(ISODOW FROM sat.quote_day) = 6
+      GROUP BY sat.commodity_guid
     )
-    SELECT latest.*, COALESCE(weekend.weekend_quote_days, 0) AS weekend_quote_days
+    SELECT latest.*, COALESCE(weekend.continuous_weekends, 0) AS continuous_weekends
     FROM latest
     LEFT JOIN weekend ON weekend.commodity_guid = latest.commodity_guid
   `;
@@ -272,11 +289,11 @@ async function loadLatestPricePairs(
     }
   }
 
-  if (weekendQuoteDays) {
+  if (continuousWeekends) {
     for (const row of rows) {
       // COUNT() arrives as bigint over the wire, and an older cached test
       // double may not send the column at all.
-      weekendQuoteDays.set(row.commodity_guid, Number(row.weekend_quote_days ?? 0));
+      continuousWeekends.set(row.commodity_guid, Number(row.continuous_weekends ?? 0));
     }
   }
 
@@ -405,12 +422,12 @@ export async function buildAccountValuationContext(
   }
 
   const mnemonics = new Map<string, string>();
-  // Weekend quote days per commodity — the observed half of the continuous-market
-  // determination, and the half that survives a namespace nobody anticipated.
-  // Comes back on the same query as the prices.
-  const weekendQuoteDays = new Map<string, number>();
+  // Complete weekends of fetched quotes per commodity — the fallback half of the
+  // continuous-market determination, used only for a namespace that names no
+  // venue this app recognises. Comes back on the same query as the prices.
+  const continuousWeekends = new Map<string, number>();
   const pricePairs = await loadLatestPricePairs(
-    [...commodityGuids], asOf, mnemonics, weekendQuoteDays,
+    [...commodityGuids], asOf, mnemonics, continuousWeekends,
   );
   const gapReasons = new Map<string, ValuationGapReason>();
   // Quote date behind each commodity's multiplier, for the staleness bound.
@@ -459,13 +476,15 @@ export async function buildAccountValuationContext(
   // The bound is per instrument, not per book: seven days of silence is the
   // ordinary shape of a market week for a listed security and is a week of
   // undisclosed exposure for something that trades through the weekend. Which
-  // one an instrument is gets decided from its own price history first and its
-  // namespace second — `commodities.namespace` is free text, so `=== 'CRYPTO'`
-  // would answer for only the subset that happens to be spelled that way.
+  // one an instrument is gets decided from its namespace first — a name that
+  // identifies a venue with a weekend is authoritative — and from its own price
+  // history only when the namespace names nothing recognisable, since
+  // `commodities.namespace` is free text and `=== 'CRYPTO'` would answer for
+  // only the subset that happens to be spelled that way.
   const boundFor = (guid: string) => stalenessDaysFor({
     namespace: namespaces.get(guid),
     mnemonic: mnemonics.get(guid),
-    weekendQuoteDays: weekendQuoteDays.get(guid),
+    continuousWeekends: continuousWeekends.get(guid),
   });
 
   // A stale quote names the commodity the same way a gap does, so both need the

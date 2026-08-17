@@ -10,7 +10,7 @@
 import { describe, expect, it } from 'vitest';
 import {
     CONTINUOUS_STALENESS_DAYS,
-    CONTINUOUS_WEEKEND_QUOTE_DAYS,
+    CONTINUOUS_WEEKEND_EVIDENCE,
     PRICE_STALENESS_DAYS,
     isContinuousMarket,
     isPriceStale,
@@ -187,33 +187,100 @@ describe('isContinuousMarket', () => {
         }
     });
 
-    it('is settled by the price history when the namespace says nothing useful', () => {
-        // The only limb that survives a namespace nobody has ever seen: quotes
-        // on days an exchange would be shut are what "never closes" MEANS.
+    it('is settled by the price history when the namespace names no venue', () => {
+        // The limb that survives a namespace nobody has ever seen: complete
+        // weekends of fetched quotes are what "never closes" MEANS.
         expect(isContinuousMarket({
             namespace: 'my-ledger-import',
             mnemonic: 'WHO-KNOWS',
-            weekendQuoteDays: CONTINUOUS_WEEKEND_QUOTE_DAYS,
+            continuousWeekends: CONTINUOUS_WEEKEND_EVIDENCE,
         })).toBe(true);
     });
 
-    it('takes weekend evidence over a namespace that names a closing venue', () => {
-        // Evidence beats naming in both directions. A commodity filed under
-        // NASDAQ that is nonetheless quoted every weekend is not doing what the
-        // label says.
+    it('lets a namespace that names a closing venue outrank the price history', () => {
+        // The ordering that matters most here, and it runs the other way to
+        // evidence-first. A commodity filed under NASDAQ IS on NASDAQ, and
+        // NASDAQ has a weekend; weekend-dated rows in its history are a fact
+        // about this book's price table, not about the venue. Reading them as
+        // proof of a continuous market reclassifies listed equities onto the
+        // three-day bound and produces a four-day warning on a healthy holding
+        // every week — the cry-wolf failure the seven-day figure exists to
+        // prevent, aimed at the instruments it was protecting.
         expect(isContinuousMarket({
             namespace: 'NASDAQ',
-            weekendQuoteDays: CONTINUOUS_WEEKEND_QUOTE_DAYS,
-        })).toBe(true);
-    });
-
-    it('does not read one stray weekend price as a continuous market', () => {
-        // A hand-typed Saturday price is not a venue. The threshold is what
-        // separates it from the ~26 weekend days a real one produces.
-        expect(isContinuousMarket({
-            namespace: 'NASDAQ',
-            weekendQuoteDays: CONTINUOUS_WEEKEND_QUOTE_DAYS - 1,
+            continuousWeekends: CONTINUOUS_WEEKEND_EVIDENCE * 4,
         })).toBe(false);
+
+        for (const ns of ['NYSE', 'AMEX', 'FUND', 'ETF', 'BOND', 'INDEX', 'CURRENCY',
+            'ISO4217', 'template', 'DEMO', 'PRIVATE', 'LSE', 'XETRA', 'HKEX']) {
+            expect(isContinuousMarket({
+                namespace: ns,
+                mnemonic: 'BTC',
+                continuousWeekends: 13,
+            }), ns).toBe(false);
+        }
+    });
+
+    it('is not fooled by a week-ending series under an unknown namespace', () => {
+        // The reachable false positive that a bare count of weekend-dated rows
+        // could not see. A weekly week-ending import is dated Saturday by
+        // construction — roughly thirteen weekend-dated rows in ninety days — yet
+        // it has one dated day per week, so it forms no complete weekend at all.
+        expect(isContinuousMarket({
+            namespace: 'Custodian Import',
+            mnemonic: 'ZZZZ',
+            continuousWeekends: 0,
+        })).toBe(false);
+    });
+
+    it('does not read a handful of weekend prices as a continuous market', () => {
+        // Monthly or quarterly weekend valuations, and hand-typed Saturday
+        // prices, sit below the threshold. Sub-threshold evidence decides
+        // nothing, and an unknown namespace with an unlisted ticker ends at the
+        // looser bound.
+        expect(isContinuousMarket({
+            namespace: 'my-ledger-import',
+            mnemonic: 'WHO-KNOWS',
+            continuousWeekends: CONTINUOUS_WEEKEND_EVIDENCE - 1,
+        })).toBe(false);
+    });
+
+    it('keeps a spot-crypto ETF on the exchange bound however it is quoted', () => {
+        // The case the authoritative limb exists for: namespace NASDAQ, a crypto
+        // ticker, and a custodian series that may well carry weekend rows. It is
+        // a share in a fund that trades when NASDAQ is open.
+        expect(stalenessDaysFor({
+            namespace: 'NASDAQ',
+            mnemonic: 'BTC',
+            continuousWeekends: 13,
+        })).toBe(PRICE_STALENESS_DAYS);
+        // Filed by asset class rather than venue, it is still an ETF.
+        expect(stalenessDaysFor({ namespace: 'Crypto ETF', mnemonic: 'IBIT' }))
+            .toBe(PRICE_STALENESS_DAYS);
+    });
+
+    it('still reaches the tighter bound for genuine crypto under an unknown namespace', () => {
+        // Both routes that remain open once naming fails, since this is what the
+        // reordering must not have cost.
+        expect(stalenessDaysFor({
+            namespace: 'Ledger Nano X',
+            mnemonic: 'SOMETOKEN',
+            continuousWeekends: CONTINUOUS_WEEKEND_EVIDENCE,
+        })).toBe(CONTINUOUS_STALENESS_DAYS);
+        expect(stalenessDaysFor({ namespace: 'Ledger Nano X', mnemonic: 'BTC' }))
+            .toBe(CONTINUOUS_STALENESS_DAYS);
+        // And the named-venue route, which never needed evidence.
+        expect(stalenessDaysFor({ namespace: 'Coinbase', mnemonic: 'SOMETOKEN' }))
+            .toBe(CONTINUOUS_STALENESS_DAYS);
+    });
+
+    it('reads a two-word continuous phrase ahead of the generic token inside it', () => {
+        // "Digital Currency" contains CURRENCY, which alone names a closing
+        // venue. The compound is the more specific reading of the same text, so
+        // it is tested first — otherwise the authoritative limb would swallow it.
+        expect(isContinuousMarket({ namespace: 'Digital Currency' })).toBe(true);
+        expect(isContinuousMarket({ namespace: 'Virtual Assets' })).toBe(true);
+        expect(isContinuousMarket({ namespace: 'CURRENCY' })).toBe(false);
     });
 
     it('falls back to the mnemonic for an imported book with a wallet namespace', () => {

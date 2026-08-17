@@ -22,7 +22,7 @@ import {
 } from '../account-valuation';
 import {
   CONTINUOUS_STALENESS_DAYS,
-  CONTINUOUS_WEEKEND_QUOTE_DAYS,
+  CONTINUOUS_WEEKEND_EVIDENCE,
   PRICE_STALENESS_DAYS,
 } from '../price-staleness';
 
@@ -57,7 +57,7 @@ function pricePair(
   commodityGuid: string,
   currencyGuid: string,
   value: number,
-  opts: { date?: Date; commodityMnemonic?: string; weekendQuoteDays?: number } = {},
+  opts: { date?: Date; commodityMnemonic?: string; continuousWeekends?: number } = {},
 ) {
   const denom = 1000000;
   return {
@@ -69,7 +69,7 @@ function pricePair(
     value_denom: BigInt(denom),
     date: opts.date ?? null,
     // COUNT() arrives from Postgres as a bigint, so the double sends one.
-    weekend_quote_days: BigInt(opts.weekendQuoteDays ?? 0),
+    continuous_weekends: BigInt(opts.continuousWeekends ?? 0),
   };
 }
 
@@ -402,9 +402,9 @@ describe('buildAccountValuationContext', () => {
     it('applies the tighter bound to crypto filed under a made-up namespace', async () => {
       // `commodities.namespace` is free text and the commodities API accepts
       // any string, so an imported book's crypto may be filed under a wallet
-      // name. Its own price history — quotes on days every exchange is shut —
-      // is what says the venue never closes, and no namespace can contradict
-      // it.
+      // name. That namespace names no venue, so the price history decides —
+      // complete weekends of fetched quotes, which only a market that stayed
+      // open produces.
       const btc = {
         accountType: 'STOCK',
         commodityGuid: 'btc-guid',
@@ -414,7 +414,7 @@ describe('buildAccountValuationContext', () => {
         pricePair('btc-guid', 'usd-guid', 61000, {
           date: new Date(ASOF.getTime() - 4 * 86_400_000),
           commodityMnemonic: 'BTC',
-          weekendQuoteDays: CONTINUOUS_WEEKEND_QUOTE_DAYS,
+          continuousWeekends: CONTINUOUS_WEEKEND_EVIDENCE,
         }),
       ]);
 
@@ -440,7 +440,34 @@ describe('buildAccountValuationContext', () => {
         pricePair('stock-guid', 'usd-guid', 123.45, {
           date: new Date(ASOF.getTime() - 4 * 86_400_000),
           commodityMnemonic: 'AAPL',
-          weekendQuoteDays: 0,
+          continuousWeekends: 0,
+        }),
+      ]);
+
+      const valuation = await buildAccountValuationContext([stockAcct], ASOF, USD);
+
+      expect(valuation.stalePrices).toEqual([]);
+    });
+
+    it('keeps the exchange bound for a listed security whose history has weekend rows', async () => {
+      // The namespace names a venue with a weekend, so it is authoritative and
+      // the history is not consulted. Weekend-dated rows reach a listed
+      // security's price table by several ordinary routes — a week-ending
+      // custodian import, a monthly valuation, a timezone-shifted timestamp —
+      // and none of them mean NASDAQ opened on a Saturday. Letting them decide
+      // would put a recurring four-day warning on a healthy equity, which is the
+      // cry-wolf failure the looser bound exists to prevent.
+      const stockAcct = {
+        accountType: 'STOCK',
+        commodityGuid: 'nasdaq-guid',
+        commodityNamespace: 'NASDAQ',
+      };
+      mockPrisma.$queryRaw.mockResolvedValue([
+        pricePair('nasdaq-guid', 'usd-guid', 61000, {
+          date: new Date(ASOF.getTime() - 4 * 86_400_000),
+          // A crypto ticker too: a spot-crypto ETF is exactly this shape.
+          commodityMnemonic: 'BTC',
+          continuousWeekends: 13,
         }),
       ]);
 
