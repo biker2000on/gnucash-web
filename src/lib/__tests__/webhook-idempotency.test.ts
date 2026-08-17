@@ -17,6 +17,7 @@ vi.mock('@/lib/prisma', () => ({
 import {
   claimWebhookIdempotency,
   completeWebhookIdempotency,
+  lockWebhookIdempotencyAttempt,
   listWebhookIdempotencyAttention,
   readIdempotencyKey,
   rearmWebhookIdempotency,
@@ -25,6 +26,7 @@ import {
   IDEMPOTENCY_KEY_MAX_LENGTH,
   WEBHOOK_CLAIM_STALE_MINUTES,
   WEBHOOK_MAX_ATTEMPTS,
+  WebhookClaimSupersededError,
 } from '../webhook-idempotency';
 
 beforeEach(() => {
@@ -175,19 +177,54 @@ describe('claimWebhookIdempotency', () => {
 });
 
 describe('claim lifecycle', () => {
+  // PostgreSQL integration tests prove contention. These CI-always assertions
+  // deliberately pin the SQL fence shape until the CI Postgres harness runs
+  // that deeper proof on every change.
+  it('locks the exact in-flight attempt with a row fence', async () => {
+    mocks.raw.mockResolvedValueOnce([{ id: 1 }]);
+
+    await expect(lockWebhookIdempotencyAttempt('book-1', 'transaction', 'k1', 7, {
+      $queryRaw: mocks.raw,
+    })).resolves.toBeUndefined();
+
+    const call = mocks.raw.mock.calls[0];
+    const sql = String(call[0]);
+    expect(sql).toContain('FOR UPDATE');
+    expect(sql).toContain('result IS NULL');
+    expect(sql).toContain("state = 'processing'");
+    expect(sql).toContain('attempts =');
+    expect(call).toContain(7);
+  });
+
+  it('turns a zero-row fence into a superseded claim before a caller can write', async () => {
+    mocks.raw.mockResolvedValueOnce([]);
+
+    await expect(lockWebhookIdempotencyAttempt('book-1', 'transaction', 'k1', 7, {
+      $queryRaw: mocks.raw,
+    })).rejects.toBeInstanceOf(WebhookClaimSupersededError);
+  });
+
   it('records the response so a later replay can return it', async () => {
     await completeWebhookIdempotency('book-1', 'transaction', 'k1', 1, { success: true });
     const call = mocks.executeRaw.mock.calls[0];
-    expect(String(call[0])).toContain('UPDATE gnucash_web_webhook_idempotency');
+    const sql = String(call[0]);
+    expect(sql).toContain('UPDATE gnucash_web_webhook_idempotency');
+    expect(sql).toContain('result IS NULL');
+    expect(sql).toContain("state = 'processing'");
+    expect(sql).toContain('attempts =');
     expect(call).toContain(JSON.stringify({ success: true }));
+    expect(call).toContain(1);
   });
 
   it('releases only uncompleted claims, so a failure never burns the key', async () => {
     await releaseWebhookIdempotency('book-1', 'transaction', 'k1', 1);
-    const sql = String(mocks.executeRaw.mock.calls[0][0]);
+    const call = mocks.executeRaw.mock.calls[0];
+    const sql = String(call[0]);
     expect(sql).toContain('UPDATE gnucash_web_webhook_idempotency');
+    expect(sql).toContain('result IS NULL');
     expect(sql).toContain("state = 'processing'");
     expect(sql).toContain('attempts =');
+    expect(call).toContain(1);
   });
 
   it('logs a completion rejected because a newer attempt owns the claim', async () => {
