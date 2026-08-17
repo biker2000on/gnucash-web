@@ -277,10 +277,33 @@ describe('isContinuousMarket', () => {
     it('reads a two-word continuous phrase ahead of the generic token inside it', () => {
         // "Digital Currency" contains CURRENCY, which alone names a closing
         // venue. The compound is the more specific reading of the same text, so
-        // it is tested first — otherwise the authoritative limb would swallow it.
+        // the phrase is cut out before the closing-venue limb reads what is left.
         expect(isContinuousMarket({ namespace: 'Digital Currency' })).toBe(true);
         expect(isContinuousMarket({ namespace: 'Virtual Assets' })).toBe(true);
+        expect(isContinuousMarket({ namespace: 'DigitalCurrency' })).toBe(true);
         expect(isContinuousMarket({ namespace: 'CURRENCY' })).toBe(false);
+    });
+
+    it('lets a closing venue beside a continuous phrase still win', () => {
+        // The phrase disarms only the word it explains. A namespace that names a
+        // phrase AND, separately, a venue with a weekend is a fund that trades
+        // when that venue is open — the authoritative limb has to survive the
+        // company of a phrase, or it is not authoritative.
+        expect(isContinuousMarket({ namespace: 'Digital Currency ETF' })).toBe(false);
+        expect(isContinuousMarket({ namespace: 'NASDAQ Virtual Asset Fund' })).toBe(false);
+        // The closing token ahead of the phrase, not only behind it.
+        expect(isContinuousMarket({ namespace: 'NYSE Digital Currency Trust Fund' })).toBe(false);
+        expect(isContinuousMarket({ namespace: 'DigitalCurrencyETF' })).toBe(false);
+        // And it is the seven-day bound the caller actually gets, mnemonic and
+        // weekend evidence notwithstanding.
+        expect(stalenessDaysFor({
+            namespace: 'Digital Currency ETF',
+            mnemonic: 'BTC',
+            continuousWeekends: 13,
+        })).toBe(PRICE_STALENESS_DAYS);
+        // Cutting the phrase out cannot invent a venue either: what is left of
+        // "Coinbase Digital Currency" still names a continuous one.
+        expect(isContinuousMarket({ namespace: 'Coinbase Digital Currency' })).toBe(true);
     });
 
     it('falls back to the mnemonic for an imported book with a wallet namespace', () => {

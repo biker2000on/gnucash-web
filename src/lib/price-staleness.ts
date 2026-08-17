@@ -236,6 +236,63 @@ function namespaceTokens(namespace: string): string[] {
 }
 
 /**
+ * Compound namespaces that read as "continuous" only whole.
+ *
+ * Each one CONTAINS a word the closing-venue set matches on its own —
+ * `CURRENCY`, `ASSET` — and that collision is the entire reason this list
+ * exists. It is not a general "this is crypto" list and must not grow into one:
+ * a namespace that names continuity without ambiguity belongs in
+ * `CONTINUOUS_NAMESPACE_TOKENS`, where it does not outrank a venue.
+ *
+ * Matched against the namespace with its separators removed, because the phrase
+ * arrives as `Digital Currency`, `DigitalCurrency` and `digital-currency`
+ * indifferently.
+ */
+const CONTINUOUS_PHRASES = [
+    /DIGITALCURRENC(?:Y|IES)?/g,
+    /DIGITALASSETS?/g,
+    /VIRTUALCURRENC(?:Y|IES)?/g,
+    /VIRTUALASSETS?/g,
+];
+
+/**
+ * The namespace with every recognised continuous phrase cut out of it, and
+ * whether one was there.
+ *
+ * The phrase is REMOVED rather than allowed to short-circuit the classification,
+ * so that it disarms only the words it actually explains. `Digital Currency`
+ * leaves nothing behind and the phrase decides; `Digital Currency ETF` leaves
+ * `ETF`, which is a venue with a weekend and outranks it. Short-circuiting on
+ * the phrase instead would hand the tighter bound to every free-text namespace
+ * that happened to contain one, which is precisely what the authoritative
+ * closing-venue limb exists to prevent.
+ *
+ * Cut per token from a map of the joined string: a phrase may SPAN a token
+ * boundary (`Digital`+`Currency`), but what survives is rebuilt token by token,
+ * so removing one can never splice two neighbouring words into a third.
+ */
+function stripContinuousPhrases(tokens: string[]): { matched: boolean; remainder: string[] } {
+    const joined = tokens.join('');
+    const covered = new Array<boolean>(joined.length).fill(false);
+    for (const phrase of CONTINUOUS_PHRASES) {
+        for (const match of joined.matchAll(phrase)) {
+            const start = match.index ?? 0;
+            for (let i = start; i < start + match[0].length; i++) covered[i] = true;
+        }
+    }
+    if (!covered.some(Boolean)) return { matched: false, remainder: tokens };
+
+    const remainder: string[] = [];
+    let at = 0;
+    for (const token of tokens) {
+        const kept = token.split('').filter((_, i) => !covered[at + i]).join('');
+        if (kept) remainder.push(kept);
+        at += token.length;
+    }
+    return { matched: true, remainder };
+}
+
+/**
  * Mnemonics of continuously-traded assets, consulted ONLY when the namespace
  * neither says "continuous" nor names a venue that closes.
  *
@@ -269,15 +326,21 @@ const CONTINUOUS_MNEMONICS = new Set([
  * table records what this book happens to hold about a commodity, while the
  * namespace records what the commodity IS.
  *
- *   1. AN EXPLICIT CONTINUOUS PHRASE — "digital currency", "virtual asset".
- *      First only because each of these CONTAINS a token that limb 2 would
- *      otherwise match (`CURRENCY`, `ASSET`), and the two-word phrase is the more
- *      specific reading of the same text. Nothing else jumps the queue.
+ *   1. AN EXPLICIT CONTINUOUS PHRASE — "digital currency", "virtual asset" — is
+ *      CUT OUT of the namespace before anything is asked of it. Not a verdict:
+ *      each of these merely CONTAINS a word limb 2 would otherwise misread
+ *      (`CURRENCY`, `ASSET`), so removing the phrase is exactly the amount of
+ *      protection the ambiguity earns, and no more. See `stripContinuousPhrases`.
  *
  *   2. A NAMESPACE THAT NAMES A VENUE WHICH CLOSES — NASDAQ, NYSE, FUND, ETF,
- *      CURRENCY, ISO4217, a foreign exchange. AUTHORITATIVE: seven days, full
- *      stop, and neither the price history nor the mnemonic is consulted. See
- *      `EXCHANGE_TRADED_NAMESPACES` for why this outranks the evidence.
+ *      CURRENCY, ISO4217, a foreign exchange — asked of WHAT SURVIVES that cut.
+ *      AUTHORITATIVE: seven days, full stop, and neither the price history nor
+ *      the mnemonic is consulted. See `EXCHANGE_TRADED_NAMESPACES` for why this
+ *      outranks the evidence. `Digital Currency ETF` and `NASDAQ Virtual Asset
+ *      Fund` are shares in funds that trade when their exchange is open, so they
+ *      land here; bare `Digital Currency`, which leaves nothing behind, does not.
+ *
+ *   2a. THE PHRASE ITSELF, once no closing venue survived the cut. Three days.
  *
  *   3. A NAMESPACE THAT NAMES A CONTINUOUS VENUE, read as words rather than
  *      compared whole, so `CRYPTO`, `Cryptocurrency`, `crypto:BTC`, `Coinbase`,
@@ -314,19 +377,22 @@ export function isContinuousMarket(commodity: CommodityMarketInput | null | unde
     const tokens = namespaceTokens(commodity.namespace ?? '');
 
     // 1. "DIGITAL CURRENCY" and "VIRTUAL ASSET" only read as one thing once the
-    // separator is gone, and each contains a token the limbs below would match
-    // on its own — so the compound phrase is tested before its parts.
-    const joined = tokens.join('');
-    if (joined.includes('DIGITALCURRENC') || joined.includes('DIGITALASSET')
-        || joined.includes('VIRTUALCURRENC') || joined.includes('VIRTUALASSET')) return true;
+    // separator is gone, and each contains a word the limb below would match on
+    // its own — so the phrase is cut out, and the rest of the namespace is still
+    // asked the question.
+    const { matched: phrase, remainder } = stripContinuousPhrases(tokens);
 
-    // 2. A named venue with a weekend settles it. Before the history, not after:
-    // this is the limb that keeps a spot-crypto ETF on the exchange bound no
-    // matter what its custodian's price series looks like.
-    if (tokens.some(token => EXCHANGE_TRADED_NAMESPACES.has(token))) return false;
+    // 2. A named venue with a weekend settles it, and it settles it even when a
+    // phrase shared the namespace with it: `Digital Currency ETF` is an ETF.
+    // Before the history, not after — this is the limb that keeps a spot-crypto
+    // ETF on the exchange bound no matter what its custodian's series looks like.
+    if (remainder.some(token => EXCHANGE_TRADED_NAMESPACES.has(token))) return false;
+
+    // 2a. Nothing that closes survived, so the phrase was the whole of it.
+    if (phrase) return true;
 
     // 3. A named venue without one.
-    for (const token of tokens) {
+    for (const token of remainder) {
         if (token.includes('CRYPTO')) return true;
         // COIN as a word or as either end of one: COIN, COINS, COINBASE,
         // BITCOIN, ALTCOIN, STABLECOIN, LITECOIN.
