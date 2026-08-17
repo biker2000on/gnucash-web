@@ -2739,8 +2739,13 @@ async function tuneAutovacuum() {
  *   - It adds a column and a trigger to a table GnuCash desktop owns, which
  *     every future desktop schema migration would have to survive.
  * Weighed against a per-(parent, name) advisory lock that already serializes
- * every writer in this app, that is a large, permanently-load-bearing
- * mechanism bought for a redundant second line of defence.
+ * the app writers listed under WHAT THAT COVERS below — which is every writer
+ * that puts a REAL account on a sibling key in a book another writer can
+ * already reach, but is NOT literally every writer of the `accounts` table:
+ * see the two lists after it for what is exempt and what has a residual
+ * window. That is a large, permanently-load-bearing mechanism bought for a
+ * second line of defence that is redundant where the protocol already holds
+ * and would not reach the exemptions anyway.
  *
  * So the enforcement for real accounts stays where it can be correct:
  * `acquireNamedXactLock(accountNameLockKey(parent, name))`, claimed inside the
@@ -2760,8 +2765,12 @@ async function tuneAutovacuum() {
  *   - `AccountService.create`, `.update` AND `.move` (services/account.service.ts).
  *     Rename and reparent matter as much as create: they can land an existing
  *     account on a key another sibling already holds. They claim the
- *     DESTINATION (parent, name) — see `claimSiblingName` for the lock
- *     ordering against the per-book lock.
+ *     DESTINATION (parent, name), computed from the account's state read under
+ *     a `SELECT ... FOR UPDATE` INSIDE the writing transaction — a key derived
+ *     from a pre-transaction read is invalidated by a concurrent write to the
+ *     other half of it, and the lock then guards a key the row never lands on.
+ *     See `lockAccountKey` and `claimSiblingName` for that argument and for the
+ *     lock ordering against the per-book lock.
  *   - `addTemplateAccounts` (src/lib/default-book.ts) and demo seeding
  *     (services/demo-book.service.ts): both graft accounts into a book that is
  *     already reachable by other writers.
@@ -2781,17 +2790,30 @@ async function tuneAutovacuum() {
  * NOT COVERED, with a residual window that is accepted rather than closed:
  *
  *   - The XML importer (src/lib/gnucash-xml/importer.ts). It replays a whole
- *     book of thousands of rows preserving the file's own guids, and the file
- *     was written by GnuCash desktop, whose engine already refuses duplicate
- *     real siblings — so the import cannot contradict itself, and a per-account
- *     lock would buy nothing for a per-row cost across the whole tree. It takes
- *     the per-BOOK lock for the whole transaction, which excludes every other
- *     book-locked operation. The window it does not close: an OVERWRITE import
- *     into an existing book, racing an app-side create under one of the parents
- *     it is re-inserting, because the create-if-missing paths above take the
- *     name lock and no book lock. That is narrow (overwrite only, same book,
- *     same parent, same name, overlapping in time) and it is a duplicate the
- *     operator report below will surface.
+ *     book of thousands of rows preserving the file's own guids, and a per-
+ *     account lock would buy nothing for a per-row cost across the whole tree.
+ *     It takes the per-BOOK lock for the whole transaction, which excludes
+ *     every other book-locked operation.
+ *
+ *     Two things it does NOT give you, stated plainly so neither reads as a
+ *     guarantee:
+ *
+ *       * SELF-consistency of the file is a POLICY ASSUMPTION, not enforced.
+ *         The reasoning is "the file came from GnuCash desktop, whose engine
+ *         refuses duplicate real siblings, so it cannot contradict itself" —
+ *         and nothing in the importer checks that. The input is arbitrary
+ *         parsed XML: a hand-written or edited file containing two real
+ *         siblings with the same (parent, name) is inserted as-is, because
+ *         there is no pre-insert validation pass that would reject it. Adding
+ *         one is a real option; it has not been done.
+ *       * A concurrent-writer window on OVERWRITE import into an existing
+ *         book, racing an app-side create under one of the parents it is
+ *         re-inserting, because the create-if-missing paths above take the
+ *         name lock and no book lock. That is narrow (overwrite only, same
+ *         book, same parent, same name, overlapping in time).
+ *
+ *     Both surface as duplicates in the operator report below rather than
+ *     being prevented.
  *
  * OUTSIDE THE INVARIANT ENTIRELY — these write `accounts` rows that are not
  * real accounts and are SUPPOSED to share a key:

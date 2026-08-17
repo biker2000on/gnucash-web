@@ -41,16 +41,28 @@ type PrismaTxClient = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
  * opposite-direction deadlock to construct — two concurrent moves that swap
  * destinations contend on two independent keys and both make progress.
  *
- * Against the other lock in play, the rule is a strict two-level hierarchy,
+ * Against the other locks in play, the rule is a strict three-level hierarchy,
  * taken in this order and never the reverse:
  *
  *     1. the per-book lock (`tryAcquireBookLock`), for reparents only
- *     2. this per-(parent, name) lock
+ *     2. the row lock on the account being changed (`lockAccountKey`), for
+ *        rename/reparent only
+ *     3. this per-(parent, name) lock
  *
  * Every other holder of a named account lock (findOrCreateAccount,
- * trading-accounts, packages, the SimpleFin sync) takes no book lock at all,
- * and the XML importer takes the book lock first exactly as here — so the
- * wait-for graph has no cycle.
+ * trading-accounts, packages, the SimpleFin sync, demo seeding) takes no book
+ * lock and no row lock on an existing account — each is a find-or-create that
+ * reads or INSERTS under the name lock — and the XML importer takes the book
+ * lock first exactly as here. So the wait-for graph has no cycle;
+ * `lockAccountKey` works the argument through case by case.
+ *
+ * ## Which (parent, name) to pass
+ *
+ * The DESTINATION key, computed from the account's state AS LOCKED at level 2,
+ * never from a read taken before the transaction: each half of the key is
+ * written by a different operation, so a pre-transaction snapshot can be
+ * invalidated by a concurrent write to the half this operation is not
+ * touching. `lockAccountKey` has the worked example.
  *
  * `selfGuid` excludes the row being renamed/moved, so a no-op update and a
  * rename that only changes case-identical text do not refuse themselves.
@@ -85,6 +97,102 @@ async function claimSiblingName(
             `An account named "${name}" already exists under this parent`,
         );
     }
+}
+
+/**
+ * Row that a sibling key is computed FROM: the account's own
+ * `(parent_guid, name)`, read under a row-level lock inside the caller's
+ * transaction.
+ */
+interface LockedAccountKey {
+    name: string;
+    parent_guid: string | null;
+}
+
+/**
+ * Take `SELECT ... FOR UPDATE` on the account being renamed/reparented and
+ * return its CURRENT `(parent_guid, name)`.
+ *
+ * ## Why the destination key cannot be derived from a pre-transaction read
+ *
+ * A sibling key has two halves and every mutation writes only one of them, so
+ * a snapshot taken before the transaction can be invalidated by a concurrent
+ * write to the OTHER half — and the resulting key is then one that nobody
+ * locked and nobody re-checked:
+ *
+ *     update(X, {name: 'New'})  reads X = (P1, 'Old'), plans (P1, 'New')
+ *     move(X, P2)               commits parent_guid = P2
+ *     update(X, ...)            writes name only -> X is now (P2, 'New')
+ *     create(P2, 'New')         claims (P2, 'New'), finds it free, commits
+ *                               -> two real siblings named 'New' under P2
+ *
+ * and symmetrically, a rename landing between `move`'s read and its claim makes
+ * `move` lock the OLD name under the new parent while the row lands on the new
+ * one. The advisory lock is real in both cases; it just guards the wrong key.
+ *
+ * So the state the key is computed from is read HERE, inside the transaction,
+ * under a lock that a concurrent writer must wait behind — and the claim and
+ * re-check follow immediately, with nothing in between that could move the
+ * account again.
+ *
+ * ## Ordering, against the two locks already in play
+ *
+ * Strict three-level hierarchy, taken in this order and never the reverse:
+ *
+ *     1. the per-book advisory lock (`tryAcquireBookLock`), reparents only
+ *     2. this row lock, on the account being changed
+ *     3. the per-(parent, name) advisory lock (`claimSiblingName`)
+ *
+ * Level 1 is a NON-BLOCKING try-lock, so nobody ever queues on it; the only
+ * waits are at levels 2 and 3, and every operation takes at most one lock at
+ * each level, always 2 before 3. That is what keeps the wait-for graph acyclic:
+ *
+ *   - Two operations on the SAME account serialize entirely at level 2. The
+ *     winner holds the row lock from before its claim until its own UPDATE
+ *     commits, so the loser cannot be holding a name lock the winner wants.
+ *   - Operations on DIFFERENT accounts take disjoint level-2 locks.
+ *   - Every OTHER holder of a name lock (findOrCreateAccount, trading-accounts,
+ *     packages, the SimpleFin sync, demo seeding, `create` here) is a
+ *     find-or-create: under the name lock it either reads or INSERTS a fresh
+ *     row, and never updates an existing account. So no one acquires a level-2
+ *     lock on an existing row while holding a level-3 lock.
+ *
+ * The one edge worth naming: `UPDATE accounts SET parent_guid = P` takes a
+ * `FOR KEY SHARE` lock on parent row P for the foreign key, which conflicts
+ * with a `FOR UPDATE` held by a concurrent rename OF P. Closing that into a
+ * cycle would require an operation whose destination parent is the very
+ * account it is moving — rejected by {@link assertReparentIsAcyclic} before any
+ * name is claimed.
+ *
+ * Returns null when the account no longer exists (deleted between the caller's
+ * existence pre-check and this lock).
+ *
+ * The lock is skipped, and the read degrades to an unlocked one, only for
+ * in-memory test doubles with no `$queryRaw` — the same degradation
+ * `acquireNamedXactLock` documents. A double cannot demonstrate row-level
+ * exclusion no matter what it returns, so the proof that this actually
+ * serializes lives in the integration tier
+ * (account-rename-reparent-race.integration.test.ts), against real Postgres
+ * and two real connections.
+ */
+async function lockAccountKey(
+    tx: PrismaTxClient,
+    guid: string,
+): Promise<LockedAccountKey | null> {
+    if (typeof tx.$queryRaw === 'function') {
+        // Lock and read are two statements on purpose. The lock has to be raw
+        // (Prisma has no `FOR UPDATE`), but the VALUES come back through the
+        // same Prisma decoding as every other read in this service, so a raw
+        // driver's column typing can never make `parent_guid` compare unequal
+        // to a Prisma-read one. Under READ COMMITTED the second statement takes
+        // a fresh snapshot, so it sees whatever the writer we just waited out
+        // committed.
+        await tx.$queryRaw`SELECT 1 AS locked FROM accounts WHERE guid = ${guid} FOR UPDATE`;
+    }
+    return tx.accounts.findUnique({
+        where: { guid },
+        select: { name: true, parent_guid: true },
+    });
 }
 
 /**
@@ -366,16 +474,19 @@ export class AccountService {
       ? await resolveBookLockGuidForAccount(guid)
       : null;
 
-    // Where this update LANDS the account on the sibling key. A rename moves
-    // it within the same parent; a reparent moves it under a new one; both
-    // can land it on a key another real sibling already holds — the exact
-    // duplicate `create()` refuses. Only claim when the key actually changes,
-    // so an update that touches neither field pays for no lock.
-    const destParentGuid =
-      data.parent_guid !== undefined ? data.parent_guid : existing.parent_guid;
-    const destName = data.name !== undefined ? data.name : existing.name;
-    const changesSiblingKey =
-      destParentGuid !== existing.parent_guid || destName !== existing.name;
+    // Does this update touch EITHER half of the sibling key? Only then is
+    // there a destination to claim, and only then is the row lock worth
+    // taking — an update that writes neither `name` nor `parent_guid` cannot
+    // move the account onto a different key no matter what else commits
+    // concurrently, so it pays for no lock.
+    const touchesSiblingKey =
+      data.name !== undefined || data.parent_guid !== undefined;
+
+    // The account's (parent, name) as read under the row lock inside the
+    // transaction — the authoritative "before" for both the key claim and the
+    // audit entry. `existing` above is a pre-transaction snapshot and may be
+    // stale by the time the transaction runs; see `lockAccountKey`.
+    let lockedBefore: LockedAccountKey | null = null;
 
     const account = await prisma.$transaction(async (tx) => {
       if (isReparent && bookLockGuid) {
@@ -384,13 +495,36 @@ export class AccountService {
           throw new BookBusyError(bookLockGuid, 'account-reparent');
         }
       }
+
+      // Book lock, then the row lock, then the sibling-name lock — see
+      // `lockAccountKey` for why the key MUST come from a read taken here
+      // rather than from `existing`, and why that order is the one every
+      // caller uses.
+      if (touchesSiblingKey) {
+        lockedBefore = await lockAccountKey(tx, guid);
+        if (!lockedBefore) {
+          // Deleted between the pre-check above and this lock.
+          throw new Error(`Account not found: ${guid}`);
+        }
+      }
+
       if (data.parent_guid !== undefined && data.parent_guid !== null) {
         await assertReparentIsAcyclic(tx, guid, data.parent_guid);
       }
-      // Book lock first, then the sibling-name lock — see `claimSiblingName`
-      // for why that order is the one every caller uses.
-      if (changesSiblingKey) {
-        await claimSiblingName(tx, destParentGuid, destName, guid);
+
+      if (lockedBefore) {
+        // Where this update LANDS the account on the sibling key. A rename
+        // moves it within its CURRENT parent; a reparent moves it under a new
+        // one; both can land it on a key another real sibling already holds —
+        // the exact duplicate `create()` refuses. Each half falls back to the
+        // locked row, never to the pre-transaction snapshot.
+        const current: LockedAccountKey = lockedBefore;
+        const destParentGuid =
+          data.parent_guid !== undefined ? data.parent_guid : current.parent_guid;
+        const destName = data.name !== undefined ? data.name : current.name;
+        if (destParentGuid !== current.parent_guid || destName !== current.name) {
+          await claimSiblingName(tx, destParentGuid, destName, guid);
+        }
       }
 
       const acct = await tx.accounts.update({
@@ -479,13 +613,18 @@ export class AccountService {
     });
 
     const { logAudit } = await import('@/lib/services/audit.service');
+    // `lockedBefore` (read under the row lock) beats `existing` (read before
+    // the transaction) for the two fields a concurrent writer can have changed
+    // in between — otherwise the audit trail records a "before" that was
+    // already false when the update ran.
+    const before = lockedBefore as LockedAccountKey | null;
     await logAudit('UPDATE', 'ACCOUNT', guid, {
-      name: existing.name,
+      name: before?.name ?? existing.name,
       code: existing.code,
       description: existing.description,
       hidden: existing.hidden,
       placeholder: existing.placeholder,
-      parent_guid: existing.parent_guid,
+      parent_guid: before ? before.parent_guid : existing.parent_guid,
       commodity_guid: existing.commodity_guid,
     }, {
       name: account.name,
@@ -593,7 +732,10 @@ export class AccountService {
       throw new Error('Invalid account GUID');
     }
 
-    // Check account exists
+    // Existence PRE-check only, for a clean error before any lock is taken.
+    // It is not authoritative for the sibling key: the name it reads can be
+    // changed by a concurrent rename before this transaction claims anything,
+    // which is why the key comes from `lockAccountKey` below instead.
     const account = await prisma.accounts.findUnique({
       where: { guid },
     });
@@ -614,16 +756,26 @@ export class AccountService {
         throw new BookBusyError(bookLockGuid, 'account-move');
       }
 
+      // Level 2 of the ordering: serialize the account row before deriving the
+      // key from it. A rename that commits between the pre-check above and
+      // this point would otherwise make the claim below lock the account's OLD
+      // name under the new parent — a lock on a key the row never lands on.
+      // See `lockAccountKey`.
+      const current = await lockAccountKey(tx, guid);
+      if (!current) {
+        throw new Error(`Account not found: ${guid}`);
+      }
+
       if (newParentGuid) {
         await assertReparentIsAcyclic(tx, guid, newParentGuid);
       }
 
       // Same claim `create()` and `update()` make, on the DESTINATION parent
-      // and this account's (unchanged) name. Book lock is already held above;
-      // this is the second and last level of the ordering — see
-      // `claimSiblingName`.
-      if (newParentGuid !== account.parent_guid) {
-        await claimSiblingName(tx, newParentGuid, account.name, guid);
+      // and this account's name AS LOCKED. Book lock and row lock are already
+      // held above; this is the third and last level of the ordering — see
+      // `claimSiblingName` and `lockAccountKey`.
+      if (newParentGuid !== current.parent_guid) {
+        await claimSiblingName(tx, newParentGuid, current.name, guid);
       }
 
       return tx.accounts.update({

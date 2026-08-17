@@ -88,15 +88,45 @@ const existingAccount = (over: Record<string, unknown> = {}) => ({
 });
 
 /**
- * Every advisory lock the service took, in order, as
- * `['try:book:<guid>', 'lock:account:<parent>:<name>']`. The two lock helpers
- * both go through `$queryRaw`, and telling them apart is the point: the book
- * lock must come FIRST (see `claimSiblingName` on lock ordering).
+ * What the LOCKED in-transaction read of the account returns — the row
+ * `lockAccountKey` hands back after its `SELECT ... FOR UPDATE`.
+ *
+ * It is a separate knob from the pre-transaction snapshot on purpose. Holding
+ * the two equal is the uncontended case; setting them differently is the ONLY
+ * way to express, at this tier, "another writer committed in between", which is
+ * exactly the interleaving that made the previous fixed-snapshot version of
+ * this file unable to see the bug.
+ */
+let lockedRow: { name: string; parent_guid: string | null } = {
+    name: 'Groceries',
+    parent_guid: PARENT,
+};
+
+/**
+ * Point both reads of the account at the same row: the ordinary case, where
+ * nothing commits between the pre-transaction read and the locked one.
+ */
+function accountIs(over: Record<string, unknown> = {}) {
+    const row = existingAccount(over);
+    prismaMock.accounts.findUnique.mockResolvedValue(row);
+    lockedRow = { name: row.name as string, parent_guid: row.parent_guid as string | null };
+}
+
+/**
+ * Every lock the service took, in order, as
+ * `['try:book:<guid>', 'row:<guid>', 'lock:account:<parent>:<name>']`. All
+ * three go through `$queryRaw`, and telling them apart is the point: the order
+ * IS the deadlock-freedom argument (see `lockAccountKey` on lock ordering).
  */
 function recordLocks(): string[] {
     const locks: string[] = [];
     txMock.$queryRaw.mockImplementation(async (...args: unknown[]) => {
         const sql = Array.isArray(args[0]) ? (args[0] as string[]).join('?') : String(args[0]);
+        if (sql.includes('FOR UPDATE')) {
+            locks.push(`row:${String(args[1])}`);
+            // `SELECT 1 AS locked` — the value is unused; only the wait matters.
+            return [{ locked: true }];
+        }
         const kind = sql.includes('pg_try_advisory_xact_lock') ? 'try' : 'lock';
         locks.push(`${kind}:${String(args[1])}`);
         return [{ locked: true }];
@@ -115,9 +145,15 @@ beforeEach(() => {
     prismaMock.books.findFirst.mockResolvedValue({ guid: BOOK });
     txMock.$queryRaw.mockResolvedValue([{ locked: true }]);
     txMock.accounts.findFirst.mockResolvedValue(null);
-    // assertReparentIsAcyclic walks up from the destination parent.
+    lockedRow = { name: 'Groceries', parent_guid: PARENT };
+    // Two callers, two shapes: `lockAccountKey` re-reads the account itself
+    // under the row lock, and `assertReparentIsAcyclic` walks up from the
+    // destination parent.
     txMock.accounts.findUnique.mockImplementation(
-        async ({ where }: { where: { guid: string } }) => ({ guid: where.guid, parent_guid: null }),
+        async ({ where }: { where: { guid: string } }) =>
+            where.guid === SELF
+                ? { guid: SELF, ...lockedRow }
+                : { guid: where.guid, parent_guid: null },
     );
     txMock.accounts.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => data);
     txMock.accounts.update.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => data);
@@ -177,7 +213,7 @@ describe('AccountService.create — sibling-name serialization', () => {
 
 describe('AccountService.update — rename lands on the same sibling key', () => {
     it('refuses a rename onto a name a sibling already holds', async () => {
-        prismaMock.accounts.findUnique.mockResolvedValue(existingAccount());
+        accountIs();
         txMock.accounts.findFirst.mockResolvedValue({ guid: OTHER });
 
         await expect(AccountService.update(SELF, { name: 'Utilities' }))
@@ -188,7 +224,7 @@ describe('AccountService.update — rename lands on the same sibling key', () =>
     });
 
     it('claims the DESTINATION name, not the current one, and locks before re-checking', async () => {
-        prismaMock.accounts.findUnique.mockResolvedValue(existingAccount());
+        accountIs();
         const locks = recordLocks();
         const order: string[] = [];
         txMock.accounts.findFirst.mockImplementation(async () => { order.push('recheck'); return null; });
@@ -199,14 +235,15 @@ describe('AccountService.update — rename lands on the same sibling key', () =>
 
         await AccountService.update(SELF, { name: 'Utilities' });
 
-        // A rename is not a reparent, so no book lock — just the one name lock,
-        // keyed on where the account is GOING.
-        expect(locks).toEqual([`lock:account:${PARENT}:Utilities`]);
+        // A rename is not a reparent, so no book lock — the row lock on the
+        // account being renamed, then the one name lock, keyed on where the
+        // account is GOING.
+        expect(locks).toEqual([`row:${SELF}`, `lock:account:${PARENT}:Utilities`]);
         expect(order).toEqual(['recheck', 'update']);
     });
 
     it('excludes the account itself, so a no-op rename is not a self-clash', async () => {
-        prismaMock.accounts.findUnique.mockResolvedValue(existingAccount());
+        accountIs();
 
         await AccountService.update(SELF, { name: 'Utilities' });
 
@@ -216,32 +253,36 @@ describe('AccountService.update — rename lands on the same sibling key', () =>
         });
     });
 
-    it('takes no name lock when neither name nor parent changes', async () => {
-        prismaMock.accounts.findUnique.mockResolvedValue(existingAccount());
+    it('takes no lock at all when the payload touches neither name nor parent', async () => {
+        accountIs();
         const locks = recordLocks();
 
         await AccountService.update(SELF, { description: 'just a description' });
 
+        // Not even the row lock: an update that writes neither half of the key
+        // cannot land the account on a different one, whatever else commits.
         expect(locks).toEqual([]);
         expect(txMock.accounts.update).toHaveBeenCalledTimes(1);
     });
 
-    it('takes the BOOK lock before the name lock when reparenting', async () => {
-        prismaMock.accounts.findUnique.mockResolvedValue(existingAccount());
+    it('takes book lock, then row lock, then name lock when reparenting', async () => {
+        accountIs();
         const locks = recordLocks();
-                await AccountService.update(SELF, { parent_guid: NEW_PARENT });
+        await AccountService.update(SELF, { parent_guid: NEW_PARENT });
 
-        // The ordering that makes deadlock impossible: book lock (one per
-        // operation, at most) strictly before the name lock (one per
-        // operation, on the destination only).
+        // The ordering that makes deadlock impossible: book lock (non-blocking,
+        // one per operation at most), then the row lock on the account being
+        // changed, then the name lock (one per operation, on the destination
+        // only). Never the reverse — see `lockAccountKey`.
         expect(locks).toEqual([
             `try:book:${BOOK}`,
+            `row:${SELF}`,
             `lock:account:${NEW_PARENT}:Groceries`,
         ]);
     });
 
     it('refuses a reparent that collides under the new parent', async () => {
-        prismaMock.accounts.findUnique.mockResolvedValue(existingAccount());
+        accountIs();
         txMock.accounts.findFirst.mockResolvedValue({ guid: OTHER });
 
         await expect(
@@ -249,11 +290,117 @@ describe('AccountService.update — rename lands on the same sibling key', () =>
         ).rejects.toThrow('An account named "Groceries" already exists under this parent');
         expect(txMock.accounts.update).not.toHaveBeenCalled();
     });
+
+    it('refuses a rename of an account that was deleted before the row lock', async () => {
+        prismaMock.accounts.findUnique.mockResolvedValue(existingAccount());
+        txMock.accounts.findUnique.mockImplementation(
+            async ({ where }: { where: { guid: string } }) =>
+                where.guid === SELF ? null : { guid: where.guid, parent_guid: null },
+        );
+
+        await expect(AccountService.update(SELF, { name: 'Utilities' }))
+            .rejects.toThrow(`Account not found: ${SELF}`);
+        expect(txMock.accounts.update).not.toHaveBeenCalled();
+    });
+});
+
+/**
+ * The stale-destination interleavings.
+ *
+ * A sibling key has two halves and every mutation writes only ONE of them, so a
+ * destination computed from a read taken BEFORE the transaction can be
+ * invalidated by a concurrent write to the other half — and the key the row
+ * actually lands on is then one nothing locked and nothing re-checked.
+ *
+ * What this tier can and cannot show: the fake below models "the pre-
+ * transaction read saw A, the locked read saw B", and asserts the service keys
+ * its claim off B. That is a real assertion about which read feeds the key, and
+ * it is exactly what the previous fixed-snapshot version of this file could not
+ * make. It is NOT a proof of mutual exclusion — a double cannot demonstrate row
+ * locking whatever it returns. That proof is
+ * account-rename-reparent-race.integration.test.ts, which drives both
+ * interleavings through real Postgres on two real connections and shows the
+ * duplicate landing without this fix.
+ */
+describe('AccountService — the destination key comes from the LOCKED read', () => {
+    it('rename-during-move: claims under the parent a concurrent move committed', async () => {
+        // Pre-transaction snapshot: still under PARENT.
+        prismaMock.accounts.findUnique.mockResolvedValue(existingAccount());
+        // By the time the row lock is granted, a concurrent move has committed
+        // parent_guid = NEW_PARENT. The rename writes `name` only, so the row
+        // LANDS on (NEW_PARENT, 'Utilities') — which is therefore the key that
+        // has to be claimed.
+        lockedRow = { name: 'Groceries', parent_guid: NEW_PARENT };
+        const locks = recordLocks();
+
+        await AccountService.update(SELF, { name: 'Utilities' });
+
+        expect(locks).toEqual([`row:${SELF}`, `lock:account:${NEW_PARENT}:Utilities`]);
+        expect(txMock.accounts.findFirst).toHaveBeenCalledWith({
+            where: { parent_guid: NEW_PARENT, name: 'Utilities', guid: { not: SELF } },
+            select: { guid: true },
+        });
+    });
+
+    it('rename-during-move: refuses when that parent already holds the name', async () => {
+        prismaMock.accounts.findUnique.mockResolvedValue(existingAccount());
+        lockedRow = { name: 'Groceries', parent_guid: NEW_PARENT };
+        txMock.accounts.findFirst.mockResolvedValue({ guid: OTHER });
+
+        await expect(AccountService.update(SELF, { name: 'Utilities' }))
+            .rejects.toThrow('An account named "Utilities" already exists under this parent');
+        expect(txMock.accounts.update).not.toHaveBeenCalled();
+    });
+
+    it('move-during-rename: claims the name a concurrent rename committed', async () => {
+        // Pre-transaction snapshot: still named 'Groceries'.
+        prismaMock.accounts.findUnique.mockResolvedValue(existingAccount());
+        // A concurrent rename committed first. The move writes `parent_guid`
+        // only, so the row lands on (NEW_PARENT, 'Utilities') — claiming
+        // (NEW_PARENT, 'Groceries') would lock a key it never occupies.
+        lockedRow = { name: 'Utilities', parent_guid: PARENT };
+        const locks = recordLocks();
+
+        await AccountService.move(SELF, NEW_PARENT);
+
+        expect(locks).toEqual([
+            `try:book:${BOOK}`,
+            `row:${SELF}`,
+            `lock:account:${NEW_PARENT}:Utilities`,
+        ]);
+        expect(txMock.accounts.findFirst).toHaveBeenCalledWith({
+            where: { parent_guid: NEW_PARENT, name: 'Utilities', guid: { not: SELF } },
+            select: { guid: true },
+        });
+    });
+
+    it('move-during-rename: refuses when the new parent already holds that name', async () => {
+        prismaMock.accounts.findUnique.mockResolvedValue(existingAccount());
+        lockedRow = { name: 'Utilities', parent_guid: PARENT };
+        txMock.accounts.findFirst.mockResolvedValue({ guid: OTHER });
+
+        await expect(AccountService.move(SELF, NEW_PARENT))
+            .rejects.toThrow('An account named "Utilities" already exists under this parent');
+        expect(txMock.accounts.update).not.toHaveBeenCalled();
+    });
+
+    it('move-during-move: no claim when a concurrent move already landed it there', async () => {
+        // The destination is where the account already is by the time the row
+        // lock is granted, so this move writes nothing that changes the key.
+        prismaMock.accounts.findUnique.mockResolvedValue(existingAccount());
+        lockedRow = { name: 'Groceries', parent_guid: NEW_PARENT };
+        const locks = recordLocks();
+
+        await AccountService.move(SELF, NEW_PARENT);
+
+        expect(locks).toEqual([`try:book:${BOOK}`, `row:${SELF}`]);
+        expect(txMock.accounts.findFirst).not.toHaveBeenCalled();
+    });
 });
 
 describe('AccountService.move — reparent lands on the destination sibling key', () => {
         it('refuses a move onto an occupied (parent, name)', async () => {
-        prismaMock.accounts.findUnique.mockResolvedValue(existingAccount());
+        accountIs();
         txMock.accounts.findFirst.mockResolvedValue({ guid: OTHER });
 
         await expect(AccountService.move(SELF, NEW_PARENT))
@@ -261,14 +408,15 @@ describe('AccountService.move — reparent lands on the destination sibling key'
         expect(txMock.accounts.update).not.toHaveBeenCalled();
     });
 
-    it('locks book then destination name, and excludes itself', async () => {
-        prismaMock.accounts.findUnique.mockResolvedValue(existingAccount());
+    it('locks book, then row, then destination name, and excludes itself', async () => {
+        accountIs();
         const locks = recordLocks();
 
         await AccountService.move(SELF, NEW_PARENT);
 
         expect(locks).toEqual([
             `try:book:${BOOK}`,
+            `row:${SELF}`,
             `lock:account:${NEW_PARENT}:Groceries`,
         ]);
         expect(txMock.accounts.findFirst).toHaveBeenCalledWith({
@@ -277,38 +425,52 @@ describe('AccountService.move — reparent lands on the destination sibling key'
         });
     });
 
-    it('takes only the SOURCE-vacating book lock when the parent does not change', async () => {
+    it('takes no NAME lock when the parent does not change', async () => {
         // Vacating a key cannot create a duplicate under it, and a move to the
         // same parent moves nothing — so there is no destination key to claim.
-        prismaMock.accounts.findUnique.mockResolvedValue(existingAccount());
+        // The row lock is still taken: "the parent does not change" is a claim
+        // about the LOCKED row, and reading it is what the lock is for.
+        accountIs();
         const locks = recordLocks();
 
         await AccountService.move(SELF, PARENT);
 
-        expect(locks).toEqual([`try:book:${BOOK}`]);
+        expect(locks).toEqual([`try:book:${BOOK}`, `row:${SELF}`]);
     });
 
     it('does not claim a key for a scheduled-transaction template row', async () => {
         // Template children are all named '' under their per-SX root and are
         // SUPPOSED to share a key — refusing them as duplicates would break
         // exactly the shape the missing unique index exists to protect.
-        prismaMock.accounts.findUnique.mockResolvedValue(existingAccount({ name: '' }));
+        accountIs({ name: '' });
         const locks = recordLocks();
 
         await AccountService.move(SELF, NEW_PARENT);
 
-        expect(locks).toEqual([`try:book:${BOOK}`]);
+        expect(locks).toEqual([`try:book:${BOOK}`, `row:${SELF}`]);
         expect(txMock.accounts.findFirst).not.toHaveBeenCalled();
     });
 
     it('takes no name lock when moving to the top level', async () => {
         // parent_guid null: the account becomes a root, sibling of nothing.
-        prismaMock.accounts.findUnique.mockResolvedValue(existingAccount());
+        accountIs();
         const locks = recordLocks();
 
         await AccountService.move(SELF, null);
 
-        expect(locks).toEqual([`try:book:${BOOK}`]);
+        expect(locks).toEqual([`try:book:${BOOK}`, `row:${SELF}`]);
         expect(txMock.accounts.findFirst).not.toHaveBeenCalled();
+    });
+
+    it('refuses a move of an account deleted between the pre-check and the row lock', async () => {
+        prismaMock.accounts.findUnique.mockResolvedValue(existingAccount());
+        txMock.accounts.findUnique.mockImplementation(
+            async ({ where }: { where: { guid: string } }) =>
+                where.guid === SELF ? null : { guid: where.guid, parent_guid: null },
+        );
+
+        await expect(AccountService.move(SELF, NEW_PARENT))
+            .rejects.toThrow(`Account not found: ${SELF}`);
+        expect(txMock.accounts.update).not.toHaveBeenCalled();
     });
 });
