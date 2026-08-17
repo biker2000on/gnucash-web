@@ -21,6 +21,7 @@ import { Field, FieldGrid, INPUT, RecordCard } from '@/components/ui/form';
 import { useUserPreferences, type CostBasisMethod, type HomeScreen } from '@/contexts/UserPreferencesContext';
 import type { DateFormat } from '@/lib/date-format';
 import { BalanceReversal } from '@/lib/format';
+import { calculateCalendarAge } from '@/lib/age';
 import type { BusinessActivity } from '@/lib/services/entity.service';
 import { FILING_STATUSES, FILING_STATUS_LABELS, type FilingStatus } from '@/lib/tax/types';
 
@@ -97,9 +98,7 @@ function computeMemberAge(birthday: string): number | null {
   if (!birthday) return null;
   const [y, m, d] = birthday.slice(0, 10).split('-').map(Number);
   if (!y || !m || !d) return null;
-  const now = new Date();
-  let age = now.getFullYear() - y;
-  if (now.getMonth() + 1 < m || (now.getMonth() + 1 === m && now.getDate() < d)) age -= 1;
+  const age = calculateCalendarAge({ year: y, month: m, day: d }, new Date(), 'local')!;
   return age >= 0 ? age : null;
 }
 

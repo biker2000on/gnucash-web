@@ -4,7 +4,7 @@ import tsconfigPaths from 'vite-tsconfig-paths';
 
 // Pin workers before Vitest starts them. `test.env` alone is applied too late
 // for Node's timezone-aware Date implementation.
-process.env.TZ ??= process.env.VITEST_TZ ?? 'America/Los_Angeles';
+process.env.TZ = process.env.VITEST_TZ ?? 'America/Los_Angeles';
 
 export default defineConfig({
   plugins: [react(), tsconfigPaths()],

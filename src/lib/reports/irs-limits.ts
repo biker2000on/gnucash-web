@@ -1,4 +1,5 @@
 import prisma from '@/lib/prisma';
+import { calculateCalendarAge } from '@/lib/age';
 
 export const RETIREMENT_ACCOUNT_TYPES = [
   '401k', '403b', '457', 'traditional_ira', 'roth_ira', 'sep_ira', 'simple_ira',
@@ -140,17 +141,7 @@ export function getDefaultLimits(year: number): LimitDefaults[] {
 
 export function calculateAge(birthday: string, asOfDate: Date): number | null {
   if (!birthday) return null;
-  const birth = new Date(`${birthday.slice(0, 10)}T00:00:00Z`);
-  if (isNaN(birth.getTime())) return null;
-
-  // ISO date-only strings are parsed at UTC midnight. Compare in UTC as well so
-  // western timezones do not interpret (for example) a Dec 31 birthday as Dec 30.
-  let age = asOfDate.getUTCFullYear() - birth.getUTCFullYear();
-  const monthDiff = asOfDate.getUTCMonth() - birth.getUTCMonth();
-  if (monthDiff < 0 || (monthDiff === 0 && asOfDate.getUTCDate() < birth.getUTCDate())) {
-    age--;
-  }
-  return age;
+  return calculateCalendarAge(birthday, asOfDate, 'utc');
 }
 
 export interface ContributionLimitResult {

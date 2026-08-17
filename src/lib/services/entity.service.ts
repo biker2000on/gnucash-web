@@ -14,6 +14,7 @@
 
 import prisma from '@/lib/prisma';
 import { getPreference } from '@/lib/user-preferences';
+import { calculateCalendarAge } from '@/lib/age';
 
 export type EntityType =
   | 'household'
@@ -92,10 +93,7 @@ export function memberAge(birthday: string | null, asOf: Date = new Date()): num
   if (!birthday) return null;
   const [y, m, d] = birthday.slice(0, 10).split('-').map(Number);
   if (!y || !m || !d) return null;
-  let age = asOf.getFullYear() - y;
-  const beforeBirthday =
-    asOf.getMonth() + 1 < m || (asOf.getMonth() + 1 === m && asOf.getDate() < d);
-  if (beforeBirthday) age -= 1;
+  const age = calculateCalendarAge({ year: y, month: m, day: d }, asOf, 'local')!;
   return age >= 0 ? age : null;
 }
 
