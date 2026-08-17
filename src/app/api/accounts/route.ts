@@ -200,11 +200,11 @@ export async function GET(request: NextRequest) {
                 period_balance: number;
             }>>`
                 SELECT s.account_guid,
-                    COALESCE(SUM(s.quantity_num::float8 / s.quantity_denom::float8), 0)::float8 AS total_balance,
+                    COALESCE(SUM(s.quantity_num::numeric / NULLIF(s.quantity_denom, 0)::numeric), 0)::float8 AS total_balance,
                     COALESCE(SUM(CASE WHEN t.post_date IS NOT NULL
                         ${startDate ? Prisma.sql`AND t.post_date >= ${new Date(startDate)}` : Prisma.empty}
                         ${endDate ? Prisma.sql`AND t.post_date <= ${new Date(endDate)}` : Prisma.empty}
-                        THEN s.quantity_num::float8 / s.quantity_denom::float8 ELSE 0 END), 0)::float8 AS period_balance
+                        THEN s.quantity_num::numeric / NULLIF(s.quantity_denom, 0)::numeric ELSE 0 END), 0)::float8 AS period_balance
                 FROM splits s
                 JOIN transactions t ON t.guid = s.tx_guid
                 WHERE s.account_guid = ANY(${bookAccountGuids}::text[])

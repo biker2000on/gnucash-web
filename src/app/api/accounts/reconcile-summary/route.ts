@@ -55,7 +55,7 @@ export async function GET() {
                 SUM(
                     CASE
                         WHEN s.reconcile_state = 'y'
-                        THEN CAST(s.quantity_num AS DECIMAL) / CAST(s.quantity_denom AS DECIMAL)
+                        THEN CAST(s.quantity_num AS DECIMAL) / NULLIF(CAST(s.quantity_denom AS DECIMAL), 0)
                         ELSE 0
                     END
                 )::text as reconciled_balance
