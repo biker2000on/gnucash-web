@@ -77,6 +77,13 @@ describe('IRS Contribution Limits', () => {
       expect(age).toBe(51);
     });
 
+    it('does not grant age one day early for a Dec 31 birthday (local parsing previously made Los Angeles users appear older)', () => {
+      // This is Dec 30 in both UTC and America/Los_Angeles. Before the UTC/local
+      // mix-up was fixed, LA parsed the birthday as Dec 30 and returned 50.
+      const age = calculateAge('1976-12-31', new Date('2026-12-30T12:00:00Z'));
+      expect(age).toBe(49);
+    });
+
     it('should return null for invalid birthday', () => {
       const age = calculateAge('', new Date('2026-03-27'));
       expect(age).toBeNull();
