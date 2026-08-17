@@ -126,6 +126,17 @@ These tests talk to a real PostgreSQL server, because the guarantees they
 cover — `FOR UPDATE`, lock ordering, advisory locks — are only observable
 across two live connections and cannot be asserted against a mocked pool.
 
+`locking.integration.test.ts` is the tier's substance: it holds a lock on one
+connection, invokes application code on another, and reads `pg_locks` from a
+third to prove the application backend is genuinely blocked before the holder
+releases. Deleting the advisory lock from `src/lib/db.ts`, the `FOR UPDATE`
+from `lockTransactionsForUpdate`, or the atomic claim from
+`webhook-idempotency.ts` each turns the matching test red.
+
+These tests write rows. The tier does not create a per-run schema and never
+truncates, so a test that writes must delete its own rows in `afterAll` —
+see the TEST DATA section of `vitest.integration.config.ts`.
+
 ```bash
 # 1. Put the URL of a THROWAWAY database in .env.test.local at the repo root.
 #    That filename is gitignored; never commit credentials.

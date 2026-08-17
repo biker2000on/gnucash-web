@@ -32,9 +32,15 @@
  *
  * Ordering matters: db-init builds account_hierarchy over `accounts`, so the
  * Prisma push has to land first.
+ *
+ * WHAT THIS SCRIPT DOES NOT DO: it never drops, truncates or otherwise removes
+ * data. It only adds schema. Rows written by the tier are cleaned up by the
+ * test file that wrote them - see the TEST DATA section of
+ * vitest.integration.config.ts. To start genuinely clean, drop and recreate the
+ * database and run this script again.
  */
 import { execSync } from 'node:child_process';
-import { redactDatabaseUrl, requireTestDatabaseUrl } from './env';
+import { requireTestDatabaseUrl } from './env';
 
 async function main(): Promise<void> {
     const url = requireTestDatabaseUrl();
@@ -44,7 +50,14 @@ async function main(): Promise<void> {
     // Setting it here is what aims them at the test database.
     process.env.DATABASE_URL = url;
 
-    console.log(`Creating integration schema in ${redactDatabaseUrl(url)}`);
+    // Deliberately does not echo the connection URL, redacted or otherwise. CI
+    // step logs are retained and readable by everyone with repository access,
+    // and a password-stripped URL still publishes the username, host, port,
+    // database name and any query-string parameters - which is inventory, not
+    // diagnostics. Whoever ran this already knows where TEST_DATABASE_URL
+    // points; `prisma db push` prints its own datasource line below if the
+    // target is genuinely in question.
+    console.log('Creating integration schema in the TEST_DATABASE_URL database.');
 
     console.log('\n== prisma db push (modelled tables) ==');
     // No --skip-generate: Prisma 7 removed that flag from `db push` (it exits

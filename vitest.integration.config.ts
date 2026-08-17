@@ -15,6 +15,31 @@ import tsconfigPaths from 'vite-tsconfig-paths';
  *
  * There is no react() plugin here: these tests exercise server-side data
  * access, not components.
+ *
+ * ## TEST DATA IS THE TEST FILE'S RESPONSIBILITY
+ *
+ * This tier runs against whatever TEST_DATABASE_URL points at, AS IT FINDS IT.
+ * It deliberately does not create a per-run schema and does not truncate
+ * anything, in either direction:
+ *
+ *   - no globalSetup creating/dropping a schema per run, because CI's postgres
+ *     service is already a fresh container per job and locally the same
+ *     throwaway database is reused all day - a drop would mean re-running the
+ *     two-step `test:integration:schema` bootstrap on every invocation;
+ *   - no blanket TRUNCATE, because "the tier wipes the database it is pointed
+ *     at" is a footgun aimed squarely at whoever mistypes TEST_DATABASE_URL.
+ *
+ * So a test that WRITES must clean up after itself, or it leaves residue that
+ * the next run sees. The convention, worked through in
+ * src/__tests__/integration/locking.integration.test.ts:
+ *
+ *   1. tag every written row with a per-run id (a uuid, not a fixed literal),
+ *      so two runs and any leftovers cannot collide;
+ *   2. delete exactly those rows in afterAll, scoped by that id.
+ *
+ * If a future test needs isolation stronger than that - say it must observe an
+ * empty table - give it its OWN schema (CREATE SCHEMA ... ; SET search_path)
+ * inside that test file rather than making the whole tier destructive.
  */
 export default defineConfig({
     plugins: [tsconfigPaths()],

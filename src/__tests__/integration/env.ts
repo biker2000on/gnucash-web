@@ -67,6 +67,23 @@ export function loadTestEnvFile(): void {
 }
 
 /**
+ * Non-throwing probe for the same variable {@link requireTestDatabaseUrl}
+ * requires.
+ *
+ * The tier as a whole still hard-fails without a database (see the header) -
+ * that policy lives in the setup file. This exists so an individual test file
+ * can additionally guard its own `describe` with `describe.skipIf`, which
+ * keeps the decision out of module scope: a file that throws while being
+ * imported takes the whole run down with a stack trace instead of a skip, and
+ * that failure mode is not worth having in a file whose only job is asserting
+ * lock behaviour.
+ */
+export function hasTestDatabaseUrl(): boolean {
+    loadTestEnvFile();
+    return Boolean(process.env.TEST_DATABASE_URL?.trim());
+}
+
+/**
  * Returns the integration database URL, or throws with the message above.
  *
  * @throws Error when TEST_DATABASE_URL is absent or blank.
@@ -78,16 +95,7 @@ export function requireTestDatabaseUrl(): string {
     return url;
 }
 
-/**
- * Strips the password from a connection URL so it can be logged. CI step logs
- * are retained and readable by anyone with repository access.
- */
-export function redactDatabaseUrl(url: string): string {
-    try {
-        const parsed = new URL(url);
-        if (parsed.password) parsed.password = '***';
-        return parsed.toString();
-    } catch {
-        return '<unparseable database url>';
-    }
-}
+// There is deliberately no redactDatabaseUrl() here. Password-stripping a
+// connection URL so it can be printed still publishes the username, host,
+// port, database name and query-string parameters into retained CI logs, and
+// nothing in this tier needs to print the URL at all - see setup-schema.ts.

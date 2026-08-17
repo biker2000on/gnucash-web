@@ -9,9 +9,11 @@
  * remove. If the postgres service, the schema steps, or the env plumbing in
  * .github/workflows/deploy.yml ever get dropped, this file goes red.
  *
- * Deliberately NOT covered here: lock ordering, FOR UPDATE, and the
- * reconciled-split guard. Those are the tests the harness was built FOR, and
- * they land separately.
+ * Deliberately NOT covered here: the concurrency contracts themselves. Those
+ * are the tests the harness was built FOR, and they live in
+ * ./locking.integration.test.ts - advisory locks, SELECT ... FOR UPDATE, and
+ * the webhook idempotency claim, each asserted by holding a lock on one
+ * connection and observing an application backend block on it.
  */
 import { describe, expect, it } from 'vitest';
 import { getTestPool, withTestClient } from './db';
