@@ -215,9 +215,11 @@ export async function findOrCreateAccount(
     if (!existing) {
       // Guard the check-then-create: take a per-(parent, name) advisory
       // lock and re-check, so concurrent callers reach the create one at a
-      // time instead of colliding on `uq_accounts_parent_name` (db-init
-      // creates that index unconditionally, so the collision would be a hard
-      // error rather than a duplicate row).
+      // time instead of both inserting a duplicate sibling. This lock is the
+      // ONLY serializer — there is deliberately no unique index on
+      // accounts(parent_guid, name), because scheduled-transaction template
+      // children share (parent, '') by design (see db-init.ts,
+      // ACCOUNTS_SIBLING_NAME_INDEX).
       // Only effective inside a transaction (pass `tx`); test doubles
       // without $queryRaw skip the lock and keep legacy behavior.
       const locked = await acquireNamedXactLock(db, accountNameLockKey(parentGuid, segment));

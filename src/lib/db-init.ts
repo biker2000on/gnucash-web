@@ -2693,123 +2693,185 @@ async function tuneAutovacuum() {
 }
 
 /**
- * H4/H7 — `accounts(parent_guid, name)`, the sibling-name uniqueness guarantee.
- * Partial, because parent_guid is NULL for root accounts (one per book).
+ * H4/H7 — `accounts(parent_guid, name)`: why there is NO unique index here, and
+ * why any `uq_accounts_parent_name` an earlier release created is dropped.
  *
- * UNCONDITIONAL, unlike every other guard here, and that is the whole point.
- * Sibling-name uniqueness is not just a nice-to-have index: `findOrCreateAccount`,
+ * Sibling-name uniqueness looks like the obvious natural key: `findOrCreateAccount`,
  * `AccountService.create`, the XML/QBO importers and the SimpleFin sync all run
- * check-then-insert against this natural key, and only the database can bind
- * writers to each other. An advisory lock binds only the callers that take it,
- * so a skipped index leaves every non-locking writer free to insert a duplicate
- * inside another writer's uncommitted window.
+ * check-then-insert against it. It is not one, because the `accounts` table also
+ * stores GnuCash's scheduled-transaction TEMPLATES, and those legitimately
+ * repeat (parent_guid, name):
  *
- * The old version skipped creation whenever ANY duplicate sibling pair existed
- * anywhere in the database, which made one unrelated historical duplicate — in
- * some other book, from some other tool — silently disable the guarantee for
- * every book, on every restart, forever. That failure mode is worse than the
- * duplicates it was avoiding, so this block resolves them instead:
+ *   - `createTemplateContents` (src/lib/services/scheduled-tx-create.ts) inserts
+ *     one child account PER SPLIT under the scheduled transaction's own template
+ *     root, every one of them named '' — the real account each split posts to
+ *     lives in the child's `account` slot, not in its name. So EVERY normal
+ *     two-split scheduled transaction is a duplicate sibling pair by design,
+ *     and GnuCash desktop's SX editor writes the same shape.
+ *   - The per-SX template roots are themselves siblings under 'Template Root',
+ *     named after the scheduled transaction, and two scheduled transactions may
+ *     share a name.
  *
- *   - Deterministic: within each (parent_guid, name) group the row with the
- *     most splits keeps the name (ties broken by guid), so the account the user
- *     actually posts to is the one left alone.
- *   - Non-destructive: losers are RENAMED, never deleted, moved or merged.
- *     Nothing references an account by name — splits, lots, prices, budgets and
- *     the app's own mapping tables all key on guid — so a rename cannot break a
- *     reference. The new name embeds the row's own guid prefix, so it is stable
- *     across runs and cannot collide with a sibling.
- *   - Logged twice over: every rename RAISEs a WARNING and the complete original
- *     row is copied into gnucash_web_migration_backups first, so the operator
- *     can see what changed and put any name back by hand.
- *   - Idempotent: the whole block no-ops once the index exists, and the rename
- *     pass is a no-op on clean data.
- *   - Safe under concurrent instances: the same advisory lock the other guards
- *     use serializes Docker replicas, and LOCK TABLE keeps a concurrent writer
- *     from slipping a fresh duplicate in between the rename pass and the index
- *     build. SHARE ROW EXCLUSIVE, not ACCESS EXCLUSIVE: readers are never
- *     blocked, and CREATE INDEX would take a write-blocking lock regardless.
+ * A unique index on (parent_guid, name) therefore breaks scheduled-transaction
+ * creation outright, with a 23505 on the second split, in this app AND in
+ * GnuCash desktop against the same database. That is not a tradeoff — it is a
+ * product regression, and it is why the previous conditional guard was a
+ * landmine rather than a safety net: on a book with no multi-split scheduled
+ * transaction yet it saw no duplicates, created the index, and broke the first
+ * scheduled transaction the user went on to create.
  *
- * Exported so tests can exercise the remediation against a real server.
+ * Excluding the templates in the index predicate is not available either: a
+ * partial-index predicate can only reference the row's own columns, and nothing
+ * on an `accounts` row says "template" — the marker is structural (an ancestor
+ * is a book's `root_template_guid`, i.e. a lookup) and the only own-row hint is
+ * the empty name, which does not cover the per-SX roots. Discriminating them
+ * would need a denormalized, trigger-maintained column on `accounts`, which
+ * GnuCash desktop would not maintain when IT creates a scheduled transaction.
+ *
+ * So the enforcement for real accounts stays where it can be correct:
+ *   - `acquireNamedXactLock(accountNameLockKey(parent, name))` serializes the
+ *     app's own create-if-missing paths (src/lib/gnucash.ts,
+ *     simplefin-sync.service.ts) — see ACCOUNT_SIBLING_UNIQUE_MARKERS there for
+ *     the adopt-the-winner path that also covers a DB-level key if one is ever
+ *     added.
+ *   - GnuCash desktop enforces sibling uniqueness for real accounts in its own
+ *     engine, so duplicate REAL siblings are anomalies rather than normal data,
+ *     and `reportDuplicateRealSiblingAccounts` below surfaces them to the
+ *     operator instead of rewriting anyone's account names.
+ *
+ * Nothing here deletes, renames, moves or merges a row.
  */
-export const ACCOUNTS_SIBLING_NAME_GUARD_DDL = `
-    DO $$
-    DECLARE
-        v_dup RECORD;
-        v_base text;
-        v_candidate text;
-        v_attempt integer;
-        v_renamed integer := 0;
-    BEGIN
-        PERFORM pg_advisory_xact_lock(hashtext('gnucash_web_accounts_sibling_name_guard'));
-        IF to_regclass('uq_accounts_parent_name') IS NOT NULL THEN
-            RETURN;
-        END IF;
+export const ACCOUNTS_SIBLING_NAME_INDEX = 'uq_accounts_parent_name';
 
-        LOCK TABLE accounts IN SHARE ROW EXCLUSIVE MODE;
+/**
+ * Drops the retired index. `IF EXISTS`, so this is a no-op on the overwhelming
+ * majority of databases and safe to run on every startup; it is issued
+ * unconditionally rather than behind the presence probe so that a probe that
+ * cannot answer still leaves the database in the intended state.
+ *
+ * DROP INDEX takes a brief ACCESS EXCLUSIVE lock on `accounts`. That is
+ * acceptable at startup (and unavoidable — the index is what has to go), and
+ * `initializeDatabase` already holds the init advisory lock, so replicas
+ * starting together do not fight over it.
+ */
+export const ACCOUNTS_SIBLING_NAME_DROP_DDL =
+    `DROP INDEX IF EXISTS ${ACCOUNTS_SIBLING_NAME_INDEX};`;
 
-        FOR v_dup IN
-            WITH dup_groups AS (
-                SELECT parent_guid, name
-                FROM accounts
-                WHERE parent_guid IS NOT NULL AND name IS NOT NULL
-                GROUP BY parent_guid, name
-                HAVING COUNT(*) > 1
-            ), members AS (
-                SELECT a.guid, a.parent_guid, a.name,
-                       (SELECT COUNT(*) FROM splits s WHERE s.account_guid = a.guid) AS split_count
-                FROM accounts a
-                JOIN dup_groups d
-                  ON d.parent_guid = a.parent_guid AND d.name = a.name
-            ), ranked AS (
-                SELECT guid, parent_guid, name,
-                       ROW_NUMBER() OVER (
-                           PARTITION BY parent_guid, name
-                           ORDER BY split_count DESC, guid ASC
-                       ) AS rn
-                FROM members
-            )
-            SELECT guid, parent_guid, name
-            FROM ranked
-            WHERE rn > 1
-            ORDER BY parent_guid, name, guid
-        LOOP
-            v_base := v_dup.name || ' (dup ' || left(v_dup.guid, 8) || ')';
-            v_candidate := v_base;
-            v_attempt := 1;
-            WHILE EXISTS (
-                SELECT 1 FROM accounts
-                WHERE parent_guid = v_dup.parent_guid AND name = v_candidate
-            ) LOOP
-                v_attempt := v_attempt + 1;
-                v_candidate := v_base || ' ' || v_attempt;
-            END LOOP;
+/**
+ * The template forest, structurally: every book's `root_template_guid` and all
+ * of its descendants, plus any ROOT-typed account that is not a book's real
+ * root (that is what an orphaned or pre-`root_template_guid` 'Template Root'
+ * looks like). Deliberately keyed on structure rather than on the name
+ * 'Template Root' or on `name = ''`, both of which a user can produce.
+ *
+ * A `root_template_guid` that IS some book's `root_account_guid` is ignored:
+ * that shape appears in fixtures which point both columns at one root, and
+ * honouring it would silently classify a whole real account tree as templates.
+ */
+const TEMPLATE_FOREST_CTE = `
+    WITH RECURSIVE template_roots AS (
+        SELECT b.root_template_guid AS guid
+        FROM books b
+        WHERE b.root_template_guid IS NOT NULL
+          AND NOT EXISTS (
+              SELECT 1 FROM books b2 WHERE b2.root_account_guid = b.root_template_guid
+          )
+        UNION
+        SELECT a.guid
+        FROM accounts a
+        WHERE a.account_type = 'ROOT'
+          AND NOT EXISTS (
+              SELECT 1 FROM books b3 WHERE b3.root_account_guid = a.guid
+          )
+    ), template_forest AS (
+        SELECT guid FROM template_roots
+        UNION
+        SELECT a.guid
+        FROM accounts a
+        JOIN template_forest f ON a.parent_guid = f.guid
+    )`;
 
-            INSERT INTO gnucash_web_migration_backups
-                (step_name, source_table, row_key, row_data)
-            SELECT
-                'accounts-sibling-name-disambiguate',
-                'accounts',
-                a.guid,
-                to_jsonb(a) || jsonb_build_object('gnucash_web_renamed_to', v_candidate)
-            FROM accounts a
-            WHERE a.guid = v_dup.guid
-            ON CONFLICT (step_name, source_table, row_key) DO NOTHING;
+/**
+ * Duplicate sibling names among REAL accounts only — anomalies, unlike the
+ * template duplicates the same query would otherwise report on every healthy
+ * book. Exported for tests.
+ */
+export const REAL_SIBLING_NAME_DUPLICATES_COUNT_SQL = `${TEMPLATE_FOREST_CTE}
+    SELECT COUNT(*)::int AS dupes
+    FROM (
+        SELECT a.parent_guid, a.name
+        FROM accounts a
+        WHERE a.parent_guid IS NOT NULL
+          AND a.guid NOT IN (SELECT guid FROM template_forest)
+        GROUP BY a.parent_guid, a.name
+        HAVING COUNT(*) > 1
+    ) d;`;
 
-            UPDATE accounts SET name = v_candidate WHERE guid = v_dup.guid;
-            v_renamed := v_renamed + 1;
+/** The same rows, listed — what the operator is told to run. Exported for tests. */
+export const REAL_SIBLING_NAME_DUPLICATES_FIND_SQL = `${TEMPLATE_FOREST_CTE}
+    SELECT a.parent_guid, a.name, COUNT(*) AS copies
+    FROM accounts a
+    WHERE a.parent_guid IS NOT NULL
+      AND a.guid NOT IN (SELECT guid FROM template_forest)
+    GROUP BY a.parent_guid, a.name
+    HAVING COUNT(*) > 1;`;
 
-            RAISE WARNING 'gnucash-web: renamed duplicate sibling account % under parent % from "%" to "%"', v_dup.guid, v_dup.parent_guid, v_dup.name, v_candidate;
-        END LOOP;
+/**
+ * Retires `uq_accounts_parent_name` and reports genuinely duplicated real
+ * siblings.
+ *
+ * Both halves log through `console`, not `RAISE WARNING`: node-postgres
+ * discards Postgres notices unless a `notice` listener is installed and no pool
+ * here installs one, so a RAISEd warning is invisible to the operator — the
+ * exact reason the previous generation of guards could disable themselves
+ * unnoticed for years.
+ *
+ * Never throws: a startup that cannot report duplicates must still start.
+ */
+async function retireAccountsSiblingNameIndex(): Promise<void> {
+    let existed = false;
+    try {
+        const presence = await query('SELECT to_regclass($1) IS NOT NULL AS present', [
+            ACCOUNTS_SIBLING_NAME_INDEX,
+        ]);
+        existed = presence.rows?.[0]?.present === true;
+        await query(ACCOUNTS_SIBLING_NAME_DROP_DDL);
+        if (existed) {
+            console.warn(
+                `WARNING: dropped unique index ${ACCOUNTS_SIBLING_NAME_INDEX} on accounts(parent_guid, name). ` +
+                'An earlier release created it, and it makes creating a multi-split scheduled ' +
+                'transaction fail with a duplicate-key error — GnuCash stores one template child ' +
+                'account per split, all named \'\' under the same parent, so duplicate siblings are ' +
+                'normal data there. No account row was changed. If scheduled-transaction creation ' +
+                'has been failing with "duplicate key value violates unique constraint", this is why, ' +
+                'and it is now fixed.',
+            );
+        }
+    } catch (error) {
+        console.error(
+            `Failed to drop the retired unique index ${ACCOUNTS_SIBLING_NAME_INDEX}:`,
+            error,
+        );
+        return;
+    }
 
-        IF v_renamed > 0 THEN
-            RAISE WARNING 'gnucash-web: disambiguated % duplicate sibling account name(s) so accounts(parent_guid, name) could be made unique; nothing was deleted, moved or merged and every original row is in gnucash_web_migration_backups (step_name = accounts-sibling-name-disambiguate) — rename them to taste from the accounts UI', v_renamed;
-        END IF;
-
-        CREATE UNIQUE INDEX IF NOT EXISTS uq_accounts_parent_name
-            ON accounts (parent_guid, name)
-            WHERE parent_guid IS NOT NULL;
-    END $$;
-`;
+    try {
+        const counted = await query(REAL_SIBLING_NAME_DUPLICATES_COUNT_SQL);
+        const dupes = Number(counted.rows?.[0]?.dupes ?? 0);
+        if (dupes > 0) {
+            console.warn(
+                `WARNING: ${dupes} duplicate sibling account name(s) exist outside the ` +
+                'scheduled-transaction templates. GnuCash itself keeps real sibling names unique, ' +
+                'so these are anomalies — usually a lost create-if-missing race or a partial import. ' +
+                'Nothing was renamed: pick the account you actually post to and rename or merge the ' +
+                'others from the accounts UI. List them with: ' +
+                REAL_SIBLING_NAME_DUPLICATES_FIND_SQL.replace(/\s+/g, ' ').trim(),
+            );
+        }
+    } catch (error) {
+        console.error('Failed to check for duplicate real sibling account names:', error);
+    }
+}
 
 /**
  * Creates unique indexes that turn silent duplicate races into clean errors
@@ -2817,14 +2879,15 @@ export const ACCOUNTS_SIBLING_NAME_GUARD_DDL = `
  *
  * db-init runs at startup on live databases, so every guard here must be
  * duplicate-safe: each block first checks whether existing rows already
- * violate the candidate key. Where a resolution is provably safe (prices,
- * reconciliation sessions, sibling account names) the block resolves it in
- * place; everywhere else it RAISEs a WARNING with a count and skips index
- * creation.
+ * violate the candidate key. Where deduping is provably safe (prices,
+ * reconciliation sessions) the block cleans up in place; everywhere else it
+ * RAISEs a WARNING with a count and skips index creation — user data is never
+ * deleted or renamed automatically.
  *
- * Only `accounts(parent_guid, name)` is UNCONDITIONAL — see
- * ACCOUNTS_SIBLING_NAME_GUARD_DDL for why that one cannot be allowed to skip.
- * No guard ever deletes, moves or merges user rows.
+ * Deliberately NOT constrained: accounts(parent_guid, name). Scheduled-
+ * transaction templates share (parent, '') by design, so the key is not unique
+ * on a healthy book at all — see ACCOUNTS_SIBLING_NAME_INDEX above, where a
+ * previously-created index is dropped.
  *
  * Deliberately NOT constrained: slots(obj_guid, name). GnuCash KVP list
  * slots legitimately store repeated (obj_guid, name) rows (a list's elements
@@ -2841,15 +2904,8 @@ interface UniqueGuardSkipDiagnostic {
     findSql: string;
     /** What breaks in the app while the index is missing. */
     impact: string;
-    /** How to clean up. */
+    /** How to clean up (never done automatically — this is user data). */
     advice: string;
-    /**
-     * Set for the guards that resolve their own duplicates. For those, a
-     * missing index does NOT mean "dirty data blocked it" — the remediation
-     * would have handled that — so the message must not tell the operator to
-     * go clean up rows that are probably already clean.
-     */
-    selfRemediating?: boolean;
 }
 
 interface UniqueGuard {
@@ -2891,13 +2947,9 @@ async function reportSkippedUniqueGuard(
             // Fall through with the "unknown" wording.
         }
 
-        const cause = diagnostic.selfRemediating
-            ? `the automatic remediation did not complete (${dupes} duplicate group(s) remain)`
-            : `${dupes} duplicate group(s) block it`;
-
         console.error(
             `ERROR: unique index ${diagnostic.indexName} on ${label} was NOT created — ` +
-            `${cause}. Until this is fixed and the app restarted, ` +
+            `${dupes} duplicate group(s) block it. Until this is fixed and the app restarted, ` +
             `${diagnostic.impact}. ${diagnostic.advice} ` +
             `List the offending rows with: ${diagnostic.findSql}`,
         );
@@ -3069,20 +3121,6 @@ async function createUniqueConstraintGuards() {
             },
         },
         {
-            label: 'accounts(parent_guid, name)',
-            ddl: ACCOUNTS_SIBLING_NAME_GUARD_DDL,
-            skipDiagnostic: {
-                indexName: 'uq_accounts_parent_name',
-                countSql: `SELECT COUNT(*)::int AS dupes FROM (
-                    SELECT parent_guid, name FROM accounts WHERE parent_guid IS NOT NULL
-                    GROUP BY parent_guid, name HAVING COUNT(*) > 1) d`,
-                findSql: `SELECT parent_guid, name, COUNT(*) FROM accounts WHERE parent_guid IS NOT NULL GROUP BY 1, 2 HAVING COUNT(*) > 1;`,
-                impact: 'every account writer is back on a racy SELECT-then-INSERT — findOrCreateAccount, AccountService.create, the XML/QBO importers and the SimpleFin sync can each create a duplicate sibling inside another writer\'s uncommitted window',
-                advice: 'This guard resolves its own duplicates, so a missing index means the DDL itself failed — look for the "Error creating unique constraint guard for accounts(parent_guid, name)" line above (typically a lock timeout, or the app role lacking rights on accounts), fix that, and restart.',
-                selfRemediating: true,
-            },
-        },
-        {
             label: 'gnucash_web_transaction_meta(simplefin_transaction_id)',
             ddl: simpleFinIdUniqueDDL,
             skipDiagnostic: {
@@ -3127,6 +3165,10 @@ async function createUniqueConstraintGuards() {
             await reportSkippedUniqueGuard(guard.label, guard.skipDiagnostic);
         }
     }
+    // Not a guard: the reverse. Retires an index an earlier release created on
+    // accounts(parent_guid, name), which scheduled-transaction templates
+    // violate by design.
+    await retireAccountsSiblingNameIndex();
     console.log('✓ Unique constraint guards created/verified successfully');
 }
 

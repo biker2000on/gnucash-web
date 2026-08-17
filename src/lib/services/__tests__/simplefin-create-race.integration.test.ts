@@ -5,15 +5,29 @@
  * Why this file exists at all: the sibling unit test drives the same functions
  * through an in-memory fake whose `acquireNamedXactLock` implements mutual
  * exclusion itself. A fake that implements the rule under test can only ever
- * confirm that the fake works. Two Prisma connections racing for one Postgres
- * advisory lock — and one partial unique index deciding the loser — is a thing
- * only a real server can demonstrate.
+ * confirm that the fake works. Six Prisma connections racing for one real
+ * Postgres advisory lock is a thing only a real server can demonstrate — as is
+ * what a unique index on accounts(parent_guid, name) does to scheduled
+ * transactions, which is the other half of this file.
  *
  * Naming: `*.integration.test.ts` is the suffix of the integration tier being
- * wired in parallel (vitest.integration.config.ts + a postgres service in CI).
- * Until that lands the file is skipped, loudly, when no TEST_DATABASE_URL is
- * resolvable — see the skip title below. It is never a silent pass: the whole
- * describe block disappears from the report rather than reporting green.
+ * wired in parallel (a postgres service in CI; the deploy workflow has none
+ * yet). Until that lands the file is skipped, loudly, when no
+ * TEST_DATABASE_URL is resolvable — see the skip title below. It is never a
+ * silent pass: the whole describe block disappears from the report rather than
+ * reporting green.
+ *
+ * Provisioning a database to run it against (throwaway, empty):
+ *
+ *     docker run -d --name gcw-itest-pg -e POSTGRES_PASSWORD=test \
+ *       -e POSTGRES_USER=test -e POSTGRES_DB=gcw_itest -p 55434:5432 postgres:17-alpine
+ *     npx prisma migrate diff --from-empty --to-schema prisma/schema.prisma \
+ *       --script -o /tmp/gcw-schema.sql
+ *     docker exec -i gcw-itest-pg psql -v ON_ERROR_STOP=1 -U test -d gcw_itest < /tmp/gcw-schema.sql
+ *     echo 'TEST_DATABASE_URL=postgresql://test:test@127.0.0.1:55434/gcw_itest' >> .env.test.local
+ *
+ * That schema is stricter than a real GnuCash book in one place that matters
+ * here — see the `recurrences_obj_guid_fkey` note in beforeAll.
  *
  * Isolation: every row this file writes carries a per-run random suffix, so it
  * can share a database with another worker's tier without either colliding.
@@ -24,7 +38,7 @@
  * it. So cleanup is explicit (afterAll) and the residue is asserted to zero
  * afterwards, which is what the rollback was for.
  */
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -67,12 +81,24 @@ const RUN = randomUUID().replace(/-/g, '').slice(0, 6).toUpperCase();
 const BOOK_GUID = guid();
 const ROOT_GUID = guid();
 const PARENT_GUID = guid();
+/** Second posting account, so a scheduled transaction has two real splits. */
+const SECOND_GUID = guid();
+/**
+ * The book's `root_template_guid`: where GnuCash keeps one child account per
+ * scheduled transaction, each with one grandchild PER SPLIT, all named ''.
+ */
+const TEMPLATE_ROOT_GUID = guid();
 const CURRENCY_GUID = guid();
 /** A throwaway currency, so nothing here depends on (or disturbs) real USD. */
 const CURRENCY = `TC${RUN}`;
 const IMBALANCE_NAME = `Imbalance-${CURRENCY}`;
 /** A throwaway ticker, likewise. */
 const SYMBOL = `ZZ${RUN}`;
+/**
+ * Name for the run-scoped unique indexes the template tests build. Per-run, so
+ * two workers sharing a database cannot collide on it.
+ */
+const SCOPED_INDEX = `uq_race_parent_name_${RUN.toLowerCase()}`;
 
 /**
  * Racers per scenario. More than two, because two can miss an interleaving.
@@ -130,10 +156,29 @@ describeWithDatabase(
     () => {
         let pool: Pool;
         let service: typeof import('../simplefin-sync.service');
+        let scheduled: typeof import('../scheduled-tx-create');
+        let dbInit: typeof import('@/lib/db-init');
         let prisma: (typeof import('@/lib/prisma'))['default'];
+        /** True when this run seeded the book's 'Template Root' and must remove it. */
+        let ownsTemplateRoot = false;
+        /** Every scheduled transaction this run creates, for teardown. */
+        const createdSxGuids: string[] = [];
 
         beforeAll(async () => {
             pool = new Pool({ connectionString: TEST_DATABASE_URL!, max: 4 });
+
+            // A GnuCash book has no foreign keys at all; a database provisioned
+            // from prisma/schema.prisma has the ones Prisma infers, and this
+            // one is wrong: `recurrences.obj_guid` is polymorphic (budgets OR
+            // scheduled transactions) and the schema models only the budget
+            // side. Left in place it would reject the recurrence row GnuCash
+            // itself writes, failing the scheduled-transaction tests below for
+            // a reason that cannot happen in production. Not restored
+            // afterwards on purpose: the constraint should not exist on a
+            // GnuCash schema in the first place.
+            await pool.query(
+                'ALTER TABLE recurrences DROP CONSTRAINT IF EXISTS recurrences_obj_guid_fkey',
+            );
 
             await pool.query(
                 `INSERT INTO commodities (guid, namespace, mnemonic, fullname, cusip, fraction, quote_flag, quote_source, quote_tz)
@@ -145,18 +190,48 @@ describeWithDatabase(
                  VALUES ($1, $2, 'ROOT', $3, 100, 0, NULL, '', '', 0, 0)`,
                 [ROOT_GUID, `Root ${RUN}`, CURRENCY_GUID],
             );
+            // scheduled-tx-create resolves the template root GLOBALLY, by the
+            // name GnuCash gives it (`WHERE name = 'Template Root' AND
+            // account_type = 'ROOT' LIMIT 1`), so on a database that already has
+            // one the fixture must NOT add a second and then assume its own was
+            // picked — that assumption would leave this run's template rows
+            // behind under someone else's root. Seed one only when the database
+            // has none, and derive the real root from each created transaction.
+            const existingTemplateRoot = await pool.query<{ guid: string }>(
+                `SELECT guid FROM accounts WHERE name = 'Template Root' AND account_type = 'ROOT' LIMIT 1`,
+            );
+            ownsTemplateRoot = existingTemplateRoot.rows.length === 0;
+            if (ownsTemplateRoot) {
+                await pool.query(
+                    `INSERT INTO accounts (guid, name, account_type, commodity_guid, commodity_scu, non_std_scu, parent_guid, code, description, hidden, placeholder)
+                     VALUES ($1, 'Template Root', 'ROOT', $2, 100, 0, NULL, '', '', 0, 0)`,
+                    [TEMPLATE_ROOT_GUID, CURRENCY_GUID],
+                );
+            }
             await pool.query(
                 `INSERT INTO books (guid, root_account_guid, root_template_guid, name)
-                 VALUES ($1, $2, $2, $3)`,
-                [BOOK_GUID, ROOT_GUID, `Race book ${RUN}`],
+                 VALUES ($1, $2, $3, $4)`,
+                [
+                    BOOK_GUID,
+                    ROOT_GUID,
+                    ownsTemplateRoot ? TEMPLATE_ROOT_GUID : existingTemplateRoot.rows[0].guid.trim(),
+                    `Race book ${RUN}`,
+                ],
             );
             await pool.query(
                 `INSERT INTO accounts (guid, name, account_type, commodity_guid, commodity_scu, non_std_scu, parent_guid, code, description, hidden, placeholder)
                  VALUES ($1, $2, 'BANK', $3, 100, 0, $4, '', '', 0, 0)`,
                 [PARENT_GUID, `Brokerage ${RUN}`, CURRENCY_GUID, ROOT_GUID],
             );
+            await pool.query(
+                `INSERT INTO accounts (guid, name, account_type, commodity_guid, commodity_scu, non_std_scu, parent_guid, code, description, hidden, placeholder)
+                 VALUES ($1, $2, 'BANK', $3, 100, 0, $4, '', '', 0, 0)`,
+                [SECOND_GUID, `Checking ${RUN}`, CURRENCY_GUID, ROOT_GUID],
+            );
 
             service = await import('../simplefin-sync.service');
+            scheduled = await import('../scheduled-tx-create');
+            dbInit = await import('@/lib/db-init');
             prisma = (await import('@/lib/prisma')).default;
 
             // Open one pooled connection per racer up front. A racer that has
@@ -226,33 +301,147 @@ describeWithDatabase(
             }
         }
 
+        /**
+         * Deletes everything one scheduled transaction owns: its template
+         * children (with their template transaction and splits and `account`
+         * slots), its per-transaction template root, and its
+         * schedxaction/recurrence/audit rows.
+         *
+         * Keyed on the transaction's OWN `template_act_guid`, never on the
+         * fixture's template root, because the service picks the template root
+         * globally and may well pick one this run did not create.
+         */
+        async function deleteScheduledTransaction(sxGuid: string): Promise<void> {
+            const roots = await pool.query<{ template_act_guid: string | null }>(
+                'SELECT template_act_guid FROM schedxactions WHERE guid = $1',
+                [sxGuid],
+            );
+            const root = roots.rows[0]?.template_act_guid?.trim();
+            if (root) {
+                const kids = await pool.query<{ guid: string }>(
+                    'SELECT guid FROM accounts WHERE parent_guid = $1',
+                    [root],
+                );
+                const kidGuids = kids.rows.map(row => row.guid.trim());
+                if (kidGuids.length > 0) {
+                    const txs = await pool.query<{ tx_guid: string }>(
+                        'SELECT DISTINCT tx_guid FROM splits WHERE account_guid = ANY($1::varchar[])',
+                        [kidGuids],
+                    );
+                    await pool.query(
+                        'DELETE FROM splits WHERE account_guid = ANY($1::varchar[])',
+                        [kidGuids],
+                    );
+                    const txGuids = txs.rows.map(row => row.tx_guid.trim());
+                    if (txGuids.length > 0) {
+                        await pool.query('DELETE FROM transactions WHERE guid = ANY($1::varchar[])', [
+                            txGuids,
+                        ]);
+                    }
+                    await pool.query('DELETE FROM slots WHERE obj_guid = ANY($1::varchar[])', [
+                        kidGuids,
+                    ]);
+                    await pool.query('DELETE FROM accounts WHERE guid = ANY($1::varchar[])', [
+                        kidGuids,
+                    ]);
+                }
+            }
+            await pool.query('DELETE FROM recurrences WHERE obj_guid = $1', [sxGuid]);
+            await pool.query('DELETE FROM schedxactions WHERE guid = $1', [sxGuid]);
+            await pool.query('DELETE FROM gnucash_web_audit WHERE entity_guid = $1', [sxGuid]);
+            if (root) await pool.query('DELETE FROM accounts WHERE guid = $1', [root]);
+        }
+
         afterAll(async () => {
             if (!pool) return;
             try {
                 await prisma?.$disconnect();
+
+                for (const sxGuid of createdSxGuids) await deleteScheduledTransaction(sxGuid);
+
                 await pool.query('DELETE FROM accounts WHERE parent_guid = $1', [PARENT_GUID]);
                 await pool.query('DELETE FROM accounts WHERE parent_guid = $1', [ROOT_GUID]);
                 await pool.query('DELETE FROM books WHERE guid = $1', [BOOK_GUID]);
-                await pool.query('DELETE FROM accounts WHERE guid = $1', [ROOT_GUID]);
+                await pool.query('DELETE FROM accounts WHERE guid = ANY($1::varchar[])', [
+                    ownsTemplateRoot ? [ROOT_GUID, TEMPLATE_ROOT_GUID] : [ROOT_GUID],
+                ]);
                 await pool.query('DELETE FROM commodities WHERE guid = $1 OR mnemonic = $2', [
                     CURRENCY_GUID,
                     SYMBOL,
                 ]);
+                // Both indexes the tests below create on purpose: a failure
+                // between creating one and dropping it must not leave it for the
+                // next run, or for another tier sharing this database.
+                await pool.query('DROP INDEX IF EXISTS uq_accounts_parent_name');
+                await pool.query(`DROP INDEX IF EXISTS ${SCOPED_INDEX}`);
 
                 // The rollback substitute: nothing this run wrote survives it.
                 // Scoped to this run's rows on purpose — a global count would
                 // flake against a database shared with another tier.
                 const residue = await pool.query<{ n: number }>(
-                    `SELECT (SELECT COUNT(*) FROM accounts WHERE guid IN ($1, $2) OR parent_guid IN ($1, $2))
-                          + (SELECT COUNT(*) FROM books WHERE guid = $3)
-                          + (SELECT COUNT(*) FROM commodities WHERE guid = $4 OR mnemonic = $5) AS n`,
-                    [ROOT_GUID, PARENT_GUID, BOOK_GUID, CURRENCY_GUID, SYMBOL],
+                    `SELECT (SELECT COUNT(*) FROM accounts
+                             WHERE guid IN ($1, $2, $3) OR parent_guid IN ($1, $2, $3))
+                          + (SELECT COUNT(*) FROM books WHERE guid = $4)
+                          + (SELECT COUNT(*) FROM commodities WHERE guid = $5 OR mnemonic = $6)
+                          + (SELECT COUNT(*) FROM schedxactions WHERE guid = ANY($7::varchar[]))
+                          + (SELECT COUNT(*) FROM recurrences WHERE obj_guid = ANY($7::varchar[]))
+                          + (SELECT COUNT(*) FROM gnucash_web_audit WHERE entity_guid = ANY($7::varchar[]))
+                          + (SELECT COUNT(*) FROM transactions WHERE description LIKE $8)
+                          + (SELECT COUNT(*) FROM accounts WHERE name LIKE $8) AS n`,
+                    [
+                        ROOT_GUID,
+                        PARENT_GUID,
+                        TEMPLATE_ROOT_GUID,
+                        BOOK_GUID,
+                        CURRENCY_GUID,
+                        SYMBOL,
+                        createdSxGuids,
+                        `%${RUN}%`,
+                    ],
                 );
                 expect(Number(residue.rows[0].n)).toBe(0);
             } finally {
                 await pool.end();
             }
         }, DB_TIMEOUT_MS);
+
+        /** A two-split scheduled transaction — the shape that has to keep working. */
+        const twoSplitInput = (label: string) => ({
+            name: `SX ${label} ${RUN}`,
+            startDate: '2026-01-05',
+            endDate: null,
+            recurrence: {
+                periodType: 'month',
+                mult: 1,
+                periodStart: '2026-01-05',
+                weekendAdjust: 'none',
+            },
+            splits: [
+                { accountGuid: PARENT_GUID, amount: -25 },
+                { accountGuid: SECOND_GUID, amount: 25 },
+            ],
+            autoCreate: false,
+            autoNotify: false,
+        });
+
+        /**
+         * Creates one and records it for teardown BEFORE asserting anything, so
+         * a failed assertion still cleans up.
+         */
+        async function createSx(label: string) {
+            const result = await scheduled.createScheduledTransaction(twoSplitInput(label));
+            if (result.success) createdSxGuids.push(result.guid);
+            return result;
+        }
+
+        /** The template root the service actually used for `sxGuid`. */
+        async function templateRootOf(sxGuid: string): Promise<string> {
+            const rows = await pool.query<{ template_act_guid: string }>(
+                'SELECT template_act_guid FROM schedxactions WHERE guid = $1',
+                [sxGuid],
+            );
+            return rows.rows[0].template_act_guid.trim();
+        }
 
         it('creates exactly one Imbalance account under concurrent syncs', async () => {
             // The book scope a real sync would carry: captured before any of
@@ -341,164 +530,193 @@ describeWithDatabase(
             expect(commodities.rows).toHaveLength(1);
         }, DB_TIMEOUT_MS);
 
-        it('has the database itself refuse a duplicate sibling, lock or no lock', async () => {
-            // This is why the fix does not rest on the advisory lock alone: the
-            // index binds writers that never take it — AccountService.create
-            // and the XML importer do not, and cannot be made to without the
-            // same discipline surviving in every account writer ever added.
-            // Its presence is also what makes the winner-adoption path in the
-            // service reachable.
-            const index = await pool.query(
-                `SELECT indexdef FROM pg_indexes WHERE indexname = 'uq_accounts_parent_name'`,
+        /**
+         * The regression a cross-vendor review caught before it shipped, proven
+         * rather than argued: `accounts(parent_guid, name)` is NOT a unique key
+         * on a healthy book. `createTemplateContents` writes one child account
+         * PER SPLIT of a scheduled transaction, all named '' under that
+         * transaction's own template root (the real account each split posts to
+         * lives in the child's `account` slot). GnuCash desktop writes the same
+         * shape, and two scheduled transactions may share a name, which makes
+         * their template roots duplicate siblings too.
+         *
+         * Both halves are demonstrated against rows THIS RUN owns, with
+         * subtree-scoped indexes rather than the global one the retired guard
+         * built. That is deliberate: a global unique index cannot be created at
+         * all on a database that already violates the key — including one shared
+         * with another tier mid-run — which would make this test's outcome
+         * depend on ambient data instead of on the code under test.
+         */
+        it('proves a unique index on accounts(parent_guid, name) breaks scheduled transactions', async () => {
+            const created = await createSx('Template');
+            expect(created.success === false ? created.error : 'ok').toBe('ok');
+            const templateRoot = await templateRootOf(
+                created.success === true ? created.guid : '',
             );
-            expect(index.rows).toHaveLength(1);
-            expect(index.rows[0].indexdef).toContain('parent_guid, name');
 
-            const name = `Dup ${RUN}`;
-            const insert = (rowGuid: string) =>
+            // Half one: the template children. Two siblings, same parent, both
+            // named '' — so a unique index over just that subtree cannot even be
+            // BUILT, which is the same rejection the second split would take on
+            // insert.
+            const children = await pool.query<{ name: string }>(
+                'SELECT name FROM accounts WHERE parent_guid = $1',
+                [templateRoot],
+            );
+            expect(children.rows.map(row => row.name)).toEqual(['', '']);
+            await expect(
                 pool.query(
-                    `INSERT INTO accounts (guid, name, account_type, commodity_guid, commodity_scu, non_std_scu, parent_guid, code, description, hidden, placeholder)
-                     VALUES ($1, $2, 'BANK', $3, 100, 0, $4, '', '', 0, 0)`,
-                    [rowGuid, name, CURRENCY_GUID, PARENT_GUID],
+                    `CREATE UNIQUE INDEX ${SCOPED_INDEX} ON accounts (parent_guid, name)
+                     WHERE parent_guid = '${templateRoot}'`,
+                ),
+            ).rejects.toMatchObject({ code: '23505' });
+
+            // Each child carries its real account in an `account` slot, which is
+            // why the empty names are not a bug to be renamed away.
+            const slots = await pool.query<{ guid_val: string }>(
+                `SELECT guid_val FROM slots
+                 WHERE name = 'account'
+                   AND obj_guid IN (SELECT guid FROM accounts WHERE parent_guid = $1)`,
+                [templateRoot],
+            );
+            expect(slots.rows.map(row => row.guid_val.trim()).sort()).toEqual(
+                [PARENT_GUID, SECOND_GUID].sort(),
+            );
+
+            // Half two: the per-transaction template roots are siblings named
+            // after the scheduled transaction, and nothing stops two
+            // transactions sharing a name. With a unique index over just that
+            // parent, creating the second one FAILS at runtime — the user-facing
+            // break, on a key an index predicate could never exclude.
+            const parentOfRoots = await pool.query<{ parent_guid: string }>(
+                'SELECT parent_guid FROM accounts WHERE guid = $1',
+                [templateRoot],
+            );
+            await pool.query(
+                `CREATE UNIQUE INDEX ${SCOPED_INDEX} ON accounts (parent_guid, name)
+                 WHERE parent_guid = '${parentOfRoots.rows[0].parent_guid.trim()}'`,
+            );
+            try {
+                const clash = await createSx('Template');
+                expect(clash.success).toBe(false);
+                expect(clash.success === false && clash.error).toMatch(
+                    /duplicate key value|unique constraint/i,
                 );
-
-            await insert(guid());
-            await expect(insert(guid())).rejects.toMatchObject({ code: '23505' });
-
-            await pool.query('DELETE FROM accounts WHERE parent_guid = $1 AND name = $2', [
-                PARENT_GUID,
-                name,
-            ]);
+                // A single transaction, so the failed create leaves nothing
+                // half-built.
+                const roots = await pool.query<{ n: number }>(
+                    `SELECT COUNT(*)::int AS n FROM accounts WHERE parent_guid = $1 AND name = $2`,
+                    [parentOfRoots.rows[0].parent_guid.trim(), `SX Template ${RUN}`],
+                );
+                expect(roots.rows[0].n).toBe(1);
+            } finally {
+                await pool.query(`DROP INDEX IF EXISTS ${SCOPED_INDEX}`);
+            }
         }, DB_TIMEOUT_MS);
 
         /**
-         * The deployment state the whole fix turns on: a database where the old
-         * db-init SKIPPED `uq_accounts_parent_name` because some unrelated
-         * duplicate sibling existed somewhere. On such a database the advisory
-         * lock was the only serializer, and it binds only its own callers — so
-         * the guarantee has to be restored, not worked around.
+         * The recovery path for the databases the earlier release already
+         * indexed: it built `uq_accounts_parent_name` on any book that happened
+         * to have no multi-split scheduled transaction at startup, and the first
+         * one the user created afterwards failed. db-init has to remove it, and
+         * has to SAY so — through `console`, because node-postgres discards a
+         * Postgres `RAISE WARNING` unseen, which is how the previous generation
+         * of guards managed to disable themselves silently.
          *
-         * Staged in a private schema rather than by dropping the real index:
-         * real tables (LIKE the production ones), a real server, the real DDL
-         * resolving `accounts`/`splits`/the backup table unqualified exactly as
-         * it does in production, and no way for a failure here to leave the
-         * shared database without its index.
+         * The index is seeded with a one-row predicate so that this assertion
+         * holds on any database, violated key or not. Retirement keys on the
+         * index NAME, which is identical either way.
          */
-        it('repairs a database where the sibling-name index was previously skipped', async () => {
-            const { ACCOUNTS_SIBLING_NAME_GUARD_DDL, SCHEMA_META_DDL } = await import('@/lib/db-init');
+        it('retires a pre-existing uq_accounts_parent_name, visibly, and leaves creation working', async () => {
+            await pool.query(
+                `CREATE UNIQUE INDEX uq_accounts_parent_name ON accounts (parent_guid, name)
+                 WHERE guid = '${PARENT_GUID}'`,
+            );
 
-            const SCHEMA = `race_guard_${RUN.toLowerCase()}`;
-            // Its own pool: `SET search_path` is session state, and a client
-            // handed back to the shared pool would carry it to the next caller.
-            const sandbox = new Pool({ connectionString: TEST_DATABASE_URL!, max: 1 });
+            const messages: string[] = [];
+            const warn = vi
+                .spyOn(console, 'warn')
+                // Collected here rather than read off `warn.mock.calls` after
+                // the fact: mockRestore() also resets the recorded calls.
+                .mockImplementation((...args: unknown[]) => { messages.push(String(args[0])); });
+            try {
+                await dbInit.initializeDatabase();
+            } finally {
+                warn.mockRestore();
+            }
+            expect(messages.some(m => /dropped unique index uq_accounts_parent_name/.test(m)))
+                .toBe(true);
+            expect(messages.some(m => /scheduled transaction/i.test(m))).toBe(true);
 
-            // Explicit guids so the tie-break is observable: within a duplicate
-            // group the most-posted-to row keeps the name, ties going to the
-            // lowest guid.
-            const PARENT = '9'.repeat(32);
-            const KEEPER = '1'.repeat(32);
-            const LOSER_A = '2'.repeat(32);
-            const LOSER_B = '3'.repeat(32);
-            const DECOY = '4'.repeat(32);
-            const ROOT_A = '5'.repeat(32);
-            const ROOT_B = '6'.repeat(32);
+            const stillThere = await pool.query(
+                `SELECT indexname FROM pg_indexes WHERE indexname = 'uq_accounts_parent_name'`,
+            );
+            expect(stillThere.rows).toHaveLength(0);
 
-            const insertAccount = (rowGuid: string, rowName: string, parent: string | null) =>
-                sandbox.query(
-                    `INSERT INTO accounts (guid, name, account_type, commodity_guid, commodity_scu, non_std_scu, parent_guid, code, description, hidden, placeholder)
-                     VALUES ($1, $2, 'BANK', $3, 100, 0, $4, '', '', 0, 0)`,
-                    [rowGuid, rowName, CURRENCY_GUID, parent],
+            const after = await createSx('Retired');
+            expect(after.success === false ? after.error : 'ok').toBe('ok');
+        }, DB_TIMEOUT_MS);
+
+        /**
+         * What replaced the rejected rename migration: a report, and one that
+         * has to be silent on a healthy book. The rename was rejected twice
+         * over — it would have renamed the template children above on EVERY
+         * healthy book, and renaming an account is not even safe in general,
+         * because personal-import.ts, qif/importer.ts and
+         * settlement-import.service.ts all resolve accounts by name, so a
+         * rename can redirect a later import into a different ledger account.
+         *
+         * Asserted as deltas rather than absolute counts, so the numbers hold
+         * on a database shared with another tier's fixtures.
+         */
+        it('counts duplicate REAL sibling names while structurally ignoring template accounts', async () => {
+            const count = async () => {
+                const rows = await pool.query<{ dupes: number }>(
+                    dbInit.REAL_SIBLING_NAME_DUPLICATES_COUNT_SQL,
                 );
-
-            const namesByGuid = async () => {
-                const rows = await sandbox.query<{ guid: string; name: string }>(
-                    'SELECT guid, name FROM accounts ORDER BY guid',
-                );
-                return Object.fromEntries(rows.rows.map(r => [r.guid.trim(), r.name]));
+                return Number(rows.rows[0].dupes);
             };
 
+            const baseline = await count();
+
+            const created = await createSx('Report');
+            expect(created.success === false ? created.error : 'ok').toBe('ok');
+
+            // Premise check: the template children ARE duplicate siblings by the
+            // raw key, so a report that did not exclude them structurally would
+            // now be non-zero.
+            const raw = await pool.query<{ n: number }>(
+                `SELECT COUNT(*)::int AS n FROM (
+                    SELECT parent_guid, name FROM accounts WHERE parent_guid IS NOT NULL
+                    GROUP BY parent_guid, name HAVING COUNT(*) > 1) d`,
+            );
+            expect(raw.rows[0].n).toBeGreaterThan(0);
+
+            // The property that matters: a healthy book reports nothing, so
+            // nothing on it would ever be "remediated".
+            expect(await count()).toBe(baseline);
+
+            // A genuine anomaly — two real siblings sharing a name — is
+            // reported, which also proves the real account tree is not being
+            // misclassified as templates.
+            const dupName = `Dup ${RUN}`;
+            const dupA = guid();
+            const dupB = guid();
+            const insertDup = (rowGuid: string) =>
+                pool.query(
+                    `INSERT INTO accounts (guid, name, account_type, commodity_guid, commodity_scu, non_std_scu, parent_guid, code, description, hidden, placeholder)
+                     VALUES ($1, $2, 'BANK', $3, 100, 0, $4, '', '', 0, 0)`,
+                    [rowGuid, dupName, CURRENCY_GUID, PARENT_GUID],
+                );
+            await insertDup(dupA);
+            await insertDup(dupB);
             try {
-                await sandbox.query(`CREATE SCHEMA ${SCHEMA}`);
-                await sandbox.query(`SET search_path TO ${SCHEMA}`);
-                await sandbox.query('CREATE TABLE accounts (LIKE public.accounts INCLUDING DEFAULTS)');
-                await sandbox.query('CREATE TABLE splits (LIKE public.splits INCLUDING DEFAULTS)');
-                await sandbox.query(SCHEMA_META_DDL);
-
-                // Three siblings called Cash — the state the old guard refused
-                // to touch, and therefore never indexed past.
-                await insertAccount(KEEPER, 'Cash', PARENT);
-                await insertAccount(LOSER_A, 'Cash', PARENT);
-                await insertAccount(LOSER_B, 'Cash', PARENT);
-                // A sibling already occupying the name LOSER_A would be given,
-                // so the collision loop has to find the next one.
-                await insertAccount(DECOY, `Cash (dup ${LOSER_A.slice(0, 8)})`, PARENT);
-                // Two roots sharing a name: NULL parent_guid is outside the
-                // partial index and must be left completely alone.
-                await insertAccount(ROOT_A, 'Root Account', null);
-                await insertAccount(ROOT_B, 'Root Account', null);
-
-                // Only the keeper is posted to, so only the keeper keeps its name.
-                for (const n of [0, 1]) {
-                    await sandbox.query(
-                        `INSERT INTO splits (guid, tx_guid, account_guid, memo, action, reconcile_state, value_num, value_denom, quantity_num, quantity_denom)
-                         VALUES ($1, $2, $3, '', '', 'n', 100, 100, 100, 100)`,
-                        [`${n}`.repeat(32), `${n}`.repeat(32), KEEPER],
-                    );
-                }
-
-                await sandbox.query(ACCOUNTS_SIBLING_NAME_GUARD_DDL);
-
-                const after = await namesByGuid();
-                expect(after[KEEPER]).toBe('Cash');
-                expect(after[LOSER_A]).toBe(`Cash (dup ${LOSER_A.slice(0, 8)}) 2`);
-                expect(after[LOSER_B]).toBe(`Cash (dup ${LOSER_B.slice(0, 8)})`);
-                expect(after[DECOY]).toBe(`Cash (dup ${LOSER_A.slice(0, 8)})`);
-                expect(after[ROOT_A]).toBe('Root Account');
-                expect(after[ROOT_B]).toBe('Root Account');
-                // Renamed, never removed.
-                expect(Object.keys(after)).toHaveLength(6);
-
-                // The index the old guard could not create now exists.
-                const index = await sandbox.query<{ indexdef: string }>(
-                    `SELECT indexdef FROM pg_indexes WHERE schemaname = $1 AND indexname = 'uq_accounts_parent_name'`,
-                    [SCHEMA],
-                );
-                expect(index.rows).toHaveLength(1);
-                expect(index.rows[0].indexdef).toContain('WHERE (parent_guid IS NOT NULL)');
-
-                // Every rename is recoverable: the complete original row, plus
-                // the name it was given.
-                const backups = await sandbox.query<{ row_key: string; row_data: Record<string, string> }>(
-                    `SELECT row_key, row_data FROM gnucash_web_migration_backups
-                     WHERE step_name = 'accounts-sibling-name-disambiguate' AND source_table = 'accounts'
-                     ORDER BY row_key`,
-                );
-                expect(backups.rows).toHaveLength(2);
-                expect(backups.rows.map(r => r.row_key.trim())).toEqual([LOSER_A, LOSER_B]);
-                for (const row of backups.rows) {
-                    expect(row.row_data.name).toBe('Cash');
-                    expect(row.row_data.parent_guid.trim()).toBe(PARENT);
-                    expect(row.row_data.gnucash_web_renamed_to).toBe(after[row.row_key.trim()]);
-                }
-
-                // Idempotent: a second startup is a no-op, not a second round
-                // of renames on top of the first.
-                await sandbox.query(ACCOUNTS_SIBLING_NAME_GUARD_DDL);
-                expect(await namesByGuid()).toEqual(after);
-                const backupsAgain = await sandbox.query(
-                    `SELECT COUNT(*)::int AS n FROM gnucash_web_migration_backups`,
-                );
-                expect(backupsAgain.rows[0].n).toBe(2);
-
-                // And the guarantee now holds against a writer that takes no
-                // lock at all — which is the entire point of restoring it.
-                await expect(insertAccount('7'.repeat(32), 'Cash', PARENT)).rejects.toMatchObject({
-                    code: '23505',
-                });
+                expect(await count()).toBe(baseline + 1);
             } finally {
-                await sandbox.query(`DROP SCHEMA IF EXISTS ${SCHEMA} CASCADE`);
-                await sandbox.end();
+                await pool.query('DELETE FROM accounts WHERE guid = ANY($1::varchar[])', [
+                    [dupA, dupB],
+                ]);
             }
+            expect(await count()).toBe(baseline);
         }, DB_TIMEOUT_MS);
     },
 );

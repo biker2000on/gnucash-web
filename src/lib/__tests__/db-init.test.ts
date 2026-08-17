@@ -57,16 +57,6 @@ describe('initializeDatabase', () => {
         expect(commodities).toContain('RAISE WARNING');
         expect(commodities).not.toContain('DELETE FROM');
 
-        // H4/H7: sibling account names — partial (root accounts have NULL
-        // parent_guid), and UNCONDITIONAL: this is the one guarantee that must
-        // hold on every database, because it is the only thing binding the
-        // account writers that never take the advisory lock.
-        const accounts = sqls.find((s) => s.includes('uq_accounts_parent_name'));
-        expect(accounts).toBeDefined();
-        expect(accounts).toContain('WHERE parent_guid IS NOT NULL');
-        expect(accounts).toContain('RAISE WARNING');
-        expect(accounts).not.toContain('DELETE FROM');
-
         // H3: SimpleFin import dedup key — duplicate imports are real
         // transactions the user must reconcile manually, so skip+warn.
         const simplefin = sqls.find((s) => s.includes('uq_txn_meta_simplefin_id'));
@@ -96,46 +86,60 @@ describe('initializeDatabase', () => {
         expect(sqls.some((s) => /CREATE UNIQUE INDEX[^;]*\bslots\b/i.test(s))).toBe(false);
     });
 
-    it('makes the sibling-account uniqueness guarantee unconditional', async () => {
+    it('never creates a unique index on accounts(parent_guid, name), and drops one an earlier release created', async () => {
         await initializeDatabase();
 
         const sqls = mocks.query.mock.calls.map((c) => String(c[0]));
-        const accounts = sqls.find((s) => s.includes('uq_accounts_parent_name'));
-        expect(accounts).toBeDefined();
 
-        // No skip branch. The previous version counted duplicate groups and
-        // skipped the index if ANY existed anywhere in the database, so one
-        // unrelated historical duplicate silently disabled the guarantee for
-        // every book on every restart — leaving AccountService.create, the XML
-        // importer and the SimpleFin sync racing each other unprotected.
-        expect(accounts).not.toMatch(/skipping unique index on accounts/);
-        expect(accounts).not.toMatch(/IF v_dirty > 0 THEN/);
-        expect(accounts).toMatch(
-            /CREATE UNIQUE INDEX IF NOT EXISTS uq_accounts_parent_name[\s\S]*END \$\$/,
-        );
+        // The key is NOT unique on a healthy book: createTemplateContents
+        // inserts one child account per split of a scheduled transaction, all
+        // named '' under that transaction's template root. A unique index makes
+        // every multi-split scheduled transaction fail with 23505 — in this app
+        // and in GnuCash desktop against the same database.
+        expect(sqls.some((s) => /CREATE UNIQUE INDEX[\s\S]*uq_accounts_parent_name/.test(s)))
+            .toBe(false);
+        expect(sqls.some((s) => /CREATE UNIQUE INDEX[^;]*\baccounts\b[^;]*parent_guid/i.test(s)))
+            .toBe(false);
 
-        // Remediation, not deletion: losers are renamed, and the whole original
-        // row is preserved first.
-        expect(accounts).toContain('UPDATE accounts SET name = v_candidate');
-        expect(accounts).toContain('gnucash_web_migration_backups');
-        expect(accounts).toContain("'accounts-sibling-name-disambiguate'");
-        expect(accounts).not.toMatch(/DELETE FROM|DROP |MERGE /);
+        // And it is actively retired, because a previous release created it
+        // on any book that happened to have no multi-split scheduled
+        // transaction at startup.
+        expect(sqls).toContain('DROP INDEX IF EXISTS uq_accounts_parent_name;');
 
-        // Deterministic winner: the most-posted-to row keeps the name.
-        expect(accounts).toContain('ORDER BY split_count DESC, guid ASC');
+        // Report-only. The rejected alternative renamed the "losing" duplicate
+        // siblings, which (a) would have renamed template children on every
+        // healthy book and (b) is unsafe regardless: personal-import.ts,
+        // qif/importer.ts and settlement-import.service.ts all resolve accounts
+        // BY NAME, so a rename can redirect a later import into a different
+        // ledger account.
+        expect(sqls.some((s) => /UPDATE accounts SET name/i.test(s))).toBe(false);
+        expect(sqls.some((s) => s.includes('accounts-sibling-name-disambiguate'))).toBe(false);
+    });
 
-        // Idempotent: nothing runs once the index exists.
-        expect(accounts).toMatch(
-            /IF to_regclass\('uq_accounts_parent_name'\) IS NOT NULL THEN\s+RETURN;/,
-        );
+    it('reports duplicate real sibling names while structurally ignoring template accounts', async () => {
+        await initializeDatabase();
 
-        // Concurrency-safe on both axes: the advisory lock serializes Docker
-        // replicas, LOCK TABLE stops a writer inserting a fresh duplicate
-        // between the rename pass and the index build.
-        expect(accounts).toContain(
-            "pg_advisory_xact_lock(hashtext('gnucash_web_accounts_sibling_name_guard'))",
-        );
-        expect(accounts).toContain('LOCK TABLE accounts IN SHARE ROW EXCLUSIVE MODE');
+        const sqls = mocks.query.mock.calls.map((c) => String(c[0]));
+        const report = sqls.find((s) => s.includes('AS dupes') && s.includes('template_forest'));
+        expect(report).toBeDefined();
+
+        // Structural exclusion — descend the template forest from
+        // books.root_template_guid and from ROOT accounts that are not a book's
+        // real root. NOT a name heuristic: neither 'Template Root' nor
+        // `name = ''` appears, because a user can produce both, and neither
+        // covers the per-transaction template roots.
+        expect(report).toContain('WITH RECURSIVE');
+        expect(report).toContain('b.root_template_guid');
+        expect(report).toContain("a.account_type = 'ROOT'");
+        expect(report).not.toContain('Template Root');
+        expect(report).not.toMatch(/name\s*(=|<>)\s*''/);
+
+        // A root_template_guid that is also a book's real root is ignored, so
+        // the report cannot classify a real tree as templates.
+        expect(report).toContain('b2.root_account_guid = b.root_template_guid');
+
+        // Read-only.
+        expect(report).not.toMatch(/UPDATE |DELETE |INSERT |DROP /);
     });
 
     it('creates the new performance indexes and no longer creates retired ones', async () => {

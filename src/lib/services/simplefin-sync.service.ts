@@ -269,19 +269,27 @@ export function isSimpleFinDuplicateViolation(err: unknown): boolean {
 }
 
 /**
- * Markers identifying the DB-side arbiters of the two natural keys this
- * service creates against. Both indexes are created by db-init
- * (src/lib/db-init.ts).
+ * Markers identifying a unique violation on the two natural keys this service
+ * creates against.
  *
- * `uq_accounts_parent_name` is PARTIAL, on accounts(parent_guid, name) WHERE
- * parent_guid IS NOT NULL, and its guard is UNCONDITIONAL: pre-existing
- * duplicate siblings are renamed (logged and backed up) rather than allowed to
- * skip the index, so the account-side guarantee holds on every database and
- * binds writers that never take the advisory lock — the XML importer and
- * AccountService.create among them. `uq_commodities_namespace_mnemonic` still
- * skips on dirty data (duplicate commodities cannot be resolved automatically:
- * accounts, prices and splits reference one by guid), so for commodities the
- * lock below is the only serializer on such a database.
+ * The two keys are enforced very differently, and the difference decides what
+ * the code below can rely on:
+ *
+ *   - commodities(namespace, mnemonic) HAS a DB arbiter,
+ *     `uq_commodities_namespace_mnemonic` from db-init — except on a database
+ *     whose duplicate commodities made that guard skip, where the advisory lock
+ *     below is the only serializer.
+ *   - accounts(parent_guid, name) has NO DB arbiter and deliberately never
+ *     will: scheduled-transaction template children legitimately share
+ *     (parent, ''), so a unique index there breaks scheduled-transaction
+ *     creation (src/lib/db-init.ts, ACCOUNTS_SIBLING_NAME_INDEX, which also
+ *     drops one an earlier release created). The advisory lock is the whole
+ *     serializer for the account paths.
+ *
+ * The account marker is therefore not dead weight but not load-bearing either:
+ * it keeps the adopt-the-winner recovery correct for a database where an
+ * operator (or a future release, on a template-aware key) does add a unique
+ * index, instead of surfacing a 23505 as a failed sync.
  *
  * Each entry lists both surface forms of the same violation: the index name
  * (Prisma's driver-adapter error carries the Postgres text verbatim) and the
@@ -1479,10 +1487,10 @@ export async function getOrCreateImbalanceAccount(
       return guid;
     });
   } catch (err) {
-    // The lock only serializes callers that take it. `uq_accounts_parent_name`
-    // binds every writer, including ones that never heard of the lock (XML
-    // import, account routes), so treat its violation as "someone else created
-    // it" and adopt the winner rather than failing the import.
+    // If a unique key on (parent_guid, name) does exist on this database (an
+    // operator's, or an earlier release's — db-init drops that one), a lost
+    // race surfaces as 23505 rather than as a duplicate row: adopt the winner
+    // instead of failing the import.
     return adoptUniqueConflictWinner(err, ACCOUNT_SIBLING_UNIQUE_MARKERS, () =>
       // Re-read on the CONSTRAINT's own key, never on the book-scope snapshot:
       // that set is memoised for ~3s and is not invalidated by account
@@ -1548,10 +1556,10 @@ export async function getOrCreateChildAccount(
 
   const commodity = await getOrCreateSymbolCommodity(mnemonic, holdingDescription);
 
-  // The child account is named for the symbol, so `uq_accounts_parent_name`
-  // covers exactly this create. The (parent, name) lock serializes concurrent
-  // syncs ahead of the index, which keeps the common case off the
-  // winner-adoption path (and off Postgres' error log).
+  // The child account is named for the symbol, so the (parent, name) lock is
+  // exactly the right key: it serializes concurrent syncs through the
+  // check-then-create window, and the adoption path below is the fallback for a
+  // database that also has a unique key of its own.
   let outcome: { guid: string; createdNew: boolean };
   try {
     outcome = await prisma.$transaction(async tx => {

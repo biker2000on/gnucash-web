@@ -1,8 +1,10 @@
 /**
  * ASI-5-009 (race half) — unit coverage for the half of the fix a real
- * database cannot easily stage: what happens when the create LOSES to a writer
- * that never took the advisory lock (XML import, account routes), and the
- * unique index is the thing that rejects it.
+ * database cannot easily stage: what happens when a create loses to a writer
+ * that never took the advisory lock and a unique key is the thing that rejects
+ * it — the commodities key on every database, and a (parent_guid, name) key on
+ * a database where one exists (an operator's; db-init itself deliberately keeps
+ * none, because scheduled-transaction templates share (parent, '')).
  *
  * The concurrency itself is proven in simplefin-create-race.integration.test.ts
  * against real PostgreSQL. Nothing here fakes a lock, and nothing here decides
