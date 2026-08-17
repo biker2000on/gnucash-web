@@ -11,14 +11,19 @@
 
 import { describe, it, expect } from 'vitest';
 import {
-    NEC_THRESHOLD,
     derive1099Status,
     maskTin,
     buildVendor1099Summary,
+    aggregateEligibleVendorPayments,
+    mapTaxInfo,
+    isVendor1099Exempt,
     isValidTaxClassification,
     Vendor1099ValidationError,
     type VendorTaxInfo,
 } from '../vendor-1099.service';
+import { getDefaultNecThreshold } from '../../reports/irs-limits';
+
+const NEC_THRESHOLD = getDefaultNecThreshold(2025)!;
 
 const taxInfo = (overrides: Partial<VendorTaxInfo> = {}): VendorTaxInfo => ({
     legalName: null,
@@ -28,6 +33,7 @@ const taxInfo = (overrides: Partial<VendorTaxInfo> = {}): VendorTaxInfo => ({
     w9ReceivedDate: null,
     w9RequestedDate: null,
     exemptFrom1099: false,
+    exemptFrom1099Override: null,
     address: null,
     notes: null,
     ...overrides,
@@ -39,24 +45,126 @@ const taxInfo = (overrides: Partial<VendorTaxInfo> = {}): VendorTaxInfo => ({
 
 describe('derive1099Status', () => {
     it('is ready when paid >= $600 with a W-9 on file', () => {
-        expect(derive1099Status({ totalPaid: 600, exempt: false, w9Received: true })).toBe('ready');
-        expect(derive1099Status({ totalPaid: 12_000, exempt: false, w9Received: true })).toBe('ready');
+        expect(derive1099Status({ totalPaid: 600, exempt: false, w9Received: true, threshold: NEC_THRESHOLD })).toBe('ready');
+        expect(derive1099Status({ totalPaid: 12_000, exempt: false, w9Received: true, threshold: NEC_THRESHOLD })).toBe('ready');
     });
 
     it('flags missing W-9 only for reportable vendors', () => {
-        expect(derive1099Status({ totalPaid: 600, exempt: false, w9Received: false })).toBe('missing_w9');
+        expect(derive1099Status({ totalPaid: 600, exempt: false, w9Received: false, threshold: NEC_THRESHOLD })).toBe('missing_w9');
         // Below threshold no W-9 is needed — below_threshold wins.
-        expect(derive1099Status({ totalPaid: 100, exempt: false, w9Received: false })).toBe('below_threshold');
+        expect(derive1099Status({ totalPaid: 100, exempt: false, w9Received: false, threshold: NEC_THRESHOLD })).toBe('below_threshold');
     });
 
     it('treats the $600 threshold as inclusive', () => {
-        expect(derive1099Status({ totalPaid: 599.99, exempt: false, w9Received: true })).toBe('below_threshold');
-        expect(derive1099Status({ totalPaid: NEC_THRESHOLD, exempt: false, w9Received: true })).toBe('ready');
+        expect(derive1099Status({ totalPaid: 599.99, exempt: false, w9Received: true, threshold: NEC_THRESHOLD })).toBe('below_threshold');
+        expect(derive1099Status({ totalPaid: NEC_THRESHOLD, exempt: false, w9Received: true, threshold: NEC_THRESHOLD })).toBe('ready');
     });
 
     it('exempt wins regardless of amount or W-9 status', () => {
-        expect(derive1099Status({ totalPaid: 50_000, exempt: true, w9Received: false })).toBe('exempt');
-        expect(derive1099Status({ totalPaid: 0, exempt: true, w9Received: true })).toBe('exempt');
+        expect(derive1099Status({ totalPaid: 50_000, exempt: true, w9Received: false, threshold: NEC_THRESHOLD })).toBe('exempt');
+        expect(derive1099Status({ totalPaid: 0, exempt: true, w9Received: true, threshold: NEC_THRESHOLD })).toBe('exempt');
+    });
+});
+
+describe('corporate classification exemption', () => {
+    it('exempts C- and S-corporations even when the manual exemption flag is absent', () => {
+        expect(isVendor1099Exempt(taxInfo({ taxClassification: 'c_corp' }))).toBe(true);
+        expect(isVendor1099Exempt(taxInfo({ taxClassification: 's_corp' }))).toBe(true);
+        expect(isVendor1099Exempt(taxInfo({ taxClassification: 'llc' }))).toBe(false);
+    });
+
+    it('honors an explicit false override for corporate carve-outs', () => {
+        expect(isVendor1099Exempt(taxInfo({ taxClassification: 'c_corp', exemptFrom1099Override: false }))).toBe(false);
+        expect(isVendor1099Exempt(taxInfo({ taxClassification: 's_corp', exemptFrom1099Override: true }))).toBe(true);
+    });
+
+    it('keeps a legacy explicit false reportable after migration', () => {
+        // The one-time migration copies false into the override rather than
+        // converting it to null, so a previously reportable corporation stays so.
+        expect(isVendor1099Exempt(taxInfo({
+            taxClassification: 'c_corp',
+            exemptFrom1099Override: false,
+        }))).toBe(false);
+    });
+
+    it('keeps attorney or medical payments to corporations reportable', () => {
+        expect(isVendor1099Exempt(taxInfo({
+            taxClassification: 'c_corp',
+            attorneyOrMedicalPayments: true,
+        }))).toBe(false);
+    });
+
+    it('keeps the displayed and computed exemption aligned for an attorney PC', () => {
+        const attorneyPc = mapTaxInfo({
+            vendor_guid: 'a'.repeat(32), legal_name: 'Attorney PC', tax_classification: 'c_corp',
+            tax_id_masked: null, w9_received: false, w9_received_date: null, w9_requested_date: null,
+            exempt_from_1099: false, exempt_from_1099_override: null,
+            attorney_or_medical_payments: true, address: null, notes: null,
+        });
+        const summary = buildVendor1099Summary(
+            2026,
+            [{ guid: 'attorney-pc', name: 'Attorney PC', active: true }],
+            new Map([['attorney-pc', 9_000]]),
+            new Map([['attorney-pc', attorneyPc]]),
+            new Map(),
+            2_000,
+        );
+        expect(attorneyPc.exemptFrom1099).toBe(isVendor1099Exempt(attorneyPc));
+        expect(summary.vendors[0].status).toBe('missing_w9');
+    });
+});
+
+describe('card-funded payment exclusion', () => {
+    it('apportions mixed funding and keeps the checking-funded amount reportable', () => {
+        const payments = aggregateEligibleVendorPayments([
+            { vendorGuid: 'vendor-1', paid: 2_900, cardFundingAmount: 400, totalFundingAmount: 2_900, transactionPayableAmount: 2_900 },
+        ]);
+        expect(payments.get('vendor-1')).toBe(2_500);
+        const summary = buildVendor1099Summary(
+            2026,
+            [{ guid: 'vendor-1', name: 'Mixed funding vendor', active: true }],
+            payments,
+            new Map(),
+            new Map(),
+            2_000,
+        );
+        expect(summary.vendors[0]).toMatchObject({ totalPaid: 2_500, crosses600: true, status: 'missing_w9' });
+    });
+
+    it('preserves all payment amount when no card funding is present', () => {
+        expect(aggregateEligibleVendorPayments([
+            { vendorGuid: 'vendor-1', paid: 1_500, cardFundingAmount: 0, totalFundingAmount: 1_500, transactionPayableAmount: 1_500 },
+        ]).get('vendor-1')).toBe(1_500);
+    });
+
+    it('does not let a non-funding expense split dilute a fully card-funded payment', () => {
+        const payments = aggregateEligibleVendorPayments([
+            // A/P $20,000; materials $5,000; flagged Visa $25,000. The
+            // expense is not a funding leg, so the payable is fully card-paid.
+            { vendorGuid: 'vendor-1', paid: 20_000, cardFundingAmount: 25_000, totalFundingAmount: 25_000, transactionPayableAmount: 20_000 },
+        ]);
+        const summary = buildVendor1099Summary(
+            2026, [{ guid: 'vendor-1', name: 'Ridgeline Fencing LLC', active: true }],
+            payments, new Map(), new Map(), 2_000,
+        );
+        expect(summary.vendors[0]).toMatchObject({ totalPaid: 0, crosses600: false, status: 'below_threshold' });
+    });
+
+    it('treats unknown funding as fully reportable so unflagged books do not change', () => {
+        const payments = aggregateEligibleVendorPayments([
+            // Owner-contribution equity is not a recognized settlement leg.
+            { vendorGuid: 'vendor-1', paid: 9_000, cardFundingAmount: 0, totalFundingAmount: 0, transactionPayableAmount: 9_000 },
+        ]);
+        expect(payments.get('vendor-1')).toBe(9_000);
+    });
+
+    it('allocates card funding pro rata to each payable in a multi-vendor payment', () => {
+        const payments = aggregateEligibleVendorPayments([
+            { vendorGuid: 'vendor-a', paid: 3_000, cardFundingAmount: 1_000, totalFundingAmount: 4_000, transactionPayableAmount: 4_000 },
+            { vendorGuid: 'vendor-b', paid: 1_000, cardFundingAmount: 1_000, totalFundingAmount: 4_000, transactionPayableAmount: 4_000 },
+        ]);
+        expect(payments.get('vendor-a')).toBe(2_250);
+        expect(payments.get('vendor-b')).toBe(750);
     });
 });
 
@@ -132,8 +240,10 @@ describe('buildVendor1099Summary', () => {
             ]),
             new Map([
                 [G1, taxInfo({ w9Received: true })],
-                [G3, taxInfo({ exemptFrom1099: true, taxClassification: 's_corp' })],
+                [G3, taxInfo({ taxClassification: 's_corp' })],
             ]),
+            new Map(),
+            NEC_THRESHOLD,
         );
 
         const byGuid = new Map(summary.vendors.map((v) => [v.vendorGuid, v]));
@@ -159,6 +269,8 @@ describe('buildVendor1099Summary', () => {
             ],
             new Map([[G2, 700]]),
             new Map(),
+            new Map(),
+            NEC_THRESHOLD,
         );
         expect(summary.vendors.map((v) => v.vendorGuid)).toEqual([G2]);
         expect(summary.vendors[0].status).toBe('missing_w9');
@@ -178,6 +290,8 @@ describe('buildVendor1099Summary', () => {
                 [G3, 900],
             ]),
             new Map(),
+            new Map(),
+            NEC_THRESHOLD,
         );
         expect(summary.vendors.map((v) => v.name)).toEqual(['Mid', 'Alpha', 'Zeta']);
     });

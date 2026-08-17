@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
 import { getBookAccountGuids } from '@/lib/book-scope';
-import { get1099Summary, parseYearParam } from '@/lib/business/vendor-1099.service';
+import { get1099Summary, parseYearParam, Vendor1099ValidationError } from '@/lib/business/vendor-1099.service';
 
 export async function GET(request: NextRequest) {
     try {
@@ -19,6 +19,9 @@ export async function GET(request: NextRequest) {
         const summary = await get1099Summary(bookGuid, bookAccountGuids, year);
         return NextResponse.json(summary);
     } catch (error) {
+        if (error instanceof Vendor1099ValidationError) {
+            return NextResponse.json({ error: error.message }, { status: 400 });
+        }
         console.error('Error generating 1099 summary:', error);
         return NextResponse.json(
             { error: 'Failed to generate 1099 summary' },
