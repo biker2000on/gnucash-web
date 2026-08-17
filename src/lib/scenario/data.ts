@@ -52,11 +52,14 @@ async function loadLiquidBalance(bookAccountGuids: string[], asOf: Date): Promis
   return Number.isFinite(value) ? value : 0;
 }
 
-function ageFromBirthday(birthday: string | null, asOf: Date): number | null {
+export function ageFromBirthday(birthday: string | null, asOf: Date): number | null {
   if (!birthday) return null;
-  const parsed = new Date(`${birthday}T00:00:00`);
+  const parsed = new Date(`${birthday.slice(0, 10)}T00:00:00Z`);
   if (Number.isNaN(parsed.getTime())) return null;
-  const years = Math.floor((asOf.getTime() - parsed.getTime()) / (365.25 * 24 * 60 * 60 * 1000));
+  let years = asOf.getUTCFullYear() - parsed.getUTCFullYear();
+  const beforeBirthday = asOf.getUTCMonth() < parsed.getUTCMonth()
+    || (asOf.getUTCMonth() === parsed.getUTCMonth() && asOf.getUTCDate() < parsed.getUTCDate());
+  if (beforeBirthday) years -= 1;
   return years > 0 && years < 120 ? years : null;
 }
 

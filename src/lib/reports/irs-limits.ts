@@ -140,7 +140,7 @@ export function getDefaultLimits(year: number): LimitDefaults[] {
 
 export function calculateAge(birthday: string, asOfDate: Date): number | null {
   if (!birthday) return null;
-  const birth = new Date(birthday);
+  const birth = new Date(`${birthday.slice(0, 10)}T00:00:00Z`);
   if (isNaN(birth.getTime())) return null;
 
   // ISO date-only strings are parsed at UTC midnight. Compare in UTC as well so
