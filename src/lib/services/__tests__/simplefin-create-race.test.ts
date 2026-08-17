@@ -221,5 +221,64 @@ describe('SimpleFin create-if-missing: losing to a writer that skipped the lock'
             expect(isUniqueViolationOn(new Error('uq_accounts_parent_name is fine'), ['uq_accounts_parent_name'])).toBe(false);
             expect(isUniqueViolationOn(null, ['uq_accounts_parent_name'])).toBe(false);
         });
+
+        it('matches the constraint EXACTLY, not as a substring', () => {
+            // A constraint whose name merely CONTAINS ours is a different
+            // constraint. Adopting its "winner" would silently import into
+            // whatever row that other key happened to protect — the failure a
+            // substring test cannot distinguish from a real recovery.
+            for (const impostor of [
+                'uq_accounts_parent_name_v2',
+                'tmp_uq_accounts_parent_name',
+                'uq_accounts_parent_name_lower',
+            ]) {
+                expect(
+                    isUniqueViolationOn(uniqueViolation(impostor, ['parent_guid', 'name', 'code']), [
+                        'uq_accounts_parent_name',
+                    ]),
+                ).toBe(false);
+            }
+
+            // Likewise for the column-tuple form: a superset of our columns is
+            // a different key.
+            expect(
+                isUniqueViolationOn(
+                    Object.assign(new Error('x'), {
+                        code: 'P2002',
+                        meta: { target: ['parent_guid', 'name', 'code'] },
+                    }),
+                    ['"parent_guid","name"'],
+                ),
+            ).toBe(false);
+
+            // The exact name still matches, from either surface form.
+            expect(isUniqueViolationOn(accountsConflict(), ['uq_accounts_parent_name'])).toBe(true);
+        });
+
+        it('reads the raw node-postgres error shape too', () => {
+            // The importers and db-init talk to Postgres through `pg`, not
+            // Prisma: no P2002, a `constraint` field, and 23505.
+            const raw = Object.assign(
+                new Error('duplicate key value violates unique constraint "uq_accounts_parent_name"'),
+                { code: '23505', constraint: 'uq_accounts_parent_name', table: 'accounts' },
+            );
+            expect(isUniqueViolationOn(raw, ['uq_accounts_parent_name'])).toBe(true);
+            expect(isUniqueViolationOn(raw, ['uq_commodities_namespace_mnemonic'])).toBe(false);
+        });
+
+        it('does not claim a non-unique failure that happens to name the index', () => {
+            // e.g. a check-constraint or FK error whose text mentions the index.
+            const notUnique = Object.assign(
+                new Error('constraint "uq_accounts_parent_name" cannot be dropped'),
+                { code: '2BP01' },
+            );
+            expect(isUniqueViolationOn(notUnique, ['uq_accounts_parent_name'])).toBe(false);
+        });
+
+        it('survives a cyclic error graph instead of hanging', () => {
+            const err = accountsConflict() as Error & { self?: unknown };
+            err.self = err;
+            expect(isUniqueViolationOn(err, ['uq_accounts_parent_name'])).toBe(true);
+        });
     });
 });

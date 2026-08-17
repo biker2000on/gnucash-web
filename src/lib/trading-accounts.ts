@@ -12,7 +12,7 @@
  */
 
 import prisma, { generateGuid } from '@/lib/prisma';
-import { accountNameLockKey, acquireNamedXactLock } from '@/lib/book-lock';
+import { accountNameLockKey, acquireNamedXactLock, isTopLevelPrismaClient } from '@/lib/book-lock';
 
 export interface SplitWithCommodity {
   accountGuid: string;
@@ -125,10 +125,33 @@ export async function getOrCreateTradingAccount(
   commodityMnemonic: string,
   commodityNamespace: string,
   bookAccountGuids: Set<string>,
-  tx?: Parameters<typeof prisma.$transaction>[0] extends (prisma: infer P) => unknown ? P : never
+  tx?: TradingTx
 ): Promise<string> {
-  // Use provided transaction context or default prisma
-  const db = tx || prisma;
+  const client = (tx ?? prisma) as TradingTx;
+  // The per-(parent, name) serializer below is transaction-scoped, so open a
+  // transaction when we were not handed one rather than run the locks in
+  // autocommit, where they would be released before their own re-check.
+  if (isTopLevelPrismaClient(client)) {
+    return (client as unknown as typeof prisma).$transaction(inner =>
+      getOrCreateTradingAccountWithin(
+        inner as TradingTx, commodityGuid, commodityMnemonic, commodityNamespace, bookAccountGuids,
+      ),
+    );
+  }
+  return getOrCreateTradingAccountWithin(
+    client, commodityGuid, commodityMnemonic, commodityNamespace, bookAccountGuids,
+  );
+}
+
+type TradingTx = Parameters<typeof prisma.$transaction>[0] extends (prisma: infer P) => unknown ? P : never;
+
+async function getOrCreateTradingAccountWithin(
+  db: TradingTx,
+  commodityGuid: string,
+  commodityMnemonic: string,
+  commodityNamespace: string,
+  bookAccountGuids: Set<string>,
+): Promise<string> {
   const scopedGuids = [...bookAccountGuids];
   if (scopedGuids.length === 0) {
     throw new Error('Cannot create a trading account for an empty book scope');
@@ -137,9 +160,9 @@ export async function getOrCreateTradingAccount(
   // Each check-then-create below is guarded by a per-(parent, name)
   // advisory lock with a re-check after acquiring it, so two concurrent
   // multi-currency saves can no longer create duplicate Trading trees.
-  // NOTE: the transaction-scoped lock only serializes when running inside a
-  // transaction (pass `tx`); on the bare client it degrades to the old
-  // behavior.
+  // `db` is always transactional here (see getOrCreateTradingAccount); only
+  // in-memory test doubles without $queryRaw skip the lock, and they report
+  // that by returning false instead of pretending to have locked.
 
   // 1. Find root Trading account or create it
   let tradingRoot = await db.accounts.findFirst({

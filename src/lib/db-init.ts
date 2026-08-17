@@ -2725,8 +2725,22 @@ async function tuneAutovacuum() {
  * on an `accounts` row says "template" — the marker is structural (an ancestor
  * is a book's `root_template_guid`, i.e. a lookup) and the only own-row hint is
  * the empty name, which does not cover the per-SX roots. Discriminating them
- * would need a denormalized, trigger-maintained column on `accounts`, which
- * GnuCash desktop would not maintain when IT creates a scheduled transaction.
+ * would need a denormalized marker column on `accounts`.
+ *
+ * To be accurate about WHY that was rejected: it is not that the marker could
+ * never be maintained. A server-side trigger runs for every writer, GnuCash
+ * desktop included, so desktop-created scheduled transactions would be marked
+ * too. The reasons are cost and ordering, and they are enough on their own:
+ *   - Template-ness is inherited from an ancestor, and the ancestor may be
+ *     inserted in the same transaction, in any order (children before the
+ *     per-SX root is a legal insert order). A row-level trigger cannot decide
+ *     at INSERT time; getting it right needs a deferred constraint trigger
+ *     plus re-derivation whenever a subtree is reparented.
+ *   - It adds a column and a trigger to a table GnuCash desktop owns, which
+ *     every future desktop schema migration would have to survive.
+ * Weighed against a per-(parent, name) advisory lock that already serializes
+ * every writer in this app, that is a large, permanently-load-bearing
+ * mechanism bought for a redundant second line of defence.
  *
  * So the enforcement for real accounts stays where it can be correct:
  *   - `acquireNamedXactLock(accountNameLockKey(parent, name))` serializes the
@@ -2744,18 +2758,130 @@ async function tuneAutovacuum() {
 export const ACCOUNTS_SIBLING_NAME_INDEX = 'uq_accounts_parent_name';
 
 /**
- * Drops the retired index. `IF EXISTS`, so this is a no-op on the overwhelming
- * majority of databases and safe to run on every startup; it is issued
- * unconditionally rather than behind the presence probe so that a probe that
- * cannot answer still leaves the database in the intended state.
- *
- * DROP INDEX takes a brief ACCESS EXCLUSIVE lock on `accounts`. That is
- * acceptable at startup (and unavoidable — the index is what has to go), and
- * `initializeDatabase` already holds the init advisory lock, so replicas
- * starting together do not fight over it.
+ * How long the drop may wait for the ACCESS EXCLUSIVE lock on `accounts`
+ * before giving up. The init advisory lock only stops a competing INITIALIZER;
+ * a live app request or a GnuCash desktop session reading `accounts` holds an
+ * ACCESS SHARE lock that DROP INDEX must wait out, and every request arriving
+ * behind the queued DROP then waits too. Bounded, so a busy database degrades
+ * to "not dropped this boot, logged, retried next boot" instead of a wedged
+ * startup that also stalls the app it is blocked behind.
  */
-export const ACCOUNTS_SIBLING_NAME_DROP_DDL =
-    `DROP INDEX IF EXISTS ${ACCOUNTS_SIBLING_NAME_INDEX};`;
+export const ACCOUNTS_SIBLING_NAME_DROP_LOCK_TIMEOUT = '3s';
+
+/**
+ * Reads back what (if anything) currently answers to the retired index name,
+ * with everything needed to decide whether this app created it. `to_regclass`
+ * resolves through the same `search_path` a bare `DROP INDEX` would, so the
+ * row described here is the object the drop would target. Exported for tests.
+ */
+export const ACCOUNTS_SIBLING_NAME_INSPECT_SQL = `
+    SELECT
+        i.indexrelid::regclass::text  AS index_name,
+        i.indrelid::regclass::text    AS table_name,
+        pg_get_indexdef(i.indexrelid) AS indexdef,
+        i.indisunique                 AS is_unique,
+        i.indpred IS NOT NULL         AS is_partial,
+        i.indexprs IS NOT NULL        AS has_expressions,
+        EXISTS (
+            SELECT 1 FROM pg_constraint c WHERE c.conindid = i.indexrelid
+        )                             AS backs_constraint
+    FROM pg_index i
+    WHERE i.indexrelid = to_regclass($1)::oid;`;
+
+/** One row of {@link ACCOUNTS_SIBLING_NAME_INSPECT_SQL}. */
+export interface AccountsSiblingNameIndexRow {
+    index_name: string;
+    table_name: string;
+    indexdef: string;
+    is_unique: boolean;
+    is_partial: boolean;
+    has_expressions: boolean;
+    backs_constraint: boolean;
+}
+
+/**
+ * The tails of `pg_get_indexdef` for the index this app itself created.
+ *
+ * The only shape ever SHIPPED is the partial one — every release that built
+ * this index built it as
+ *
+ *     CREATE UNIQUE INDEX uq_accounts_parent_name
+ *         ON accounts (parent_guid, name) WHERE parent_guid IS NOT NULL
+ *
+ * (root accounts have a NULL parent_guid). The bare form is accepted too: it
+ * is the same key without the root-row exclusion, it is what a hand-written
+ * "just add the obvious unique index" produces, and it breaks scheduled
+ * transactions in exactly the same way — so leaving it in place while claiming
+ * to have retired the constraint would be the worse failure. Both are logged
+ * verbatim when dropped.
+ *
+ * Rendering confirmed against PostgreSQL 17: the predicate comes back
+ * normalized and parenthesized as `WHERE (parent_guid IS NOT NULL)`.
+ */
+const RETIRED_ACCOUNTS_SIBLING_NAME_INDEXDEFS = [
+    'USING btree (parent_guid, name)',
+    'USING btree (parent_guid, name) WHERE (parent_guid IS NOT NULL)',
+] as const;
+
+/**
+ * True only for the index described by
+ * {@link RETIRED_ACCOUNTS_SIBLING_NAME_INDEXDEFS}.
+ *
+ * Anything else wearing that name is an operator's object — a different column
+ * list, an expression index, some other predicate, a non-unique index, a
+ * constraint's backing index, or an index on another table entirely — and this
+ * app has no business destroying it. Startup DDL that silently deletes a
+ * stranger's index because the NAME matched is how an app eats an operator's
+ * work; the name alone is not identity. Exported for tests.
+ */
+export function isRetiredAccountsSiblingNameIndex(row: AccountsSiblingNameIndexRow): boolean {
+    return (
+        row.is_unique === true &&
+        row.has_expressions === false &&
+        row.backs_constraint === false &&
+        /(^|\.)accounts$/.test(row.table_name) &&
+        RETIRED_ACCOUNTS_SIBLING_NAME_INDEXDEFS.some(tail => row.indexdef.endsWith(tail))
+    );
+}
+
+/**
+ * Drops the retired index — and only when it is the one described by
+ * {@link isRetiredAccountsSiblingNameIndex}.
+ *
+ * Re-stating the identity predicate inside the statement is deliberate: the
+ * inspect query above runs on a different pooled connection, so a decision made
+ * there and executed here would be a TOCTOU window in DDL that deletes an
+ * object. This single statement decides and drops atomically; the app-side
+ * inspection exists to LOG what happened, not to authorize it.
+ *
+ * `SET LOCAL` scopes the timeout to this statement's own transaction, so the
+ * pooled connection goes back to the pool with its normal `lock_timeout`. A
+ * timeout raises 55P03 (`lock_not_available`), which the caller logs and
+ * swallows: startup continues, and the next boot retries.
+ */
+export const ACCOUNTS_SIBLING_NAME_DROP_DDL = `
+    DO $$
+    DECLARE
+        target oid;
+    BEGIN
+        SET LOCAL lock_timeout = '${ACCOUNTS_SIBLING_NAME_DROP_LOCK_TIMEOUT}';
+        SELECT i.indexrelid INTO target
+        FROM pg_index i
+        WHERE i.indexrelid = to_regclass('${ACCOUNTS_SIBLING_NAME_INDEX}')::oid
+          AND i.indisunique
+          AND i.indexprs IS NULL
+          AND i.indrelid = to_regclass('accounts')::oid
+          AND NOT EXISTS (SELECT 1 FROM pg_constraint c WHERE c.conindid = i.indexrelid)
+          AND (
+              pg_get_indexdef(i.indexrelid) LIKE '%USING btree (parent_guid, name)'
+              OR pg_get_indexdef(i.indexrelid)
+                 LIKE '%USING btree (parent_guid, name) WHERE (parent_guid IS NOT NULL)'
+          );
+        IF target IS NOT NULL THEN
+            EXECUTE format('DROP INDEX %s', target::regclass::text);
+        END IF;
+    END
+    $$;`;
 
 /**
  * The template forest, structurally: every book's `root_template_guid` and all
@@ -2829,32 +2955,81 @@ export const REAL_SIBLING_NAME_DUPLICATES_FIND_SQL = `${TEMPLATE_FOREST_CTE}
  * Never throws: a startup that cannot report duplicates must still start.
  */
 async function retireAccountsSiblingNameIndex(): Promise<void> {
-    let existed = false;
+    // Independent halves: a drop that was skipped, blocked or failed must not
+    // suppress the duplicate report, which is the operator's only signal that
+    // a race already landed rows.
+    await dropRetiredAccountsSiblingNameIndex();
+    await reportDuplicateRealSiblingAccounts();
+}
+
+/** The drop half of {@link retireAccountsSiblingNameIndex}. Never throws. */
+async function dropRetiredAccountsSiblingNameIndex(): Promise<void> {
     try {
-        const presence = await query('SELECT to_regclass($1) IS NOT NULL AS present', [
+        const before = await query(ACCOUNTS_SIBLING_NAME_INSPECT_SQL, [
             ACCOUNTS_SIBLING_NAME_INDEX,
         ]);
-        existed = presence.rows?.[0]?.present === true;
-        await query(ACCOUNTS_SIBLING_NAME_DROP_DDL);
-        if (existed) {
+        const found = before.rows?.[0] as AccountsSiblingNameIndexRow | undefined;
+
+        if (found && !isRetiredAccountsSiblingNameIndex(found)) {
+            // Someone else's object is wearing the name. Say so and leave it
+            // alone — this app did not create it and will not delete it.
             console.warn(
-                `WARNING: dropped unique index ${ACCOUNTS_SIBLING_NAME_INDEX} on accounts(parent_guid, name). ` +
-                'An earlier release created it, and it makes creating a multi-split scheduled ' +
-                'transaction fail with a duplicate-key error — GnuCash stores one template child ' +
-                'account per split, all named \'\' under the same parent, so duplicate siblings are ' +
-                'normal data there. No account row was changed. If scheduled-transaction creation ' +
-                'has been failing with "duplicate key value violates unique constraint", this is why, ' +
-                'and it is now fixed.',
+                `WARNING: "${found.index_name}" exists but is NOT the index this app retired, ` +
+                'so it was left in place. This app only drops the exact index an earlier release ' +
+                `created (a plain UNIQUE btree on accounts(parent_guid, name)); found instead: ` +
+                `${found.indexdef}. If a unique key on accounts(parent_guid, name) is in effect, ` +
+                'creating a multi-split scheduled transaction will fail with a duplicate-key error ' +
+                '(GnuCash stores one template child account per split, all named \'\' under the ' +
+                'same parent), in this app and in GnuCash desktop alike. Drop it yourself if that ' +
+                'is what it is.',
+            );
+            return;
+        }
+
+        await query(ACCOUNTS_SIBLING_NAME_DROP_DDL);
+
+        if (found) {
+            const after = await query(ACCOUNTS_SIBLING_NAME_INSPECT_SQL, [
+                ACCOUNTS_SIBLING_NAME_INDEX,
+            ]);
+            const stillThere = (after.rowCount ?? 0) > 0;
+            console.warn(
+                stillThere
+                    ? `WARNING: ${ACCOUNTS_SIBLING_NAME_INDEX} is still present after the drop ` +
+                      'attempt; it will be retried on the next start.'
+                    : `WARNING: dropped index ${found.index_name} on ${found.table_name} ` +
+                      `(was: ${found.indexdef}). An earlier release created it, and it makes ` +
+                      'creating a multi-split scheduled transaction fail with a duplicate-key ' +
+                      'error — GnuCash stores one template child account per split, all named ' +
+                      '\'\' under the same parent, so duplicate siblings are normal data there. ' +
+                      'No account row was changed. If scheduled-transaction creation has been ' +
+                      'failing with "duplicate key value violates unique constraint", this is why, ' +
+                      'and it is now fixed.',
             );
         }
     } catch (error) {
+        const code = (error as { code?: string } | null)?.code;
+        if (code === '55P03') {
+            // lock_not_available: another session holds `accounts`. Bounded on
+            // purpose — startup proceeds and the next boot tries again.
+            console.error(
+                `Could not drop the retired unique index ${ACCOUNTS_SIBLING_NAME_INDEX}: waited ` +
+                `${ACCOUNTS_SIBLING_NAME_DROP_LOCK_TIMEOUT} for an exclusive lock on accounts and ` +
+                'gave up (another app request or a GnuCash desktop session is using the table). ' +
+                'Startup continues; the drop is retried on the next start. Until then, creating a ' +
+                'multi-split scheduled transaction can still fail with a duplicate-key error.',
+            );
+            return;
+        }
         console.error(
             `Failed to drop the retired unique index ${ACCOUNTS_SIBLING_NAME_INDEX}:`,
             error,
         );
-        return;
     }
+}
 
+/** The report half of {@link retireAccountsSiblingNameIndex}. Never throws. */
+async function reportDuplicateRealSiblingAccounts(): Promise<void> {
     try {
         const counted = await query(REAL_SIBLING_NAME_DUPLICATES_COUNT_SQL);
         const dupes = Number(counted.rows?.[0]?.dupes ?? 0);

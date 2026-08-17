@@ -10,7 +10,13 @@
 import { z } from 'zod';
 import prisma from '@/lib/prisma';
 import { generateGuid, serializeBigInts } from '@/lib/gnucash';
-import { tryAcquireBookLock, resolveBookLockGuidForAccount, BookBusyError } from '@/lib/book-lock';
+import {
+    tryAcquireBookLock,
+    resolveBookLockGuidForAccount,
+    BookBusyError,
+    accountNameLockKey,
+    acquireNamedXactLock,
+} from '@/lib/book-lock';
 
 /**
  * Validate a reparent on the transaction client, while the per-book advisory
@@ -165,6 +171,31 @@ export class AccountService {
     const accountGuid = generateGuid();
 
     const account = await prisma.$transaction(async (tx) => {
+      // Sibling-name uniqueness for REAL accounts has no DB arbiter — a
+      // unique index on accounts(parent_guid, name) cannot exist because
+      // scheduled-transaction templates share (parent, '') by design (see
+      // src/lib/db-init.ts, ACCOUNTS_SIBLING_NAME_INDEX). So serialize on the
+      // same per-(parent, name) key the create-if-missing paths use, and
+      // re-check under it: without this, two concurrent creates of the same
+      // name under the same parent both commit and the book quietly grows the
+      // duplicate GnuCash desktop's own engine would have refused.
+      //
+      // Only when there IS a parent: the ROOT account (parent_guid null) is
+      // not a sibling of anything, and `name` here is always non-empty
+      // (CreateAccountSchema), so this never sees the template shape.
+      if (data.parent_guid) {
+        await acquireNamedXactLock(tx, accountNameLockKey(data.parent_guid, data.name));
+        const clash = await tx.accounts.findFirst({
+          where: { parent_guid: data.parent_guid, name: data.name },
+          select: { guid: true },
+        });
+        if (clash) {
+          throw new Error(
+            `An account named "${data.name}" already exists under this parent`,
+          );
+        }
+      }
+
       const acct = await tx.accounts.create({
         data: {
           guid: accountGuid,

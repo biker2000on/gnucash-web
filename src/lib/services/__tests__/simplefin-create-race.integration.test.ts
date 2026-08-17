@@ -622,14 +622,29 @@ describeWithDatabase(
          * Postgres `RAISE WARNING` unseen, which is how the previous generation
          * of guards managed to disable themselves silently.
          *
-         * The index is seeded with a one-row predicate so that this assertion
-         * holds on any database, violated key or not. Retirement keys on the
-         * index NAME, which is identical either way.
+         * Seeded in the EXACT shape every release that built it used —
+         * `ON accounts (parent_guid, name) WHERE parent_guid IS NOT NULL`,
+         * excluding the NULL-parent root rows. The shape matters now:
+         * retirement no longer keys on the index NAME, it verifies the index is
+         * the one this app created (`isRetiredAccountsSiblingNameIndex`), so
+         * seeding any other shape would exercise the refusal path instead —
+         * which the next test does deliberately.
+         *
+         * Building that index needs a book with no duplicate siblings, and this
+         * file's earlier tests deliberately created some (a scheduled
+         * transaction's template children all share (parent, '')). They are
+         * removed first, through the same service that created them. If the
+         * database still holds duplicate siblings from somewhere else, the
+         * CREATE fails with 23505 — which is honest: the index being retired
+         * could never have existed on such a database either.
          */
         it('retires a pre-existing uq_accounts_parent_name, visibly, and leaves creation working', async () => {
+            // splice(0): these are gone, so afterAll must not try again.
+            for (const sxGuid of createdSxGuids.splice(0)) await deleteScheduledTransaction(sxGuid);
+
             await pool.query(
                 `CREATE UNIQUE INDEX uq_accounts_parent_name ON accounts (parent_guid, name)
-                 WHERE guid = '${PARENT_GUID}'`,
+                 WHERE parent_guid IS NOT NULL`,
             );
 
             const messages: string[] = [];
@@ -643,8 +658,10 @@ describeWithDatabase(
             } finally {
                 warn.mockRestore();
             }
-            expect(messages.some(m => /dropped unique index uq_accounts_parent_name/.test(m)))
-                .toBe(true);
+            // The message names the object AND quotes what was dropped, so the
+            // operator can tell exactly what left their database.
+            expect(messages.some(m => /dropped index .*uq_accounts_parent_name/.test(m))).toBe(true);
+            expect(messages.some(m => /USING btree \(parent_guid, name\)/.test(m))).toBe(true);
             expect(messages.some(m => /scheduled transaction/i.test(m))).toBe(true);
 
             const stillThere = await pool.query(
@@ -654,6 +671,39 @@ describeWithDatabase(
 
             const after = await createSx('Retired');
             expect(after.success === false ? after.error : 'ok').toBe('ok');
+        }, DB_TIMEOUT_MS);
+
+        /**
+         * The other half of the same contract: an index this app did NOT
+         * create keeps the name but not the shape, and must survive startup.
+         * Deleting a stranger's index because the name matched is how startup
+         * DDL eats an operator's work.
+         */
+        it('refuses to drop a same-named index it did not create, and says so', async () => {
+            await pool.query(
+                `CREATE UNIQUE INDEX uq_accounts_parent_name
+                 ON accounts (parent_guid, name, code) WHERE guid = '${PARENT_GUID}'`,
+            );
+
+            const messages: string[] = [];
+            const warn = vi
+                .spyOn(console, 'warn')
+                .mockImplementation((...args: unknown[]) => { messages.push(String(args[0])); });
+            try {
+                await dbInit.initializeDatabase();
+            } finally {
+                warn.mockRestore();
+            }
+
+            try {
+                const survived = await pool.query(
+                    `SELECT indexname FROM pg_indexes WHERE indexname = 'uq_accounts_parent_name'`,
+                );
+                expect(survived.rows).toHaveLength(1);
+                expect(messages.some(m => /is NOT the index this app retired/.test(m))).toBe(true);
+            } finally {
+                await pool.query(`DROP INDEX IF EXISTS uq_accounts_parent_name`);
+            }
         }, DB_TIMEOUT_MS);
 
         /**

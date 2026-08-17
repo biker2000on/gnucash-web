@@ -298,19 +298,100 @@ export function isSimpleFinDuplicateViolation(err: unknown): boolean {
 const ACCOUNT_SIBLING_UNIQUE_MARKERS = ['uq_accounts_parent_name', '"parent_guid","name"'];
 const COMMODITY_UNIQUE_MARKERS = ['uq_commodities_namespace_mnemonic', '"namespace","mnemonic"'];
 
+/** Pulls the constraint/index name out of Postgres' own violation text. */
+const UNIQUE_CONSTRAINT_NAME_RE = /unique (?:constraint|index) "([^"]+)"/gi;
+/** Recognizes a unique violation from message text alone (raw/driver paths). */
+const UNIQUE_VIOLATION_TEXT_RE = /duplicate key value|unique constraint|unique index/i;
+
 /**
- * True when `err` is a Postgres unique violation on one of `markers`.
+ * The identifying facts of a constraint violation, EXTRACTED rather than
+ * pattern-matched: the exact constraint/index names the error names, and the
+ * exact column tuples it reports, each normalized to the `"a","b"` form a
+ * P2002 `meta.target` renders as.
  *
- * Same shape as `isSimpleFinDuplicateViolation` above: Prisma raises P2002,
- * raw paths surface 23505 text, and the identifying detail lives in the
- * message or in `meta`. Exported for tests.
+ * Extraction is what makes exact matching possible. A `text.includes(marker)`
+ * test cannot distinguish `uq_accounts_parent_name` from an unrelated
+ * `uq_accounts_parent_name_v2` (or from a constraint whose name merely embeds
+ * it), so it would adopt a "winner" from a constraint this code knows nothing
+ * about — an import into the wrong account, dressed as recovery.
+ *
+ * The walk is over the whole error graph because the identity can sit at any
+ * depth: node-postgres puts it in `constraint`, Prisma in `meta.target`, and
+ * the Prisma 7 pg driver adapter in
+ * `meta.driverAdapterError.cause.{originalMessage,constraint.fields}`. Bounded
+ * and cycle-safe.
+ */
+function describeUniqueViolation(err: unknown): { identifiers: Set<string>; unique: boolean } {
+  const identifiers = new Set<string>();
+  let unique = false;
+  const seen = new Set<object>();
+  const stack: unknown[] = [err];
+  let budget = 500;
+
+  /** `['parent_guid','name']` -> `"parent_guid","name"` (the P2002 form). */
+  const addColumnTuple = (value: unknown) => {
+    if (!Array.isArray(value) || value.length === 0) return;
+    if (!value.every(field => typeof field === 'string')) return;
+    identifiers.add(value.map(field => JSON.stringify(field)).join(','));
+  };
+
+  const visitString = (key: string, value: string) => {
+    if (key === 'code' || key === 'originalCode') {
+      if (value === 'P2002' || value === '23505') unique = true;
+      return;
+    }
+    if (key === 'kind') {
+      if (value === 'UniqueConstraintViolation') unique = true;
+      return;
+    }
+    // A string `constraint`/`target` IS the identity — take it verbatim.
+    if (key === 'constraint' || key === 'target') {
+      identifiers.add(value);
+      return;
+    }
+    if (!UNIQUE_VIOLATION_TEXT_RE.test(value)) return;
+    unique = true;
+    for (const match of value.matchAll(UNIQUE_CONSTRAINT_NAME_RE)) identifiers.add(match[1]);
+  };
+
+  while (stack.length > 0 && budget-- > 0) {
+    const node = stack.pop();
+    if (!node || typeof node !== 'object') continue;
+    if (seen.has(node)) continue;
+    seen.add(node);
+
+    // `message` is non-enumerable on Error, so Object.entries misses it.
+    if (node instanceof Error) visitString('message', node.message);
+
+    for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+      if (typeof value === 'string') {
+        visitString(key, value);
+        continue;
+      }
+      if (key === 'target' || key === 'fields') addColumnTuple(value);
+      if (value && typeof value === 'object') stack.push(value);
+    }
+  }
+
+  return { identifiers, unique };
+}
+
+/**
+ * True when `err` is a Postgres unique violation whose constraint is EXACTLY
+ * one of `markers` — either the index name (`uq_accounts_parent_name`) or the
+ * conflicting column tuple (`"parent_guid","name"`).
+ *
+ * Both halves must hold: the error has to actually be a unique violation
+ * (Prisma P2002, raw 23505, or Postgres' own wording), and the constraint it
+ * names has to be one of ours. Any other constraint rethrows, so the caller
+ * records a sync error rather than adopting a row it did not race for.
+ * Exported for tests.
  */
 export function isUniqueViolationOn(err: unknown, markers: readonly string[]): boolean {
   if (!err) return false;
-  const anyErr = err as { code?: unknown; meta?: unknown };
-  const text = `${err instanceof Error ? err.message : String(err)} ${JSON.stringify(anyErr.meta ?? {})}`;
-  if (!markers.some(marker => text.includes(marker))) return false;
-  return anyErr.code === 'P2002' || /duplicate key value|unique constraint/i.test(text);
+  const { identifiers, unique } = describeUniqueViolation(err);
+  if (!unique) return false;
+  return markers.some(marker => identifiers.has(marker));
 }
 
 /**

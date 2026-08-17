@@ -187,19 +187,44 @@ export function serializeBigInts<T>(obj: T): T {
 }
 
 import prisma from './prisma';
-import { accountNameLockKey, acquireNamedXactLock } from './book-lock';
+import { accountNameLockKey, acquireNamedXactLock, isTopLevelPrismaClient } from './book-lock';
+
+type PrismaTxClient = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
 
 /**
  * Find or create a GnuCash account by colon-delimited path.
  * Creates missing intermediate accounts as placeholders.
+ *
+ * The per-(parent, name) serializer is a TRANSACTION-scoped advisory lock, so
+ * this opens its own transaction whenever it was not handed one (no `tx`, or a
+ * top-level client such as the `prisma` singleton — the email bill-capture path
+ * passes neither). Running the lock in autocommit would release it before the
+ * re-check, which is a no-op dressed up as a guard; `acquireNamedXactLock`
+ * now rejects that outright, so the wrapper here is what keeps those callers
+ * working AND locked.
  */
 export async function findOrCreateAccount(
   path: string,
   bookRootGuid: string,
   currencyGuid: string,
-  tx?: Parameters<Parameters<typeof prisma.$transaction>[0]>[0]
+  tx?: PrismaTxClient
 ): Promise<string> {
-  const db = tx || prisma;
+  const client = (tx ?? prisma) as PrismaTxClient;
+  if (isTopLevelPrismaClient(client)) {
+    return (client as unknown as typeof prisma).$transaction(inner =>
+      findOrCreateAccountWithin(inner, path, bookRootGuid, currencyGuid),
+    );
+  }
+  return findOrCreateAccountWithin(client, path, bookRootGuid, currencyGuid);
+}
+
+/** The path walk itself, always running inside a transaction in production. */
+async function findOrCreateAccountWithin(
+  db: PrismaTxClient,
+  path: string,
+  bookRootGuid: string,
+  currencyGuid: string,
+): Promise<string> {
   const segments = path.split(':');
   let parentGuid = bookRootGuid;
 
@@ -220,8 +245,9 @@ export async function findOrCreateAccount(
       // accounts(parent_guid, name), because scheduled-transaction template
       // children share (parent, '') by design (see db-init.ts,
       // ACCOUNTS_SIBLING_NAME_INDEX).
-      // Only effective inside a transaction (pass `tx`); test doubles
-      // without $queryRaw skip the lock and keep legacy behavior.
+      // `db` is always transactional here (see findOrCreateAccount); only
+      // in-memory test doubles without $queryRaw skip the lock, and they say
+      // so by returning false rather than pretending to have locked.
       const locked = await acquireNamedXactLock(db, accountNameLockKey(parentGuid, segment));
       if (locked) {
         existing = await db.accounts.findFirst({
