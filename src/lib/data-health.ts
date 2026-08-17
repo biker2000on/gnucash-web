@@ -398,6 +398,7 @@ async function loadZeroDenominators(
     guids: string[],
     itemCap: number,
 ): Promise<HealthCheck> {
+    // This check is book-scoped by s.account_guid = ANY(...); unlike loadStructuralIssues, splits on missing accounts are not visible here.
     const rows = await prisma.$queryRaw<
         {
             guid: string;
@@ -445,7 +446,7 @@ async function loadZeroDenominators(
         return {
             guid: r.guid,
             name: r.account_name,
-            detail: `${r.post_date ? r.post_date.toISOString().slice(0, 10) + ' · ' : ''}transaction ${transaction} (${r.tx_guid.slice(0, 8)}…) · zero ${denominators} denominator; split is excluded from balances`,
+            detail: `${r.post_date ? r.post_date.toISOString().slice(0, 10) + ' · ' : ''}transaction ${transaction} (${r.tx_guid.slice(0, 8)}…) · zero ${denominators} denominator; split is excluded from NULLIF-protected balances`,
             href: `/accounts/${r.account_guid}`,
         };
     });

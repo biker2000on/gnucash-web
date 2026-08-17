@@ -267,6 +267,6 @@ describe('runDataHealth — zero denominators', () => {
         });
         expect(check?.items[0]?.detail).toContain('transaction Corrupt import');
         expect(check?.items[0]?.detail).toContain('zero quantity denominator');
-        expect(check?.items[0]?.detail).toContain('excluded from balances');
+        expect(check?.items[0]?.detail).toContain('excluded from NULLIF-protected balances');
     });
 });

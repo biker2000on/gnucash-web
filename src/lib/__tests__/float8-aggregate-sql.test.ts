@@ -1,41 +1,59 @@
 /**
- * SQL-text tripwire for split-fraction aggregates corrected in the float8
- * remainder sweep. This checks query templates, not PostgreSQL arithmetic;
- * real-database parse checks remain necessary for SQL validity and grouping.
+ * SQL-text tripwire for split-fraction aggregates. This checks query templates,
+ * not PostgreSQL arithmetic; real-database parse checks remain necessary for
+ * SQL validity and grouping.
  */
 
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { readFileSync, readdirSync } from 'node:fs';
+import { relative, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-const CONVERTED_SOURCES = [
-    ['src/lib/reports/net-worth-by-owner.ts', 1],
-    ['src/lib/reports/account-summary.ts', 2],
-    ['src/lib/reports/equity-statement.ts', 3],
-    ['src/app/api/accounts/[guid]/transactions/route.ts', 1],
-    ['src/app/api/accounts/route.ts', 2],
-    ['src/lib/account-current-value.ts', 1],
-    ['src/app/api/tools/debt-payoff/route.ts', 1],
-    ['src/lib/insights.ts', 6],
-] as const;
+const SOURCE_ROOT = resolve(process.cwd(), 'src');
 
-const NUMERIC_FRACTION = /s\.(?:quantity|value)_num::numeric\s*\/\s*NULLIF\(s\.(?:quantity|value)_denom,\s*0\)::numeric/g;
-const TERMINAL_FLOAT8 = /::float8\s+AS\s+\w+/g;
-const PER_SPLIT_FLOAT = /s\.(?:quantity|value)_num::(?:float8|double precision)\s*\/|CAST\(s\.(?:quantity|value)_num\s+AS\s+(?:FLOAT8|DOUBLE PRECISION)\)\s*\//i;
+// These pre-existing endpoints are deliberately outside this float8 remainder
+// fix. Keep this allowlist explicit so a new unguarded split division fails.
+const KNOWN_OUT_OF_SCOPE_UNGUARDED_DIVISIONS = new Set([
+    'app/api/accounts/[guid]/balance/route.ts',
+    'app/api/business/990/route.ts',
+    'app/api/dashboard/custom-widget/route.ts',
+    'app/api/fire/social-security/route.ts',
+    'app/api/payslips/[id]/match/route.ts',
+    'app/api/tax/estimated/route.ts',
+    'app/api/tools/drawdown/prefill/route.ts',
+    'lib/ai-query/schema-context.ts', // Documentation, not an executed query.
+    'lib/services/mortgage.service.ts',
+    'lib/services/payslip-post.service.ts',
+    'lib/tax/book-income.ts',
+    'lib/tax/tax-schedule.ts',
+]);
+
+const PER_SPLIT_FLOAT = /(?:s\.(?:quantity|value)_num\s*::\s*(?:float8|double precision)|CAST\(s\.(?:quantity|value)_num\s+AS\s+(?:FLOAT8|DOUBLE PRECISION)\))\s*\//i;
+const UNGUARDED_SPLIT_DENOMINATOR = /(?:s\.(?:quantity|value)_num(?:\s*::\s*(?:numeric|float|float8|double precision))?|CAST\(\s*s\.(?:quantity|value)_num\s+AS\s+DECIMAL\s*\))\s*\/\s*(?:CAST\(\s*)?s\.(?:quantity|value)_denom\b/i;
+
+function sourceFiles(directory: string): string[] {
+    return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+        const path = resolve(directory, entry.name);
+        if (entry.isDirectory()) return sourceFiles(path);
+        return entry.isFile() && path.endsWith('.ts') && !path.includes('/__tests__/')
+            ? [path]
+            : [];
+    });
+}
 
 describe('split-fraction aggregate SQL', () => {
-    it('uses numeric split arithmetic and one final float8 compatibility cast for all 17 conversions', () => {
-        // One numeric fraction and one terminal compatibility cast per
-        // conversion. Do not reintroduce per-split float division: repeated
-        // fractions (for example seven 1/7 splits) must aggregate in numeric.
-        let conversions = 0;
-        for (const [file, expectedConversions] of CONVERTED_SOURCES) {
-            const source = readFileSync(resolve(process.cwd(), file), 'utf8');
-            expect([...source.matchAll(NUMERIC_FRACTION)]).toHaveLength(expectedConversions);
-            expect([...source.matchAll(TERMINAL_FLOAT8)]).toHaveLength(expectedConversions);
-            expect(source).not.toMatch(PER_SPLIT_FLOAT);
-            conversions += expectedConversions;
+    it('contains no per-split float8 division anywhere under src', () => {
+        for (const file of sourceFiles(SOURCE_ROOT)) {
+            expect(readFileSync(file, 'utf8'), relative(SOURCE_ROOT, file)).not.toMatch(PER_SPLIT_FLOAT);
         }
-        expect(conversions).toBe(17);
+    });
+
+    it('does not add an unguarded split denominator division', () => {
+        const unguardedFiles = sourceFiles(SOURCE_ROOT)
+            .filter((file) => UNGUARDED_SPLIT_DENOMINATOR.test(readFileSync(file, 'utf8')))
+            .map((file) => relative(SOURCE_ROOT, file));
+
+        expect(unguardedFiles.every(
+            (file) => KNOWN_OUT_OF_SCOPE_UNGUARDED_DIVISIONS.has(file),
+        )).toBe(true);
     });
 });
