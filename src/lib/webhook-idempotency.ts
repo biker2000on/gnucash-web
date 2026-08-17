@@ -35,7 +35,11 @@ export const IDEMPOTENCY_KEY_MAX_LENGTH = 200;
  */
 export const WEBHOOK_CLAIM_STALE_MINUTES = 5;
 
-/** Three total executions bound both stale-claim recovery and write failures. */
+/**
+ * Three total executions bound both stale-claim recovery and transient write
+ * failures. This is intentionally one shared budget with no automatic
+ * backoff: three database blips for one key require an operator re-arm.
+ */
 export const WEBHOOK_MAX_ATTEMPTS = 3;
 
 /** Endpoints get their own key namespace so unrelated callers cannot collide. */
@@ -75,6 +79,10 @@ export function ensureWebhookIdempotencyTable(): Promise<void> {
             result JSONB,
             state VARCHAR(32) NOT NULL DEFAULT 'processing',
             attempts INTEGER NOT NULL DEFAULT 1,
+            -- Kept as TIMESTAMP for compatibility with existing GnuCash Web
+            -- installations. NOW() and the stale comparison below must use
+            -- the same database session TimeZone; migrate both columns to
+            -- TIMESTAMPTZ together if pools can use mixed TimeZones.
             claim_started_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
             detail TEXT,
             completed_at TIMESTAMP,
@@ -201,7 +209,7 @@ export async function claimWebhookIdempotency(
       )
     RETURNING attempts
   `;
-  if (claimed.length > 0) return { status: 'claimed', attempt: claimed[0].attempts ?? 1 };
+  if (claimed.length > 0) return { status: 'claimed', attempt: claimed[0].attempts };
 
   const existing = await executor.$queryRaw<Array<{
     result: unknown; state: string; attempts: number; detail: string | null; terminal_stalled: boolean;
@@ -239,25 +247,25 @@ export async function completeWebhookIdempotency(
   result: unknown,
   executor: Pick<typeof prisma, '$executeRaw'> = prisma,
 ): Promise<boolean> {
-  try {
-    const updated = await executor.$executeRaw`
-      UPDATE gnucash_web_webhook_idempotency
-      SET result = ${JSON.stringify(result)}::jsonb, state = 'completed',
-          completed_at = NOW(), detail = NULL
-      WHERE book_guid = ${bookGuid} AND endpoint = ${endpoint} AND idempotency_key = ${key}
-        AND result IS NULL AND state = 'processing' AND attempts = ${attempt}
-    `;
-    if (updated !== 1) {
-      console.error(
-        `Rejected stale webhook completion for ${endpoint}/${key}: attempt ${attempt} no longer owns the claim`,
-      );
-      return false;
-    }
-    return true;
-  } catch (error) {
-    console.error(`Failed to record idempotent result for ${endpoint}/${key}:`, error);
+  // Do not catch database errors here. In the in-transaction callers, a
+  // failed statement aborts PostgreSQL's transaction; reporting it as a
+  // superseded claim would return a non-retryable 409 for an event nobody is
+  // processing. `false` is reserved solely for a successful UPDATE affecting
+  // zero rows (a genuine stale fence token).
+  const updated = await executor.$executeRaw`
+    UPDATE gnucash_web_webhook_idempotency
+    SET result = ${JSON.stringify(result)}::jsonb, state = 'completed',
+        completed_at = NOW(), detail = NULL
+    WHERE book_guid = ${bookGuid} AND endpoint = ${endpoint} AND idempotency_key = ${key}
+      AND result IS NULL AND state = 'processing' AND attempts = ${attempt}
+  `;
+  if (updated !== 1) {
+    console.error(
+      `Rejected stale webhook completion for ${endpoint}/${key}: attempt ${attempt} no longer owns the claim`,
+    );
     return false;
   }
+  return true;
 }
 
 /**
@@ -313,7 +321,11 @@ export async function releaseWebhookIdempotency(
 /**
  * A deliberate, operator-triggered reset for a terminal record. It only
  * re-arms terminal work, resets the bounded automatic budget once, and never
- * touches a completed result.
+ * touches a completed result. Resetting `attempts` makes its numerical fence
+ * token non-monotonic; that ABA is contained by the same row's `result IS
+ * NULL AND state = 'processing'` predicates in lock/complete/release. A
+ * future fence consumer that needs to survive operator re-arms must use a
+ * separate monotonic claim epoch or UUID token.
  */
 export async function rearmWebhookIdempotency(
   bookGuid: string,

@@ -68,8 +68,8 @@ describe('validateIdempotencyKey', () => {
 });
 
 describe('claimWebhookIdempotency', () => {
-  it('claims via INSERT ... ON CONFLICT DO NOTHING so the DB picks the winner', async () => {
-    mocks.raw.mockResolvedValueOnce([{ id: 1 }]);
+  it('claims via INSERT ... ON CONFLICT so the DB picks the winner', async () => {
+    mocks.raw.mockResolvedValueOnce([{ attempts: 1 }]);
 
     await expect(claimWebhookIdempotency('book-1', 'transaction', 'k1'))
       .resolves.toEqual({ status: 'claimed', attempt: 1 });
@@ -210,9 +210,14 @@ describe('claim lifecycle', () => {
     expect(sql).toContain('NOW()');
   });
 
-  it('never throws out of complete/release — the ledger write already succeeded', async () => {
+  it('propagates completion database errors so an in-transaction caller rolls back', async () => {
     mocks.executeRaw.mockRejectedValue(new Error('connection reset'));
-    await expect(completeWebhookIdempotency('b', 'transaction', 'k', 1, {})).resolves.toBe(false);
+    await expect(completeWebhookIdempotency('b', 'transaction', 'k', 1, {}))
+      .rejects.toThrow('connection reset');
+  });
+
+  it('keeps release best-effort after a write failure', async () => {
+    mocks.executeRaw.mockRejectedValue(new Error('connection reset'));
     await expect(releaseWebhookIdempotency('b', 'transaction', 'k', 1)).resolves.toBeUndefined();
   });
 });

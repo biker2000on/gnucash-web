@@ -2112,6 +2112,9 @@ async function createExtensionTables() {
             result JSONB,
             state VARCHAR(32) NOT NULL DEFAULT 'processing',
             attempts INTEGER NOT NULL DEFAULT 1,
+            -- Kept as TIMESTAMP for compatibility. The claim/reclaim queries
+            -- use NOW() in the same session; migrate all timestamp columns to
+            -- TIMESTAMPTZ together before allowing mixed pool TimeZones.
             claim_started_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
             detail TEXT,
             completed_at TIMESTAMP,
