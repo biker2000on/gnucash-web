@@ -42,8 +42,6 @@ interface TaxScheduleReport {
   items: LineItem[];
   unmappedTaxRelated: UnmappedAccount[];
   overrides: Record<string, string>;
-  capitalGainsWarnings: string[];
-  capitalGainsCollisionCodes: string[];
 }
 
 const CURRENT_YEAR = new Date().getFullYear();
@@ -279,20 +277,6 @@ export default function TaxSchedulePage() {
 
       {data && !loading && (
         <>
-          {data.capitalGainsCollisionCodes.length > 0 && (
-            <div className="bg-negative/10 border border-negative/30 rounded-lg p-4 text-sm text-foreground-secondary">
-              <span className="font-semibold text-negative">TXF download blocked.</span>{' '}
-              Account mappings already use {data.capitalGainsCollisionCodes.join(', ')}, which would double-count realized capital gains. Remove those overrides or review the capital-gains report before exporting.
-            </div>
-          )}
-          {data.capitalGainsWarnings.length > 0 && (
-            <div className="bg-warning/5 border border-warning/30 rounded-lg p-4">
-              <div className="text-warning font-semibold text-sm mb-2">Capital-gains review required</div>
-              <ul className="space-y-1 text-xs text-foreground-secondary">
-                {data.capitalGainsWarnings.map((warning, index) => <li key={`${warning}-${index}`}>{warning}</li>)}
-              </ul>
-            </div>
-          )}
           {/* Unmapped tax-related accounts warning */}
           {data.unmappedTaxRelated.length > 0 && (
             <div className="bg-warning/5 border border-warning/30 rounded-lg p-4">

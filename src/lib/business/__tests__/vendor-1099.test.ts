@@ -136,6 +136,19 @@ describe('card-funded payment exclusion', () => {
             { vendorGuid: 'vendor-1', paid: 1_500, cardFundingAmount: 0, totalFundingAmount: 1_500 },
         ]).get('vendor-1')).toBe(1_500);
     });
+
+    it('does not let a non-funding expense split dilute a fully card-funded payment', () => {
+        const payments = aggregateEligibleVendorPayments([
+            // A/P $20,000; materials $5,000; flagged Visa $25,000. The
+            // expense is not a funding leg, so the payable is fully card-paid.
+            { vendorGuid: 'vendor-1', paid: 20_000, cardFundingAmount: 25_000, totalFundingAmount: 25_000 },
+        ]);
+        const summary = buildVendor1099Summary(
+            2026, [{ guid: 'vendor-1', name: 'Ridgeline Fencing LLC', active: true }],
+            payments, new Map(), new Map(), 2_000,
+        );
+        expect(summary.vendors[0]).toMatchObject({ totalPaid: 0, crosses600: false, status: 'below_threshold' });
+    });
 });
 
 /* ------------------------------------------------------------------ */

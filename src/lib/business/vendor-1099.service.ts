@@ -182,10 +182,16 @@ export function aggregateEligibleVendorPayments(
 ): Map<string, number> {
     const totals = new Map<string, number>();
     for (const payment of payments) {
-        const fundingRatio = payment.totalFundingAmount > 0
-            ? Math.min(1, Math.max(0, payment.cardFundingAmount / payment.totalFundingAmount))
-            : 0;
-        const eligiblePaid = round2(payment.paid * (1 - fundingRatio));
+        // Funding legs are only cash/settlement balance-sheet accounts
+        // (ASSET/BANK/CASH/LIABILITY/CREDIT), never expense, discount, or
+        // rounding splits. Settle at most the A/P amount, then apportion that
+        // settled amount by card vs non-card funding; any residual is explicit
+        // non-cash settlement and is not treated as 1099 cash paid.
+        const totalFunding = Math.max(0, payment.totalFundingAmount);
+        const cardFunding = Math.min(totalFunding, Math.max(0, payment.cardFundingAmount));
+        const settledMagnitude = Math.min(Math.abs(payment.paid), totalFunding);
+        const nonCardRatio = totalFunding > 0 ? (totalFunding - cardFunding) / totalFunding : 0;
+        const eligiblePaid = round2(Math.sign(payment.paid) * settledMagnitude * nonCardRatio);
         totals.set(payment.vendorGuid, round2((totals.get(payment.vendorGuid) ?? 0) + eligiblePaid));
     }
     return totals;
@@ -340,7 +346,7 @@ export async function get1099Summary(
                 LEFT JOIN gnucash_web_account_preferences funding_pref ON funding_pref.account_guid = funding.account_guid
                 WHERE funding.tx_guid = s.tx_guid
                   AND funding.guid <> s.guid
-                  AND funding_account.account_type <> 'PAYABLE'
+                  AND funding_account.account_type IN ('ASSET', 'BANK', 'CASH', 'LIABILITY', 'CREDIT')
             ) funding
             WHERE inv.eff_owner_type = ${OWNER_TYPE_VENDOR}
               AND t.post_date >= ${start} AND t.post_date <= ${end}

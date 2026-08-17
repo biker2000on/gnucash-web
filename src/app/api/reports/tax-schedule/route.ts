@@ -3,8 +3,6 @@ import { requireRole } from '@/lib/auth';
 import { getBookAccountGuids } from '@/lib/book-scope';
 import { generateTaxSchedule } from '@/lib/tax/tax-schedule';
 import { buildTxfFile, type TxfExportItem } from '@/lib/tax/txf-file';
-import { capitalGainsTxfItems } from '@/lib/tax/txf-capital-gains';
-import { loadCapitalGainsReport } from '@/lib/reports/capital-gains';
 import { saveTxfOverrides, TxfOverrideValidationError } from '@/lib/tax/txf';
 
 /**
@@ -43,8 +41,7 @@ export async function GET(request: NextRequest) {
         total: item.total,
         accounts: item.accounts.map(a => ({ path: a.path, amount: a.amount })),
       }));
-      const capitalGains = await loadCapitalGainsReport(bookAccountGuids, year);
-      const txf = buildTxfFile([...exportItems, ...capitalGainsTxfItems(capitalGains)]);
+      const txf = buildTxfFile(exportItems);
       return new NextResponse(txf, {
         headers: {
           'Content-Type': 'text/plain; charset=us-ascii',
