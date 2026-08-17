@@ -20,7 +20,7 @@ import {
   collectValuationCoverage,
   mergeValuationCoverage,
 } from '../account-valuation';
-import { PRICE_STALENESS_DAYS } from '../price-staleness';
+import { CRYPTO_STALENESS_DAYS, PRICE_STALENESS_DAYS } from '../price-staleness';
 
 const mockPrisma = prisma as unknown as {
   $queryRaw: Mock;
@@ -358,6 +358,57 @@ describe('buildAccountValuationContext', () => {
       ]);
       expect(valuation.stalePrices?.[0].message).toContain('AAPL');
       expect(valuation.stalePrices?.[0].message).toContain('77 days old');
+    });
+
+    it('holds a continuously-traded commodity to its own, tighter bound', async () => {
+      // Same quote date, same as-of date, two verdicts. Three days back: the
+      // newest quote a closed exchange could have produced, and three days of
+      // trading nobody recorded on a market that never shut.
+      const friday = new Date('2026-08-13T20:00:00.000Z');
+      const btc = {
+        accountType: 'STOCK',
+        commodityGuid: 'btc-guid',
+        commodityNamespace: 'CRYPTO',
+      };
+      mockPrisma.$queryRaw.mockResolvedValue([
+        pricePair('stock-guid', 'usd-guid', 123.45, {
+          date: friday,
+          commodityMnemonic: 'AAPL',
+        }),
+        pricePair('btc-guid', 'usd-guid', 61000, {
+          date: friday,
+          commodityMnemonic: 'BTC',
+        }),
+      ]);
+
+      const valuation = await buildAccountValuationContext([stock, btc], ASOF, USD);
+
+      // Both still valued; only one is disclosed as old.
+      expect(valuation.getMultiplier(btc)).toBe(61000);
+      expect(valuation.stalePrices).toEqual([
+        expect.objectContaining({ commodityGuid: 'btc-guid', label: 'BTC' }),
+      ]);
+      expect(valuation.stalePrices?.[0].message).toContain(
+        `older than ${CRYPTO_STALENESS_DAYS} days`,
+      );
+    });
+
+    it('leaves a crypto quote inside the tighter bound alone', async () => {
+      const btc = {
+        accountType: 'STOCK',
+        commodityGuid: 'btc-guid',
+        commodityNamespace: 'CRYPTO',
+      };
+      mockPrisma.$queryRaw.mockResolvedValue([
+        pricePair('btc-guid', 'usd-guid', 61000, {
+          date: new Date(ASOF.getTime() - CRYPTO_STALENESS_DAYS * 86_400_000),
+          commodityMnemonic: 'BTC',
+        }),
+      ]);
+
+      const valuation = await buildAccountValuationContext([btc], ASOF, USD);
+
+      expect(valuation.stalePrices).toEqual([]);
     });
 
     it('discloses a stale exchange rate for a foreign-currency balance', async () => {

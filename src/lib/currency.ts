@@ -8,7 +8,19 @@
 import prisma from './prisma';
 import { toDecimalNumber as toDecimal } from './gnucash';
 import { getActiveBookRootGuid } from './book-scope';
-import { PRICE_STALENESS_DAYS, isPriceStale, priceAgeDays } from './price-staleness';
+import { isPriceStale, priceAgeDays, stalenessDaysFor } from './price-staleness';
+
+/**
+ * The bound for a currency pair.
+ *
+ * Every rate in this module is a quote between two commodities in the CURRENCY
+ * namespace, so it is asked for by name rather than left to a default: FX
+ * markets close for the weekend like the exchanges do, which is the gap the
+ * seven-day bound exists to clear. A crypto pair does not come through here —
+ * crypto is a non-CURRENCY commodity priced through `account-valuation.ts`,
+ * where the tighter continuous-market bound applies.
+ */
+const FX_STALENESS_DAYS = stalenessDaysFor('CURRENCY');
 
 export interface ExchangeRate {
     fromCurrency: string;
@@ -22,10 +34,10 @@ export interface ExchangeRate {
      */
     ageDays: number;
     /**
-     * True when `date` is more than `PRICE_STALENESS_DAYS` before the as-of
-     * date. The rate is still returned and still usable — a conversion the
-     * caller can label is better than a conversion it cannot perform — but a
-     * caller that renders the converted figure must say the quote is old.
+     * True when `date` is more than `FX_STALENESS_DAYS` before the as-of date.
+     * The rate is still returned and still usable — a conversion the caller can
+     * label is better than a conversion it cannot perform — but a caller that
+     * renders the converted figure must say the quote is old.
      */
     stale: boolean;
 }
@@ -152,7 +164,7 @@ export async function getAllCurrencies(): Promise<Currency[]> {
 function ageOf(priceDate: Date, asOfDate: Date): { ageDays: number; stale: boolean } {
     return {
         ageDays: priceAgeDays(priceDate, asOfDate),
-        stale: isPriceStale(priceDate, asOfDate, PRICE_STALENESS_DAYS),
+        stale: isPriceStale(priceDate, asOfDate, FX_STALENESS_DAYS),
     };
 }
 

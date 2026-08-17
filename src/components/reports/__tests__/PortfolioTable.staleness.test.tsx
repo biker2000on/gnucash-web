@@ -21,7 +21,11 @@ import { PortfolioTable } from '../PortfolioTable';
 
 const COMPLETE: CostBasisCoverage = { status: 'complete', coveredShares: 100 };
 
-function holding(symbol: string, priceDate: string): PortfolioHolding {
+function holding(
+    symbol: string,
+    priceDate: string,
+    commodityNamespace: string | null = 'NASDAQ',
+): PortfolioHolding {
     return {
         guid: `acct-${symbol}`,
         accountName: `Brokerage:${symbol}`,
@@ -29,6 +33,7 @@ function holding(symbol: string, priceDate: string): PortfolioHolding {
         shares: 100,
         latestPrice: 120,
         priceDate,
+        commodityNamespace,
         marketValue: 12000,
         costBasis: 10000,
         costBasisCoverage: COMPLETE,
@@ -103,5 +108,47 @@ describe('PortfolioTable price staleness', () => {
         render(<PortfolioTable data={report([holding('AAPL', '')])} />);
 
         expect(screen.queryByText(/stale/i)).toBeNull();
+    });
+
+    /**
+     * The weekend that excuses a listed security's three-day-old quote does not
+     * exist for a market that trades through it. Holding both to one bound
+     * means either crying wolf on the equity or going quiet on the crypto, and
+     * quiet is the expensive one.
+     */
+    describe('the bound follows the instrument, not the table', () => {
+        it("calls a crypto quote stale on a gap an equity's calendar explains", () => {
+            render(<PortfolioTable data={report([
+                holding('AAPL', '2026-08-14'),
+                holding('BTC', '2026-08-14', 'CRYPTO'),
+            ])} />);
+
+            expect(within(rowFor('BTC')).getByText(/stale/i)).toBeTruthy();
+            expect(within(rowFor('AAPL')).queryByText(/stale/i)).toBeNull();
+            expect(screen.getByText(/1 of 2 holdings/i)).toBeTruthy();
+        });
+
+        it('leaves a crypto quote from yesterday alone', () => {
+            render(<PortfolioTable data={report([holding('BTC', '2026-08-16', 'CRYPTO')])} />);
+
+            expect(screen.queryByText(/stale/i)).toBeNull();
+        });
+
+        it('falls back to the looser bound when the payload carries no namespace', () => {
+            // A report cached before the namespace travelled with the holding.
+            render(<PortfolioTable data={report([holding('AAPL', '2026-08-14', null)])} />);
+
+            expect(screen.queryByText(/stale/i)).toBeNull();
+        });
+
+        it('quotes no single day count above a table that applies two', () => {
+            render(<PortfolioTable data={report([
+                holding('AAPL', '2026-06-01'),
+                holding('BTC', '2026-06-01', 'CRYPTO'),
+            ])} />);
+
+            const caption = screen.getByText(/2 of 2 holdings/i);
+            expect(caption.textContent).not.toMatch(/\d+ days? old/);
+        });
     });
 });

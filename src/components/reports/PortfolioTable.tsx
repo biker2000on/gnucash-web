@@ -11,7 +11,7 @@ import {
     BASIS_CONSEQUENCE,
 } from '@/components/investments/CostBasisCoverageMark';
 import { sameCoverageStatement } from '@/lib/holdings-coverage';
-import { PRICE_STALENESS_DAYS, isPriceStale } from '@/lib/price-staleness';
+import { isPriceStale, stalenessDaysFor } from '@/lib/price-staleness';
 
 function fmtCurrency(n: number): string {
     return new Intl.NumberFormat('en-US', {
@@ -75,8 +75,15 @@ export function PortfolioTable({ data, onAccountClick }: PortfolioTableProps) {
     //
     // Marked per row rather than in a caption alone, because staleness differs
     // row to row: a single sentence cannot say WHICH market values are old.
+    // How old a quote may be depends on what it quotes: a listed security's
+    // newest possible price is routinely a few days back because the exchange
+    // was shut, while a continuously-traded one has no such excuse. The bound
+    // therefore comes from the holding's own commodity namespace, and the
+    // caption below quotes no single number because two rows in one table can
+    // be held to different ones.
     const asOfDate = data.filters.endDate || data.generatedAt;
-    const isStale = (h: PortfolioHolding) => isPriceStale(h.priceDate, asOfDate);
+    const isStale = (h: PortfolioHolding) =>
+        isPriceStale(h.priceDate, asOfDate, stalenessDaysFor(h.commodityNamespace));
     const staleCount = holdings.filter(isStale).length;
     const staleMark = (
         <span className="ml-1 text-xs text-warning">stale</span>
@@ -84,8 +91,8 @@ export function PortfolioTable({ data, onAccountClick }: PortfolioTableProps) {
     const staleCaption = staleCount > 0 && (
         <p className="mb-3 text-left text-xs text-warning">
             {staleCount} of {holdings.length} holdings {staleCount === 1 ? 'is' : 'are'} priced from
-            a quote more than {PRICE_STALENESS_DAYS} days old (marked stale); their market value and
-            gain may not reflect current prices.
+            a quote older than its market normally goes without one (marked stale); their market
+            value and gain may not reflect current prices.
         </p>
     );
     const caption = holdings.length > 0 && (

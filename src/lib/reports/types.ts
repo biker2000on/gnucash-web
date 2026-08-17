@@ -166,6 +166,15 @@ export interface PortfolioHolding {
   shares: number;
   latestPrice: number;
   priceDate: string;
+  /**
+   * The commodity's GnuCash namespace, carried so the table can decide how old
+   * `priceDate` is allowed to be before it says so. A continuously-traded
+   * commodity gets a tighter bound than a listed security; without the namespace
+   * the browser would have to hold both to the looser one. Optional because a
+   * report payload cached before this existed has no namespace to offer, and the
+   * fallback in `stalenessDaysFor` is the safe direction.
+   */
+  commodityNamespace?: string | null;
   marketValue: number;
   /** Basis of the shares `costBasisCoverage` describes, not always all of them. */
   costBasis: number;

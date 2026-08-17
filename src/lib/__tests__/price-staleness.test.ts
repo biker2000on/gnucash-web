@@ -9,10 +9,12 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
+    CRYPTO_STALENESS_DAYS,
     PRICE_STALENESS_DAYS,
     isPriceStale,
     priceAgeDays,
     stalePriceMessage,
+    stalenessDaysFor,
 } from '../price-staleness';
 
 const MONDAY = new Date('2026-08-17T13:00:00.000Z');
@@ -80,6 +82,61 @@ describe('isPriceStale', () => {
     });
 });
 
+/**
+ * The seven-day bound is bought entirely by the exchange being SHUT: it is the
+ * span in which no quote could have existed, so warning would blame the book
+ * for the calendar. A market that never closes has no such span, and holding it
+ * to seven days hands back a week of silence on the asset class most able to
+ * move inside it.
+ */
+describe('stalenessDaysFor', () => {
+    it('holds a continuously-traded commodity to a tighter bound', () => {
+        expect(stalenessDaysFor('CRYPTO')).toBe(CRYPTO_STALENESS_DAYS);
+        expect(CRYPTO_STALENESS_DAYS).toBeLessThan(PRICE_STALENESS_DAYS);
+    });
+
+    it('reads the namespace case-insensitively, as the rest of the app does', () => {
+        // `yahoo-symbol.ts` and `commodity-metadata.ts` both upper-case before
+        // comparing, because namespace is free text in the GnuCash schema.
+        expect(stalenessDaysFor('crypto')).toBe(CRYPTO_STALENESS_DAYS);
+        expect(stalenessDaysFor('Crypto')).toBe(CRYPTO_STALENESS_DAYS);
+    });
+
+    it('keeps the exchange-traded bound for every namespace that closes', () => {
+        for (const ns of ['CURRENCY', 'NASDAQ', 'NYSE', 'AMEX', 'FUND', 'ETF', 'BOND']) {
+            expect(stalenessDaysFor(ns)).toBe(PRICE_STALENESS_DAYS);
+        }
+    });
+
+    it('falls back to the looser bound when the namespace is unknown or absent', () => {
+        // Late beats crying wolf: an unrecognised instrument may legitimately
+        // quote weekly, and a warning nobody believes protects nobody.
+        expect(stalenessDaysFor(undefined)).toBe(PRICE_STALENESS_DAYS);
+        expect(stalenessDaysFor(null)).toBe(PRICE_STALENESS_DAYS);
+        expect(stalenessDaysFor('SOMETHING_NEW')).toBe(PRICE_STALENESS_DAYS);
+    });
+
+    it('splits on a gap that spans a weekend, which only one of the two closed for', () => {
+        // Friday's close read on Tuesday. For a listed security that is the
+        // newest quote that could exist and warning would be noise; for crypto
+        // it is three days of trading nobody recorded.
+        const fridayClose = new Date('2026-08-14T20:00:00.000Z');
+        const tuesday = new Date('2026-08-18T13:00:00.000Z');
+        expect(priceAgeDays(fridayClose, tuesday)).toBe(3);
+        expect(isPriceStale(fridayClose, tuesday, stalenessDaysFor('NASDAQ'))).toBe(false);
+        expect(isPriceStale(fridayClose, tuesday, stalenessDaysFor('CRYPTO'))).toBe(true);
+    });
+
+    it('gives crypto one day of margin for a fetch that ran late, and no more', () => {
+        const bound = stalenessDaysFor('CRYPTO');
+        const onTheBound = new Date(MONDAY.getTime() - CRYPTO_STALENESS_DAYS * 86_400_000);
+        const pastIt = new Date(MONDAY.getTime() - (CRYPTO_STALENESS_DAYS + 1) * 86_400_000);
+
+        expect(isPriceStale(onTheBound, MONDAY, bound)).toBe(false);
+        expect(isPriceStale(pastIt, MONDAY, bound)).toBe(true);
+    });
+});
+
 describe('stalePriceMessage', () => {
     it('names the holding, the quote it used, and the age', () => {
         const message = stalePriceMessage('AAPL', '2026-08-01', 16);
@@ -87,6 +144,14 @@ describe('stalePriceMessage', () => {
         expect(message).toContain('2026-08-01');
         expect(message).toContain('16 days old');
         expect(message).toContain(String(PRICE_STALENESS_DAYS));
+    });
+
+    it('states the bound it was judged against, since that is not one number', () => {
+        // Two commodities in one statement can be held to different bounds, so
+        // the line has to carry its own rather than lean on a shared heading.
+        const crypto = stalePriceMessage('BTC', '2026-08-10', 7, CRYPTO_STALENESS_DAYS);
+        expect(crypto).toContain(`older than ${CRYPTO_STALENESS_DAYS} days`);
+        expect(crypto).not.toContain(`older than ${PRICE_STALENESS_DAYS} days`);
     });
 
     it('reads as a disclosure, not an exclusion', () => {

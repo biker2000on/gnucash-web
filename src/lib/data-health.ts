@@ -51,7 +51,19 @@ export interface HealthCheck {
 }
 
 export interface DataHealthOptions {
-    /** Prices older than this many days are "stale". Default `PRICE_STALENESS_DAYS`. */
+    /**
+     * Prices older than this many days are "stale". Default
+     * `PRICE_STALENESS_DAYS`, the same exchange-traded bound the valuation
+     * disclosure uses.
+     *
+     * Applied UNIFORMLY to every commodity, unlike the valuation path, which
+     * picks a per-instrument bound (`stalenessDaysFor`) because it warns
+     * automatically inside a statement nobody asked to be warned in. This is a
+     * diagnostic the operator opens on purpose, with the window as an input they
+     * chose and can see printed beside the result; silently applying a different
+     * number to some rows than the one they typed would make the report harder
+     * to read, not safer.
+     */
     staleDays?: number;
     /** Unreconciled splits older than this many days age into the report. Default 90. */
     unreconciledDays?: number;

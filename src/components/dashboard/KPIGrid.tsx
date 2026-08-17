@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { ProvenanceModal } from '@/components/provenance/ProvenanceModal';
-import { PRICE_STALENESS_DAYS } from '@/lib/price-staleness';
+import { ErrorLiveRegion } from '@/components/a11y/LiveRegion';
 
 interface TraceReference {
     traceId: string;
@@ -272,8 +272,11 @@ export default function KPIGrid({ data, loading }: KPIGridProps) {
     // quotes that stopped updating. Unlike the exclusion above, the money IS in
     // the number -- so this qualifies the figure rather than shrinking it.
     const stalePrices = coverage?.stalePrices ?? [];
+    // No day count here: how old is too old depends on the instrument, and two
+    // commodities in one total can be held to different bounds. Each line in the
+    // banner states its own; the caveat only says the total has one.
     const staleCaveat = stalePrices.length > 0
-        ? `Priced from quotes over ${PRICE_STALENESS_DAYS} days old`
+        ? 'Priced from out-of-date quotes'
         : undefined;
     const valuationCaveat = [partialCaveat, staleCaveat].filter(Boolean).join(' · ') || undefined;
     // When the two dates could not value the same holdings, the difference
@@ -291,6 +294,12 @@ export default function KPIGrid({ data, loading }: KPIGridProps) {
             ? changeCoverage
             : undefined;
     const showBanner = bannerCoverage !== undefined || !changeComparable || stalePrices.length > 0;
+    // Named because it is both shown and announced, and the two must not drift.
+    const bannerHeading = bannerCoverage
+        ? 'These totals are incomplete'
+        : !changeComparable
+            ? 'Net worth change is not available'
+            : 'These totals use out-of-date prices';
 
     const cards: KPICardProps[] = [
         {
@@ -353,19 +362,21 @@ export default function KPIGrid({ data, loading }: KPIGridProps) {
     return (
         <>
             {showBanner && (
-                <div
-                    // A missing figure interrupts; a figure that is present but
-                    // priced from an old quote announces politely.
-                    role={bannerCoverage || !changeComparable ? 'alert' : 'status'}
-                    className="bg-warning/10 border border-warning/30 rounded-lg px-4 py-3 mb-4 text-sm text-warning"
-                >
-                    <div className="font-medium">
-                        {bannerCoverage
-                            ? 'These totals are incomplete'
-                            : !changeComparable
-                                ? 'Net worth change is not available'
-                                : `These totals use prices more than ${PRICE_STALENESS_DAYS} days old`}
-                    </div>
+                <div className="bg-warning/10 border border-warning/30 rounded-lg px-4 py-3 mb-4 text-sm text-warning">
+                    {/*
+                      * The banner renders with its heading already in it, so a
+                      * role on this node announces nothing reliably — the node
+                      * and its text reach the accessibility tree in one commit.
+                      * The shared region mounts empty and publishes on a later
+                      * one, which is the mechanism a screen reader responds to.
+                      * A missing figure interrupts; a figure that is present but
+                      * priced from an old quote waits for a pause.
+                      */}
+                    <ErrorLiveRegion
+                        message={bannerHeading}
+                        politeness={bannerCoverage || !changeComparable ? 'assertive' : 'polite'}
+                    />
+                    <div className="font-medium">{bannerHeading}</div>
                     {bannerCoverage && bannerCoverage.gaps.length > 0 && (
                         <ul className="mt-1.5 space-y-1 text-xs">
                             {bannerCoverage.gaps.map(gap => (

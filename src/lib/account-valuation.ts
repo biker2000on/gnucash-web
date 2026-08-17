@@ -2,9 +2,9 @@ import prisma from '@/lib/prisma';
 import { toDecimalNumber as toDecimal } from '@/lib/gnucash';
 import { getBaseCurrency, type Currency } from '@/lib/currency';
 import {
-  PRICE_STALENESS_DAYS,
   describeStalePrice,
   isPriceStale,
+  stalenessDaysFor,
   type StalePriceDisclosure,
 } from '@/lib/price-staleness';
 
@@ -51,7 +51,9 @@ export interface ValuationCoverage {
   gaps: ValuationGap[];
   /**
    * Commodities that ARE in the total but were priced from a quote older than
-   * `PRICE_STALENESS_DAYS`.
+   * the bound for their instrument class (`stalenessDaysFor`). Each entry's
+   * `message` states the bound it was judged against, since two commodities in
+   * one statement can be held to different ones.
    *
    * A distinct list from `gaps` because it makes a distinct statement, and the
    * two must not be read as one: a gap says a balance was left OUT, so the
@@ -370,11 +372,17 @@ export async function buildAccountValuationContext(
   // Absent when the multiplier rests on no quote (report currency, or an
   // account type valued at face value), which cannot go stale.
   const rateDates = new Map<string, Date | string>();
+  // Namespace per commodity, kept only so the staleness bound can be chosen per
+  // instrument: a continuously-traded commodity has no weekend to excuse a
+  // silent week (see `stalenessDaysFor`). Recorded from the account rows already
+  // in hand, so this costs no extra query.
+  const namespaces = new Map<string, string | null>();
   const reportMnemonic = reportCurrency?.mnemonic ?? 'the report currency';
 
   for (const account of accounts) {
     const commodityGuid = account.commodityGuid;
     if (!commodityGuid || multiplierCache.has(commodityGuid)) continue;
+    namespaces.set(commodityGuid, account.commodityNamespace ?? null);
 
     if (!reportCurrencyGuid) {
       multiplierCache.set(commodityGuid, 1);
@@ -403,11 +411,16 @@ export async function buildAccountValuationContext(
     }
   }
 
+  // The bound is per instrument, not per book: seven days of silence is the
+  // ordinary shape of a market week for a listed security and is a week of
+  // undisclosed exposure for something that trades through the weekend.
+  const boundFor = (guid: string) => stalenessDaysFor(namespaces.get(guid));
+
   // A stale quote names the commodity the same way a gap does, so both need the
   // mnemonic backfill. A fully priced, fully current book still triggers
   // neither, keeping that path query-for-query identical.
   const staleGuids = [...rateDates.keys()].filter(
-    guid => isPriceStale(rateDates.get(guid), asOf, PRICE_STALENESS_DAYS),
+    guid => isPriceStale(rateDates.get(guid), asOf, boundFor(guid)),
   );
   if (gapReasons.size > 0 || staleGuids.length > 0) {
     await resolveMissingMnemonics([...gapReasons.keys(), ...staleGuids], mnemonics);
@@ -420,7 +433,7 @@ export async function buildAccountValuationContext(
       mnemonics.get(guid) ?? guid,
       rateDates.get(guid),
       asOf,
-      PRICE_STALENESS_DAYS,
+      boundFor(guid),
     );
     if (disclosure) stalePrices.push(disclosure);
   }

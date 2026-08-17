@@ -45,7 +45,7 @@ export async function generateInvestmentPortfolio(
             name: true,
             account_type: true,
             commodity_guid: true,
-            commodity: { select: { mnemonic: true, fullname: true } },
+            commodity: { select: { mnemonic: true, fullname: true, namespace: true } },
         },
     });
 
@@ -136,6 +136,9 @@ export async function generateInvestmentPortfolio(
             shares: effectiveShares,
             latestPrice,
             priceDate,
+            // Travels with the quote date it qualifies: the table needs both to
+            // judge whether this price is too old to stand for "current".
+            commodityNamespace: account.commodity?.namespace ?? null,
             marketValue,
             costBasis,
             costBasisCoverage,
