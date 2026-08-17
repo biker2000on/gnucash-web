@@ -43,7 +43,7 @@ export async function fetchAccountCurrentValues(
 
     const quantityRows = await prisma.$queryRaw<Array<{ account_guid: string; qty: number }>>`
         SELECT s.account_guid,
-               COALESCE(SUM(CAST(s.quantity_num AS DOUBLE PRECISION) / NULLIF(s.quantity_denom, 0)), 0) AS qty
+               COALESCE(SUM(s.quantity_num::numeric / NULLIF(s.quantity_denom, 0)::numeric), 0)::float8 AS qty
         FROM splits s
         JOIN transactions t ON t.guid = s.tx_guid
         WHERE s.account_guid = ANY(${accountGuids}::text[])

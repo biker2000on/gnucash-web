@@ -390,6 +390,79 @@ async function loadStructuralIssues(
     };
 }
 
+/**
+ * (c) Zero split denominators — NULLIF-protected balance queries exclude these
+ * splits rather than failing the entire report, so they must be surfaced.
+ */
+async function loadZeroDenominators(
+    guids: string[],
+    itemCap: number,
+): Promise<HealthCheck> {
+    // This check is book-scoped by s.account_guid = ANY(...); unlike loadStructuralIssues, splits on missing accounts are not visible here.
+    const rows = await prisma.$queryRaw<
+        {
+            guid: string;
+            account_guid: string;
+            account_name: string;
+            tx_guid: string;
+            description: string | null;
+            post_date: Date | null;
+            quantity_zero: boolean;
+            value_zero: boolean;
+        }[]
+    >`
+        SELECT
+            s.guid,
+            a.guid AS account_guid,
+            a.name AS account_name,
+            t.guid AS tx_guid,
+            t.description,
+            t.post_date,
+            s.quantity_denom = 0 AS quantity_zero,
+            s.value_denom = 0 AS value_zero
+        FROM splits s
+        JOIN accounts a ON a.guid = s.account_guid
+        JOIN transactions t ON t.guid = s.tx_guid
+        WHERE s.account_guid = ANY(${guids}::text[])
+          AND (s.quantity_denom = 0 OR s.value_denom = 0)
+        ORDER BY t.post_date DESC NULLS LAST
+        LIMIT ${itemCap}
+    `;
+
+    const countRows = await prisma.$queryRaw<{ n: number }[]>`
+        SELECT COUNT(*)::int AS n
+        FROM splits s
+        WHERE s.account_guid = ANY(${guids}::text[])
+          AND (s.quantity_denom = 0 OR s.value_denom = 0)
+    `;
+    const count = countRows[0]?.n ?? 0;
+
+    const items: HealthCheckItem[] = rows.map((r) => {
+        const denominators = [
+            r.quantity_zero ? 'quantity' : null,
+            r.value_zero ? 'value' : null,
+        ].filter((value): value is string => value !== null).join(' and ');
+        const transaction = r.description || '(no description)';
+        return {
+            guid: r.guid,
+            name: r.account_name,
+            detail: `${r.post_date ? r.post_date.toISOString().slice(0, 10) + ' · ' : ''}transaction ${transaction} (${r.tx_guid.slice(0, 8)}…) · zero ${denominators} denominator; split is excluded from NULLIF-protected balances`,
+            href: `/accounts/${r.account_guid}`,
+        };
+    });
+
+    return {
+        id: 'zero-denominators',
+        label: 'Zero split denominators',
+        // Follow-up: expand this copy when deferred value-denominator report paths are NULLIF-protected.
+        description: 'Splits with a zero quantity or value denominator are excluded from NULLIF-protected balances.',
+        severity: count > 0 ? 'error' : 'ok',
+        count,
+        items,
+        truncated: count > items.length,
+    };
+}
+
 interface HeldCommodityRow {
     commodity_guid: string;
     mnemonic: string;
@@ -400,7 +473,7 @@ interface HeldCommodityRow {
 }
 
 /**
- * (c)(d)(e) Price checks. One pass gathers the book's held non-currency
+ * (d)(e)(f) Price checks. One pass gathers the book's held non-currency
  * commodities plus any commodity flagged for quotes, then classifies each into
  * stale / missing / quote-flag-stale using the pure threshold helpers.
  */
@@ -545,7 +618,7 @@ async function loadPriceChecks(
 }
 
 /**
- * (f) Unreconciled aging — splits in balance-sheet accounts that are still
+ * (g) Unreconciled aging — splits in balance-sheet accounts that are still
  * unreconciled and older than `unreconciledDays`. Aggregated per account.
  */
 async function loadUnreconciledAging(
@@ -643,9 +716,10 @@ export async function runDataHealth(
     const asOf = opts.asOf ?? new Date();
     const itemCap = opts.itemCap ?? ITEM_CAP;
 
-    const [unbalanced, structural, priceChecks, unreconciled] = await Promise.all([
+    const [unbalanced, structural, zeroDenominators, priceChecks, unreconciled] = await Promise.all([
         loadUnbalancedTransactions(bookAccountGuids, itemCap),
         loadStructuralIssues(bookAccountGuids, itemCap),
+        loadZeroDenominators(bookAccountGuids, itemCap),
         loadPriceChecks(bookAccountGuids, staleDays, asOf),
         loadUnreconciledAging(bookAccountGuids, unreconciledDays, asOf, itemCap),
     ]);
@@ -656,6 +730,7 @@ export async function runDataHealth(
     const checks: HealthCheck[] = [
         unbalanced,
         structural,
+        zeroDenominators,
         missing,
         stale,
         quote,
