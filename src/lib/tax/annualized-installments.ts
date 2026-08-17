@@ -108,7 +108,9 @@ export function computeAnnualizedInstallments(
     return {
       applicable: false,
       columns: [],
-      requiredCumulativeByQuarter: [round2(rap * 0.25), round2(rap * 0.5), round2(rap * 0.75), round2(rap)],
+      // Qualifying farmers/fishers have a single Jan. 15 installment; the
+      // API supplies [0, 0, 0, rap] directly to the quarter tracker.
+      requiredCumulativeByQuarter: [0, 0, 0, rap],
       anyBenefit: false,
     };
   }

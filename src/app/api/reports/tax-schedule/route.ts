@@ -5,7 +5,6 @@ import { generateTaxSchedule } from '@/lib/tax/tax-schedule';
 import { buildTxfFile, type TxfExportItem } from '@/lib/tax/txf-file';
 import { capitalGainsTxfItems } from '@/lib/tax/txf-capital-gains';
 import { loadCapitalGainsReport } from '@/lib/reports/capital-gains';
-import { addCapitalGainsToTaxSchedule } from '@/lib/tax/tax-schedule-capital-gains';
 import { saveTxfOverrides, TxfOverrideValidationError } from '@/lib/tax/txf';
 
 /**
@@ -36,21 +35,15 @@ export async function GET(request: NextRequest) {
 
     const bookAccountGuids = await getBookAccountGuids();
     const report = await generateTaxSchedule(bookAccountGuids, year);
-    const capitalGains = await loadCapitalGainsReport(bookAccountGuids, year);
-    const reportWithCapitalGains = addCapitalGainsToTaxSchedule(report, capitalGains);
 
     if (format === 'txf') {
-      if (reportWithCapitalGains.capitalGainsCollisionCodes.length > 0) {
-        return NextResponse.json({
-          error: `TXF export blocked: account mappings already use ${reportWithCapitalGains.capitalGainsCollisionCodes.join(', ')}, which would double-count realized capital gains. Remove those overrides or review the capital-gains report.`,
-        }, { status: 409 });
-      }
       const exportItems: TxfExportItem[] = report.items.map(item => ({
         code: item.code,
         payerSupported: item.payerSupported,
         total: item.total,
         accounts: item.accounts.map(a => ({ path: a.path, amount: a.amount })),
       }));
+      const capitalGains = await loadCapitalGainsReport(bookAccountGuids, year);
       const txf = buildTxfFile([...exportItems, ...capitalGainsTxfItems(capitalGains)]);
       return new NextResponse(txf, {
         headers: {
@@ -60,7 +53,7 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    return NextResponse.json(reportWithCapitalGains);
+    return NextResponse.json(report);
   } catch (error) {
     console.error('Error generating tax schedule report:', error);
     return NextResponse.json(

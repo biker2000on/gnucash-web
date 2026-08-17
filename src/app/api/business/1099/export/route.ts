@@ -45,7 +45,8 @@ export async function GET(request: NextRequest) {
         const lines: string[] = [
             `1099-NEC PREP WORKSHEET — TAX YEAR ${year} — NOT AN OFFICIAL IRS FORM`,
             `Vendors paid at least $${threshold} in ${year}. Verify amounts and full TINs against your records before filing (only masked TINs are stored here).`,
-            'WARNING: attorneys\' fees and medical/health-care payments can be reportable even to corporations. This app cannot detect either payment type; review corporate vendors before filing.',
+            'WARNING: Mark attorney or medical/health-care vendors in the tracker; those payments can be reportable even to corporations. Review the correct form and box before filing.',
+            'WARNING: Card and third-party-network payments are excluded only when their funding account is marked in Account settings. Box 1 is a cash-paid worksheet total, not a payment-type classification: it can include goods/materials or rent, and payments not applied to posted A/P bills are not included.',
             '',
             [
                 'Payer Name',
@@ -53,7 +54,7 @@ export async function GET(request: NextRequest) {
                 'Recipient Legal Name',
                 'Recipient TIN (masked - obtain full TIN from W-9)',
                 'Recipient Address',
-                'Box 1 Nonemployee Compensation',
+                'Cash-paid worksheet total (review Box 1 eligibility)',
                 'W-9 Received',
                 'W-9 Requested Date',
                 'Filed 1099-NEC Date',

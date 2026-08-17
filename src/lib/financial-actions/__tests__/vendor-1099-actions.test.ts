@@ -48,8 +48,8 @@ const VENDORS_BY_YEAR: Record<number, Vendor1099ComplianceInput[]> = {
     vendor({ vendorGuid: G_FILED, name: 'Filed Contractor', totalPaid: 900, w9Received: true, filedDate: '2026-01-20' }),
   ],
   2026: [
-    vendor({ vendorGuid: G_DESIGNER, name: 'Design Studio', totalPaid: 1500 }),
-    vendor({ vendorGuid: G_READY, name: 'Ready Vendor', totalPaid: 700, w9Received: true }),
+    vendor({ vendorGuid: G_DESIGNER, name: 'Design Studio', totalPaid: 2500 }),
+    vendor({ vendorGuid: G_READY, name: 'Ready Vendor', totalPaid: 2700, w9Received: true }),
     vendor({ vendorGuid: G_TINY, name: 'Tiny Vendor', totalPaid: 100 }),
   ],
 };
@@ -79,6 +79,19 @@ describe('vendor1099ComplianceActions', () => {
       bookGuid: 'book-1',
       targetType: 'vendor_1099',
     });
+  });
+
+  it('keeps prior-year actions when an unverified current-year threshold fails', async () => {
+    vi.setSystemTime(new Date('2027-01-15T12:00:00Z'));
+    vi.mocked(get1099Compliance).mockImplementation(async (_bookGuid, _guids, taxYear, asOf) => {
+      if (taxYear === 2027) throw new Error('No verified 1099-NEC threshold is configured for tax year 2027');
+      return summarizeVendor1099Compliance(taxYear, VENDORS_BY_YEAR[2026], asOf);
+    });
+
+    const actions = await vendor1099ComplianceActions('book-1', ['acct-1']);
+
+    expect(actions.some(action => action.stableKey.endsWith(':2026'))).toBe(true);
+    expect(vi.mocked(get1099Compliance).mock.calls.map(call => call[2])).toEqual([2026, 2027]);
   });
 
   it('emits W-9 and filing candidates with the documented lanes and severities', async () => {

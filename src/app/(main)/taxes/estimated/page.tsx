@@ -45,6 +45,12 @@ interface TrackerResponse {
   };
   linkedBusinesses: Array<{ name: string | null; share: number; treatment: string }>;
   priorYear: { tax: number | null; agi: number | null; pinned: boolean };
+  farmerQualification: {
+    bookMarkedFarm: boolean;
+    assertedQualifyingFarmer: boolean;
+    qualifyingIncomeTestAvailable: boolean;
+    march1Exception: string | null;
+  };
   safeHarbor: SafeHarborPayload;
   withholding: { ytd: number; annualized: number };
   estimatedPayments: {
@@ -149,6 +155,7 @@ export default function EstimatedTaxPage() {
   const [year, setYear] = useState<TaxYear>(defaultYear);
   const [priorYearTax, setPriorYearTax] = useState<number | null>(null);
   const [priorYearAgi, setPriorYearAgi] = useState<number | null>(null);
+  const [qualifyingFarmer, setQualifyingFarmer] = useState(false);
   const [data, setData] = useState<TrackerResponse | null>(null);
   const [notApplicable, setNotApplicable] = useState<NotApplicableResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -165,6 +172,7 @@ export default function EstimatedTaxPage() {
     const params = new URLSearchParams({ year: String(year) });
     if (priorYearTax !== null) params.set('priorYearTax', String(priorYearTax));
     if (priorYearAgi !== null) params.set('priorYearAgi', String(priorYearAgi));
+    if (qualifyingFarmer) params.set('qualifyingFarmer', 'true');
 
     const timer = setTimeout(() => {
       fetch(`/api/tax/estimated?${params.toString()}`)
@@ -200,7 +208,7 @@ export default function EstimatedTaxPage() {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [year, priorYearTax, priorYearAgi]);
+  }, [year, priorYearTax, priorYearAgi, qualifyingFarmer]);
 
   const savePriorYear = useCallback(async () => {
     setSaveState('saving');
@@ -332,6 +340,27 @@ export default function EstimatedTaxPage() {
           Without prior-year figures the target falls back to 90% of this year&apos;s projected
           tax — usually a higher bar than the prior-year safe harbor.
         </p>
+        {data?.farmerQualification.bookMarkedFarm && (
+          <div className="mt-3 border-t border-border pt-3">
+            <label className="flex items-start gap-2 cursor-pointer text-xs text-foreground-secondary">
+              <input
+                type="checkbox"
+                checked={qualifyingFarmer}
+                onChange={e => setQualifyingFarmer(e.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-border bg-input-bg text-primary focus:ring-primary/50"
+              />
+              <span>
+                I qualify as a farmer or fisher for estimated-tax installment relief.
+                The app cannot verify the statutory two-thirds gross-income test.
+              </span>
+            </label>
+            {qualifyingFarmer && data.farmerQualification.march1Exception && (
+              <p className="mt-2 text-[11px] text-warning">
+                {data.farmerQualification.march1Exception}
+              </p>
+            )}
+          </div>
+        )}
       </div>
 
       {loading && !data && (

@@ -27,6 +27,11 @@ export async function PUT(request: Request, { params }: RouteParams) {
         if (!body || typeof body !== 'object') {
             return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
         }
+        // One-release compatibility for browser bundles deployed before the
+        // override rename. Prefer the new key even when it is explicitly null.
+        const exemptValue = body.exemptFrom1099Override === undefined
+            ? body.exemptFrom1099
+            : body.exemptFrom1099Override;
 
         const input: UpsertVendorTaxInfoInput = {
             legalName: optionalString(body.legalName),
@@ -36,11 +41,15 @@ export async function PUT(request: Request, { params }: RouteParams) {
             w9ReceivedDate: optionalString(body.w9ReceivedDate),
             w9RequestedDate: optionalString(body.w9RequestedDate),
             exemptFrom1099Override:
-                body.exemptFrom1099Override === undefined
+                exemptValue === undefined
                     ? undefined
-                    : body.exemptFrom1099Override === null
+                    : exemptValue === null
                         ? null
-                        : Boolean(body.exemptFrom1099Override),
+                        : Boolean(exemptValue),
+            attorneyOrMedicalPayments:
+                body.attorneyOrMedicalPayments === undefined
+                    ? undefined
+                    : Boolean(body.attorneyOrMedicalPayments),
             address: optionalString(body.address),
             notes: optionalString(body.notes),
         };

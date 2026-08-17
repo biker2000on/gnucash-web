@@ -14,6 +14,8 @@ import {
     derive1099Status,
     maskTin,
     buildVendor1099Summary,
+    aggregateEligibleVendorPayments,
+    mapTaxInfo,
     isVendor1099Exempt,
     isValidTaxClassification,
     Vendor1099ValidationError,
@@ -74,6 +76,65 @@ describe('corporate classification exemption', () => {
     it('honors an explicit false override for corporate carve-outs', () => {
         expect(isVendor1099Exempt(taxInfo({ taxClassification: 'c_corp', exemptFrom1099Override: false }))).toBe(false);
         expect(isVendor1099Exempt(taxInfo({ taxClassification: 's_corp', exemptFrom1099Override: true }))).toBe(true);
+    });
+
+    it('keeps a legacy explicit false reportable after migration', () => {
+        // The one-time migration copies false into the override rather than
+        // converting it to null, so a previously reportable corporation stays so.
+        expect(isVendor1099Exempt(taxInfo({
+            taxClassification: 'c_corp',
+            exemptFrom1099Override: false,
+        }))).toBe(false);
+    });
+
+    it('keeps attorney or medical payments to corporations reportable', () => {
+        expect(isVendor1099Exempt(taxInfo({
+            taxClassification: 'c_corp',
+            attorneyOrMedicalPayments: true,
+        }))).toBe(false);
+    });
+
+    it('keeps the displayed and computed exemption aligned for an attorney PC', () => {
+        const attorneyPc = mapTaxInfo({
+            vendor_guid: 'a'.repeat(32), legal_name: 'Attorney PC', tax_classification: 'c_corp',
+            tax_id_masked: null, w9_received: false, w9_received_date: null, w9_requested_date: null,
+            exempt_from_1099: false, exempt_from_1099_override: null,
+            attorney_or_medical_payments: true, address: null, notes: null,
+        });
+        const summary = buildVendor1099Summary(
+            2026,
+            [{ guid: 'attorney-pc', name: 'Attorney PC', active: true }],
+            new Map([['attorney-pc', 9_000]]),
+            new Map([['attorney-pc', attorneyPc]]),
+            new Map(),
+            2_000,
+        );
+        expect(attorneyPc.exemptFrom1099).toBe(isVendor1099Exempt(attorneyPc));
+        expect(summary.vendors[0].status).toBe('missing_w9');
+    });
+});
+
+describe('card-funded payment exclusion', () => {
+    it('apportions mixed funding and keeps the checking-funded amount reportable', () => {
+        const payments = aggregateEligibleVendorPayments([
+            { vendorGuid: 'vendor-1', paid: 2_900, cardFundingAmount: 400, totalFundingAmount: 2_900 },
+        ]);
+        expect(payments.get('vendor-1')).toBe(2_500);
+        const summary = buildVendor1099Summary(
+            2026,
+            [{ guid: 'vendor-1', name: 'Mixed funding vendor', active: true }],
+            payments,
+            new Map(),
+            new Map(),
+            2_000,
+        );
+        expect(summary.vendors[0]).toMatchObject({ totalPaid: 2_500, crosses600: true, status: 'missing_w9' });
+    });
+
+    it('preserves all payment amount when no card funding is present', () => {
+        expect(aggregateEligibleVendorPayments([
+            { vendorGuid: 'vendor-1', paid: 1_500, cardFundingAmount: 0, totalFundingAmount: 1_500 },
+        ]).get('vendor-1')).toBe(1_500);
     });
 });
 

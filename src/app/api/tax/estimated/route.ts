@@ -304,7 +304,9 @@ export async function GET(request: NextRequest) {
       annualTarget: safeHarbor.requiredAnnualPayment,
       annualWithholding: annualized.withholding,
       payments,
-      ...(annualizedMethod.applicable && annualizedMethod.anyBenefit
+      ...(isQualifyingFarmer
+        ? { requiredCumulativeByQuarter: [0, 0, 0, safeHarbor.requiredAnnualPayment] as [number, number, number, number] }
+        : annualizedMethod.applicable && annualizedMethod.anyBenefit
         ? { requiredCumulativeByQuarter: annualizedMethod.requiredCumulativeByQuarter }
         : {}),
     });
@@ -337,6 +339,9 @@ export async function GET(request: NextRequest) {
         assertedQualifyingFarmer: isQualifyingFarmer,
         // The tracker cannot test the statutory 2/3 gross-income condition.
         qualifyingIncomeTestAvailable: false,
+        march1Exception: isQualifyingFarmer
+          ? 'A qualifying farmer or fisher may avoid the Jan. 15 installment by filing the return and paying all tax by March 1; confirm eligibility with a tax professional.'
+          : null,
       },
       withholding: {
         ytd: ytd.withholding,

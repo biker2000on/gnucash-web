@@ -110,6 +110,7 @@ export const CreateAccountSchema = z.object({
   is_retirement: z.boolean().optional(),
   retirement_account_type: z.enum(RETIREMENT_ACCOUNT_TYPE_VALUES).nullable().optional(),
   owner: z.enum(OWNER_VALUES).nullable().optional(),
+  is_card_payment_source: z.boolean().optional(),
 });
 
 export const UpdateAccountSchema = z.object({
@@ -126,6 +127,7 @@ export const UpdateAccountSchema = z.object({
   is_retirement: z.boolean().optional(),
   retirement_account_type: z.enum(RETIREMENT_ACCOUNT_TYPE_VALUES).nullable().optional(),
   owner: z.enum(OWNER_VALUES).nullable().optional(),
+  is_card_payment_source: z.boolean().optional(),
 });
 
 export type CreateAccountInput = z.infer<typeof CreateAccountSchema>;
@@ -196,15 +198,16 @@ export class AccountService {
       }
 
       // Write preferences if any preference fields are provided
-      if (data.tax_related !== undefined || data.is_retirement !== undefined || data.retirement_account_type !== undefined || data.owner !== undefined) {
+      if (data.tax_related !== undefined || data.is_retirement !== undefined || data.retirement_account_type !== undefined || data.owner !== undefined || data.is_card_payment_source !== undefined) {
         await tx.$executeRaw`
-          INSERT INTO gnucash_web_account_preferences (account_guid, tax_related, is_retirement, retirement_account_type, owner)
+          INSERT INTO gnucash_web_account_preferences (account_guid, tax_related, is_retirement, retirement_account_type, owner, is_card_payment_source)
           VALUES (
             ${accountGuid},
             ${data.tax_related ?? false},
             ${data.is_retirement ?? false},
             ${data.retirement_account_type ?? null},
-            ${data.owner ?? null}
+            ${data.owner ?? null},
+            ${data.is_card_payment_source ?? false}
           )
         `;
       }
@@ -338,7 +341,7 @@ export class AccountService {
       // Upsert preferences if any preference fields are provided
       // Uses CASE WHEN to only update fields present in the request,
       // preserving existing values for fields not included
-      if (data.tax_related !== undefined || data.is_retirement !== undefined || data.retirement_account_type !== undefined || data.owner !== undefined) {
+      if (data.tax_related !== undefined || data.is_retirement !== undefined || data.retirement_account_type !== undefined || data.owner !== undefined || data.is_card_payment_source !== undefined) {
         const taxRelated = data.tax_related;
         const isRetirement = data.is_retirement;
         const retirementType = data.retirement_account_type;
@@ -347,22 +350,26 @@ export class AccountService {
         const hasIsRetirement = data.is_retirement !== undefined;
         const hasRetirementType = data.retirement_account_type !== undefined;
         const hasOwner = data.owner !== undefined;
+        const cardPaymentSource = data.is_card_payment_source;
+        const hasCardPaymentSource = data.is_card_payment_source !== undefined;
 
         await tx.$executeRaw`
-          INSERT INTO gnucash_web_account_preferences (account_guid, tax_related, is_retirement, retirement_account_type, owner)
+          INSERT INTO gnucash_web_account_preferences (account_guid, tax_related, is_retirement, retirement_account_type, owner, is_card_payment_source)
           VALUES (
             ${guid},
             ${taxRelated ?? false},
             ${isRetirement ?? false},
             ${retirementType ?? null},
-            ${owner ?? null}
+            ${owner ?? null},
+            ${cardPaymentSource ?? false}
           )
           ON CONFLICT (account_guid)
           DO UPDATE SET
             tax_related = CASE WHEN ${hasTaxRelated}::boolean THEN ${taxRelated ?? false} ELSE gnucash_web_account_preferences.tax_related END,
             is_retirement = CASE WHEN ${hasIsRetirement}::boolean THEN ${isRetirement ?? false} ELSE gnucash_web_account_preferences.is_retirement END,
             retirement_account_type = CASE WHEN ${hasRetirementType}::boolean THEN ${retirementType ?? null} ELSE gnucash_web_account_preferences.retirement_account_type END,
-            owner = CASE WHEN ${hasOwner}::boolean THEN ${owner ?? null} ELSE gnucash_web_account_preferences.owner END
+            owner = CASE WHEN ${hasOwner}::boolean THEN ${owner ?? null} ELSE gnucash_web_account_preferences.owner END,
+            is_card_payment_source = CASE WHEN ${hasCardPaymentSource}::boolean THEN ${cardPaymentSource ?? false} ELSE gnucash_web_account_preferences.is_card_payment_source END
         `;
       }
 
@@ -391,6 +398,7 @@ export class AccountService {
         ...(data.is_retirement !== undefined && { is_retirement: data.is_retirement }),
         ...(data.retirement_account_type !== undefined && { retirement_account_type: data.retirement_account_type }),
         ...(data.owner !== undefined && { owner: data.owner }),
+        ...(data.is_card_payment_source !== undefined && { is_card_payment_source: data.is_card_payment_source }),
         ...(data.notes !== undefined && { notes: data.notes }),
       },
     });
