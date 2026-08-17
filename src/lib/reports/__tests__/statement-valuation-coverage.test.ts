@@ -116,6 +116,7 @@ describe('generateBalanceSheet with an unconvertible balance', () => {
       complete: false,
       unvaluedAccountCount: 1,
       gaps: [EUR_GAP],
+      stalePrices: [],
     });
   });
 
@@ -145,6 +146,7 @@ describe('generateBalanceSheet with an unconvertible balance', () => {
       complete: true,
       unvaluedAccountCount: 0,
       gaps: [],
+      stalePrices: [],
     });
   });
 });
@@ -207,6 +209,7 @@ describe('generateBudgetBalanceSheet with an unconvertible balance', () => {
       complete: false,
       unvaluedAccountCount: 1,
       gaps: [EUR_GAP],
+      stalePrices: [],
     });
   });
 
@@ -312,6 +315,7 @@ describe('generateBudgetBalanceSheet with an unconvertible balance', () => {
       complete: true,
       unvaluedAccountCount: 0,
       gaps: [],
+      stalePrices: [],
     });
   });
 });

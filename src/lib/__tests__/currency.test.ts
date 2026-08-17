@@ -19,6 +19,7 @@ vi.mock('../prisma', () => ({
 vi.mock('../book-scope', () => ({ getActiveBookRootGuid: vi.fn() }));
 
 import { convertAmount, findExchangeRate } from '../currency';
+import { PRICE_STALENESS_DAYS } from '../price-staleness';
 
 function price(
   from: string,
@@ -108,5 +109,103 @@ describe('currency exchange-rate lookup', () => {
 
   it('returns null from convertAmount when no rate exists', async () => {
     await expect(convertAmount(10, 'missing', 'usd')).resolves.toBeNull();
+  });
+});
+
+describe('exchange-rate staleness', () => {
+  const ASOF = new Date('2026-08-17T13:00:00.000Z');
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.pricesFindFirst.mockResolvedValue(null);
+    mocks.commoditiesFindFirst.mockImplementation(({ where }: { where: { mnemonic?: string } }) => {
+      if (where.mnemonic === 'USD') return { guid: 'usd', mnemonic: 'USD' };
+      if (where.mnemonic === 'EUR') return { guid: 'eur', mnemonic: 'EUR' };
+      return null;
+    });
+    mocks.commoditiesFindUnique.mockResolvedValue({ mnemonic: 'USD' });
+  });
+
+  it('does not flag a fresh quote', async () => {
+    mocks.pricesFindFirst.mockResolvedValueOnce(
+      price('CAD', 'USD', 0.72, new Date('2026-08-16T20:00:00.000Z')),
+    );
+
+    const result = await findExchangeRate('cad', 'usd', ASOF);
+
+    expect(result?.stale).toBe(false);
+    expect(result?.ageDays).toBe(0);
+  });
+
+  it('does not flag a normal weekend gap', async () => {
+    // Friday's close is the newest quote that exists when read on Monday.
+    mocks.pricesFindFirst.mockResolvedValueOnce(
+      price('CAD', 'USD', 0.72, new Date('2026-08-14T20:00:00.000Z')),
+    );
+
+    const result = await findExchangeRate('cad', 'usd', ASOF);
+
+    expect(result?.stale).toBe(false);
+    expect(result?.ageDays).toBe(2);
+  });
+
+  it('does not flag a quote sitting exactly on the bound', async () => {
+    mocks.pricesFindFirst.mockResolvedValueOnce(
+      price('CAD', 'USD', 0.72, new Date(ASOF.getTime() - PRICE_STALENESS_DAYS * 86_400_000)),
+    );
+
+    const result = await findExchangeRate('cad', 'usd', ASOF);
+
+    expect(result?.ageDays).toBe(PRICE_STALENESS_DAYS);
+    expect(result?.stale).toBe(false);
+  });
+
+  it('flags a quote past the bound while still returning the rate', async () => {
+    mocks.pricesFindFirst.mockResolvedValueOnce(
+      price('CAD', 'USD', 0.72, new Date('2026-06-01T00:00:00.000Z')),
+    );
+
+    const result = await findExchangeRate('cad', 'usd', ASOF);
+
+    // Refusing to convert is worse than converting out loud.
+    expect(result?.rate).toBe(0.72);
+    expect(result?.stale).toBe(true);
+    expect(result?.ageDays).toBe(77);
+  });
+
+  it('flags an inverted rate by the age of the row it inverted', async () => {
+    mocks.pricesFindFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(price('USD', 'CAD', 1.25, new Date('2026-06-01T00:00:00.000Z')));
+
+    const result = await findExchangeRate('cad', 'usd', ASOF);
+
+    expect(result?.rate).toBeCloseTo(0.8);
+    expect(result?.stale).toBe(true);
+  });
+
+  it('inherits the older leg when triangulating', async () => {
+    mocks.pricesFindFirst.mockImplementation(({ where }: {
+      where: { commodity_guid: string; currency_guid: string };
+    }) => {
+      const key = `${where.commodity_guid}->${where.currency_guid}`;
+      if (key === 'cad->usd') return price('CAD', 'USD', 0.75, new Date('2026-08-16T00:00:00.000Z'));
+      if (key === 'usd->gbp') return price('USD', 'GBP', 0.8, new Date('2026-05-01T00:00:00.000Z'));
+      return null;
+    });
+
+    const result = await findExchangeRate('cad', 'gbp', ASOF);
+
+    // One fresh leg does not make the product fresh.
+    expect(result?.source).toBe('triangulated:USD');
+    expect(result?.stale).toBe(true);
+  });
+
+  it('never calls a same-currency identity stale', async () => {
+    const result = await findExchangeRate('usd', 'usd', ASOF);
+
+    expect(result?.rate).toBe(1);
+    expect(result?.stale).toBe(false);
+    expect(result?.ageDays).toBe(0);
   });
 });
