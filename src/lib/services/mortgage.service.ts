@@ -46,6 +46,11 @@ export interface MortgageDetectionResult {
   paymentHistory: PaymentSplit[];
 }
 
+interface OriginalAmountDetection {
+  amount: number;
+  estimated: boolean;
+}
+
 /**
  * Service class for mortgage detection and analysis
  */
@@ -125,7 +130,8 @@ export class MortgageService {
    *
    * Strategy 1: Look for the first/largest posting to the liability account
    * (opening balance transaction).
-   * Strategy 2 (fallback): Sum all principal postings.
+   * Strategy 2 (fallback): Sum principal postings only when the ledger does
+   * not establish an opening balance.
    */
   static detectOriginalAmount(
     splits: Array<{
@@ -137,6 +143,19 @@ export class MortgageService {
     }>,
     mortgageAccountGuid: string
   ): number {
+    return MortgageService.detectOriginalAmountWithConfidence(splits, mortgageAccountGuid).amount;
+  }
+
+  private static detectOriginalAmountWithConfidence(
+    splits: Array<{
+      tx_guid: string;
+      account_guid: string;
+      value_num: bigint | number | string;
+      value_denom: bigint | number | string;
+      post_date: Date;
+    }>,
+    mortgageAccountGuid: string
+  ): OriginalAmountDetection {
     // Filter to splits posting to the mortgage account
     const mortgageSplits = splits
       .filter((s) => s.account_guid === mortgageAccountGuid)
@@ -146,7 +165,7 @@ export class MortgageService {
       }))
       .sort((a, b) => a.post_date.getTime() - b.post_date.getTime());
 
-    if (mortgageSplits.length === 0) return 0;
+    if (mortgageSplits.length === 0) return { amount: 0, estimated: true };
 
     // Strategy 1: The first/largest posting is likely the opening balance.
     // In GnuCash, the opening balance for a liability is typically negative
@@ -179,22 +198,36 @@ export class MortgageService {
 
         // If opening is at least 3x the average subsequent payment, use it
         if (maxAbsValue > avgSubsequent * 3) {
-          return maxAbsValue;
+          return { amount: maxAbsValue, estimated: false };
         }
       } else {
         // Only one date of transactions, return the max
-        return maxAbsValue;
+        return { amount: maxAbsValue, estimated: false };
       }
     } else {
-      return maxAbsValue;
+      return { amount: maxAbsValue, estimated: false };
     }
 
-    // Strategy 2 (fallback): Sum all principal postings
+    // At the 3x boundary, a first-date credit only identifies opening principal
+    // when it also accounts for all later principal movement. This retains an
+    // imported opening balance while rejecting a small first draw/adjustment.
+    const openingCredit = openingSplits
+      .filter((s) => s.value < 0)
+      .reduce((max, s) => Math.max(max, Math.abs(s.value)), 0);
+    const subsequentPrincipal = mortgageSplits
+      .filter((s) => s.post_date.getTime() !== firstDate)
+      .reduce((sum, s) => sum + Math.abs(s.value), 0);
+    if (openingCredit > 0 && openingCredit >= subsequentPrincipal) {
+      return { amount: openingCredit, estimated: false };
+    }
+
+    // No opening credit is available, so retain the existing best-effort
+    // behavior for partial/imported payment history.
     const totalPrincipal = mortgageSplits.reduce(
       (sum, s) => sum + Math.abs(s.value),
       0
     );
-    return totalPrincipal;
+    return { amount: totalPrincipal, estimated: true };
   }
 
   /**
@@ -374,10 +407,11 @@ export class MortgageService {
     );
 
     // Detect original amount
-    const originalAmount = MortgageService.detectOriginalAmount(
+    const originalAmountDetection = MortgageService.detectOriginalAmountWithConfidence(
       enrichedSplits,
       mortgageAccountGuid
     );
+    const originalAmount = originalAmountDetection.amount;
 
     // Calculate interest rate directly from interest/balance ratios.
     // This avoids contamination from escrow splits that also post to the mortgage account.
@@ -482,7 +516,10 @@ export class MortgageService {
 
     // Determine confidence
     let confidence: DetectionConfidence;
-    if (regularPayments.length > 10) {
+    if (originalAmountDetection.estimated) {
+      confidence = 'low';
+      warnings.push('Original principal not determinable from ledger — estimated');
+    } else if (regularPayments.length > 10) {
       // Check payment variance
       const paymentAmounts = regularPayments.map((p) => p.total);
       const avgPayment =
