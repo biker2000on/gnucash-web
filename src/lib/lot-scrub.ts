@@ -55,6 +55,100 @@ import {
  */
 export const PARENT_SPLIT_SLOT = 'gnucash_web_parent_split';
 
+/**
+ * Slot recording the AVERAGE-COST basis of the shares disposed by one split.
+ *
+ * Written per DISPOSAL split (sell or transfer-out, original splits and
+ * scrub-created sub-splits alike) by the average-cost replay in
+ * lot-assignment.ts, which knows the pooled basis-per-share AS OF that
+ * disposal's date. Everything downstream — generateCapitalGains, the lot
+ * summaries in @/lib/lots, and the Form 8949 rows in
+ * @/lib/reports/capital-gains — reads THIS number instead of pro-rating the
+ * lot's own buy cost, so a book scrubbed under the average-cost election
+ * reports average-cost gains everywhere rather than in one place.
+ *
+ * The amount is FEE-INCLUSIVE: buy-side commissions are capitalized into the
+ * pool at the moment shares enter it (IRS Pub. 550 — a commission adjusts
+ * basis, it is not deductible), which is what pooling means. Consumers must
+ * therefore NOT add buy-side fees again on top of this value; sell-side fees
+ * still reduce proceeds at the consumer, exactly as for a FIFO lot.
+ *
+ * Absence of the slot means "this disposal was not priced by the average-cost
+ * method" and every consumer falls back to its existing per-lot pro-rata
+ * basis, so FIFO/LIFO books are untouched.
+ */
+export const AVG_COST_BASIS_SLOT = 'avg_cost_basis';
+
+/**
+ * Slot recording a still-OPEN lot's remaining pooled basis after an
+ * average-cost scrub (shares remaining × the pool's final basis-per-share).
+ *
+ * Under pooling every open lot shares one basis-per-share, so a lot's own buy
+ * cost stops describing the basis of the shares it still holds the moment a
+ * later buy at a different price re-averages the pool. This slot is what lets
+ * `totalCost` / `unrealizedGain` in @/lib/lots stay consistent with the
+ * realized numbers instead of reverting to per-lot cost for the open side.
+ * Fee-inclusive for the same reason as AVG_COST_BASIS_SLOT.
+ */
+export const AVG_BASIS_REMAINING_SLOT = 'avg_cost_basis_remaining';
+
+/** Write (or overwrite) a disposal split's average-cost basis slot. */
+export async function writeAvgCostBasis(
+  splitGuid: string,
+  basis: number,
+  tx: PrismaTx,
+): Promise<void> {
+  await tx.slots.deleteMany({ where: { obj_guid: splitGuid, name: AVG_COST_BASIS_SLOT } });
+  await tx.slots.create({
+    data: {
+      obj_guid: splitGuid,
+      name: AVG_COST_BASIS_SLOT,
+      slot_type: 4,
+      string_val: String(Math.round(basis * 1e6) / 1e6),
+    },
+  });
+}
+
+/** Write (or overwrite) an open lot's remaining pooled-basis slot. */
+export async function writeAvgBasisRemaining(
+  lotGuid: string,
+  basis: number,
+  tx: PrismaTx,
+): Promise<void> {
+  await tx.slots.deleteMany({ where: { obj_guid: lotGuid, name: AVG_BASIS_REMAINING_SLOT } });
+  await tx.slots.create({
+    data: {
+      obj_guid: lotGuid,
+      name: AVG_BASIS_REMAINING_SLOT,
+      slot_type: 4,
+      string_val: String(Math.round(basis * 1e6) / 1e6),
+    },
+  });
+}
+
+/** Batch-read `avg_cost_basis` slots for the given splits. Missing = absent. */
+export async function readAvgCostBasisForSplits(
+  splitGuids: string[],
+  tx: PrismaTx,
+): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  if (splitGuids.length === 0) return out;
+  // `?? []` for the same reason the rest of this module carries it: mocked
+  // Prisma clients in tests return undefined for queries they do not stub.
+  const rows = (await tx.slots.findMany({
+    where: { obj_guid: { in: splitGuids }, name: AVG_COST_BASIS_SLOT },
+    select: { obj_guid: true, name: true, string_val: true },
+  })) ?? [];
+  for (const row of rows) {
+    // Defensive against a test double that ignores the where clause: only an
+    // actual average-cost slot may switch a gain onto the pooled basis.
+    if (row.name !== undefined && row.name !== AVG_COST_BASIS_SLOT) continue;
+    const parsed = row.string_val ? parseFloat(row.string_val) : NaN;
+    if (Number.isFinite(parsed)) out.set(row.obj_guid, parsed);
+  }
+  return out;
+}
+
 /** Tag a generated sub-split with its run and the parent it was carved from. */
 async function tagGeneratedSubSplit(
   tx: PrismaTx,
@@ -110,6 +204,16 @@ export interface SplitSellResult {
   subSplitsCreated: string[];
   /** Lots the sell was assigned to */
   lotsUsed: string[];
+  /**
+   * One entry per lot this disposal actually consumed, naming the SPLIT row
+   * that carries those shares (the original split for the first allocation,
+   * a generated sub-split for the rest). The average-cost replay needs this
+   * mapping to record each row's pooled basis; deriving it by index from
+   * `subSplitsCreated` would break on the oversell remainder, which is a
+   * sub-split with no lot. The un-allocatable oversell remainder is
+   * deliberately absent — it consumed no lot and has no basis.
+   */
+  allocations: Array<{ splitGuid: string; lotGuid: string; shares: number }>;
   /** Warning if sell exceeds all lot balances */
   warning?: string;
 }
@@ -314,14 +418,14 @@ export async function splitSellAcrossLots(
   const remainingSell = Math.abs(sellQty);
 
   if (remainingSell < qtyEpsilon) {
-    return { subSplitsCreated: [], lotsUsed: [], warning: 'Sell quantity is zero' };
+    return { subSplitsCreated: [], lotsUsed: [], allocations: [], warning: 'Sell quantity is zero' };
   }
 
   // Filter lots with shares > 0
   const availableLots = openLots.filter(l => l.shares > qtyEpsilon);
 
   if (availableLots.length === 0) {
-    return { subSplitsCreated: [], lotsUsed: [], warning: 'No open lots available' };
+    return { subSplitsCreated: [], lotsUsed: [], allocations: [], warning: 'No open lots available' };
   }
 
   // Determine how many lots are needed
@@ -353,7 +457,11 @@ export async function splitSellAcrossLots(
     });
     // Mutate shares in-place
     alloc.lot.shares -= alloc.shares;
-    return { subSplitsCreated: [], lotsUsed: [alloc.lot.guid] };
+    return {
+      subSplitsCreated: [],
+      lotsUsed: [alloc.lot.guid],
+      allocations: [{ splitGuid: sellSplitGuid, lotGuid: alloc.lot.guid, shares: alloc.shares }],
+    };
   }
 
   // Multiple lots needed — save original qty/val as slots for revert, then create sub-splits
@@ -407,6 +515,7 @@ export async function splitSellAcrossLots(
   const valueSign = sellVal < 0 ? -1 : 1;
   const subSplitsCreated: string[] = [];
   const lotsUsed: string[] = [];
+  const allocationRows: SplitSellResult['allocations'] = [];
   const qtyDenom = Number(sellSplit.quantity_denom);
   const valDenom = Number(sellSplit.value_denom);
 
@@ -455,6 +564,11 @@ export async function splitSellAcrossLots(
   });
   firstAlloc.lot.shares -= firstAlloc.shares;
   lotsUsed.push(firstAlloc.lot.guid);
+  allocationRows.push({
+    splitGuid: sellSplitGuid,
+    lotGuid: firstAlloc.lot.guid,
+    shares: firstAlloc.shares,
+  });
 
   let usedQtyNum = firstQty.num;
   let usedValNum = firstVal.num;
@@ -481,8 +595,9 @@ export async function splitSellAcrossLots(
     usedQtyNum += subQty.num;
     usedValNum += subVal.num;
 
-    await createSubSplit(subQty, subVal, alloc.lot.guid);
+    const subGuid = await createSubSplit(subQty, subVal, alloc.lot.guid);
     lotsUsed.push(alloc.lot.guid);
+    allocationRows.push({ splitGuid: subGuid, lotGuid: alloc.lot.guid, shares: alloc.shares });
     alloc.lot.shares -= alloc.shares;
   }
 
@@ -510,7 +625,7 @@ export async function splitSellAcrossLots(
     );
   }
 
-  return { subSplitsCreated, lotsUsed, warning };
+  return { subSplitsCreated, lotsUsed, allocations: allocationRows, warning };
 }
 
 // ---------------------------------------------------------------------------
@@ -541,12 +656,32 @@ export async function readCarriedBasis(lotGuid: string, tx: PrismaTx): Promise<n
  *
  * Returns null when the source lot has no incoming shares to derive a basis
  * from (nothing to carry).
+ *
+ * AVERAGE COST: when the source account was scrubbed under the average-cost
+ * election, the transfer-out split carries the pooled basis of exactly these
+ * shares in its `avg_cost_basis` slot (written by the source account's replay,
+ * which runs first — scrubAllAccounts orders accounts topologically by
+ * transfer dependency). That number, not the source lot's own buy cost, is
+ * what leaves the pool, so it is preferred whenever present. Pass
+ * `sourceSplit` to enable this; omit it and the per-lot pro-rata rule below
+ * applies unchanged, which is what FIFO/LIFO books get.
  */
 export async function computeCarriedBasis(
   sourceLotGuid: string,
   transferredShares: number,
   tx: PrismaTx,
+  sourceSplit?: { guid: string; shares: number },
 ): Promise<number | null> {
+  if (sourceSplit) {
+    const avgBasis = (await readAvgCostBasisForSplits([sourceSplit.guid], tx)).get(sourceSplit.guid);
+    if (avgBasis !== undefined) {
+      const splitShares = Math.abs(sourceSplit.shares);
+      // Normally the transfer-in allocation equals the source split's own
+      // quantity; scale defensively so a differing allocation carries its
+      // proportionate slice rather than the whole split's basis.
+      return splitShares > 0 ? avgBasis * (transferredShares / splitShares) : avgBasis;
+    }
+  }
   const sourceLotSplits = (await tx.splits.findMany({
     where: { lot_guid: sourceLotGuid },
     select: {
@@ -722,7 +857,10 @@ export async function linkTransferToLot(
     // is not a taxable disposition and must not step up the destination lot.
     const transferQty = toDecimalNumber(split.quantity_num, split.quantity_denom);
     if (transferQty > 0) {
-      const carried = await computeCarriedBasis(sourceSplit.lot_guid, transferQty, tx);
+      const carried = await computeCarriedBasis(sourceSplit.lot_guid, transferQty, tx, {
+        guid: sourceSplit.guid,
+        shares: toDecimalNumber(sourceSplit.quantity_num, sourceSplit.quantity_denom),
+      });
       await writeCarriedBasisSlot(lotGuid, carried, tx);
     }
 
@@ -867,6 +1005,8 @@ export async function splitTransferAcrossSourceLots(
 
   interface Allocation {
     sourceLotGuid: string;
+    /** The transfer-OUT split these shares left through (average-cost basis source). */
+    sourceSplit: { guid: string; shares: number };
     shares: number;
   }
   const totalSourceQty = lottedSourceSplits.reduce(
@@ -875,6 +1015,7 @@ export async function splitTransferAcrossSourceLots(
 
   const allocations: Allocation[] = lottedSourceSplits.map(s => ({
     sourceLotGuid: s.lot_guid!,
+    sourceSplit: { guid: s.guid, shares: toDecimalNumber(s.quantity_num, s.quantity_denom) },
     shares: (Math.abs(toDecimalNumber(s.quantity_num, s.quantity_denom)) / totalSourceQty) * transferQty,
   }));
 
@@ -883,6 +1024,7 @@ export async function splitTransferAcrossSourceLots(
     sourceLotGuid: string,
     postDate: Date | null | undefined,
     allocShares: number,
+    sourceSplit: { guid: string; shares: number },
   ): Promise<string> {
     const lotGuid = generateGuid();
     await tx.lots.create({
@@ -916,7 +1058,7 @@ export async function splitTransferAcrossSourceLots(
     // Carry original basis for every own-account transfer (see
     // linkTransferToLot — same rule, per source lot here).
     if (allocShares > 0) {
-      const carried = await computeCarriedBasis(sourceLotGuid, allocShares, tx);
+      const carried = await computeCarriedBasis(sourceLotGuid, allocShares, tx, sourceSplit);
       await writeCarriedBasisSlot(lotGuid, carried, tx);
     }
 
@@ -1020,7 +1162,7 @@ export async function splitTransferAcrossSourceLots(
 
   // First allocation reuses the original split
   const firstAlloc = allocations[0];
-  const firstLotGuid = await createDestLot(firstAlloc.sourceLotGuid, split.transaction?.post_date, firstAlloc.shares);
+  const firstLotGuid = await createDestLot(firstAlloc.sourceLotGuid, split.transaction?.post_date, firstAlloc.shares, firstAlloc.sourceSplit);
   lotGuids.push(firstLotGuid);
 
   const firstQty = fromDecimal(firstAlloc.shares, qtyDenom);
@@ -1046,7 +1188,7 @@ export async function splitTransferAcrossSourceLots(
   for (let i = 1; i < allocations.length; i++) {
     const alloc = allocations[i];
     const isLast = i === allocations.length - 1;
-    const lotGuid = await createDestLot(alloc.sourceLotGuid, split.transaction?.post_date, alloc.shares);
+    const lotGuid = await createDestLot(alloc.sourceLotGuid, split.transaction?.post_date, alloc.shares, alloc.sourceSplit);
     lotGuids.push(lotGuid);
 
     let subQty: { num: bigint; denom: bigint };
@@ -1447,7 +1589,10 @@ export async function assignAdjustmentToLots(
  *
  * Basis: a destination lot's `carried_basis` slot (written by the transfer
  * linking functions) counts as additional basis. Mixed lots (partial sale +
- * transfer-out) realize only the SOLD shares' pro-rata gain.
+ * transfer-out) realize only the SOLD shares' pro-rata gain. Under the
+ * AVERAGE-COST election every sell split instead carries its own pooled basis
+ * in an `avg_cost_basis` slot and that number is used verbatim — see
+ * AVG_COST_BASIS_SLOT and the replay in @/lib/lot-assignment.
  *
  * @param lotGuid - GUID of the closed lot
  * @param runId - Unique run identifier for tagging
@@ -1577,8 +1722,22 @@ export async function generateCapitalGains(
     (sum, s) => sum + toDecimalNumber(s.value_num, s.value_denom), 0,
   );
 
+  // AVERAGE COST: the disposal splits carry the pooled basis of exactly the
+  // shares they disposed, priced as of their own dates by the replay in
+  // lot-assignment.ts. That number replaces every per-lot pro-rata rule below
+  // — under pooling a lot's own buy cost does not describe the basis of the
+  // shares sold out of it. Requiring EVERY sell split to carry the slot keeps
+  // a partially re-scrubbed lot (some sells priced by average, some not) on
+  // the legacy path rather than silently mixing two bases in one gain.
+  const avgBasisBySplit = await readAvgCostBasisForSplits(sellSplits.map(s => s.guid), tx);
+  const isAverageCostLot =
+    sellSplits.length > 0 && sellSplits.every(s => avgBasisBySplit.has(s.guid));
+
   let gainLoss: number;
-  if (transferOutSplits.length === 0 && Math.abs(carriedBasis) < 0.005) {
+  if (isAverageCostLot) {
+    const avgBasisTotal = sellSplits.reduce((sum, s) => sum + (avgBasisBySplit.get(s.guid) ?? 0), 0);
+    gainLoss = saleProceeds - avgBasisTotal;
+  } else if (transferOutSplits.length === 0 && Math.abs(carriedBasis) < 0.005) {
     gainLoss = -lot.splits.reduce(
       (sum, s) => sum + toDecimalNumber(s.value_num, s.value_denom),
       0,

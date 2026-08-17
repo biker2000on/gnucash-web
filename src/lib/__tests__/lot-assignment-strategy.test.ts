@@ -334,15 +334,27 @@ describe('per-sale LIFO replay', () => {
   });
 });
 
-describe('average-cost labeling', () => {
-  it('states that assignment falls back to FIFO instead of claiming average gains', async () => {
+describe('average cost — method reporting', () => {
+  it('reports the method it actually used, with no FIFO fallback warning', async () => {
     addTrade('2024-01-01', 10, 1000);
     addTrade('2024-02-01', -5, 600);
 
     const result = await autoAssignLots(STOCK_ACCT, 'average');
 
-    expect(result.method).toContain('average cost not implemented');
-    expect(result.warnings.join(' ')).toMatch(/used FIFO/i);
+    expect(result.method).toBe('average');
+    expect(result.warnings.join(' ')).not.toMatch(/not implemented|used FIFO/i);
+  });
+
+  it('still consumes lots oldest-first, so the holding period is FIFO', async () => {
+    // Treas. Reg. §1.1012-1(e)(7)(ii): under the average-basis method shares
+    // are deemed sold in the order acquired. Basis is pooled; ORDER is not.
+    addTrade('2024-01-01', 10, 1000);
+    addTrade('2024-06-01', 10, 2000);
+    const sellGuid = addTrade('2024-07-01', -5, 1100);
+
+    await autoAssignLots(STOCK_ACCT, 'average');
+
+    expect(lotTitle(lotOfSplit(sellGuid))).toBe('Buy 2024-01-01');
   });
 });
 
