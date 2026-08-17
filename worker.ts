@@ -13,6 +13,7 @@ import { Pool } from 'pg';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { validateStartupEnvironment } from './src/lib/startup-env';
 import {
+  applyScheduleChange,
   msUntilNextUtcTime,
   normalizeRefreshTime,
   resolvePriceRefreshTargets,
@@ -539,32 +540,14 @@ async function main() {
           break;
         }
         case 'schedule-changed': {
-          const { bookGuid, enabled, refreshTime } = job.data as {
-            userId?: number; // deprecated, kept for backward compat
-            bookGuid?: string;
-            enabled: boolean;
-            refreshTime: string;
-          };
-
-          // Resolve bookGuid: use provided value, or look up from DB
-          let resolvedBookGuid = bookGuid;
-          if (!resolvedBookGuid) {
-            const prisma = createWorkerPrisma();
-            try {
-              const firstBook = await prisma.books.findFirst({ select: { guid: true } });
-              resolvedBookGuid = firstBook?.guid;
-            } finally {
-              await prisma.$disconnect();
-            }
-          }
-
-          if (resolvedBookGuid) {
-            if (enabled) {
-              setSchedule(resolvedBookGuid, refreshTime || '21:00');
-            } else {
-              clearSchedule(resolvedBookGuid);
-            }
-          }
+          // Fails closed on a job with no bookGuid: no book is scheduled and no
+          // book is cleared. This used to fall back to `books.findFirst()` --
+          // an arbitrary book, and one the signal was never authorized for.
+          // See applyScheduleChange for why doing nothing is the safe outcome.
+          applyScheduleChange(job.data as Parameters<typeof applyScheduleChange>[0], {
+            setSchedule,
+            clearSchedule,
+          });
           break;
         }
         case 'ocr-receipt': {

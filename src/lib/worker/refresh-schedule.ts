@@ -154,3 +154,77 @@ export async function resolvePriceRefreshTargets(
 
     return targets;
 }
+
+/**
+ * Payload of a `schedule-changed` job, as it arrives off the queue.
+ *
+ * `bookGuid` is optional only because jobs enqueued by an older build may
+ * already be sitting in Redis without one. Every current producer
+ * (`signalScheduleChanged`, called from the settings route with the bookGuid
+ * the request was authorized against) always sets it.
+ */
+export interface ScheduleChangeRequest {
+    /**
+     * Deprecated and IGNORED. Documented here so it is clear that the handler
+     * does not, and must not, resolve a book from it.
+     */
+    userId?: number;
+    bookGuid?: string;
+    enabled?: boolean;
+    refreshTime?: string;
+}
+
+/** Timer operations the handler is allowed to perform, injected for testing. */
+export interface ScheduleChangeEffects {
+    setSchedule(bookGuid: string, refreshTime: string): void;
+    clearSchedule(bookGuid: string): void;
+    /** Diagnostics for the ignored case. Defaults to console.error. */
+    onSkip?(message: string): void;
+}
+
+/** What the handler did. `'ignored'` means no timer was touched. */
+export type ScheduleChangeOutcome = 'set' | 'cleared' | 'ignored';
+
+/**
+ * Apply a `schedule-changed` signal to exactly the book it names — or to
+ * nothing at all.
+ *
+ * FAIL CLOSED. A request with no bookGuid used to fall back to
+ * `books.findFirst()`, so a legacy job carrying only `{enabled, refreshTime}`
+ * could arm or cancel a price-refresh timer on whichever book Postgres
+ * happened to return first — an authorization AND targeting bug, unrelated to
+ * (and untouched by) validating the time. There is no safe guess available
+ * here: the deprecated `userId` cannot authorize a book, and any book we pick
+ * is a book nobody asked for. Doing nothing is strictly better than doing the
+ * wrong thing to an arbitrary book.
+ *
+ * Nothing is lost by ignoring such a job: `recoverSchedules()` rebuilds every
+ * timer from the preference table and `getUserBooks()` on the next worker
+ * start, and any settings save re-signals with a bookGuid attached.
+ */
+export function applyScheduleChange(
+    request: ScheduleChangeRequest,
+    effects: ScheduleChangeEffects,
+): ScheduleChangeOutcome {
+    const onSkip = effects.onSkip ?? ((message: string) => console.error(message));
+    const bookGuid = typeof request.bookGuid === 'string' ? request.bookGuid.trim() : '';
+
+    if (!bookGuid) {
+        onSkip(
+            '[schedule] schedule-changed job carries no bookGuid — ignoring. ' +
+            'Refusing to guess a book: an arbitrary book is not the one the ' +
+            'signal was authorized for. Schedules for this book are rebuilt ' +
+            'from authorized books on the next worker start, or on the next ' +
+            'settings save.',
+        );
+        return 'ignored';
+    }
+
+    if (request.enabled) {
+        effects.setSchedule(bookGuid, request.refreshTime || DEFAULT_REFRESH_TIME);
+        return 'set';
+    }
+
+    effects.clearSchedule(bookGuid);
+    return 'cleared';
+}

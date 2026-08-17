@@ -16,6 +16,7 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import {
+    applyScheduleChange,
     DEFAULT_REFRESH_TIME,
     msUntilNextUtcTime,
     normalizeRefreshTime,
@@ -245,5 +246,92 @@ describe('resolvePriceRefreshTargets — malformed stored time', () => {
 
         expect(targets.map(t => t.bookGuid)).toEqual(['book-bob', 'book-bob-archive']);
         expect(onSkip).toHaveBeenCalledWith(expect.stringContaining('permission lookup exploded'));
+    });
+});
+
+/**
+ * The `schedule-changed` handler.
+ *
+ * A second copy of the arbitrary-book defect lived here, in the queue handler,
+ * after the recovery path was fixed: with no bookGuid in the job data it fell
+ * back to `books.findFirst()` and then armed or cancelled a timer on that book.
+ * A legacy job carrying only `{enabled: true, refreshTime: '06:30'}` — the
+ * shape produced before bookGuid was added, and one that can still be sitting
+ * in Redis across a deploy — was therefore enough to schedule price refreshes
+ * against a book nobody asked for. Validating the TIME did nothing about that;
+ * it is an authorization and targeting bug.
+ */
+describe('applyScheduleChange', () => {
+    function effects(onSkip = vi.fn()) {
+        return { setSchedule: vi.fn(), clearSchedule: vi.fn(), onSkip };
+    }
+
+    it('fails closed on a legacy job with no bookGuid: nothing scheduled, nothing cleared, log emitted', () => {
+        const onSkip = vi.fn();
+        const fx = effects(onSkip);
+
+        // Exactly the shape a pre-bookGuid producer enqueued.
+        const outcome = applyScheduleChange({ enabled: true, refreshTime: '06:30' }, fx);
+
+        expect(outcome).toBe('ignored');
+        expect(fx.setSchedule).not.toHaveBeenCalled();
+        expect(fx.clearSchedule).not.toHaveBeenCalled();
+        expect(onSkip).toHaveBeenCalledTimes(1);
+        expect(onSkip).toHaveBeenCalledWith(expect.stringContaining('no bookGuid'));
+    });
+
+    it('fails closed on the disable path too — an arbitrary book must not be un-scheduled either', () => {
+        const fx = effects();
+
+        expect(applyScheduleChange({ enabled: false }, fx)).toBe('ignored');
+        expect(fx.clearSchedule).not.toHaveBeenCalled();
+        expect(fx.setSchedule).not.toHaveBeenCalled();
+        expect(fx.onSkip).toHaveBeenCalledWith(expect.stringContaining('no bookGuid'));
+    });
+
+    it('ignores the deprecated userId — it cannot authorize a book', () => {
+        const fx = effects();
+
+        expect(applyScheduleChange({ userId: 1, enabled: true, refreshTime: '06:30' }, fx)).toBe('ignored');
+        expect(fx.setSchedule).not.toHaveBeenCalled();
+        expect(fx.clearSchedule).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        ['empty string', ''],
+        ['whitespace only', '   '],
+        ['not a string', 12345 as unknown as string],
+    ])('treats a bookGuid that is %s as absent', (_label, bookGuid) => {
+        const fx = effects();
+
+        expect(applyScheduleChange({ bookGuid, enabled: true, refreshTime: '06:30' }, fx)).toBe('ignored');
+        expect(fx.setSchedule).not.toHaveBeenCalled();
+        expect(fx.clearSchedule).not.toHaveBeenCalled();
+    });
+
+    it('schedules exactly the book the signal names, and no other', () => {
+        const fx = effects();
+
+        expect(applyScheduleChange({ bookGuid: 'book-alice', enabled: true, refreshTime: '06:30' }, fx)).toBe('set');
+        expect(fx.setSchedule).toHaveBeenCalledTimes(1);
+        expect(fx.setSchedule).toHaveBeenCalledWith('book-alice', '06:30');
+        expect(fx.clearSchedule).not.toHaveBeenCalled();
+        expect(fx.onSkip).not.toHaveBeenCalled();
+    });
+
+    it('clears exactly the book the signal names when disabled', () => {
+        const fx = effects();
+
+        expect(applyScheduleChange({ bookGuid: 'book-alice', enabled: false }, fx)).toBe('cleared');
+        expect(fx.clearSchedule).toHaveBeenCalledExactlyOnceWith('book-alice');
+        expect(fx.setSchedule).not.toHaveBeenCalled();
+    });
+
+    it('applies the documented default when the signal carries no time', () => {
+        const fx = effects();
+
+        applyScheduleChange({ bookGuid: 'book-alice', enabled: true }, fx);
+
+        expect(fx.setSchedule).toHaveBeenCalledWith('book-alice', DEFAULT_REFRESH_TIME);
     });
 });
