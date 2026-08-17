@@ -56,6 +56,10 @@ const ANNOUNCING_SURFACES: string[] = [
     'src/components/LoginForm.tsx',
     'src/components/books/NewBookForm.tsx',
     'src/components/budget/BatchEditModal.tsx',
+    // Not a failed action but a status change, and one that renders with its
+    // text already in place — exactly the shape that never announces when the
+    // role is hand-rolled onto the visible panel.
+    'src/components/dashboard/KPIGrid.tsx',
     'src/components/budget/EstimateModal.tsx',
     'src/components/documents/LinkedDocumentsPanel.tsx',
     'src/components/home/BulkDetailPanel.tsx',
@@ -68,6 +72,7 @@ const ANNOUNCING_SURFACES: string[] = [
     'src/components/provenance/ProvenanceModal.tsx',
     'src/components/reports/SaveReportDialog.tsx',
     'src/components/reports/TransactionDrilldownModal.tsx',
+    'src/components/reports/ValuationCoverageNotice.tsx',
     'src/components/scheduled-transactions/CreateScheduledPanel.tsx',
     'src/components/settings/TwoFactorSection.tsx',
 ];
