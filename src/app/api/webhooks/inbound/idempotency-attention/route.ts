@@ -10,14 +10,14 @@ import {
 /**
  * GET /api/webhooks/inbound/idempotency-attention
  *
- * Authenticated operator view for inbound events that will no longer be
+ * Admin-only operator view for inbound events that will no longer be
  * retried automatically. A `stalled` row is intentionally read-only: timeout
  * alone is not proof that its worker died. `failed_permanent` means its write
  * failed on the final permitted attempt.
  */
 export async function GET() {
     try {
-        const roleResult = await requireRole('edit');
+        const roleResult = await requireRole('admin');
         if (roleResult instanceof NextResponse) return roleResult;
 
         const items = await listWebhookIdempotencyAttention(roleResult.bookGuid);
@@ -41,13 +41,13 @@ export async function GET() {
 /**
  * POST /api/webhooks/inbound/idempotency-attention
  *
- * Re-arm one terminal key after an operator fixes its cause. The storage
+ * Admin-only: re-arm one terminal key after an operator fixes its cause. The storage
  * mutation is additionally guarded by `result IS NULL`, so this endpoint can
  * never turn a completed payment or transaction into a replayable claim.
  */
 export async function POST(request: Request) {
     try {
-        const roleResult = await requireRole('edit');
+        const roleResult = await requireRole('admin');
         if (roleResult instanceof NextResponse) return roleResult;
 
         const body = await request.json().catch(() => null);

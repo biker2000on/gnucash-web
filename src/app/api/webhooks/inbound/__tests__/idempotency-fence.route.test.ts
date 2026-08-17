@@ -50,6 +50,8 @@ import prisma from '@/lib/prisma';
 import { POST as postTransaction } from '../transaction/route';
 import { POST as postMembershipPayment } from '../membership-payment/route';
 
+let txClient: unknown;
+
 const transactionBody = {
   date: '2026-08-17', description: 'Fence test', amount: 1,
   fromAccountGuid: 'from', toAccountGuid: 'to', idempotencyKey: 'fence-key',
@@ -68,6 +70,13 @@ beforeEach(() => {
   mocks.transactionCreate.mockResolvedValue({});
   mocks.splitsCreateMany.mockResolvedValue({ count: 2 });
   mocks.recordPayment.mockResolvedValue({ paymentId: 1 });
+  vi.mocked(prisma.$transaction).mockImplementation(async (callback) => {
+    txClient = {
+      transactions: { create: mocks.transactionCreate },
+      splits: { createMany: mocks.splitsCreateMany },
+    };
+    return callback(txClient as never);
+  });
   vi.mocked(prisma.books.findUnique).mockResolvedValue({ root_account_guid: 'root' } as never);
   vi.mocked(prisma.accounts.findUnique).mockResolvedValue({ commodity_guid: 'usd' } as never);
   vi.mocked(prisma.accounts.findMany).mockResolvedValue([
@@ -89,7 +98,8 @@ describe('inbound webhook idempotency fence', () => {
     }));
 
     expect(response.status).toBe(201);
-    expect(mocks.lock).toHaveBeenCalledWith('book-from-session', 'transaction', 'fence-key', 1, expect.anything());
+    expect(mocks.lock).toHaveBeenCalledWith('book-from-session', 'transaction', 'fence-key', 1, txClient);
+    expect(mocks.complete.mock.calls[0]?.[5]).toBe(txClient);
     expect(events).toEqual(['lock', 'transaction']);
   });
 
@@ -103,7 +113,8 @@ describe('inbound webhook idempotency fence', () => {
     }));
 
     expect(response.status).toBe(201);
-    expect(mocks.lock).toHaveBeenCalledWith('book-from-session', 'membership-payment', 'fence-key', 1, expect.anything());
+    expect(mocks.lock).toHaveBeenCalledWith('book-from-session', 'membership-payment', 'fence-key', 1, txClient);
+    expect(mocks.complete.mock.calls[0]?.[5]).toBe(txClient);
     expect(events).toEqual(['lock', 'payment']);
   });
 
