@@ -20,11 +20,13 @@ const mockSplitsFindMany = vi.fn();
 const mockSplitsCreate = vi.fn();
 const mockSplitsUpdate = vi.fn();
 const mockLotsFindUnique = vi.fn();
+const mockLotsFindMany = vi.fn();
 const mockLotsCreate = vi.fn();
 const mockLotsUpdate = vi.fn();
 const mockSlotsFindFirst = vi.fn();
 const mockSlotsFindMany = vi.fn();
 const mockSlotsCreate = vi.fn();
+const mockSlotsDeleteMany = vi.fn();
 const mockAccountsFindUnique = vi.fn();
 const mockAccountsFindFirst = vi.fn();
 const mockAccountsFindMany = vi.fn();
@@ -47,6 +49,7 @@ vi.mock('../prisma', () => ({
     },
     lots: {
       findUnique: (...args: unknown[]) => mockLotsFindUnique(...args),
+      findMany: (...args: unknown[]) => mockLotsFindMany(...args),
       create: (...args: unknown[]) => mockLotsCreate(...args),
       update: (...args: unknown[]) => mockLotsUpdate(...args),
     },
@@ -54,6 +57,7 @@ vi.mock('../prisma', () => ({
       findFirst: (...args: unknown[]) => mockSlotsFindFirst(...args),
       findMany: (...args: unknown[]) => mockSlotsFindMany(...args),
       create: (...args: unknown[]) => mockSlotsCreate(...args),
+      deleteMany: (...args: unknown[]) => mockSlotsDeleteMany(...args),
     },
     accounts: {
       findUnique: (...args: unknown[]) => mockAccountsFindUnique(...args),
@@ -88,6 +92,7 @@ function createMockTx() {
     },
     lots: {
       findUnique: mockLotsFindUnique,
+      findMany: mockLotsFindMany,
       create: mockLotsCreate,
       update: mockLotsUpdate,
     },
@@ -95,6 +100,7 @@ function createMockTx() {
       findFirst: mockSlotsFindFirst,
       findMany: mockSlotsFindMany,
       create: mockSlotsCreate,
+      deleteMany: mockSlotsDeleteMany,
     },
     accounts: {
       findUnique: mockAccountsFindUnique,
@@ -142,6 +148,12 @@ beforeEach(() => {
   // Re-arm after the reset: the reconciled-split guard takes a parent-row
   // FOR UPDATE lock through $queryRaw on every scrub path.
   mockQueryRaw.mockResolvedValue([]);
+  // The transfer paths now REPLACE a destination lot's carried_basis rather
+  // than blindly adding a second row, and re-derive every sibling slice from
+  // the source lot's whole outflow set (reconcileCarriedBasisForSourceLots).
+  // Both need these to exist; per-test overrides still win.
+  mockSlotsDeleteMany.mockResolvedValue({ count: 0 });
+  mockLotsFindMany.mockResolvedValue([]);
 });
 
 // ---------------------------------------------------------------------------

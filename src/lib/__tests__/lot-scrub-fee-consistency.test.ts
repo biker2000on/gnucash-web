@@ -47,7 +47,7 @@ vi.mock('../commodities', () => ({
 }));
 
 import { apportionCarriedBasis } from '../lot-scrub';
-import { autoAssignLots } from '../lot-assignment';
+import { autoAssignLots, revertScrubRun } from '../lot-assignment';
 import { getAccountLots } from '../lots';
 import { lotToRealizedSales } from '../reports/capital-gains';
 import { loadTradeFees } from '../trade-fees';
@@ -380,6 +380,218 @@ describe('carried basis is conserved across partial transfers', () => {
     expect(resB.totalRealizedGain).toBeCloseTo(1999.99, 6);
     expect(await lotsReportRealizedGain(STOCK_B)).toBeCloseTo(1999.99, 6);
     expect(await form8949Gain(STOCK_B)).toBeCloseTo(1999.99, 6);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// (d) Conservation survives a BACKDATED transfer
+// ---------------------------------------------------------------------------
+
+describe('carried basis is conserved when an outflow is inserted out of order', () => {
+  /**
+   * The same $1,000.01 over three shares, but the three transfers are not
+   * entered in date order: 15 June and 17 June are booked and scrubbed first,
+   * and only then is the missed 16 June transfer entered and the book
+   * re-scrubbed. That is ordinary bookkeeping, and it is what a
+   * compute-once-per-transfer apportionment cannot survive:
+   *
+   *   - the first pass hands 15 June cum(1) = 333.336667 and 17 June
+   *     cum(2) - cum(1) = 333.336666;
+   *   - the backdated 16 June transfer now sits BETWEEN them, so it is handed
+   *     cum(2) - cum(1) = 333.336666 as well;
+   *   - stored total 1,000.009999 against the $1,000.01 actually paid, and the
+   *     eventual full sale reports $1,999.990001 instead of $1,999.99.
+   *
+   * The slices are therefore never final: every pass that can have changed a
+   * lot's outflow set re-derives all of them
+   * (reconcileCarriedBasisForSourceLots).
+   */
+  function seedTwoOfThreeTransfers() {
+    seedBook();
+    addTx('tx-buy', '2022-01-10', [
+      ['a-buy', STOCK_A, 3, 1000],
+      ['a-buy-comm', COMMISSIONS, 0.01, 0.01],
+      ['a-buy-cash', CASH, -1000.01, -1000.01],
+    ]);
+    addTx('tx-xfer-a', '2024-06-15', [['a-out-a', STOCK_A, -1, 0], ['b-in-a', STOCK_B, 1, 0]]);
+    addTx('tx-xfer-c', '2024-06-17', [['a-out-c', STOCK_A, -1, 0], ['b-in-c', STOCK_B, 1, 0]]);
+  }
+
+  /** The missed middle transfer, entered after the first scrub. */
+  function addBackdatedTransfer() {
+    addTx('tx-xfer-b', '2024-06-16', [['a-out-b', STOCK_A, -1, 0], ['b-in-b', STOCK_B, 1, 0]]);
+  }
+
+  it('re-apportions the slices already stored, so the stored total stays exact', async () => {
+    seedTwoOfThreeTransfers();
+    await autoAssignLots(STOCK_A, 'fifo');
+    await autoAssignLots(STOCK_B, 'fifo');
+
+    // First pass: 15 June leads, 17 June follows and carries the smaller slice.
+    expect(carriedBasisUnits(split('b-in-a').lot_guid as string)).toBe(333_336_667);
+    expect(carriedBasisUnits(split('b-in-c').lot_guid as string)).toBe(333_336_666);
+
+    addBackdatedTransfer();
+    await autoAssignLots(STOCK_A, 'fifo');
+    await autoAssignLots(STOCK_B, 'fifo');
+
+    const destLots = ['b-in-a', 'b-in-b', 'b-in-c'].map(g => split(g).lot_guid as string);
+    expect(new Set(destLots).size).toBe(3);
+
+    // 17 June is no longer the second outflow — it is the third, and DRAINS
+    // the lot. Its stored slice must have been rewritten from 333,336,666.
+    // Without that rewrite the three slices sum to 1,000,009,999.
+    expect(carriedBasisUnits(destLots[2])).toBe(333_336_667);
+    expect(destLots.map(carriedBasisUnits)).toEqual([333_336_667, 333_336_666, 333_336_667]);
+    expect(destLots.reduce((sum, lot) => sum + carriedBasisUnits(lot), 0)).toBe(1_000_010_000);
+  });
+
+  it('realizes the full $1,999.99 on the later sale, on all three surfaces', async () => {
+    seedTwoOfThreeTransfers();
+    await autoAssignLots(STOCK_A, 'fifo');
+    await autoAssignLots(STOCK_B, 'fifo');
+
+    addBackdatedTransfer();
+    addTx('tx-sell', '2024-11-02', [
+      ['b-sell', STOCK_B, -3, -3000],
+      ['b-sell-cash', CASH, 3000, 3000],
+    ]);
+    await autoAssignLots(STOCK_A, 'fifo');
+    const resB = await autoAssignLots(STOCK_B, 'fifo');
+
+    // $3,000 proceeds - $1,000.01 basis, to the millionth. The drifted book
+    // reported $1,999.990001 here.
+    expect(Math.round(resB.totalRealizedGain * 1e6)).toBe(1_999_990_000);
+    expect(await lotsReportRealizedGain(STOCK_B)).toBeCloseTo(1999.99, 6);
+    expect(await form8949Gain(STOCK_B)).toBeCloseTo(1999.99, 6);
+    // The ledger posts each lot's gain in the book currency's cents, so three
+    // lots of $666.663333 book $1,999.98 — a rounding of the conserved figure
+    // above, not a loss of basis. Pinned so the two are not confused.
+    expect(-bookedGainsIncome('Long Term')).toBeCloseTo(1999.98, 6);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// (e) The residual does not move when the book is re-scrubbed
+// ---------------------------------------------------------------------------
+
+describe('residual assignment is stable across revert and re-scrub', () => {
+  /**
+   * Three transfers leave the $1,000.01 lot on the SAME day, so the order
+   * among them — and with it which destination lot receives the residual
+   * millionth — is decided entirely by the tiebreak.
+   *
+   * Two of the three outflows are sub-splits the engine CARVED from a transfer
+   * that spanned several lots, and a revert-and-re-scrub carves them again
+   * with freshly generated GUIDs. A guid tiebreak therefore reshuffles them on
+   * every run: sell one specific destination lot and its taxable gain depends
+   * on how many times the book has been scrubbed. The order is keyed on the
+   * transaction instead (orderLotOutflows), which the engine never
+   * regenerates.
+   *
+   * The rounds are compared to each other AND to the documented expectation,
+   * so this fails both if the result drifts and if it settles on the wrong lot.
+   */
+  /**
+   * The two surviving splits are named to start with '7' and '8' on purpose.
+   * A regenerated sub-split's guid is random hex, so under the OLD guid
+   * tiebreak it lands before both (~7/16 of runs), between them (~1/16) or
+   * after both (~1/2) — a different lot takes the residual in most runs, and
+   * the round-to-round comparison below sees it. Readable names alone
+   * ("a-out-…") would sort the sub-split into one bucket far too often for
+   * this test to discriminate.
+   */
+  const OUT_X2 = '7-a-out-x2-guid-00000000000000';
+  const OUT_X3 = '8-a-out-x3-guid-00000000000000';
+
+  function seedSameDayTransfersOutOfThreeLots() {
+    seedBook();
+    // One small early lot, then the lot whose basis does not divide evenly.
+    addTx('tx-buy-1', '2022-01-05', [
+      ['a-buy-1', STOCK_A, 1, 500], ['a-buy-1-cash', CASH, -500, -500],
+    ]);
+    addTx('tx-buy-2', '2022-02-10', [
+      ['a-buy-2', STOCK_A, 3, 1000],
+      ['a-buy-2-comm', COMMISSIONS, 0.01, 0.01],
+      ['a-buy-2-cash', CASH, -1000.01, -1000.01],
+    ]);
+    // x1 spans the early lot AND the $1,000.01 lot, so its leg into the
+    // $1,000.01 lot is a sub-split the engine carves fresh on every scrub.
+    // x2 and x3 fit in one lot, so they keep the user's own split guids.
+    addTx('tx-x1', '2024-06-15', [['a-out-1', STOCK_A, -2, 0], ['b-in-1', STOCK_B, 2, 0]]);
+    addTx('tx-x2', '2024-06-15', [[OUT_X2, STOCK_A, -1, 0], ['b-in-2', STOCK_B, 1, 0]]);
+    addTx('tx-x3', '2024-06-15', [[OUT_X3, STOCK_A, -1, 0], ['b-in-3', STOCK_B, 1, 0]]);
+    addTx('tx-sell', '2024-11-02', [
+      ['b-sell', STOCK_B, -4, -4000],
+      ['b-sell-cash', CASH, 4000, 4000],
+    ]);
+  }
+
+  /** The transfer a destination lot's shares arrived on. */
+  function transferOfLot(lotGuid: string): string {
+    const arrival = db.t.splits.find(
+      s => s.lot_guid === lotGuid && Number(s.quantity_num) > 0,
+    );
+    return arrival?.tx_guid ?? 'unknown';
+  }
+
+  /** Every destination lot as "<transfer>:<carried basis in millionths>". */
+  function basisByTransfer(): string[] {
+    return db.t.lots
+      .filter(l => l.account_guid === STOCK_B)
+      .map(l => {
+        const raw = slotVal(l.guid, 'carried_basis');
+        return `${transferOfLot(l.guid)}:${raw === null ? 'none' : Math.round(parseFloat(raw) * 1e6)}`;
+      })
+      .sort();
+  }
+
+  /** Every destination lot as "<transfer>:<realized gain in millionths>". */
+  async function gainByTransfer(): Promise<string[]> {
+    const accountPaths = await buildAccountPathMap();
+    const lots = await getAccountLots(STOCK_B, { includeTradeFees: true, accountPaths });
+    return lots
+      .map(lot => `${transferOfLot(lot.guid)}:${Math.round(lot.realizedGain * 1e6)}`)
+      .sort();
+  }
+
+  it('gives the residual millionth to the same lot, and the same gain, every scrub', async () => {
+    seedSameDayTransfersOutOfThreeLots();
+
+    const rounds: Array<{ basis: string[]; gains: string[]; total: number }> = [];
+    const ROUNDS = 4;
+    for (let round = 0; round < ROUNDS; round++) {
+      const resA = await autoAssignLots(STOCK_A, 'fifo');
+      const resB = await autoAssignLots(STOCK_B, 'fifo');
+
+      rounds.push({
+        basis: basisByTransfer(),
+        gains: await gainByTransfer(),
+        total: Math.round(resB.totalRealizedGain * 1e6),
+      });
+
+      if (round < ROUNDS - 1) {
+        await revertScrubRun(resB.runId);
+        await revertScrubRun(resA.runId);
+      }
+    }
+
+    // Every re-scrub reproduces the first one exactly — same lot, same gain.
+    for (let round = 1; round < ROUNDS; round++) {
+      expect(rounds[round]).toEqual(rounds[0]);
+    }
+
+    // And it settles where the documented order says it should: the outflows
+    // of the $1,000.01 lot run tx-x1, tx-x2, tx-x3, so tx-x2's destination lot
+    // holds the short slice and tx-x3's drains the lot.
+    expect(rounds[0].basis).toEqual([
+      'tx-x1:333336667',
+      'tx-x1:500000000',
+      'tx-x2:333336666',
+      'tx-x3:333336667',
+    ]);
+    // $4,000 proceeds - ($500 + $1,000.01) of basis, conserved exactly.
+    expect(rounds[0].total).toBe(2_499_990_000);
   });
 });
 

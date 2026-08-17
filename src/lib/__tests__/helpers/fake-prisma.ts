@@ -136,17 +136,37 @@ export class FakePrisma {
     return out;
   }
 
+  /**
+   * One orderBy term -> comparator. Supports `{ transaction: { post_date } }`
+   * and plain scalar columns, which is the whole vocabulary the lot engine
+   * uses; an array of terms compares them left to right, as SQL does.
+   */
+  private cmpTerm(term: Rec, a: Rec, b: Rec): number {
+    if (term?.transaction?.post_date) {
+      const dir = term.transaction.post_date === 'desc' ? -1 : 1;
+      const ta = this.txOf(a)?.post_date?.getTime?.() ?? 0;
+      const tb = this.txOf(b)?.post_date?.getTime?.() ?? 0;
+      return (ta - tb) * dir;
+    }
+    for (const [column, direction] of Object.entries(term ?? {})) {
+      if (typeof direction !== 'string') continue;
+      const dir = direction === 'desc' ? -1 : 1;
+      const diff = cmpVal(a[column] ?? null, b[column] ?? null);
+      if (diff !== 0) return diff * dir;
+    }
+    return 0;
+  }
+
   private sortSplits(list: Rec[], orderBy: any): Rec[] {
     if (!orderBy) return list;
-    const dir = orderBy?.transaction?.post_date === 'desc' ? -1 : 1;
-    if (orderBy?.transaction?.post_date) {
-      return [...list].sort((a, b) => {
-        const ta = this.txOf(a)?.post_date?.getTime?.() ?? 0;
-        const tb = this.txOf(b)?.post_date?.getTime?.() ?? 0;
-        return (ta - tb) * dir;
-      });
-    }
-    return list;
+    const terms: Rec[] = Array.isArray(orderBy) ? orderBy : [orderBy];
+    return [...list].sort((a, b) => {
+      for (const term of terms) {
+        const diff = this.cmpTerm(term, a, b);
+        if (diff !== 0) return diff;
+      }
+      return 0;
+    });
   }
 
   splits = {

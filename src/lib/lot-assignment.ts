@@ -18,6 +18,7 @@ import {
   PARENT_SPLIT_SLOT,
   splitSellAcrossLots,
   splitTransferAcrossSourceLots,
+  reconcileCarriedBasisForSourceLots,
   generateCapitalGains,
   valueZeroValueTrade,
   assignAdjustmentToLots,
@@ -69,7 +70,16 @@ async function getUnassignedSplits(
         select: { post_date: true },
       },
     },
-    orderBy: { transaction: { post_date: 'asc' } },
+    // post_date alone leaves same-day splits in whatever order the driver
+    // returned them, and that order decides which lot each of them consumes.
+    // tx_guid then guid make the replay below reproducible: both are the
+    // user's own identifiers here (an unassigned split is never one the engine
+    // generated), so a revert and re-scrub sees the same sequence.
+    orderBy: [
+      { transaction: { post_date: 'asc' } },
+      { tx_guid: 'asc' },
+      { guid: 'asc' },
+    ],
   });
 
   return splits.map(s => ({
@@ -368,6 +378,29 @@ async function assignWithStrategy(
         }
         break;
       }
+    }
+  }
+
+  // ── Re-apportion downstream carried basis ────────────────────────────────
+  // This pass may have assigned an outflow that lands BEFORE ones an earlier
+  // pass already apportioned — a backdated transfer or sale, ordinary
+  // bookkeeping. Every slice behind it then shifts, and the destination lots'
+  // stored carried_basis stops summing to the source lot's basis. Re-derive
+  // the whole outflow set for this account's lots so the invariant holds under
+  // insertion at any date, not merely in date order.
+  //
+  // This can rewrite a lot slot in the DESTINATION account. It deliberately
+  // does NOT bump that account's transaction tokens: the write touches no
+  // transaction or split row, and taking a second account's transaction locks
+  // mid-run is exactly the ABBA deadlock the lock ordering above avoids. The
+  // destination account's own next scrub re-reads the slot either way.
+  {
+    const accountLots = await tx.lots.findMany({
+      where: { account_guid: accountGuid },
+      select: { guid: true },
+    });
+    if (accountLots.length > 0) {
+      await reconcileCarriedBasisForSourceLots(accountLots.map(l => l.guid), tx);
     }
   }
 
@@ -872,7 +905,12 @@ export async function clearLotAssignments(
       await tx.slots.deleteMany({
         where: {
           obj_guid: { in: deleteGuids },
-          name: { in: ['title', 'source_lot_guid', 'acquisition_date', 'carried_basis', 'gnucash_web_generated'] },
+          name: {
+            in: [
+              'title', 'source_lot_guid', 'source_split_guid', 'acquisition_date',
+              'carried_basis', 'gnucash_web_generated',
+            ],
+          },
         },
       });
       await tx.lots.deleteMany({
