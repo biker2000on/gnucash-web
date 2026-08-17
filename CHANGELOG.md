@@ -252,6 +252,29 @@ Covers work landed since 0.23.2.0 (2026-07-29).
 
 ### Fixed
 
+- **Pressing Escape no longer destroys a half-typed transaction.** Escape, the
+  close button, and Cancel all discarded an in-progress transaction outright,
+  with no confirmation and no way to recover it — a multi-split entry could be
+  lost to a single keystroke. A form you have not typed into still closes
+  instantly, with no extra prompt; a form with unsaved changes now asks first,
+  and declining returns you to the form with every value intact and the cursor
+  back where it was. Editing an existing transaction and changing nothing
+  counts as unchanged, so closing it is still immediate.
+
+- **Restored the missing keyboard focus indicator on the account picker.** The
+  account search box removed the browser's focus outline and replaced it with a
+  colour that did not exist, so keyboard users had no visible indication of
+  where they were. It now uses the same focus treatment as the rest of the app.
+  Ten other controls had the same defect and are fixed; a further sweep
+  confirmed the remaining uses do supply a visible replacement.
+
+- **The fixed-asset list and the asset detail page now report the same
+  balance.** The list totalled each asset's recorded transaction value while
+  the detail page totalled units held, so for any asset where the two diverge
+  the screens disagreed and there was no way to tell which was right. Both now
+  use one shared calculation. Assets whose value and unit count agree are
+  unaffected.
+
 - **AR/AP aging can now be tied back to the balance sheet.** The aging report
   gains a per-control-account reconciliation showing the control account's
   balance, the aged total, and any unreconciled residual between them.

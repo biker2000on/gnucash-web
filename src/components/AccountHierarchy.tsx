@@ -822,6 +822,7 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                                     handleNewChild(account);
                                 }}
                                 className="p-1 min-h-[24px] min-w-[24px] flex items-center justify-center rounded hover:bg-primary/20 text-foreground-muted hover:text-primary transition-colors"
+                                aria-label="Add Child Account"
                                 title="Add Child Account"
                             >
                                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -834,6 +835,7 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                                     handleEdit(account);
                                 }}
                                 className="p-1 min-h-[24px] min-w-[24px] flex items-center justify-center rounded hover:bg-primary/20 text-foreground-muted hover:text-primary transition-colors"
+                                aria-label="Edit Account"
                                 title="Edit Account"
                             >
                                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -846,6 +848,7 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                                     handleDeleteConfirm(account);
                                 }}
                                 className="p-1 min-h-[24px] min-w-[24px] flex items-center justify-center rounded hover:bg-negative/20 text-foreground-muted hover:text-negative transition-colors"
+                                aria-label="Delete Account"
                                 title="Delete Account"
                             >
                                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1418,6 +1421,7 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                             tax_related: (selectedAccount as unknown as { tax_related?: boolean }).tax_related ?? false,
                             is_retirement: (selectedAccount as unknown as { is_retirement?: boolean }).is_retirement ?? false,
                             retirement_account_type: (selectedAccount as unknown as { retirement_account_type?: string | null }).retirement_account_type ?? null,
+                            is_card_payment_source: (selectedAccount as unknown as { is_card_payment_source?: boolean }).is_card_payment_source ?? false,
                         } : undefined}
                         parentGuid={parentGuid}
                         onSave={handleSave}

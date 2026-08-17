@@ -23,14 +23,14 @@ export async function GET(
       return NextResponse.json({ error: 'Account not found' }, { status: 404 });
     }
 
-    const rows = await prisma.$queryRaw<{ account_guid: string; cost_basis_method: string | null; lot_assignment_method: string | null; is_retirement: boolean; retirement_account_type: string | null; owner: string | null }[]>`
-      SELECT account_guid, cost_basis_method, lot_assignment_method, is_retirement, retirement_account_type, owner
+    const rows = await prisma.$queryRaw<{ account_guid: string; cost_basis_method: string | null; lot_assignment_method: string | null; is_retirement: boolean; retirement_account_type: string | null; owner: string | null; is_card_payment_source: boolean }[]>`
+      SELECT account_guid, cost_basis_method, lot_assignment_method, is_retirement, retirement_account_type, owner, is_card_payment_source
       FROM gnucash_web_account_preferences
       WHERE account_guid = ${guid}
     `;
 
     if (rows.length === 0) {
-      return NextResponse.json({ account_guid: guid, cost_basis_method: null, lot_assignment_method: null, is_retirement: false, retirement_account_type: null, owner: null });
+      return NextResponse.json({ account_guid: guid, cost_basis_method: null, lot_assignment_method: null, is_retirement: false, retirement_account_type: null, owner: null, is_card_payment_source: false });
     }
 
     return NextResponse.json(rows[0]);
@@ -108,7 +108,7 @@ export async function PATCH(
     // Build the SET clause dynamically — only update fields present in the request body
     const hasCostBasis = 'cost_basis_method' in body;
     const hasLotAssignment = 'lot_assignment_method' in body;
-    const hasRetirement = 'is_retirement' in body || 'retirement_account_type' in body || 'owner' in body;
+    const hasRetirement = 'is_retirement' in body || 'retirement_account_type' in body || 'owner' in body || 'is_card_payment_source' in body;
 
     if (!hasCostBasis && !hasLotAssignment && !hasRetirement) {
       return NextResponse.json({ error: 'No valid fields to update' }, { status: 400 });
@@ -149,26 +149,29 @@ export async function PATCH(
       const hasIsRetirement = 'is_retirement' in body;
       const hasRetirementType = 'retirement_account_type' in body;
       const hasOwner = 'owner' in body;
+      const cardPaymentSource = body.is_card_payment_source ?? false;
+      const hasCardPaymentSource = 'is_card_payment_source' in body;
 
       await prisma.$executeRaw`
-        INSERT INTO gnucash_web_account_preferences (account_guid, is_retirement, retirement_account_type, owner)
-        VALUES (${guid}, ${isRetirement}, ${retirementType}, ${ownerValue})
+        INSERT INTO gnucash_web_account_preferences (account_guid, is_retirement, retirement_account_type, owner, is_card_payment_source)
+        VALUES (${guid}, ${isRetirement}, ${retirementType}, ${ownerValue}, ${cardPaymentSource})
         ON CONFLICT (account_guid)
         DO UPDATE SET
           is_retirement = CASE WHEN ${hasIsRetirement}::boolean THEN ${isRetirement} ELSE gnucash_web_account_preferences.is_retirement END,
           retirement_account_type = CASE WHEN ${hasRetirementType}::boolean THEN ${retirementType} ELSE gnucash_web_account_preferences.retirement_account_type END,
-          owner = CASE WHEN ${hasOwner}::boolean THEN ${ownerValue} ELSE gnucash_web_account_preferences.owner END
+          owner = CASE WHEN ${hasOwner}::boolean THEN ${ownerValue} ELSE gnucash_web_account_preferences.owner END,
+          is_card_payment_source = CASE WHEN ${hasCardPaymentSource}::boolean THEN ${cardPaymentSource} ELSE gnucash_web_account_preferences.is_card_payment_source END
       `;
     }
 
     // Fetch and return the updated row
-    const rows = await prisma.$queryRaw<{ account_guid: string; cost_basis_method: string | null; lot_assignment_method: string | null; is_retirement: boolean; retirement_account_type: string | null; owner: string | null }[]>`
-      SELECT account_guid, cost_basis_method, lot_assignment_method, is_retirement, retirement_account_type, owner
+    const rows = await prisma.$queryRaw<{ account_guid: string; cost_basis_method: string | null; lot_assignment_method: string | null; is_retirement: boolean; retirement_account_type: string | null; owner: string | null; is_card_payment_source: boolean }[]>`
+      SELECT account_guid, cost_basis_method, lot_assignment_method, is_retirement, retirement_account_type, owner, is_card_payment_source
       FROM gnucash_web_account_preferences
       WHERE account_guid = ${guid}
     `;
 
-    return NextResponse.json(rows[0] ?? { account_guid: guid, cost_basis_method: null, lot_assignment_method: null, is_retirement: false, retirement_account_type: null, owner: null });
+    return NextResponse.json(rows[0] ?? { account_guid: guid, cost_basis_method: null, lot_assignment_method: null, is_retirement: false, retirement_account_type: null, owner: null, is_card_payment_source: false });
   } catch (error) {
     console.error('Error updating account preferences:', error);
     return NextResponse.json({ error: 'Failed to update account preferences' }, { status: 500 });

@@ -41,6 +41,8 @@
     --success-light: #dcfce7;
     --error: #dc2626;
     --error-light: #fee2e2;
+    /* Text on a solid --error surface. 4.83:1 against #dc2626 (WCAG AA). */
+    --error-foreground: #ffffff;
     --warning: #d97706;
     --warning-light: #fef3c7;
 
@@ -101,6 +103,8 @@
     --success-light: #14532d;
     --error: #f87171;
     --error-light: #450a0a;
+    /* Text on a solid --error surface. 6.71:1 against #f87171 (WCAG AA). */
+    --error-foreground: #0c1322;
     --warning: #fbbf24;
     --warning-light: #451a03;
 
@@ -159,6 +163,7 @@
     --color-success-light: var(--success-light);
     --color-error: var(--error);
     --color-error-light: var(--error-light);
+    --color-error-foreground: var(--error-foreground);
     --color-warning: var(--warning);
     --color-warning-light: var(--warning-light);
 

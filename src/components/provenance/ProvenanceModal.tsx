@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useCallback, useEffect, useLayoutEffect, useState } from 'react';
 import { Modal } from '@/components/ui/Modal';
+import { ErrorLiveRegion } from '@/components/a11y/LiveRegion';
 import { PopoutButton } from '@/components/popout/PopoutButton';
 import { usePopoutHost } from '@/lib/popout/usePopout';
 import type { CalculationTrace, EvidenceRef } from '@/lib/financial-actions/types';
@@ -75,6 +76,7 @@ export function ProvenanceTraceView({ traceId, trace: suppliedTrace }: ExplainPa
   return (
     <div className="p-5 sm:p-6 space-y-6">
       {loading && <p className="text-sm text-foreground-secondary">Loading calculation trace…</p>}
+      <ErrorLiveRegion message={error} />
       {error && <p className="text-sm text-negative">{error}</p>}
       {trace && (
         <>

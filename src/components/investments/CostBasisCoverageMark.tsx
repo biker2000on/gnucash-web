@@ -1,7 +1,7 @@
 'use client';
 
 import { Tooltip } from '@/components/ui/Tooltip';
-import type { CostBasisCoverage } from '@/lib/commodities';
+import type { CostBasisCoverage } from '@/lib/holdings-coverage';
 
 function formatShares(shares: number): string {
     return shares.toLocaleString(undefined, { maximumFractionDigits: 4 });

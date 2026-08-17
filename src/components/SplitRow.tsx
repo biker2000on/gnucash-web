@@ -206,6 +206,7 @@ export function SplitRow({
                                 type="button"
                                 onClick={() => onRemove(index)}
                                 className="p-2 text-foreground-muted hover:text-negative transition-colors"
+                                aria-label="Remove split"
                                 title="Remove split"
                             >
                                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

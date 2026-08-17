@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
-import prisma, { toDecimal } from '@/lib/prisma';
-import { serializeBigInts } from '@/lib/gnucash';
+import prisma from '@/lib/prisma';
+import { serializeBigInts, toDecimal, toDecimalNumber } from '@/lib/gnucash';
 import { Prisma } from '@prisma/client';
 import { isAccountInActiveBook } from '@/lib/book-scope';
 import { requireRole } from '@/lib/auth';
@@ -380,15 +380,15 @@ export async function GET(
                 // in ONE query, so traceCostBasis skips its per-lot lookup
                 const transferLotGuids = allSplitsForAccount
                     .filter(split =>
-                        Number(split.quantity_num) / Number(split.quantity_denom) > 0 &&
+                        toDecimalNumber(split.quantity_num, split.quantity_denom) > 0 &&
                         split.lot_guid &&
                         isTransferIn(split, split.transaction?.splits || [], accountCommodityGuid))
                     .map(split => split.lot_guid!);
                 await preloadLotSplits(transferLotGuids, costBasisCache);
 
                 for (const split of allSplitsForAccount) {
-                    const shares = Number(split.quantity_num) / Number(split.quantity_denom);
-                    const value = Math.abs(Number(split.value_num) / Number(split.value_denom));
+                    const shares = toDecimalNumber(split.quantity_num, split.quantity_denom);
+                    const value = Math.abs(toDecimalNumber(split.value_num, split.value_denom));
 
                     if (shares > 0) {
                         runShares += shares;
@@ -456,8 +456,8 @@ export async function GET(
                 const totals: InvestmentTotals = new Map();
 
                 for (const split of allSplitsWithTx) {
-                    const shares = Number(split.quantity_num) / Number(split.quantity_denom);
-                    const value = Math.abs(Number(split.value_num) / Number(split.value_denom));
+                    const shares = toDecimalNumber(split.quantity_num, split.quantity_denom);
+                    const value = Math.abs(toDecimalNumber(split.value_num, split.value_denom));
 
                     if (shares > 0) {
                         runShares += shares;
@@ -661,7 +661,7 @@ export async function GET(
             ? await prisma.$queryRaw<{ guid: string; running_balance: number }[]>`
                 WITH account_transaction_deltas AS (
                     SELECT t.guid, t.post_date, t.enter_date,
-                        SUM(s.quantity_num::float8 / s.quantity_denom::float8) AS delta
+                        COALESCE(SUM(s.quantity_num::numeric / NULLIF(s.quantity_denom, 0)::numeric), 0) AS delta
                     FROM transactions t
                     JOIN splits s ON s.tx_guid = t.guid
                     WHERE s.account_guid = ANY(${targetAccountGuids}::text[])
@@ -715,7 +715,7 @@ export async function GET(
             const accountSplits = enrichedSplits.filter(s => targetAccountGuids.includes(s.account_guid));
             const accountSplit = accountSplits[0];
             const splitValue = accountSplits.reduce(
-                (sum, s) => sum + Number(s.quantity_num) / Number(s.quantity_denom),
+                (sum, s) => sum + toDecimalNumber(s.quantity_num, s.quantity_denom),
                 0,
             );
 
@@ -739,9 +739,9 @@ export async function GET(
                 account_splits: accountSplits.map((split) => ({
                     guid: split.guid,
                     reconcile_state: split.reconcile_state || 'n',
-                    amount: (
-                        Number(split.quantity_num) / Number(split.quantity_denom)
-                    ).toString(),
+                    // Intentional fixed-point wire format: avoids exponential notation and
+                    // safely renders zero-denominator imports as the shared "0" fallback.
+                    amount: toDecimal(split.quantity_num, split.quantity_denom),
                 })),
                 // Transaction meta: reviewed status, source, preserved payee
                 reviewed: meta?.reviewed ?? true, // default to reviewed if no meta row

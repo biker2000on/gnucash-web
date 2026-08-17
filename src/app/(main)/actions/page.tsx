@@ -655,7 +655,7 @@ export default function FinancialActionCenterPage() {
               aria-label="Action view"
               value={actionView}
               onChange={event => setActionView(event.target.value as ActionView)}
-              className="bg-transparent font-medium text-foreground outline-none"
+              className="bg-transparent font-medium text-foreground"
             >
               <option value="pending">Pending</option>
               <option value="all">All</option>

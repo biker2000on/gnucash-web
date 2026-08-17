@@ -368,7 +368,13 @@ export async function collectFinancialEventsForBook(
     const currentYear = now.getUTCFullYear();
     const linkedByTarget = await linkedDocumentsForType(bookGuid, 'vendor_1099');
     for (const taxYear of [currentYear - 1, currentYear]) {
-      const compliance = await get1099Compliance(bookGuid, accountGuids, taxYear, now);
+      let compliance;
+      try {
+        compliance = await get1099Compliance(bookGuid, accountGuids, taxYear, now);
+      } catch (error) {
+        console.warn(`Money Timeline vendor 1099 unavailable for ${taxYear}:`, error);
+        continue;
+      }
       if (compliance.reportableCount === 0) continue;
       const allFiled = compliance.unfiledCount === 0;
       // Fully-filed past deadlines are finished business — keep the timeline clean.

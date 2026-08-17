@@ -8,6 +8,7 @@ const {
   taxCreate,
   taxUpdate,
   filingFindMany,
+  thresholdFindFirst,
 } = vi.hoisted(() => ({
   rawQuery: vi.fn(),
   accountGuids: vi.fn(),
@@ -16,6 +17,7 @@ const {
   taxCreate: vi.fn(),
   taxUpdate: vi.fn(),
   filingFindMany: vi.fn(),
+  thresholdFindFirst: vi.fn(),
 }));
 
 vi.mock('@/lib/prisma', () => ({
@@ -28,6 +30,7 @@ vi.mock('@/lib/prisma', () => ({
       update: taxUpdate,
     },
     gnucash_web_vendor_1099_filings: { findMany: filingFindMany },
+    gnucash_web_contribution_limits: { findFirst: thresholdFindFirst },
   },
 }));
 vi.mock('@/lib/book-scope', () => ({ getAccountGuidsForBook: accountGuids }));
@@ -46,6 +49,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   taxFindMany.mockResolvedValue([]);
   filingFindMany.mockResolvedValue([]);
+  thresholdFindFirst.mockResolvedValue(null);
 });
 
 describe('assertVendor1099BookScope', () => {

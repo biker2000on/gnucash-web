@@ -208,7 +208,7 @@ export function CurrencySelect({ value, onChange, id, className }: CurrencySelec
           onChange={e => setSearch(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder="Search currencies..."
-          className="w-full bg-input-bg border border-primary/50 rounded-lg px-4 py-3 text-foreground focus:outline-none transition-colors"
+          className="w-full bg-input-bg border border-primary/50 rounded-lg px-4 py-3 text-foreground focus:border-primary focus:ring-2 focus:ring-primary focus:outline-none transition-colors"
         />
       )}
 

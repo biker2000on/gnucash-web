@@ -2,6 +2,7 @@
 
 import { useState, useCallback } from 'react';
 import { AccountSelector } from '@/components/ui/AccountSelector';
+import { ErrorLiveRegion } from '@/components/a11y/LiveRegion';
 
 /* ------------------------------------------------------------------ */
 /* Types                                                               */
@@ -134,7 +135,8 @@ function EditableValue({
             setEditing(true);
           }}
           className="text-xs text-foreground-muted hover:text-primary transition-colors"
-          title="Edit value"
+          aria-label={`Edit ${label}`}
+          title={`Edit ${label}`}
         >
           <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
@@ -304,6 +306,10 @@ export function MortgageAutoDetect({ onDetectionComplete }: MortgageAutoDetectPr
       {loading && <DetectionSkeleton />}
 
       {/* Error state */}
+      <ErrorLiveRegion
+        message={error && !loading ? `Couldn't analyze payments. ${error}` : null}
+        politeness="polite"
+      />
       {error && !loading && (
         <div className="bg-error/10 border border-error/30 rounded-xl p-5">
           <div className="flex items-start gap-3">
