@@ -2743,15 +2743,67 @@ async function tuneAutovacuum() {
  * mechanism bought for a redundant second line of defence.
  *
  * So the enforcement for real accounts stays where it can be correct:
- *   - `acquireNamedXactLock(accountNameLockKey(parent, name))` serializes the
- *     app's own create-if-missing paths (src/lib/gnucash.ts,
- *     simplefin-sync.service.ts) — see ACCOUNT_SIBLING_UNIQUE_MARKERS there for
- *     the adopt-the-winner path that also covers a DB-level key if one is ever
- *     added.
- *   - GnuCash desktop enforces sibling uniqueness for real accounts in its own
- *     engine, so duplicate REAL siblings are anomalies rather than normal data,
- *     and `reportDuplicateRealSiblingAccounts` below surfaces them to the
- *     operator instead of rewriting anyone's account names.
+ * `acquireNamedXactLock(accountNameLockKey(parent, name))`, claimed inside the
+ * writing transaction with a re-check under it.
+ *
+ * WHAT THAT COVERS, EXACTLY — the lock is the only arbiter, so a writer that
+ * does not take it is not "slightly racy", it is unconstrained. Covered:
+ *
+ *   - `findOrCreateAccount` (src/lib/gnucash.ts) and therefore every caller of
+ *     it: reconcile, lot-scrub gains accounts, inventory-engine,
+ *     invoice-engine, bill capture, the QIF / personal / settlement importers.
+ *   - `ensureAccountPath` (services/packages.service.ts).
+ *   - `trading-accounts.ts` (Trading root, namespace group, per-commodity leaf).
+ *   - `simplefin-sync.service.ts` (imbalance, per-symbol child, cash child) —
+ *     see ACCOUNT_SIBLING_UNIQUE_MARKERS there for the adopt-the-winner path
+ *     that also covers a DB-level key if one is ever added.
+ *   - `AccountService.create`, `.update` AND `.move` (services/account.service.ts).
+ *     Rename and reparent matter as much as create: they can land an existing
+ *     account on a key another sibling already holds. They claim the
+ *     DESTINATION (parent, name) — see `claimSiblingName` for the lock
+ *     ordering against the per-book lock.
+ *   - `addTemplateAccounts` (src/lib/default-book.ts) and demo seeding
+ *     (services/demo-book.service.ts): both graft accounts into a book that is
+ *     already reachable by other writers.
+ *
+ * NOT COVERED, deliberately — each of these builds a book nothing else can
+ * reach yet, so there is no second writer to race:
+ *
+ *   - `createDefaultBook` (src/lib/default-book.ts), POST /api/books, POST
+ *     /api/books/from-template, the QBO importer (import/qbo-import.service.ts)
+ *     and the business importer (import/business-import.service.ts). Each
+ *     generates its own book guid and root guid inside the function and
+ *     inserts the whole tree in one transaction; no row referencing that root
+ *     is visible until it commits. Their account names come from a static
+ *     template or a path-keyed map, so they cannot even collide with
+ *     themselves.
+ *
+ * NOT COVERED, with a residual window that is accepted rather than closed:
+ *
+ *   - The XML importer (src/lib/gnucash-xml/importer.ts). It replays a whole
+ *     book of thousands of rows preserving the file's own guids, and the file
+ *     was written by GnuCash desktop, whose engine already refuses duplicate
+ *     real siblings — so the import cannot contradict itself, and a per-account
+ *     lock would buy nothing for a per-row cost across the whole tree. It takes
+ *     the per-BOOK lock for the whole transaction, which excludes every other
+ *     book-locked operation. The window it does not close: an OVERWRITE import
+ *     into an existing book, racing an app-side create under one of the parents
+ *     it is re-inserting, because the create-if-missing paths above take the
+ *     name lock and no book lock. That is narrow (overwrite only, same book,
+ *     same parent, same name, overlapping in time) and it is a duplicate the
+ *     operator report below will surface.
+ *
+ * OUTSIDE THE INVARIANT ENTIRELY — these write `accounts` rows that are not
+ * real accounts and are SUPPOSED to share a key:
+ *
+ *   - `createTemplateContents` (services/scheduled-tx-create.ts) and the
+ *     template half of the XML importer, which insert the '' -named
+ *     per-split children this whole comment is about.
+ *
+ * Finally, `reportDuplicateRealSiblingAccounts` below surfaces any duplicate
+ * real siblings that already exist — from a pre-lock release, from the XML
+ * window above, or from a book edited elsewhere — to the operator, instead of
+ * rewriting anyone's account names.
  *
  * Nothing here deletes, renames, moves or merges a row.
  */

@@ -280,5 +280,90 @@ describe('SimpleFin create-if-missing: losing to a writer that skipped the lock'
             err.self = err;
             expect(isUniqueViolationOn(err, ['uq_accounts_parent_name'])).toBe(true);
         });
+
+        /**
+         * Inspecting an error must never BECOME the error.
+         *
+         * This predicate only ever runs on the failure path, and reading a
+         * property is not inert: an enumerable getter can throw, and a Proxy
+         * can throw from `get`, from `ownKeys`, or by being revoked. If any of
+         * that escaped, `adoptUniqueConflictWinner` would propagate the
+         * ACCESSOR's error and the real database error — the thing the
+         * operator needs to see — would be gone. So every hostile shape below
+         * has to come back as a plain `false`, which sends the caller down its
+         * `throw err` branch with the ORIGINAL error intact.
+         */
+        describe('hostile error shapes cannot hijack the failure', () => {
+            const boom = () => { throw new Error('accessor exploded'); };
+
+            it('does not leak a throwing enumerable getter', () => {
+                const err = accountsConflict();
+                Object.defineProperty(err, 'detail', { enumerable: true, get: boom });
+                // Still recognised: the constraint identity lives in sibling
+                // properties this walk can still read.
+                expect(isUniqueViolationOn(err, ['uq_accounts_parent_name'])).toBe(true);
+            });
+
+            it('does not leak a throwing getter that hides the identity', () => {
+                const err = Object.assign(new Error('x'), { code: 'P2002' });
+                Object.defineProperty(err, 'meta', { enumerable: true, get: boom });
+                // Nothing readable names a constraint, so this is simply "not
+                // ours" — false, not a thrown accessor error.
+                expect(isUniqueViolationOn(err, ['uq_accounts_parent_name'])).toBe(false);
+            });
+
+            it('does not leak a Proxy whose get trap throws', () => {
+                const err = new Proxy(accountsConflict(), { get: boom });
+                expect(isUniqueViolationOn(err, ['uq_accounts_parent_name'])).toBe(false);
+            });
+
+            it('does not leak a Proxy whose ownKeys trap throws', () => {
+                const err = new Proxy(accountsConflict(), { ownKeys: boom });
+                expect(isUniqueViolationOn(err, ['uq_accounts_parent_name'])).toBe(false);
+            });
+
+            it('does not leak a REVOKED Proxy', () => {
+                const { proxy, revoke } = Proxy.revocable(accountsConflict(), {});
+                revoke();
+                expect(isUniqueViolationOn(proxy, ['uq_accounts_parent_name'])).toBe(false);
+            });
+
+            it('does not leak a hostile node nested inside a normal error', () => {
+                // The realistic shape: Prisma's own error is fine, but one
+                // branch of `meta` is a driver object with a lazy accessor.
+                const hostile = new Proxy({}, { ownKeys: boom });
+                const err = Object.assign(accountsConflict(), { extra: hostile });
+                // The reachable half still identifies the constraint.
+                expect(isUniqueViolationOn(err, ['uq_accounts_parent_name'])).toBe(true);
+            });
+
+            it('propagates the ORIGINAL database error through the adopt path', async () => {
+                // End to end: `getOrCreateChildAccount` catches a create
+                // failure, asks this predicate about it, and must rethrow what
+                // the DATABASE said — not what the inspection tripped over.
+                // A real unique violation (23505) whose constraint identity is
+                // behind a getter that throws: unidentifiable, so not adoptable.
+                const original = Object.assign(new Error('duplicate key value'), { code: '23505' });
+                Object.defineProperty(original, 'constraint', { enumerable: true, get: boom });
+
+                const queryRaw = vi.fn(async () => []);
+                Object.assign(mocks.prisma, {
+                    accounts: { create: vi.fn(async () => { throw original; }) },
+                    commodities: { findFirst: vi.fn(async () => ({ guid: COMMODITY, fraction: 10000 })) },
+                    $queryRaw: queryRaw,
+                    $transaction: transaction({
+                        accounts: { create: vi.fn(async () => { throw original; }) },
+                        commodities: { findFirst: vi.fn(async () => ({ guid: COMMODITY, fraction: 10000 })) },
+                        $queryRaw: queryRaw,
+                    }),
+                });
+
+                const thrown = await getOrCreateChildAccount(
+                    PARENT, 'AAPL', 'Apple', BOOK, new Set([PARENT]),
+                ).then(() => null, (e: unknown) => e);
+
+                expect(thrown).toBe(original);
+            });
+        });
     });
 });

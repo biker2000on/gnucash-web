@@ -23,6 +23,7 @@
 
 import prisma from '@/lib/prisma';
 import { generateGuid } from '@/lib/gnucash';
+import { accountNameLockKey, acquireNamedXactLock } from '@/lib/book-lock';
 import { createDefaultBook } from '@/lib/default-book';
 import { saveEntityProfile } from '@/lib/services/entity.service';
 import { grantRole } from '@/lib/services/permission.service';
@@ -139,21 +140,44 @@ async function ensurePlanAccounts(
         if (isStock && !demoCommodityGuid) {
             throw new Error('Demo seed: DEMO commodity required but not provided');
         }
-        const guid = generateGuid();
-        await prisma.accounts.create({
-            data: {
-                guid,
-                name,
-                account_type: spec.type,
-                commodity_guid: isStock ? demoCommodityGuid! : usdGuid,
-                commodity_scu: isStock ? DEMO_STOCK.fraction : 100,
-                non_std_scu: 0,
-                parent_guid: parentGuid,
-                code: '',
-                description: '',
-                hidden: 0,
-                placeholder: 0,
-            },
+        // This is a create-if-missing against a book that is ALREADY
+        // reachable: `createDemoBook` grants the user admin on it before
+        // seeding starts, so a second tab (or the SimpleFin sync, if the user
+        // is quick) can create accounts under these same parents while this
+        // loop runs. `accounts(parent_guid, name)` has no unique index and
+        // deliberately never will (src/lib/db-init.ts,
+        // ACCOUNTS_SIBLING_NAME_INDEX), so claim the key on the same advisory
+        // lock every other app writer uses, and re-check under it.
+        //
+        // One transaction per account: the lock is transaction-scoped, and a
+        // seed plan is tens of accounts, so batching buys nothing. The loop
+        // was never atomic to begin with — a failure part-way already left the
+        // accounts it had created.
+        const guid = await prisma.$transaction(async (tx) => {
+            await acquireNamedXactLock(tx, accountNameLockKey(parentGuid, name));
+            const winner = await tx.accounts.findFirst({
+                where: { parent_guid: parentGuid, name },
+                select: { guid: true },
+            });
+            if (winner) return winner.guid;
+
+            const newGuid = generateGuid();
+            await tx.accounts.create({
+                data: {
+                    guid: newGuid,
+                    name,
+                    account_type: spec.type,
+                    commodity_guid: isStock ? demoCommodityGuid! : usdGuid,
+                    commodity_scu: isStock ? DEMO_STOCK.fraction : 100,
+                    non_std_scu: 0,
+                    parent_guid: parentGuid,
+                    code: '',
+                    description: '',
+                    hidden: 0,
+                    placeholder: 0,
+                },
+            });
+            return newGuid;
         });
         pathMap.set(spec.path, guid);
     }

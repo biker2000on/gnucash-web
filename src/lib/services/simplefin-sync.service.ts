@@ -360,10 +360,41 @@ function describeUniqueViolation(err: unknown): { identifiers: Set<string>; uniq
     if (seen.has(node)) continue;
     seen.add(node);
 
-    // `message` is non-enumerable on Error, so Object.entries misses it.
-    if (node instanceof Error) visitString('message', node.message);
+    // INSPECTION MUST NOT THROW. Reading a node is not as inert as it looks:
+    // `Object.entries` invokes every enumerable getter, and a getter — or a
+    // Proxy's ownKeys/get trap, or a revoked Proxy — is free to throw. This
+    // function only ever runs while HANDLING a database error, so an escaping
+    // accessor error would replace that error with a meaningless one from the
+    // inspector: the caller would report "cannot perform 'ownKeys' on a
+    // proxy that has been revoked" and the real 23505 (or whatever it was)
+    // would be gone. Failing closed per node instead means the worst case is
+    // "we learned nothing from this node", which lands on `unique === false`,
+    // which makes `adoptUniqueConflictWinner` rethrow the ORIGINAL error —
+    // exactly the behaviour for any error shape we do not recognise.
+    // `message` is non-enumerable on Error, so the key walk below misses it.
+    // Its own guard: `instanceof` runs a getPrototypeOf trap, and `.message`
+    // may be an accessor.
+    try {
+      if (node instanceof Error) visitString('message', node.message);
+    } catch { /* unreadable message — the rest of the node may still be fine */ }
 
-    for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+    // Per-KEY rather than one `Object.entries(node)`, so a single throwing
+    // getter costs us that property and not the whole node: the constraint
+    // name may well be sitting in a sibling property we can still read.
+    // `Object.keys` itself can throw (revoked proxy), hence the outer guard.
+    let keys: string[];
+    try {
+      keys = Object.keys(node as Record<string, unknown>);
+    } catch {
+      continue;
+    }
+    for (const key of keys) {
+      let value: unknown;
+      try {
+        value = (node as Record<string, unknown>)[key];
+      } catch {
+        continue;
+      }
       if (typeof value === 'string') {
         visitString(key, value);
         continue;
@@ -385,11 +416,24 @@ function describeUniqueViolation(err: unknown): { identifiers: Set<string>; uniq
  * (Prisma P2002, raw 23505, or Postgres' own wording), and the constraint it
  * names has to be one of ours. Any other constraint rethrows, so the caller
  * records a sync error rather than adopting a row it did not race for.
+ *
+ * TOTAL BY CONSTRUCTION: this is a predicate asked ABOUT an error, on the
+ * error path, so it must never become the error. `describeUniqueViolation`
+ * already fails closed per node, and this last guard makes the whole call
+ * non-throwing — a `false` here sends `adoptUniqueConflictWinner` down its
+ * `throw err` branch, which propagates the ORIGINAL database error rather
+ * than whatever the inspection tripped over.
  * Exported for tests.
  */
 export function isUniqueViolationOn(err: unknown, markers: readonly string[]): boolean {
   if (!err) return false;
-  const { identifiers, unique } = describeUniqueViolation(err);
+  let identifiers: Set<string>;
+  let unique: boolean;
+  try {
+    ({ identifiers, unique } = describeUniqueViolation(err));
+  } catch {
+    return false;
+  }
   if (!unique) return false;
   return markers.some(marker => identifiers.has(marker));
 }

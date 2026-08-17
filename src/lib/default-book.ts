@@ -8,7 +8,7 @@
 
 import prisma from './prisma';
 import { generateGuid } from './gnucash';
-import { acquireBookLock, acquireNamedXactLock, commodityLockKey } from './book-lock';
+import { accountNameLockKey, acquireBookLock, acquireNamedXactLock, commodityLockKey } from './book-lock';
 import { getCurrencyName } from './currencies';
 import { getEntityAccountTemplate, type TemplateAccountDef } from './book-templates';
 import type { BusinessActivity, EntityType } from '@/lib/services/entity.service';
@@ -196,10 +196,26 @@ export async function addTemplateAccounts(
 
     const add = async (accounts: TemplateAccountDef[], parent: string) => {
       for (const def of accounts) {
-        const current = await tx.accounts.findFirst({
+        let current = await tx.accounts.findFirst({
           where: { parent_guid: parent, name: def.name },
           select: { guid: true, account_type: true, placeholder: true },
         });
+        if (!current) {
+          // The book lock above serializes this graft against other
+          // BOOK-LOCKED operations only. Account creation is not one of them:
+          // AccountService.create, findOrCreateAccount and the SimpleFin sync
+          // all take the per-(parent, name) lock and no book lock, so without
+          // claiming that key here a concurrent create lands a duplicate real
+          // sibling — and accounts(parent_guid, name) has no unique index to
+          // catch it (src/lib/db-init.ts, ACCOUNTS_SIBLING_NAME_INDEX).
+          // Ordering matches every other two-lock caller: book lock first,
+          // then the name lock.
+          await acquireNamedXactLock(tx, accountNameLockKey(parent, def.name));
+          current = await tx.accounts.findFirst({
+            where: { parent_guid: parent, name: def.name },
+            select: { guid: true, account_type: true, placeholder: true },
+          });
+        }
         let guid: string;
         if (current) {
           if (current.account_type !== def.type) {

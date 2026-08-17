@@ -18,6 +18,75 @@ import {
     acquireNamedXactLock,
 } from '@/lib/book-lock';
 
+type PrismaTxClient = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
+
+/**
+ * Claim a REAL account's `(parent_guid, name)` sibling key inside `tx`, or
+ * refuse.
+ *
+ * Every path that can PUT an account on a sibling key — create, rename, move —
+ * must come through here, because there is no database arbiter to fall back on:
+ * a unique index on `accounts(parent_guid, name)` cannot exist while the same
+ * table stores scheduled-transaction templates (see
+ * `ACCOUNTS_SIBLING_NAME_INDEX` in src/lib/db-init.ts). The advisory lock IS
+ * the constraint, so a writer that skips it is not "slightly racy", it is
+ * unconstrained.
+ *
+ * ## Lock ordering
+ *
+ * Exactly ONE sibling-name lock is taken per operation, on the DESTINATION
+ * `(parent, name)` only. A reparent touches two parents, but the source parent
+ * needs no lock: vacating a key can never create a duplicate under it, only
+ * remove one. With a single key there is no pair to order and no
+ * opposite-direction deadlock to construct — two concurrent moves that swap
+ * destinations contend on two independent keys and both make progress.
+ *
+ * Against the other lock in play, the rule is a strict two-level hierarchy,
+ * taken in this order and never the reverse:
+ *
+ *     1. the per-book lock (`tryAcquireBookLock`), for reparents only
+ *     2. this per-(parent, name) lock
+ *
+ * Every other holder of a named account lock (findOrCreateAccount,
+ * trading-accounts, packages, the SimpleFin sync) takes no book lock at all,
+ * and the XML importer takes the book lock first exactly as here — so the
+ * wait-for graph has no cycle.
+ *
+ * `selfGuid` excludes the row being renamed/moved, so a no-op update and a
+ * rename that only changes case-identical text do not refuse themselves.
+ */
+async function claimSiblingName(
+    tx: PrismaTxClient,
+    parentGuid: string | null,
+    name: string,
+    selfGuid: string | null,
+): Promise<void> {
+    // The ROOT account (parent_guid null) is a sibling of nothing.
+    if (!parentGuid) return;
+    // '' is the scheduled-transaction template shape: GnuCash stores one child
+    // account PER SPLIT under a template root, every one of them named '', and
+    // those duplicates are correct data. `CreateAccountSchema`/
+    // `UpdateAccountSchema` both require a non-empty name, so this is only
+    // reachable by moving an existing template row — which must not be
+    // refused for being a duplicate of the template rows beside it.
+    if (name === '') return;
+
+    await acquireNamedXactLock(tx, accountNameLockKey(parentGuid, name));
+    const clash = await tx.accounts.findFirst({
+        where: {
+            parent_guid: parentGuid,
+            name,
+            ...(selfGuid ? { guid: { not: selfGuid } } : {}),
+        },
+        select: { guid: true },
+    });
+    if (clash) {
+        throw new Error(
+            `An account named "${name}" already exists under this parent`,
+        );
+    }
+}
+
 /**
  * Validate a reparent on the transaction client, while the per-book advisory
  * lock is held: parent must exist and must not be a descendant of the moved
@@ -174,27 +243,13 @@ export class AccountService {
       // Sibling-name uniqueness for REAL accounts has no DB arbiter — a
       // unique index on accounts(parent_guid, name) cannot exist because
       // scheduled-transaction templates share (parent, '') by design (see
-      // src/lib/db-init.ts, ACCOUNTS_SIBLING_NAME_INDEX). So serialize on the
+      // src/lib/db-init.ts, ACCOUNTS_SIBLING_NAME_INDEX). Serialize on the
       // same per-(parent, name) key the create-if-missing paths use, and
       // re-check under it: without this, two concurrent creates of the same
-      // name under the same parent both commit and the book quietly grows the
-      // duplicate GnuCash desktop's own engine would have refused.
-      //
-      // Only when there IS a parent: the ROOT account (parent_guid null) is
-      // not a sibling of anything, and `name` here is always non-empty
-      // (CreateAccountSchema), so this never sees the template shape.
-      if (data.parent_guid) {
-        await acquireNamedXactLock(tx, accountNameLockKey(data.parent_guid, data.name));
-        const clash = await tx.accounts.findFirst({
-          where: { parent_guid: data.parent_guid, name: data.name },
-          select: { guid: true },
-        });
-        if (clash) {
-          throw new Error(
-            `An account named "${data.name}" already exists under this parent`,
-          );
-        }
-      }
+      // name under the same parent both commit and the book quietly grows a
+      // duplicate. `AccountService.update`/`move` claim the same key — see
+      // `claimSiblingName`.
+      await claimSiblingName(tx, data.parent_guid, data.name, null);
 
       const acct = await tx.accounts.create({
         data: {
@@ -311,6 +366,17 @@ export class AccountService {
       ? await resolveBookLockGuidForAccount(guid)
       : null;
 
+    // Where this update LANDS the account on the sibling key. A rename moves
+    // it within the same parent; a reparent moves it under a new one; both
+    // can land it on a key another real sibling already holds — the exact
+    // duplicate `create()` refuses. Only claim when the key actually changes,
+    // so an update that touches neither field pays for no lock.
+    const destParentGuid =
+      data.parent_guid !== undefined ? data.parent_guid : existing.parent_guid;
+    const destName = data.name !== undefined ? data.name : existing.name;
+    const changesSiblingKey =
+      destParentGuid !== existing.parent_guid || destName !== existing.name;
+
     const account = await prisma.$transaction(async (tx) => {
       if (isReparent && bookLockGuid) {
         const locked = await tryAcquireBookLock(tx, bookLockGuid);
@@ -320,6 +386,11 @@ export class AccountService {
       }
       if (data.parent_guid !== undefined && data.parent_guid !== null) {
         await assertReparentIsAcyclic(tx, guid, data.parent_guid);
+      }
+      // Book lock first, then the sibling-name lock — see `claimSiblingName`
+      // for why that order is the one every caller uses.
+      if (changesSiblingKey) {
+        await claimSiblingName(tx, destParentGuid, destName, guid);
       }
 
       const acct = await tx.accounts.update({
@@ -545,6 +616,14 @@ export class AccountService {
 
       if (newParentGuid) {
         await assertReparentIsAcyclic(tx, guid, newParentGuid);
+      }
+
+      // Same claim `create()` and `update()` make, on the DESTINATION parent
+      // and this account's (unchanged) name. Book lock is already held above;
+      // this is the second and last level of the ordering — see
+      // `claimSiblingName`.
+      if (newParentGuid !== account.parent_guid) {
+        await claimSiblingName(tx, newParentGuid, account.name, guid);
       }
 
       return tx.accounts.update({
