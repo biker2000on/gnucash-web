@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { ReactNode, useState } from 'react';
 import { ErrorLiveRegion } from '@/components/a11y/LiveRegion';
 import { CurrencySelect } from '@/components/CurrencySelect';
 import NewBookForm from '@/components/books/NewBookForm';
@@ -72,8 +72,23 @@ export function CreateBookWizard({ onBookCreated, isOnboarding = false }: Create
     }
   };
 
+  // One live region for the whole wizard, not one per step. `error` survives a
+  // step change, so a step-local region would remount already holding the
+  // previous step's failure — a node that enters the tree with its text is the
+  // announcement this component exists to avoid. Because every branch below
+  // returns through `withLiveRegion`, the region occupies the same slot in
+  // every render and React reconciles it rather than remounting it. A new
+  // branch that returns bare JSX would break that; the test in
+  // src/components/__tests__/error-live-regions.test.tsx pins it.
+  const withLiveRegion = (stepContent: ReactNode) => (
+    <>
+      <ErrorLiveRegion message={error} />
+      {stepContent}
+    </>
+  );
+
   if (step === 'choose') {
-    return (
+    return withLiveRegion(
       <div>
         {isOnboarding && (
           <div className="text-center mb-10">
@@ -137,7 +152,7 @@ export function CreateBookWizard({ onBookCreated, isOnboarding = false }: Create
   }
 
   if (step === 'demo') {
-    return (
+    return withLiveRegion(
       <div>
         <button
           onClick={() => setStep('choose')}
@@ -155,7 +170,6 @@ export function CreateBookWizard({ onBookCreated, isOnboarding = false }: Create
           explore accounts, reports, and tools. You can delete it at any time.
         </p>
 
-        <ErrorLiveRegion message={error} />
         {error && (
           <div className="mb-4 p-3 bg-negative/10 border border-negative/30 rounded-lg text-negative text-sm">
             {error}
@@ -196,7 +210,7 @@ export function CreateBookWizard({ onBookCreated, isOnboarding = false }: Create
   }
 
   if (step === 'import') {
-    return (
+    return withLiveRegion(
       <div>
         <button
           onClick={() => setStep('choose')}
@@ -213,7 +227,6 @@ export function CreateBookWizard({ onBookCreated, isOnboarding = false }: Create
           First, create a book with a name and currency. You can then import your GnuCash data from the Import/Export page.
         </p>
 
-        <ErrorLiveRegion message={error} />
         {error && (
           <div className="mb-4 p-3 bg-negative/10 border border-negative/30 rounded-lg text-negative text-sm">
             {error}
@@ -261,7 +274,7 @@ export function CreateBookWizard({ onBookCreated, isOnboarding = false }: Create
   }
 
   // step === 'create'
-  return (
+  return withLiveRegion(
     <div>
       <button
         onClick={() => setStep('choose')}
