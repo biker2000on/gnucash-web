@@ -49,12 +49,15 @@ type PrismaTxClient = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
  *        rename/reparent only
  *     3. this per-(parent, name) lock
  *
- * Every other holder of a named account lock (findOrCreateAccount,
- * trading-accounts, packages, the SimpleFin sync, demo seeding) takes no book
- * lock and no row lock on an existing account — each is a find-or-create that
- * reads or INSERTS under the name lock — and the XML importer takes the book
- * lock first exactly as here. So the wait-for graph has no cycle;
- * `lockAccountKey` works the argument through case by case.
+ * Every other holder of a named account lock is bound by the rule documented
+ * on `accountNameLockKey` in src/lib/book-lock.ts: while holding one it may
+ * not take a row lock on an account row it did not itself INSERT. That
+ * document enumerates each holder and how it satisfies the rule — it is a rule
+ * the other side has to keep, not a property they happen to have, and
+ * `addTemplateAccounts` broke it before the two-phase rewrite. The XML
+ * importer takes the book lock first exactly as here. So the wait-for graph
+ * has no cycle across levels 2 and 3; `lockAccountKey` works the argument
+ * through case by case.
  *
  * ## Which (parent, name) to pass
  *
@@ -151,11 +154,20 @@ interface LockedAccountKey {
  *     winner holds the row lock from before its claim until its own UPDATE
  *     commits, so the loser cannot be holding a name lock the winner wants.
  *   - Operations on DIFFERENT accounts take disjoint level-2 locks.
- *   - Every OTHER holder of a name lock (findOrCreateAccount, trading-accounts,
- *     packages, the SimpleFin sync, demo seeding, `create` here) is a
- *     find-or-create: under the name lock it either reads or INSERTS a fresh
- *     row, and never updates an existing account. So no one acquires a level-2
- *     lock on an existing row while holding a level-3 lock.
+ *   - Every OTHER holder of a name lock is forbidden to acquire a level-2 lock
+ *     on a row it did not itself INSERT while holding that level-3 lock. That
+ *     is the rule stated and enumerated holder-by-holder on `accountNameLockKey`
+ *     in src/lib/book-lock.ts, and `SiblingKeyAdoptedError` is what enforces it
+ *     where a post-claim re-check adopts a concurrently created row. It is not
+ *     self-evident and it has been broken: `addTemplateAccounts` and
+ *     `bootstrapInventoryAccounts` both used to update an existing account from
+ *     underneath a claimed key. The resulting deadlock is reproduced against
+ *     the pre-fix code, as a real SQLSTATE 40P01, in
+ *     account-lock-hierarchy-deadlock.integration.test.ts.
+ *
+ * This covers ordering ACROSS levels 2 and 3. Ordering between two level-3
+ * keys is a separate question, and only partly settled — see the closing
+ * section of `accountNameLockKey`.
  *
  * The one edge worth naming: `UPDATE accounts SET parent_guid = P` takes a
  * `FOR KEY SHARE` lock on parent row P for the foreign key, which conflicts

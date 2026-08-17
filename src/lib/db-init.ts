@@ -2754,9 +2754,15 @@ async function tuneAutovacuum() {
  * WHAT THAT COVERS, EXACTLY — the lock is the only arbiter, so a writer that
  * does not take it is not "slightly racy", it is unconstrained. Covered:
  *
- *   - `findOrCreateAccount` (src/lib/gnucash.ts) and therefore every caller of
- *     it: reconcile, lot-scrub gains accounts, inventory-engine,
- *     invoice-engine, bill capture, the QIF / personal / settlement importers.
+ *   - `findOrCreateAccount` / `findOrCreateAccountDetailed` (src/lib/gnucash.ts)
+ *     and therefore every caller of them: reconcile, lot-scrub gains accounts,
+ *     bill capture, the QIF / personal / settlement importers.
+ *   - `bootstrapInventoryAccounts` (src/lib/inventory-engine.ts) and
+ *     `findOrCreatePostAccount` (src/lib/business/invoice-engine.ts) claim the
+ *     key directly rather than through `findOrCreateAccount`, because each
+ *     also has to reconcile an account that already exists and the two cannot
+ *     happen under one lock — see the ordering rule on `accountNameLockKey`
+ *     (src/lib/book-lock.ts).
  *   - `ensureAccountPath` (services/packages.service.ts).
  *   - `trading-accounts.ts` (Trading root, namespace group, per-commodity leaf).
  *   - `simplefin-sync.service.ts` (imbalance, per-symbol child, cash child) —

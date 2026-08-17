@@ -14,10 +14,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
     AdvisoryLockOutsideTransactionError,
+    SiblingKeyAdoptedError,
     acquireBookLock,
     acquireNamedXactLock,
     isTopLevelPrismaClient,
     tryAcquireBookLock,
+    withAdoptionRetry,
     type MaybeRawClient,
 } from '../book-lock';
 
@@ -105,5 +107,46 @@ describe('transaction-scoped advisory locks', () => {
         // callers skip the re-check that would prove nothing.
         await expect(acquireNamedXactLock(asClient(testDouble()), 'account:parent:Cash')).resolves.toBe(false);
         await expect(acquireBookLock(asClient(testDouble()), 'book-guid')).resolves.toBeUndefined();
+    });
+});
+
+/**
+ * The escape hatch that keeps the level-2-before-level-3 ordering real where a
+ * find-or-create adopts a row it would otherwise have to UPDATE from under a
+ * claimed sibling key. See `SiblingKeyAdoptedError` and `accountNameLockKey`.
+ */
+describe('withAdoptionRetry', () => {
+    it('returns the first attempt`s value when nothing was adopted', async () => {
+        const attempt = vi.fn(async () => 'done');
+        await expect(withAdoptionRetry(attempt)).resolves.toBe('done');
+        expect(attempt).toHaveBeenCalledTimes(1);
+    });
+
+    it('re-runs the whole attempt after an adoption, so the retry starts a NEW transaction', async () => {
+        // The advisory locks a failed attempt took are only released when its
+        // transaction rolls back, which is why the unit of retry has to be the
+        // attempt itself rather than the statement that lost.
+        const attempt = vi
+            .fn<() => Promise<string>>()
+            .mockRejectedValueOnce(new SiblingKeyAdoptedError('Inventory'))
+            .mockResolvedValueOnce('reconciled');
+        await expect(withAdoptionRetry(attempt)).resolves.toBe('reconciled');
+        expect(attempt).toHaveBeenCalledTimes(2);
+    });
+
+    it('gives up loudly rather than spinning when the budget is exhausted', async () => {
+        const attempt = vi.fn(async () => {
+            throw new SiblingKeyAdoptedError('Accounts Receivable');
+        });
+        await expect(withAdoptionRetry(attempt, 3)).rejects.toBeInstanceOf(SiblingKeyAdoptedError);
+        expect(attempt).toHaveBeenCalledTimes(3);
+    });
+
+    it('never retries any other error', async () => {
+        const attempt = vi.fn(async () => {
+            throw new Error('constraint violated');
+        });
+        await expect(withAdoptionRetry(attempt)).rejects.toThrow('constraint violated');
+        expect(attempt).toHaveBeenCalledTimes(1);
     });
 });

@@ -235,19 +235,29 @@ describeWithDatabase(
         }, DB_TIMEOUT_MS);
 
         /**
-         * Waits until Postgres reports at least one backend other than this one
-         * waiting on a lock, and returns how many. Zero means the app never
-         * blocked, i.e. the interleaving under test did not happen — which the
-         * callers assert on, so a race that quietly stopped racing reports a
-         * failure rather than a pass.
+         * Waits until Postgres reports at least one backend blocked
+         * specifically BY `blockerPid` — the connection this test parked on the
+         * row — and returns how many. Zero means the app never blocked, i.e.
+         * the interleaving under test did not happen, which the callers assert
+         * on: a race that quietly stopped racing reports a failure rather than
+         * a pass.
+         *
+         * Scoped through `pg_blocking_pids` rather than counting ungranted
+         * `pg_locks` rows cluster-wide. Both are strong signals in a serialized
+         * tier, but only this one is evidence of WHICH backend is waiting on
+         * WHOM: an ungranted lock belonging to some other database, or to a
+         * leftover connection, would satisfy the weaker form.
          */
-        async function waitForBlockedBackend(): Promise<number> {
+        async function waitForBlockedBackend(blockerPid: number): Promise<number> {
             const deadline = Date.now() + PARK_TIMEOUT_MS;
             while (Date.now() < deadline) {
                 const res = await pool.query<{ n: number }>(
-                    `SELECT COUNT(DISTINCT pid)::int AS n
-                     FROM pg_locks
-                     WHERE NOT granted AND pid <> pg_backend_pid()`,
+                    `SELECT COUNT(*)::int AS n
+                       FROM pg_stat_activity
+                      WHERE datname = current_database()
+                        AND pid <> pg_backend_pid()
+                        AND pg_blocking_pids(pid) @> ARRAY[$1]::int[]`,
+                    [blockerPid],
                 );
                 const blocked = Number(res.rows[0].n);
                 if (blocked > 0) return blocked;
@@ -270,6 +280,9 @@ describeWithDatabase(
         ): Promise<{ settled: PromiseSettledResult<T>; blocked: number }> {
             const blocker = await pool.connect();
             try {
+                const pidRes = await blocker.query<{ pid: number }>('SELECT pg_backend_pid() AS pid');
+                const blockerPid = Number(pidRes.rows[0].pid);
+
                 await blocker.query('BEGIN');
                 await blocker.query("SET LOCAL lock_timeout = '10s'");
                 await concurrent(blocker);
@@ -279,7 +292,7 @@ describeWithDatabase(
                 // the poll below is still running.
                 running.catch(() => {});
 
-                const blocked = await waitForBlockedBackend();
+                const blocked = await waitForBlockedBackend(blockerPid);
                 await blocker.query('COMMIT');
 
                 const [settled] = await Promise.allSettled([running]);

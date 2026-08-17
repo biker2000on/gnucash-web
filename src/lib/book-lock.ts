@@ -169,12 +169,136 @@ export async function acquireNamedXactLock(
     return true;
 }
 
+/**
+ * Thrown by a find-or-create that claimed a sibling-name key and found a row
+ * a concurrent creator had committed since its own pre-claim read — an
+ * ADOPTION — in a case where reconciling that row would require a row-level
+ * lock.
+ *
+ * Taking that row lock is forbidden, and the reason is an ordering one rather
+ * than a stylistic one. `AccountService.update`/`.move` lock the account row
+ * FIRST and only then claim the destination sibling key (see `lockAccountKey`
+ * in src/lib/services/account.service.ts). A transaction that claims a name
+ * key and then reaches for a row lock runs that order backwards, and the two
+ * together close a wait-for cycle that Postgres resolves by aborting one side
+ * with SQLSTATE 40P01:
+ *
+ *     T1  holds  account:(P,'A')       wants  row lock on E
+ *     T2  holds  row lock on E         wants  account:(P,'A')
+ *
+ * A transaction-scoped advisory lock cannot be released early, so "claim the
+ * key, then drop it before updating" is not available. Retrying the whole
+ * transaction is: the next attempt's pre-claim pass sees the adopted row as an
+ * existing one and reconciles it with no name lock held, which is the correct
+ * level for a row lock.
+ *
+ * @see withAdoptionRetry
+ */
+export class SiblingKeyAdoptedError extends Error {
+    readonly code = 'SIBLING_KEY_ADOPTED';
+    constructor(public readonly accountName: string) {
+        super(
+            `Concurrent creation of "${accountName}" was adopted after its sibling key was claimed; retrying the transaction so the row is reconciled before any name lock is held.`,
+        );
+        this.name = 'SiblingKeyAdoptedError';
+    }
+}
+
+/**
+ * Runs `attempt` and re-runs it, up to `maxAttempts` times, while it reports
+ * {@link SiblingKeyAdoptedError}. Every other error propagates on the first
+ * throw.
+ *
+ * Each retry needs a DIFFERENT concurrent transaction to have committed inside
+ * a window measured in milliseconds, so the default budget is generous rather
+ * than tuned; it exists so a pathological loop fails loudly instead of
+ * spinning forever.
+ *
+ * `attempt` must open its own transaction — that is the point, since the
+ * advisory locks a failed attempt took are only released when its transaction
+ * rolls back.
+ */
+export async function withAdoptionRetry<T>(
+    attempt: () => Promise<T>,
+    maxAttempts = 3,
+): Promise<T> {
+    for (let n = 1; ; n++) {
+        try {
+            return await attempt();
+        } catch (err) {
+            if (err instanceof SiblingKeyAdoptedError && n < maxAttempts) continue;
+            throw err;
+        }
+    }
+}
+
 /** Lock key guarding find-or-create of a commodity by natural key. */
 export function commodityLockKey(namespace: string, mnemonic: string): string {
     return `commodity:${namespace}:${mnemonic}`;
 }
 
-/** Lock key guarding find-or-create of an account by (parent, name). */
+/**
+ * Lock key guarding find-or-create of an account by (parent, name).
+ *
+ * ## THE ORDERING RULE FOR EVERY HOLDER OF THIS LOCK
+ *
+ * A transaction holding a key returned by this function MUST NOT acquire a
+ * row-level lock on an account row it did not itself INSERT. No
+ * `accounts.update`, no `accounts.delete`, no `SELECT ... FOR UPDATE`, and no
+ * `UPDATE`/`INSERT` that writes `parent_guid` (which takes `FOR KEY SHARE` on
+ * the parent row for the foreign key) against a pre-existing row.
+ *
+ * The rule exists because `AccountService.update`/`.move` take the two locks
+ * the other way round — row lock first, then the destination key derived from
+ * what that lock read, which is the only order that can derive a correct key
+ * (see `lockAccountKey` in src/lib/services/account.service.ts). Mixing the
+ * two orders closes a wait-for cycle; {@link SiblingKeyAdoptedError} has the
+ * worked example, and it is a real deadlock, not a theoretical one — see
+ * src/lib/services/__tests__/account-lock-hierarchy-deadlock.integration.test.ts,
+ * which reproduces SQLSTATE 40P01 against the pre-fix code.
+ *
+ * Rows this transaction inserted itself are exempt, and safely so: their guids
+ * are invisible to every other session until COMMIT, so no other backend can
+ * hold or want a lock on them.
+ *
+ * ## Every holder in the repository, and how each satisfies the rule
+ *
+ * | Holder                                             | Site                                        | Why it is safe                                                                          |
+ * |----------------------------------------------------|---------------------------------------------|-----------------------------------------------------------------------------------------|
+ * | `AccountService.create`                            | services/account.service.ts:360             | Claims, then INSERTs. Never updates.                                                     |
+ * | `AccountService.update` / `.move`                  | services/account.service.ts:526, 778        | Takes the row lock BEFORE the claim. Defines the order; does not violate it.              |
+ * | `findOrCreateAccount` / `findOrCreateAccountDetailed` | gnucash.ts:251                            | Claims, then INSERTs. Reports `createdGuids` so callers can post-process ONLY its own rows. |
+ * | `ensureTypedAccount` (packages)                    | services/packages.service.ts:208            | Claims, then INSERTs. The service's later updates target `gnucash_web_packages`, not accounts. |
+ * | `ensureTradingAccount`                             | trading-accounts.ts:189, 237, 270           | Three claims, each followed only by an INSERT.                                            |
+ * | SimpleFin imbalance / symbol / cash-child          | services/simplefin-sync.service.ts:1579, 1691, 1837 | One claim per transaction, each followed only by an INSERT.                       |
+ * | Demo book seeding                                  | services/demo-book.service.ts:157           | One claim per transaction, followed only by an INSERT.                                    |
+ * | `addTemplateAccounts`                              | default-book.ts (phase 3)                   | Two-phase: every UPDATE of an existing account happens in phase 2, before any claim.       |
+ * | `bootstrapInventoryAccounts`                       | inventory-engine.ts (phase 3)               | Two-phase, same shape.                                                                    |
+ * | `findOrCreatePostAccount` (invoice A/R–A/P)        | business/invoice-engine.ts (phase 3)        | Two-phase; the INSERT already carries the final account type, so nothing is coerced after. |
+ * | Personal / QIF import type fix-up                  | import/personal-import.service.ts, qif/importer.ts | Updates only `createdGuids` — rows the same transaction inserted.                  |
+ *
+ * The last four rows are enforced by {@link SiblingKeyAdoptedError}: where the
+ * post-claim re-check adopts a row a concurrent creator committed, they abort
+ * and {@link withAdoptionRetry} re-runs the transaction, so the adopted row is
+ * reconciled from the next attempt's first phase with no name lock held.
+ *
+ * Non-account holders of `acquireNamedXactLock` — `commodityLockKey` and
+ * `reconcile:<accountGuid>` (reconcile.ts:276) — are in disjoint key spaces.
+ * Neither is ever requested by a transaction already holding an account name
+ * lock, so neither can extend the wait-for graph.
+ *
+ * ## What this rule does NOT cover
+ *
+ * Ordering BETWEEN two account name locks. Most holders take only one key that
+ * another transaction could contend for (a path walk locks a segment only when
+ * it is missing, and every deeper segment then hangs off a guid it just
+ * created, which nobody else can name). `addTemplateAccounts`,
+ * `bootstrapInventoryAccounts` and the two-`findOrCreateAccount` callers can
+ * hold several contended keys at once, and they take them in their own fixed
+ * orders rather than in one globally agreed order. No pair of those orders is
+ * currently in conflict, but nothing enforces that; a shared canonical
+ * acquisition order is the remaining work.
+ */
 export function accountNameLockKey(parentGuid: string, name: string): string {
     return `account:${parentGuid}:${name}`;
 }

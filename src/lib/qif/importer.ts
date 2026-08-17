@@ -605,17 +605,21 @@ export function planQifImport(
 const CHUNK = 2000;
 
 /**
- * Create an account path via findOrCreateAccount, then fix the account_type
- * of any segments that were newly created (findOrCreateAccount defaults
- * them to INCOME).
+ * Create an account path via findOrCreateAccountDetailed, then fix the
+ * account_type of the segments it actually inserted (they default to INCOME).
  */
 async function createPlannedAccount(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     tx: any,
     planned: PlannedAccountCreate,
     currencyGuid: string,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    findOrCreateAccount: (path: string, root: string, currency: string, tx?: any) => Promise<string>
+    findOrCreateAccountDetailed: (
+        path: string,
+        root: string,
+        currency: string,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        tx?: any,
+    ) => Promise<{ guid: string; createdGuids: string[] }>
 ): Promise<{ guid: string; created: number }> {
     const segments = planned.path.split(':');
 
@@ -632,36 +636,33 @@ async function createPlannedAccount(
         existingDepth++;
     }
 
-    const leafGuid = await findOrCreateAccount(planned.path, planned.anchorGuid, currencyGuid, tx);
+    const { guid: leafGuid, createdGuids } = await findOrCreateAccountDetailed(
+        planned.path,
+        planned.anchorGuid,
+        currencyGuid,
+        tx,
+    );
 
-    // Re-walk to collect the guids of newly created segments and set their type.
-    if (existingDepth < segments.length) {
-        let walkGuid = planned.anchorGuid;
-        const newGuids: string[] = [];
-        for (let i = 0; i < segments.length; i++) {
-            const row = await tx.accounts.findFirst({
-                where: { name: segments[i], parent_guid: walkGuid },
-                select: { guid: true },
-            });
-            if (!row) break;
-            walkGuid = row.guid;
-            if (i >= existingDepth) newGuids.push(row.guid);
-        }
-        if (newGuids.length > 0) {
-            await tx.accounts.updateMany({
-                where: { guid: { in: newGuids } },
-                data: { account_type: planned.accountType },
-            });
-        }
-        return { guid: leafGuid, created: segments.length - existingDepth };
+    // Type the segments this transaction INSERTED — never one it merely
+    // adopted from a concurrent creator. The walk above is still holding the
+    // sibling-name lock of every segment it created, so a row lock taken here
+    // on a row belonging to another transaction runs the lock hierarchy
+    // backwards; see `SiblingKeyAdoptedError` in src/lib/book-lock.ts. An
+    // adopted segment keeps the type its creator gave it, which is also the
+    // better outcome: this import did not make that account.
+    if (createdGuids.length > 0) {
+        await tx.accounts.updateMany({
+            where: { guid: { in: createdGuids } },
+            data: { account_type: planned.accountType },
+        });
     }
-    return { guid: leafGuid, created: 0 };
+    return { guid: leafGuid, created: segments.length - existingDepth };
 }
 
 export async function executeQifImport(plan: QifImportPlan): Promise<QifImportResult> {
     // Lazy imports keep this module DB-free for unit tests of the planner.
     const { default: prisma } = await import('@/lib/prisma');
-    const { generateGuid, fromDecimal, findOrCreateAccount } = await import('@/lib/gnucash');
+    const { generateGuid, fromDecimal, findOrCreateAccountDetailed } = await import('@/lib/gnucash');
 
     const result: QifImportResult = {
         accountsCreated: 0,
@@ -678,7 +679,7 @@ export async function executeQifImport(plan: QifImportPlan): Promise<QifImportRe
                     tx,
                     planned,
                     plan.currencyGuid,
-                    findOrCreateAccount
+                    findOrCreateAccountDetailed
                 );
                 newAccountGuids.set(planned.key, guid);
                 result.accountsCreated += created;

@@ -209,6 +209,39 @@ export async function findOrCreateAccount(
   currencyGuid: string,
   tx?: PrismaTxClient
 ): Promise<string> {
+  const { guid } = await findOrCreateAccountDetailed(path, bookRootGuid, currencyGuid, tx);
+  return guid;
+}
+
+/** What {@link findOrCreateAccountDetailed} resolved, and what it inserted. */
+export interface FindOrCreateAccountResult {
+  /** The leaf account at `path`. */
+  guid: string;
+  /**
+   * The accounts this call INSERTED, root-to-leaf. Excludes both segments that
+   * already existed and segments ADOPTED under the name lock — rows a
+   * concurrent transaction committed inside the check-then-create window.
+   *
+   * Callers that post-process the new segments (setting a real account type,
+   * say) must restrict themselves to these guids. An adopted row belongs to
+   * another transaction, and locking it here would mean taking a ROW lock
+   * while this walk still holds the sibling-name locks of every segment it
+   * created — the reverse of `AccountService.update`'s order, and a deadlock.
+   * See `SiblingKeyAdoptedError` in src/lib/book-lock.ts.
+   */
+  createdGuids: string[];
+}
+
+/**
+ * {@link findOrCreateAccount}, additionally reporting which segments it
+ * inserted. Same locking, same transaction handling.
+ */
+export async function findOrCreateAccountDetailed(
+  path: string,
+  bookRootGuid: string,
+  currencyGuid: string,
+  tx?: PrismaTxClient
+): Promise<FindOrCreateAccountResult> {
   const client = (tx ?? prisma) as PrismaTxClient;
   if (isTopLevelPrismaClient(client)) {
     return (client as unknown as typeof prisma).$transaction(inner =>
@@ -224,8 +257,9 @@ async function findOrCreateAccountWithin(
   path: string,
   bookRootGuid: string,
   currencyGuid: string,
-): Promise<string> {
+): Promise<FindOrCreateAccountResult> {
   const segments = path.split(':');
+  const createdGuids: string[] = [];
   let parentGuid = bookRootGuid;
 
   for (let i = 0; i < segments.length; i++) {
@@ -278,8 +312,9 @@ async function findOrCreateAccountWithin(
         description: '',
       },
     });
+    createdGuids.push(newGuid);
     parentGuid = newGuid;
   }
 
-  return parentGuid;
+  return { guid: parentGuid, createdGuids };
 }

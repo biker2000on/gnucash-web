@@ -52,7 +52,13 @@
 
 import { Prisma } from '@prisma/client';
 import prisma from '@/lib/prisma';
-import { generateGuid, toDecimalNumber, fromDecimal, findOrCreateAccount } from '@/lib/gnucash';
+import { generateGuid, toDecimalNumber, fromDecimal } from '@/lib/gnucash';
+import {
+  accountNameLockKey,
+  acquireNamedXactLock,
+  SiblingKeyAdoptedError,
+  withAdoptionRetry,
+} from '@/lib/book-lock';
 import {
   assertNotLocked,
   getBookGuidForAccount,
@@ -736,11 +742,55 @@ async function findOrCreatePostAccount(
   }
 
   const name = kind === 'invoice' ? 'Accounts Receivable' : 'Accounts Payable';
-  const guid = await findOrCreateAccount(name, bookRootGuid, currencyGuid, db);
-  // findOrCreateAccount creates INCOME-typed leaves — coerce to the A/R–A/P type.
-  await db.accounts.update({
-    where: { guid },
-    data: { account_type: accountType, placeholder: 0, description: name },
+
+  // Two phases, in the order src/lib/book-lock.ts requires. This used to be
+  // `findOrCreateAccount` followed by a type coercion, which took a ROW lock
+  // from underneath the sibling-name lock that call had just claimed — the
+  // reverse of `AccountService.update`/`.move`, and a deadlock against a
+  // concurrent rename. See `SiblingKeyAdoptedError`.
+
+  // Phase 2: an account already on this key is coerced under a row lock, with
+  // no name lock held.
+  const existing = await db.accounts.findFirst({
+    where: { parent_guid: bookRootGuid, name },
+    select: { guid: true },
+  });
+  if (existing) {
+    await db.accounts.update({
+      where: { guid: existing.guid },
+      data: { account_type: accountType, placeholder: 0, description: name },
+    });
+    return existing.guid;
+  }
+
+  // Phase 3: claim the key and INSERT, already carrying the A/R–A/P type so
+  // there is nothing left to coerce.
+  await acquireNamedXactLock(db, accountNameLockKey(bookRootGuid, name));
+  const won = await db.accounts.findFirst({
+    where: { parent_guid: bookRootGuid, name },
+    select: { guid: true },
+  });
+  // Adopted from a concurrent creator, which will have typed it INCOME if it
+  // came through findOrCreateAccount. Coercing it is a row UPDATE, forbidden
+  // from under this name lock — `postInvoice` retries the transaction and
+  // phase 2 above coerces it at the correct level.
+  if (won) throw new SiblingKeyAdoptedError(name);
+
+  const guid = generateGuid();
+  await db.accounts.create({
+    data: {
+      guid,
+      name,
+      account_type: accountType,
+      commodity_guid: currencyGuid,
+      commodity_scu: 100,
+      non_std_scu: 0,
+      parent_guid: bookRootGuid,
+      code: '',
+      description: name,
+      hidden: 0,
+      placeholder: 0,
+    },
   });
   return guid;
 }
@@ -1127,7 +1177,13 @@ export async function postInvoice(
   const lockBookGuid = await getBookGuidForRoot(bookRootGuid);
   if (lockBookGuid) await assertNotLocked(lockBookGuid, [input.postDate]);
 
-  await prisma.$transaction(async (tx) => {
+  // Retried, and only, when `findOrCreatePostAccount` adopts an A/R–A/P
+  // account a concurrent creator committed while it held the sibling key —
+  // see `SiblingKeyAdoptedError`. Everything the transaction reads it reads
+  // inside itself, and a rollback undoes everything it wrote, so a second
+  // attempt starts from live state rather than from anything the first left
+  // behind.
+  await withAdoptionRetry(() => prisma.$transaction(async (tx) => {
     await assertInvoiceInBook(tx, bookGuid, guid);
 
     // Serialize concurrent posts of the same invoice: without this row lock,
@@ -1266,7 +1322,7 @@ export async function postInvoice(
       total: totals.total,
       dueDate: dueDate.toISOString().slice(0, 10),
     };
-  });
+  }));
 
   return result!;
 }
