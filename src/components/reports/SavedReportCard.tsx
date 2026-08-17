@@ -46,6 +46,7 @@ export default function SavedReportCard({ report, onToggleStar, onEdit, onDelete
             <button
                 onClick={() => onToggleStar(report.id)}
                 className="absolute top-4 right-4 text-foreground-muted hover:text-warning transition-colors"
+                aria-label={report.isStarred ? 'Unstar' : 'Star'}
                 title={report.isStarred ? 'Unstar' : 'Star'}
             >
                 {report.isStarred ? (
@@ -108,6 +109,7 @@ export default function SavedReportCard({ report, onToggleStar, onEdit, onDelete
                     <button
                         onClick={() => onEdit(report)}
                         className="text-foreground-muted hover:text-foreground transition-colors"
+                        aria-label="Edit"
                         title="Edit"
                     >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -117,6 +119,7 @@ export default function SavedReportCard({ report, onToggleStar, onEdit, onDelete
                     <button
                         onClick={() => setConfirmingDelete(true)}
                         className="text-foreground-muted hover:text-error transition-colors"
+                        aria-label="Delete"
                         title="Delete"
                     >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

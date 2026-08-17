@@ -232,6 +232,7 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
                         <button
                             onClick={() => onDuplicate(transaction.guid)}
                             className="text-foreground-muted hover:text-primary transition-colors"
+                            aria-label="Duplicate transaction"
                             title="Duplicate (d)"
                         >
                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -248,6 +249,7 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
                             }
                         }}
                         className="text-foreground-muted hover:text-primary transition-colors"
+                        aria-label="Edit in modal"
                         title="Edit in modal"
                     >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -317,6 +319,7 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
                                         <button
                                             onClick={() => onDuplicate(transaction.guid)}
                                             className="text-foreground-muted hover:text-primary transition-colors"
+                                            aria-label="Duplicate transaction"
                                             title="Duplicate (d)"
                                         >
                                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -327,6 +330,7 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
                                     <button
                                         onClick={() => onEditModal(transaction.guid)}
                                         className="text-warning hover:text-warning transition-colors text-xs italic"
+                                        aria-label="Multi-split: edit in modal"
                                         title="Multi-split: edit in modal"
                                     >
                                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

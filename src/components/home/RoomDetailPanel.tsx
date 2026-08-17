@@ -5,6 +5,7 @@ import type { HomeRoom, HomeItem } from '@/lib/services/home.service';
 import { formatCurrency } from '@/lib/format';
 import { useToast } from '@/contexts/ToastContext';
 import { LinkedDocumentsPanel } from '@/components/documents/LinkedDocumentsPanel';
+import { ErrorLiveRegion } from '@/components/a11y/LiveRegion';
 import {
     CATEGORY_OPTIONS,
     categoryLabel,
@@ -543,6 +544,7 @@ export function RoomDetailPanel({
                 </span>
             </div>
 
+            <ErrorLiveRegion message={error} />
             {error && (
                 <div className="border border-error/30 bg-surface/30 rounded-xl p-4">
                     <p className="text-sm text-error">{error}</p>

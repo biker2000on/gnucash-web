@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { Modal } from '@/components/ui/Modal';
+import { ErrorLiveRegion } from '@/components/a11y/LiveRegion';
 
 interface Book {
     guid: string;
@@ -125,6 +126,7 @@ export default function BookEditorModal({ book, isOpen, onClose, onSaved, onDele
                     />
                 </div>
 
+                <ErrorLiveRegion message={error} />
                 {error && (
                     <div className="px-3 py-2 bg-error/10 border border-error/30 rounded-lg text-sm text-error">
                         {error}

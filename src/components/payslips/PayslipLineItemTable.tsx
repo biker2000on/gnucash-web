@@ -173,6 +173,7 @@ export function PayslipLineItemTable({
                           <button
                             onClick={() => onRemoveLineItem(index)}
                             className="text-foreground-muted hover:text-error transition-colors py-1"
+                            aria-label="Remove line item"
                             title="Remove line item"
                           >
                             <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
@@ -317,6 +318,7 @@ export function PayslipLineItemTable({
                       <button
                         onClick={() => onRemoveLineItem(index)}
                         className="text-foreground-muted hover:text-error transition-colors"
+                        aria-label="Remove line item"
                         title="Remove line item"
                       >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">

@@ -691,6 +691,7 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
                                                 deleteSplit(index);
                                             }}
                                             className="text-xs text-foreground-muted hover:text-error transition-colors"
+                                            aria-label="Delete split"
                                             title="Delete split"
                                         >
                                             &times;
@@ -708,6 +709,7 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
                                                 deleteSplit(index);
                                             }}
                                             className="text-xs text-foreground-muted hover:text-error transition-colors"
+                                            aria-label="Delete split"
                                             title="Delete split"
                                         >
                                             &times;

@@ -818,6 +818,7 @@ export default function Layout({ children }: { children: ReactNode }) {
                         className={`w-full flex items-center gap-2 rounded-lg border border-sidebar-border bg-background/40 text-sidebar-text hover:text-foreground hover:border-border-hover transition-colors duration-150 ${
                             collapsed && hydrated ? 'justify-center px-0 py-2' : 'px-3 py-2'
                         }`}
+                        aria-label="Search everything (Ctrl+K)"
                         title="Search everything (Ctrl+K)"
                     >
                         <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
