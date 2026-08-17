@@ -248,6 +248,7 @@ vi.mock('../book-lock', () => ({
 vi.mock('../commodities', () => ({ getLatestPrice: vi.fn(async () => null) }));
 
 import { autoAssignLots, revertScrubRun } from '../lot-assignment';
+import { decodeAvgBasisHistory, writeAvgBasisWrites, type PrismaTx } from '../lot-scrub';
 import { getAccountLots, computeRealizedGain, remainingCostBasis } from '../lots';
 import { loadTradeFees } from '../trade-fees';
 import { lotToRealizedSales } from '../reports/capital-gains';
@@ -388,9 +389,25 @@ const avgRunOf = (splitGuid: string) => rawSlotOf(splitGuid, 'avg_cost_basis_run
 /** An open lot's remaining pooled basis, and the run that wrote it. */
 const remainingOf = (lotGuid: string) => slotOf(lotGuid, 'avg_cost_basis_remaining');
 const remainingRunOf = (lotGuid: string) => rawSlotOf(lotGuid, 'avg_cost_basis_remaining_run');
-/** The displaced value stashed on a lot, and the run it belonged to. */
-const stashOf = (lotGuid: string) => slotOf(lotGuid, 'avg_cost_basis_remaining_prev');
-const stashRunOf = (lotGuid: string) => rawSlotOf(lotGuid, 'avg_cost_basis_remaining_prev_run');
+/**
+ * The displaced writes a lot carries, oldest first — decoded the way the
+ * engine decodes them, so these helpers describe the stack rather than one
+ * slot's raw text.
+ */
+const stashHistory = (lotGuid: string) =>
+  decodeAvgBasisHistory(
+    rawSlotOf(lotGuid, 'avg_cost_basis_remaining_prev') ?? null,
+    rawSlotOf(lotGuid, 'avg_cost_basis_remaining_prev_run') ?? null,
+  );
+/** The most recently displaced value on a lot, and the run it belonged to. */
+const stashOf = (lotGuid: string): number | undefined => {
+  const history = stashHistory(lotGuid);
+  return history.length > 0 ? parseFloat(history[history.length - 1].value) : undefined;
+};
+const stashRunOf = (lotGuid: string): string | undefined => {
+  const history = stashHistory(lotGuid);
+  return history.length > 0 ? (history[history.length - 1].run ?? undefined) : undefined;
+};
 
 const allLotGuids = (): string[] => db.lots.map(l => l.guid as string);
 const slotsNamed = (name: string) => db.slots.filter(s => s.name === name);
@@ -1172,19 +1189,162 @@ describe('average-cost run provenance', () => {
     expect(stashRunOf(lot1)).toBe(runB.runId);
 
     // Revert the MIDDLE run. It no longer owns lot1's live value (run C does),
-    // so lot1's number must not change — but B's stash must be invalidated.
+    // so lot1's number must not change — and B's entry leaves the stack, while
+    // A's, belonging to a run nobody has reverted, stays underneath it.
     await revertScrubRun(runB.runId);
     expect(remainingOf(lot1)).toBeCloseTo(300, 6);
     expect(remainingRunOf(lot1)).toBe(runC.runId);
-    expect(stashOf(lot1)).toBeUndefined();
-    expect(stashRunOf(lot1)).toBeUndefined();
+    expect(stashHistory(lot1).some(e => e.run === runB.runId)).toBe(false);
+    expect(stashOf(lot1)).toBeCloseTo(100, 6);
+    expect(stashRunOf(lot1)).toBe(runA.runId);
 
-    // Now revert C. With B's stash correctly invalidated there is nothing to
-    // restore, so the lot falls back to its own cost rather than to a figure
-    // computed by a run that has already been undone.
+    // Now revert C. THE ASSERTION: the value restored is run A's $100 — the
+    // topmost write by a run that still stands — and never run B's $200, which
+    // left the stack when B was reverted.
     await revertScrubRun(runC.runId);
+    expect(remainingOf(lot1)).toBeCloseTo(100, 6);
+    expect(remainingRunOf(lot1)).toBe(runA.runId);
+    expect(remainingOf(lot1)).not.toBeCloseTo(200, 2);
+
+    // And with A reverted too the lot keeps no pooled number at all.
+    await revertScrubRun(runA.runId);
     expect(remainingOf(lot1)).toBeUndefined();
     expect(remainingRunOf(lot1)).toBeUndefined();
+    expect(stashHistory(lot1)).toHaveLength(0);
+  });
+
+  /**
+   * REVERSE-ORDER UNWIND AT DEPTH THREE — the case a one-level stash cannot
+   * represent.
+   *
+   * Three runs re-price the same lot: A $100, B $200, C $300. Undoing them
+   * newest-first must walk back down the same staircase — revert C ⇒ B's $200,
+   * revert B ⇒ A's $100 — because neither B nor A has been undone at the point
+   * their number is restored.
+   *
+   * A single `_prev` pair holds ONE displaced value, so C's write erased B's
+   * record of A. Reverting C put B's $200 back and reverting B then found
+   * nothing to restore: the lot fell through to per-lot basis while run A's
+   * disposal slots still said part of that basis was spent — double-counted
+   * basis, understating every later gain, with nothing visible in the UI.
+   */
+  it('restores each displaced value in turn when three runs are unwound newest-first', async () => {
+    addTrade('2024-01-01', 10, 100);           // pool 10 sh / $100 ⇒ $10.00
+    const runA = await autoAssignLots(STOCK_ACCT, 'average');
+    const lot1 = allLotGuids()[0];
+    expect(remainingOf(lot1)).toBeCloseTo(100, 6);
+    expect(remainingRunOf(lot1)).toBe(runA.runId);
+
+    addTrade('2024-06-01', 10, 300);           // pool 20 sh / $400 ⇒ $20.00
+    const runB = await autoAssignLots(STOCK_ACCT, 'average');
+    expect(remainingOf(lot1)).toBeCloseTo(200, 6);
+    expect(remainingRunOf(lot1)).toBe(runB.runId);
+
+    addTrade('2024-09-01', 20, 800);           // pool 40 sh / $1200 ⇒ $30.00
+    const runC = await autoAssignLots(STOCK_ACCT, 'average');
+    expect(remainingOf(lot1)).toBeCloseTo(300, 6);
+    expect(remainingRunOf(lot1)).toBe(runC.runId);
+
+    // Revert C: B owned the value C displaced, and B still stands.
+    await revertScrubRun(runC.runId);
+    expect(remainingOf(lot1)).toBeCloseTo(200, 6);
+    expect(remainingRunOf(lot1)).toBe(runB.runId);
+
+    // Revert B: A owned the value B displaced, and A still stands. THE
+    // ASSERTION — a one-level stash arrives here with nothing left to restore.
+    await revertScrubRun(runB.runId);
+    expect(remainingOf(lot1)).toBeCloseTo(100, 6);
+    expect(remainingRunOf(lot1)).toBe(runA.runId);
+
+    // And unwinding the last one empties the lot rather than resurrecting a
+    // number from a run that has already been undone.
+    await revertScrubRun(runA.runId);
+    expect(remainingOf(lot1)).toBeUndefined();
+    expect(remainingRunOf(lot1)).toBeUndefined();
+  });
+
+  /**
+   * THE DETACHED-SALE RESIDUE — a revert that reports success while leaving a
+   * wrong basis behind.
+   *
+   * A sale that fits inside ONE lot is assigned straight to the user's own
+   * split, with no generated sub-split to tag; the average run records its
+   * basis in `avg_cost_basis` on that user split. Reverting the run deleted
+   * the slot but left the split attached to the lot, so the closed lot went on
+   * reporting a sale — now priced off the lot's own $100 buy instead of the
+   * $200 pooled basis. $300 of gain on a Form 8949 line the user had already
+   * seen at $200, from an operation that reported success.
+   *
+   * `avgArtifacts.splitGuids` names that split exactly, so the revert can
+   * clear its `lot_guid` — no `gnucash_web_generated` tag on a user row, and
+   * no user row deleted.
+   */
+  it('detaches the sale it priced instead of leaving it on the lot at per-lot basis', async () => {
+    addTrade('2024-01-01', 10, 100);           // 10 sh @ $10.00
+    addTrade('2024-06-01', 10, 300);           // 10 sh @ $30.00
+    await autoAssignLots(STOCK_ACCT, 'average');
+
+    // Run B prices one 10-share sale against the pool: 20 sh / $400 ⇒
+    // $20.00/sh ⇒ basis $200, proceeds $400, gain $200.
+    const sellGuid = addTrade('2024-07-01', -10, 400);
+    const runB = await autoAssignLots(STOCK_ACCT, 'average');
+    const saleLot = lotOfSplit(sellGuid)!;
+    expect(avgBasisOf(sellGuid)).toBeCloseTo(200, 6);
+    expect(avgRunOf(sellGuid)).toBe(runB.runId);
+    // The shape that produces the residue: the split carrying the basis is the
+    // user's own, and nothing tagged it.
+    expect(generatedFor(runB.runId).some(s => s.obj_guid === sellGuid)).toBe(false);
+
+    const filed = (await getAccountLots(STOCK_ACCT)).find(l => l.guid === saleLot)!;
+    expect(lotToRealizedSales(filed, 'AAPL')[0].costBasis).toBeCloseTo(200, 6);
+    expect(filed.realizedGain).toBeCloseTo(200, 6);
+
+    const result = await revertScrubRun(runB.runId);
+    expect(result.reverted).toBeGreaterThan(0);
+
+    // THE ASSERTION: the run that reported success left no sale behind at all
+    // — and above all not one priced at the first lot's own $100.
+    expect(lotOfSplit(sellGuid)).toBeNull();
+    const after = await getAccountLots(STOCK_ACCT);
+    const salesAfter = after.flatMap(l => lotToRealizedSales(l, 'AAPL'));
+    expect(salesAfter).toHaveLength(0);
+    expect(salesAfter.some(s => Math.abs(s.costBasis - 100) < 0.01)).toBe(false);
+    expect(after.every(l => Math.abs(l.realizedGain) < 0.01)).toBe(true);
+
+    // The lot the sale had closed holds its 10 bought shares again.
+    const reopened = after.find(l => l.guid === saleLot)!;
+    expect(reopened.isClosed).toBe(false);
+    expect(reopened.totalShares).toBeCloseTo(10, 6);
+  });
+
+  /**
+   * The history lives in `slots.string_val`, a VARCHAR(4096). A book scrubbed
+   * enough times must not push it past that and take the whole scrub down with
+   * a column-width error, so the OLDEST writes are dropped — the ones only an
+   * equally old revert would restore.
+   */
+  it('bounds the write history to the slot column, newest writes first to survive', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const lot = 'lot-deep-history';
+    const stack = Array.from({ length: 200 }, (_, i) => ({
+      run: `run-${String(i).padStart(28, '0')}`,
+      value: String(1000 + i),
+    }));
+
+    await writeAvgBasisWrites(lot, stack, fakePrisma as unknown as PrismaTx);
+
+    const raw = rawSlotOf(lot, 'avg_cost_basis_remaining_prev')!;
+    expect(raw.length).toBeLessThanOrEqual(4096);
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+
+    // The live value is the newest write, and the history under it ends with
+    // the one it displaced. Only the far end of the stack was given up.
+    expect(remainingOf(lot)).toBeCloseTo(1199, 6);
+    expect(remainingRunOf(lot)).toBe(stack[199].run);
+    const kept = decodeAvgBasisHistory(raw, null);
+    expect(kept[kept.length - 1].value).toBe('1198');
+    expect(kept.some(e => e.value === '1000')).toBe(false);
   });
 
   it('run-scoped cleanup only ever deletes SLOTS, never the user’s split', async () => {

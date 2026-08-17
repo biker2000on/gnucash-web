@@ -136,7 +136,8 @@ export const AVG_COST_BASIS_RUN_SLOT = 'avg_cost_basis_run';
 export const AVG_BASIS_REMAINING_RUN_SLOT = 'avg_cost_basis_remaining_run';
 
 /**
- * The `avg_cost_basis_remaining` value a later run DISPLACED, plus its owner.
+ * The `avg_cost_basis_remaining` values earlier runs wrote and later runs
+ * DISPLACED — the whole history, oldest first, each entry naming its own run.
  *
  * The disposal slot is written once and never re-priced (a run only processes
  * UNASSIGNED splits, so a disposal an earlier run already assigned is never
@@ -148,17 +149,43 @@ export const AVG_BASIS_REMAINING_RUN_SLOT = 'avg_cost_basis_remaining_run';
  * lot's slot, the lot would fall back to `computeCarriedBasis` — its own buy
  * cost — while run A's surviving disposal slot still says the pool already
  * spent part of that cost. The two would double-count basis and understate
- * every future gain, again with no symptom. So the displaced value is stashed
- * here and restored when its displacer is reverted.
+ * every future gain, again with no symptom. So a displaced value is kept and
+ * restored when its displacer is reverted.
  *
- * The owner is a separate row rather than packed into the value because a
- * revert must be able to FIND stashes belonging to the run being reverted
- * (`where name = ..._prev_run, string_val = runId`) and drop them, so that
- * reverting B and then C never resurrects B's number.
+ * ## Why a HISTORY and not a single displaced value
+ *
+ * One `_prev` pair can only ever describe one write, and reverts are neither
+ * depth-bounded nor ordered. With A=$100, B=$200, C=$300 on one lot, C's write
+ * displaced B and overwrote B's record of A; reverting C then B restored $200
+ * and then nothing, and the lot fell through to per-lot basis with run A's
+ * disposal slot still standing — the double-count above, reached from a
+ * two-step undo that reported success at every step.
+ *
+ * Ownership is therefore recorded PER WRITE rather than per slot: the lot
+ * carries the full stack of (run, value) writes, its top materialized into
+ * `avg_cost_basis_remaining` for readers. Reverting a run drops that run's
+ * entries wherever they sit in the stack and re-materializes the new top. That
+ * is correct at any depth (nothing is overwritten, so nothing is lost) and in
+ * any order (an entry is identified by its owner, not by its position), and it
+ * cannot resurrect an already-reverted run's number, because that run's entry
+ * was removed when it was reverted.
+ *
+ * The stack lives in ONE row — a JSON array of `{run, value}`, `run` omitted
+ * for a legacy value written before provenance existed — rather than one row
+ * per entry: `slots` has no uniqueness or ordering column to lean on, and
+ * GnuCash desktop folds duplicate names on an object into a single KVP entry,
+ * so multi-row history would be silently truncated by a round trip through the
+ * desktop app.
  */
 export const AVG_BASIS_REMAINING_PREV_SLOT = 'avg_cost_basis_remaining_prev';
 
-/** Owning run of the stashed value. See AVG_BASIS_REMAINING_PREV_SLOT. */
+/**
+ * LEGACY owner companion of a single-value `avg_cost_basis_remaining_prev`.
+ *
+ * Never written any more — an entry's owner now travels inside the history
+ * above. Still read (so a stash written before the history existed keeps its
+ * owner) and still swept, so no stale row survives a revert.
+ */
 export const AVG_BASIS_REMAINING_PREV_RUN_SLOT = 'avg_cost_basis_remaining_prev_run';
 
 /** Every slot name the average-cost election writes onto a disposal split. */
@@ -223,8 +250,157 @@ export async function writeAvgCostBasis(
 }
 
 /**
- * Write (or overwrite) an open lot's remaining pooled-basis slot, stamped with
- * the run that computed it and stashing whatever value it displaced.
+ * One write of a lot's pooled remaining basis: the value, and the run that
+ * wrote it (`null` only for a legacy value written before provenance existed).
+ */
+export interface AvgBasisWrite {
+  run: string | null;
+  /** The formatted slot value, kept as written so a restore is byte-identical. */
+  value: string;
+}
+
+/** Serialize the displaced-write history for AVG_BASIS_REMAINING_PREV_SLOT. */
+export function encodeAvgBasisHistory(history: readonly AvgBasisWrite[]): string {
+  return JSON.stringify(
+    history.map(entry => (entry.run === null ? { value: entry.value } : { run: entry.run, value: entry.value })),
+  );
+}
+
+/**
+ * `slots.string_val` is VARCHAR(4096), so the history cannot grow forever: a
+ * book scrubbed under the average election a hundred times would eventually
+ * make the insert fail and take the whole scrub down with it.
+ *
+ * The bound is applied by dropping the OLDEST entries — the ones only a revert
+ * of an equally old run would ever restore, which then falls back to per-lot
+ * basis exactly as a book with no history at all does. Every recent run keeps
+ * its predecessor, which is what an undo actually reaches for.
+ */
+const MAX_HISTORY_CHARS = 4000;
+
+function encodeAvgBasisHistoryForColumn(
+  history: readonly AvgBasisWrite[],
+): { encoded: string; dropped: number } {
+  let dropped = 0;
+  let encoded = encodeAvgBasisHistory(history);
+  while (encoded.length > MAX_HISTORY_CHARS && dropped < history.length) {
+    dropped++;
+    encoded = encodeAvgBasisHistory(history.slice(dropped));
+  }
+  return { encoded, dropped };
+}
+
+/**
+ * Parse the displaced-write history.
+ *
+ * Tolerant of the PRE-HISTORY shape a book may already carry: a bare number in
+ * the slot, its owner in the legacy `_prev_run` companion. Anything else
+ * unparseable yields no history rather than throwing — a corrupt stash must not
+ * be able to fail a revert, and losing it is what deleting it would do anyway.
+ */
+export function decodeAvgBasisHistory(
+  raw: string | null,
+  legacyRun: string | null,
+): AvgBasisWrite[] {
+  if (raw === null || raw === '') return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    parsed = null;
+  }
+  if (Array.isArray(parsed)) {
+    const out: AvgBasisWrite[] = [];
+    for (const entry of parsed) {
+      if (typeof entry !== 'object' || entry === null) continue;
+      const { run, value } = entry as { run?: unknown; value?: unknown };
+      if (typeof value !== 'string' || !Number.isFinite(parseFloat(value))) continue;
+      out.push({ run: typeof run === 'string' ? run : null, value });
+    }
+    return out;
+  }
+  // Pre-history single stash: the whole slot was the number.
+  if (!Number.isFinite(parseFloat(raw))) return [];
+  return [{ run: legacyRun, value: raw }];
+}
+
+/**
+ * Every pooled-basis write a lot carries, oldest first — the displaced history
+ * plus the live value as its top entry.
+ */
+export async function readAvgBasisWrites(
+  lotGuid: string,
+  tx: PrismaTx,
+): Promise<AvgBasisWrite[]> {
+  const stack = decodeAvgBasisHistory(
+    await readSlotString(lotGuid, AVG_BASIS_REMAINING_PREV_SLOT, tx),
+    await readSlotString(lotGuid, AVG_BASIS_REMAINING_PREV_RUN_SLOT, tx),
+  );
+  const current = await readSlotString(lotGuid, AVG_BASIS_REMAINING_SLOT, tx);
+  if (current !== null) {
+    stack.push({ run: await readSlotString(lotGuid, AVG_BASIS_REMAINING_RUN_SLOT, tx), value: current });
+  }
+  return stack;
+}
+
+/**
+ * Replace a lot's pooled-basis slots with exactly this stack: the top entry
+ * materialized into the live slots every reader looks at, the rest kept as
+ * history. An empty stack leaves the lot with no average-cost slots at all.
+ */
+export async function writeAvgBasisWrites(
+  lotGuid: string,
+  stack: readonly AvgBasisWrite[],
+  tx: PrismaTx,
+): Promise<void> {
+  await tx.slots.deleteMany({
+    where: { obj_guid: lotGuid, name: { in: [...AVG_LOT_SLOT_NAMES] } },
+  });
+  if (stack.length === 0) return;
+
+  const history = stack.slice(0, -1);
+  const top = stack[stack.length - 1];
+  if (history.length > 0) {
+    const { encoded, dropped } = encodeAvgBasisHistoryForColumn(history);
+    if (dropped > 0) {
+      console.warn(
+        `Lot ${lotGuid}: dropped the ${dropped} oldest average-cost basis write(s) ` +
+        `to fit the slot column; reverting those runs will fall back to per-lot basis.`,
+      );
+    }
+    await tx.slots.create({
+      data: {
+        obj_guid: lotGuid,
+        name: AVG_BASIS_REMAINING_PREV_SLOT,
+        slot_type: 4,
+        string_val: encoded,
+      },
+    });
+  }
+  await tx.slots.create({
+    data: {
+      obj_guid: lotGuid,
+      name: AVG_BASIS_REMAINING_SLOT,
+      slot_type: 4,
+      string_val: top.value,
+    },
+  });
+  // A legacy value has no owner; it is restored exactly as it was found.
+  if (top.run !== null) {
+    await tx.slots.create({
+      data: {
+        obj_guid: lotGuid,
+        name: AVG_BASIS_REMAINING_RUN_SLOT,
+        slot_type: 4,
+        string_val: top.run,
+      },
+    });
+  }
+}
+
+/**
+ * Record this run's remaining pooled basis for an open lot, pushing whatever
+ * value it displaces onto the lot's write history rather than over it.
  */
 export async function writeAvgBasisRemaining(
   lotGuid: string,
@@ -232,68 +408,12 @@ export async function writeAvgBasisRemaining(
   runId: string,
   tx: PrismaTx,
 ): Promise<void> {
-  const priorValue = await readSlotString(lotGuid, AVG_BASIS_REMAINING_SLOT, tx);
-  const priorRun = await readSlotString(lotGuid, AVG_BASIS_REMAINING_RUN_SLOT, tx);
-
-  // Which value this write should stash as "the state before this run".
-  //  - displacing ANOTHER run's value (or an untagged legacy one): stash it;
-  //  - re-writing our OWN value (this run touching the lot twice): the
-  //    pre-run state is the stash that is already there — keep it, or the
-  //    second write would erase the only record of it;
-  //  - nothing there: nothing to stash.
-  let prevValue: string | null;
-  let prevRun: string | null;
-  if (priorRun !== null && priorRun === runId) {
-    prevValue = await readSlotString(lotGuid, AVG_BASIS_REMAINING_PREV_SLOT, tx);
-    prevRun = await readSlotString(lotGuid, AVG_BASIS_REMAINING_PREV_RUN_SLOT, tx);
-  } else {
-    prevValue = priorValue;
-    prevRun = priorValue === null ? null : priorRun;
-  }
-
-  await tx.slots.deleteMany({
-    where: { obj_guid: lotGuid, name: { in: [...AVG_LOT_SLOT_NAMES] } },
-  });
-
-  if (prevValue !== null) {
-    await tx.slots.create({
-      data: {
-        obj_guid: lotGuid,
-        name: AVG_BASIS_REMAINING_PREV_SLOT,
-        slot_type: 4,
-        string_val: prevValue,
-      },
-    });
-    // A legacy value written before provenance existed has no owner; the stash
-    // then restores the number without an owner, exactly as it was found.
-    if (prevRun !== null) {
-      await tx.slots.create({
-        data: {
-          obj_guid: lotGuid,
-          name: AVG_BASIS_REMAINING_PREV_RUN_SLOT,
-          slot_type: 4,
-          string_val: prevRun,
-        },
-      });
-    }
-  }
-
-  await tx.slots.create({
-    data: {
-      obj_guid: lotGuid,
-      name: AVG_BASIS_REMAINING_SLOT,
-      slot_type: 4,
-      string_val: formatBasis(basis),
-    },
-  });
-  await tx.slots.create({
-    data: {
-      obj_guid: lotGuid,
-      name: AVG_BASIS_REMAINING_RUN_SLOT,
-      slot_type: 4,
-      string_val: runId,
-    },
-  });
+  const stack = await readAvgBasisWrites(lotGuid, tx);
+  // This run touching the same lot twice is one write, not two: the second
+  // value supersedes the first, and both would be dropped by the same revert.
+  if (stack.length > 0 && stack[stack.length - 1].run === runId) stack.pop();
+  stack.push({ run: runId, value: formatBasis(basis) });
+  await writeAvgBasisWrites(lotGuid, stack, tx);
 }
 
 /** Batch-read `avg_cost_basis` slots for the given splits. Missing = absent. */

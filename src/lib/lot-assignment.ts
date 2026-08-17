@@ -34,6 +34,9 @@ import {
   readCarriedBasis,
   writeAvgCostBasis,
   writeAvgBasisRemaining,
+  readAvgBasisWrites,
+  writeAvgBasisWrites,
+  decodeAvgBasisHistory,
   type OpenLot,
   type PrismaTx,
 } from './lot-scrub';
@@ -236,9 +239,9 @@ async function clearAverageCostArtifacts(accountGuid: string, tx: PrismaTx): Pro
 interface RunAverageArtifacts {
   /** Disposal splits whose `avg_cost_basis` this run wrote. */
   splitGuids: string[];
-  /** Lots whose `avg_cost_basis_remaining` this run wrote. */
+  /** Lots whose LIVE `avg_cost_basis_remaining` this run wrote. */
   lotGuids: string[];
-  /** Lots holding a stash of a value THIS run wrote that a later run displaced. */
+  /** Lots whose write history holds a value THIS run wrote and a later run displaced. */
   stashLotGuids: string[];
 }
 
@@ -265,28 +268,58 @@ async function findAverageCostArtifactsForRun(
     })) ?? [];
     return [...new Set(rows.map(r => r.obj_guid))];
   };
+  // A displaced write's owner travels INSIDE the history row, so this one
+  // cannot be an equality match on string_val: the history rows are read and
+  // decoded, then filtered by owner. (Legacy single stashes, whose owner still
+  // lives in its own companion row, are unioned in.)
+  const historyOwnedByRun = async (): Promise<string[]> => {
+    const rows = (await tx.slots.findMany({
+      where: { name: AVG_BASIS_REMAINING_PREV_SLOT },
+      select: { obj_guid: true, string_val: true },
+    })) ?? [];
+    const out = new Set(await ownedBy(AVG_BASIS_REMAINING_PREV_RUN_SLOT));
+    for (const row of rows) {
+      if (decodeAvgBasisHistory(row.string_val ?? null, null).some(e => e.run === runId)) {
+        out.add(row.obj_guid);
+      }
+    }
+    return [...out];
+  };
+
   return {
     splitGuids: await ownedBy(AVG_COST_BASIS_RUN_SLOT),
     lotGuids: await ownedBy(AVG_BASIS_REMAINING_RUN_SLOT),
-    stashLotGuids: await ownedBy(AVG_BASIS_REMAINING_PREV_RUN_SLOT),
+    stashLotGuids: await historyOwnedByRun(),
   };
 }
 
 /**
  * Undo ONLY this run's average-cost slots, leaving every other run's standing.
  *
- * Three moves, in order:
+ * Two moves:
  *
  *  1. Disposal slots this run wrote are deleted. Another run's disposal slot
  *     is never touched, so reverting a later run cannot rewrite the basis on a
  *     sale an earlier run already priced and the user already filed.
- *  2. Open-lot slots this run wrote are deleted, and the value this run
- *     displaced is put back with its own owner. Without the restore the lot
- *     would fall back to its per-lot buy cost while an earlier run's disposal
- *     slot still says part of that cost was spent — double-counted basis.
- *  3. Stashes THIS run wrote that a later run has since displaced are dropped,
- *     so reverting this run and then the later one cannot resurrect a number
- *     from a run that has already been reverted.
+ *  2. On every lot this run wrote to — whether its value is still live or a
+ *     later run has displaced it — the lot's write history is rebuilt WITHOUT
+ *     this run's entries, and whatever is left on top becomes the live value.
+ *
+ * Move 2 is one operation rather than "delete mine, restore the one below"
+ * because the history is a stack of writes, not a single displaced value:
+ *
+ *  - removing an entry from the middle leaves the runs above and below it
+ *    intact, so reverts in any order compose (revert C then B walks back down
+ *    to A's number; revert B then C skips B entirely and lands on A's);
+ *  - the run being reverted is identified by ownership, not position, so its
+ *    number can never be resurrected by a later revert — it is gone from the
+ *    stack the moment it is reverted;
+ *  - depth is whatever the book has. Nothing is overwritten, so nothing is
+ *    lost, however many runs re-price the same lot.
+ *
+ * Without the restore below the lot would fall back to its per-lot buy cost
+ * while an earlier run's disposal slot still says part of that cost was spent
+ * — double-counted basis, understating every later gain.
  *
  * Only slot rows are deleted. No split, lot, or transaction is removed on this
  * path, which is what makes it safe to point at the user's own sell split.
@@ -302,64 +335,23 @@ async function clearAverageCostArtifactsForRun(
     });
   }
 
-  if (artifacts.lotGuids.length > 0) {
-    // A lot the revert has already deleted (this run created it) gets its
-    // slots dropped, never a restored value re-attached to a dead guid.
-    const survivingLots = new Set(
-      ((await tx.lots.findMany({
-        where: { guid: { in: artifacts.lotGuids } },
-        select: { guid: true },
-      })) ?? []).map(l => l.guid),
-    );
+  const touchedLotGuids = [...new Set([...artifacts.lotGuids, ...artifacts.stashLotGuids])];
+  if (touchedLotGuids.length === 0) return;
 
-    for (const lotGuid of artifacts.lotGuids) {
-      const prevRow = await tx.slots.findFirst({
-        where: { obj_guid: lotGuid, name: AVG_BASIS_REMAINING_PREV_SLOT },
-        select: { string_val: true },
-      });
-      const prevRunRow = await tx.slots.findFirst({
-        where: { obj_guid: lotGuid, name: AVG_BASIS_REMAINING_PREV_RUN_SLOT },
-        select: { string_val: true },
-      });
-      await tx.slots.deleteMany({
-        where: { obj_guid: lotGuid, name: { in: [...AVG_LOT_SLOT_NAMES] } },
-      });
+  // A lot the revert has already deleted (this run created it) gets its slots
+  // dropped, never a restored value re-attached to a dead guid.
+  const survivingLots = new Set(
+    ((await tx.lots.findMany({
+      where: { guid: { in: touchedLotGuids } },
+      select: { guid: true },
+    })) ?? []).map(l => l.guid),
+  );
 
-      const prevValue = prevRow?.string_val ?? null;
-      const prevRun = prevRunRow?.string_val ?? null;
-      // Restore only a value belonging to some OTHER run. A stash naming this
-      // run is this run's own earlier write, which the revert is undoing too.
-      if (prevValue === null || prevRun === runId || !survivingLots.has(lotGuid)) continue;
-
-      await tx.slots.create({
-        data: {
-          obj_guid: lotGuid,
-          name: AVG_BASIS_REMAINING_SLOT,
-          slot_type: 4,
-          string_val: prevValue,
-        },
-      });
-      if (prevRun !== null) {
-        await tx.slots.create({
-          data: {
-            obj_guid: lotGuid,
-            name: AVG_BASIS_REMAINING_RUN_SLOT,
-            slot_type: 4,
-            string_val: prevRun,
-          },
-        });
-      }
-    }
-  }
-
-  const orphanedStashes = artifacts.stashLotGuids.filter(g => !artifacts.lotGuids.includes(g));
-  if (orphanedStashes.length > 0) {
-    await tx.slots.deleteMany({
-      where: {
-        obj_guid: { in: orphanedStashes },
-        name: { in: [AVG_BASIS_REMAINING_PREV_SLOT, AVG_BASIS_REMAINING_PREV_RUN_SLOT] },
-      },
-    });
+  for (const lotGuid of touchedLotGuids) {
+    const stack = survivingLots.has(lotGuid)
+      ? (await readAvgBasisWrites(lotGuid, tx)).filter(entry => entry.run !== runId)
+      : [];
+    await writeAvgBasisWrites(lotGuid, stack, tx);
   }
 }
 
@@ -1295,7 +1287,7 @@ export async function revertScrubRun(
     const avgSplitOwners = avgArtifacts.splitGuids.length > 0
       ? ((await tx.splits.findMany({
           where: { guid: { in: avgArtifacts.splitGuids } },
-          select: { guid: true, account_guid: true, tx_guid: true },
+          select: { guid: true, account_guid: true, tx_guid: true, lot_guid: true },
         })) ?? [])
       : [];
     const avgLotOwnerGuids = [...new Set([...avgArtifacts.lotGuids, ...avgArtifacts.stashLotGuids])];
@@ -1428,6 +1420,53 @@ export async function revertScrubRun(
     // reversible action on one run rewriting another run's tax number, with
     // no error and nothing visible in the UI.
     await clearAverageCostArtifactsForRun(runId, avgArtifacts, tx);
+
+    // ── Detach the disposals this run priced ────────────────────────────────
+    //
+    // A sale that fits inside ONE lot is assigned straight to the user's own
+    // split, with no generated sub-split to tag, so nothing above reaches it:
+    // the revert dropped its `avg_cost_basis` and left it attached, and the
+    // still-closed lot went on reporting the sale at the lot's own buy cost
+    // instead of the pooled basis the user had already seen — a bigger gain on
+    // a Form 8949 line, produced by an operation that reported success.
+    //
+    // `avgArtifacts.splitGuids` names exactly the splits this run priced, so
+    // undoing the assignment needs no marker on a user row: only `lot_guid` is
+    // cleared, exactly as the modified-original restore above does it. Nothing
+    // is tagged `gnucash_web_generated` and no user row is deleted — the two
+    // things this design must never do. Splits the sweep already deleted are
+    // simply absent, so the update passes over them.
+    if (avgArtifacts.splitGuids.length > 0) {
+      await tx.splits.updateMany({
+        where: { guid: { in: avgArtifacts.splitGuids }, lot_guid: { not: null } },
+        data: { lot_guid: null },
+      });
+    }
+
+    // A lot those disposals had emptied is holding its shares again. Left
+    // flagged closed it would be skipped by the next scrub's open-lot query,
+    // hiding real shares from the pool that re-prices them.
+    const detachedLotGuids = [...new Set(
+      avgSplitOwners.map(s => s.lot_guid).filter((g): g is string => g !== null && g !== undefined),
+    )];
+    if (detachedLotGuids.length > 0) {
+      const stillClosed = (await tx.lots.findMany({
+        where: { guid: { in: detachedLotGuids }, is_closed: 1 },
+        select: { guid: true },
+      })) ?? [];
+      for (const lot of stillClosed) {
+        const remaining = (await tx.splits.findMany({
+          where: { lot_guid: lot.guid },
+          select: { quantity_num: true, quantity_denom: true },
+        })) ?? [];
+        const shares = remaining.reduce(
+          (sum, s) => sum + toDecimalNumber(s.quantity_num, s.quantity_denom), 0,
+        );
+        if (Math.abs(shares) > 1e-9) {
+          await tx.lots.update({ where: { guid: lot.guid }, data: { is_closed: 0 } });
+        }
+      }
+    }
 
     // Bump the concurrency token on every account the revert rewrote
     // (restored sell splits, detached lots, dropped average-cost slots) so
