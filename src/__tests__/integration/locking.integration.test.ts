@@ -87,8 +87,8 @@ async function waitUntil(
 }
 
 /**
- * How many backends are BLOCKED on the session advisory lock `lockName` maps
- * to, read from outside both parties.
+ * How many backends hold - or are queued behind - the session advisory lock
+ * that `lockName` maps to, read from outside every party involved.
  *
  * `pg_advisory_lock(hashtext($1))` is the single-argument (bigint) form, which
  * Postgres records as classid = high 32 bits, objid = low 32 bits,
@@ -96,19 +96,29 @@ async function waitUntil(
  * to 32 unsigned bits rather than compared directly - a negative hash would
  * otherwise never match.
  */
-async function advisoryLockWaiters(lockName: string): Promise<number> {
-    const result = await getTestPool().query<{ waiters: number }>(
+async function countAdvisoryLocks(lockName: string, granted: boolean): Promise<number> {
+    const result = await getTestPool().query<{ locks: number }>(
         `WITH k AS (SELECT hashtext($1)::bigint AS key)
-         SELECT count(*)::int AS waiters
+         SELECT count(*)::int AS locks
          FROM pg_locks l, k
          WHERE l.locktype = 'advisory'
-           AND NOT l.granted
+           AND l.granted = $2
            AND l.classid = ((k.key >> 32) & 4294967295)::oid
            AND l.objid = (k.key & 4294967295)::oid
            AND l.objsubid = 1`,
-        [lockName],
+        [lockName, granted],
     );
-    return result.rows[0].waiters;
+    return result.rows[0].locks;
+}
+
+/** Backends BLOCKED on `lockName`, i.e. queued behind whoever holds it. */
+function advisoryLockWaiters(lockName: string): Promise<number> {
+    return countAdvisoryLocks(lockName, false);
+}
+
+/** Backends currently HOLDING `lockName`. */
+function advisoryLockHolders(lockName: string): Promise<number> {
+    return countAdvisoryLocks(lockName, true);
 }
 
 /**
@@ -183,6 +193,61 @@ describe.skipIf(!HAS_TEST_DATABASE)('database contention (real PostgreSQL)', () 
     });
 
     describe('session advisory locks (src/lib/db.ts)', () => {
+        it('tryWithDatabaseAdvisoryLock takes a free lock and runs the operation', async () => {
+            // The other half of the contract - and the half whose absence let a
+            // `return { acquired: false }` stub satisfy every other test in this
+            // file for free. Testing the helper ONLY while a competing session
+            // holds the lock means deleting the locking entirely still looks
+            // green, because refusing is the expected answer there.
+            //
+            // The mid-flight pg_locks read is what makes this more than an
+            // outcome check: it observes the lock existing IN THE SERVER while
+            // the operation is inside the critical section, so a stub that
+            // returns `acquired: true` and runs the work without ever calling
+            // pg_try_advisory_lock goes red here rather than passing.
+            const lockName = `integration-test:uncontended:${RUN_ID}`;
+
+            expect(await advisoryLockHolders(lockName)).toBe(0);
+
+            let heldDuringOperation = -1;
+            let operationRan = false;
+            const outcome = await appDb.tryWithDatabaseAdvisoryLock(lockName, async () => {
+                operationRan = true;
+                heldDuringOperation = await advisoryLockHolders(lockName);
+                return 'ran';
+            });
+
+            expect(outcome).toEqual({ acquired: true, result: 'ran' });
+            expect(operationRan).toBe(true);
+            expect(heldDuringOperation).toBe(1);
+        });
+
+        it('tryWithDatabaseAdvisoryLock releases the lock once the operation finishes', async () => {
+            // Release is invisible in the return value, so it needs its own
+            // assertion or dropping the pg_advisory_unlock costs nothing. The
+            // connection the helper used goes back to the pool still holding
+            // the lock, and from then on whoever borrows it inherits a lock
+            // nobody knows about while every future caller is refused.
+            //
+            // Asserted two ways because they fail differently: no backend still
+            // holds the key, and an unrelated session can actually take it.
+            const lockName = `integration-test:release:${RUN_ID}`;
+
+            const outcome = await appDb.tryWithDatabaseAdvisoryLock(lockName, async () => 'ran');
+            expect(outcome).toEqual({ acquired: true, result: 'ran' });
+
+            expect(await advisoryLockHolders(lockName)).toBe(0);
+
+            await withTestClient(async (probe) => {
+                const taken = await probe.query<{ locked: boolean }>(
+                    'SELECT pg_try_advisory_lock(hashtext($1)) AS locked',
+                    [lockName],
+                );
+                expect(taken.rows[0].locked).toBe(true);
+                await probe.query('SELECT pg_advisory_unlock(hashtext($1))', [lockName]);
+            });
+        });
+
         it('tryWithDatabaseAdvisoryLock refuses a lock another session holds', async () => {
             // The non-blocking variant's entire contract: when someone else has
             // it, report `acquired: false` and DO NOT run the operation. Callers

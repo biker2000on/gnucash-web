@@ -3,10 +3,19 @@
  *
  *   npm run test:integration:schema
  *
- * Run it once per throwaway database; it is idempotent, so re-running is safe.
- * CI runs this exact script against its postgres service, which is the point:
- * the local and CI paths to a usable database are the same two steps, not two
- * things that drift.
+ * Run it once per EMPTY database. CI runs this exact script against its
+ * postgres service, which is the point: the local and CI paths to a usable
+ * database are the same two steps, not two things that drift. CI gets an empty
+ * database for free - the service container is new for every job.
+ *
+ * IT IS NOT RE-RUNNABLE, and that is a property of `prisma db push`, not a
+ * missing feature here. Step 2 below creates 20 tables that prisma/schema.prisma
+ * does not model, so on a second run `db push` reads them as drift and asks to
+ * DROP them; because they hold rows by then it refuses outright rather than
+ * doing it. That refusal is the safe outcome and is deliberately left in place:
+ * silencing it with --accept-data-loss would mean a mistyped TEST_DATABASE_URL
+ * drops 20 tables out of whatever database it actually landed on. To re-provision,
+ * drop and recreate the database, then run this again.
  *
  * WHY TWO STEPS. The schema this app runs on has two halves and neither one
  * alone is enough:
@@ -64,7 +73,26 @@ async function main(): Promise<void> {
     // with "unknown or unexpected option") because the command no longer runs
     // the generator implicitly. The datasource comes from prisma.config.ts,
     // which reads DATABASE_URL - set just above.
-    execSync('npx prisma db push', { stdio: 'inherit' });
+    try {
+        execSync('npx prisma db push', { stdio: 'inherit' });
+    } catch {
+        // Overwhelmingly this is the re-run case described in the header: the
+        // database already went through step 2, and db push wants to drop the
+        // tables only step 2 knows about. The raw prisma output above says
+        // "use --accept-data-loss", which is the one thing nobody should do
+        // here, so say what to do instead before exiting.
+        throw new Error(
+            [
+                '`prisma db push` failed.',
+                '',
+                'If it reported dropping gnucash_web_* tables, this database has',
+                'already been provisioned: the script targets an EMPTY database and',
+                'cannot be re-run against a populated one. Do NOT pass',
+                '--accept-data-loss - drop and recreate the database, then run',
+                'npm run test:integration:schema again.',
+            ].join('\n'),
+        );
+    }
 
     console.log('\n== initializeDatabase (views + unmodelled extension tables) ==');
     // Imported dynamically, AFTER DATABASE_URL is set: src/lib/db.ts opens its

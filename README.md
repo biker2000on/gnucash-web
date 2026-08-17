@@ -138,14 +138,14 @@ truncates, so a test that writes must delete its own rows in `afterAll` —
 see the TEST DATA section of `vitest.integration.config.ts`.
 
 ```bash
-# 1. Put the URL of a THROWAWAY database in .env.test.local at the repo root.
-#    That filename is gitignored; never commit credentials.
+# 1. Put the URL of a THROWAWAY, EMPTY database in .env.test.local at the repo
+#    root. That filename is gitignored; never commit credentials.
 echo 'TEST_DATABASE_URL=postgresql://user:password@localhost:5432/gnucash_test' > .env.test.local
 
-# 2. Create the schema (idempotent — re-running is safe).
+# 2. Create the schema. Once per database — see below; not re-runnable.
 npm run test:integration:schema
 
-# 3. Run the tier.
+# 3. Run the tier. This one IS re-runnable, as often as you like.
 npm run test:integration
 ```
 
@@ -159,6 +159,15 @@ push` creates the tables modelled in `prisma/schema.prisma`, then
 tables that exist only as idempotent DDL in `src/lib/db-init.ts`. A further set
 of tables is created lazily by per-feature `ensureXTable()` helpers the first
 time a feature is used, exactly as in production.
+
+**Step 2 wants an empty database and cannot be re-run against a provisioned
+one.** `initializeDatabase()` creates 20 tables that `prisma/schema.prisma` does
+not model, so on a second run `prisma db push` reads them as drift and asks to
+drop them — and refuses, because by then they hold rows. The refusal is the
+correct outcome and is left in place on purpose: `--accept-data-loss` would make
+a mistyped `TEST_DATABASE_URL` destructive. To re-provision, drop and recreate
+the database and run step 2 again. CI never hits this, since its `postgres`
+service container is new for every job.
 
 **If `TEST_DATABASE_URL` is missing, the tier fails with instructions — it does
 not skip.** A skipped tier reports green while asserting nothing, which reads
