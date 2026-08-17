@@ -46,6 +46,7 @@ vi.mock('../commodities', () => ({
   getLatestPrice: vi.fn().mockResolvedValue(null),
 }));
 
+import { apportionCarriedBasis } from '../lot-scrub';
 import { autoAssignLots } from '../lot-assignment';
 import { getAccountLots } from '../lots';
 import { lotToRealizedSales } from '../reports/capital-gains';
@@ -307,6 +308,120 @@ describe('carried basis includes commissions named for the broker', () => {
     expect(bookedGainsIncome('Long Term')).toBeCloseTo(-490, 6);
     expect(await lotsReportRealizedGain(STOCK_B)).toBeCloseTo(490, 6);
     expect(await form8949Gain(STOCK_B)).toBeCloseTo(490, 6);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// (c) A commission is conserved across partial transfers
+// ---------------------------------------------------------------------------
+
+/** A `carried_basis` slot as an exact integer count of millionths. */
+function carriedBasisUnits(lotGuid: string): number {
+  const raw = slotVal(lotGuid, 'carried_basis');
+  if (raw === null) throw new Error(`no carried_basis slot on lot ${lotGuid}`);
+  return Math.round(parseFloat(raw) * 1e6);
+}
+
+describe('carried basis is conserved across partial transfers', () => {
+  /**
+   * Buy 3 shares for $1,000.00 plus a $0.01 commission — $1,000.01 of basis
+   * that does NOT divide evenly by three — then move them out ONE AT A TIME so
+   * each share lands in its own destination lot, and sell all three there.
+   *
+   * Rounding every lot's own $333.33666666... slice independently stored
+   * $333.336667 three times: $1,000.010001 of basis against the $1,000.01
+   * actually paid, and a gain short by the difference. The apportionment
+   * rounds the CUMULATIVE allocation instead, so the slices telescope back to
+   * the source basis exactly.
+   */
+  function seedShareByShareTransfer() {
+    seedBook();
+    addTx('tx-buy', '2022-01-10', [
+      ['a-buy', STOCK_A, 3, 1000],
+      ['a-buy-comm', COMMISSIONS, 0.01, 0.01],
+      ['a-buy-cash', CASH, -1000.01, -1000.01],
+    ]);
+    for (const [i, date] of ['2024-06-15', '2024-06-16', '2024-06-17'].entries()) {
+      addTx(`tx-xfer-${i}`, date, [
+        [`a-out-${i}`, STOCK_A, -1, 0],
+        [`b-in-${i}`, STOCK_B, 1, 0],
+      ]);
+    }
+    addTx('tx-sell', '2024-11-02', [
+      ['b-sell', STOCK_B, -3, -3000],
+      ['b-sell-cash', CASH, 3000, 3000],
+    ]);
+  }
+
+  it('spreads $1,000.01 over three one-share lots that sum back to $1,000.01', async () => {
+    seedShareByShareTransfer();
+
+    await autoAssignLots(STOCK_A, 'fifo');
+    await autoAssignLots(STOCK_B, 'fifo');
+
+    const destLots = [0, 1, 2].map(i => split(`b-in-${i}`).lot_guid as string);
+    expect(new Set(destLots).size).toBe(3);
+
+    const stored = destLots.map(carriedBasisUnits);
+    // Integer millionths, so this is an EXACT conservation check: independent
+    // per-lot rounding stores 333336667 three times and overshoots by 1.
+    expect(stored.reduce((sum, units) => sum + units, 0)).toBe(1_000_010_000);
+    expect([...stored].sort((a, b) => a - b)).toEqual([333_336_666, 333_336_667, 333_336_667]);
+  });
+
+  it('realizes $1,999.99 on the sale, on all three surfaces', async () => {
+    seedShareByShareTransfer();
+
+    await autoAssignLots(STOCK_A, 'fifo');
+    const resB = await autoAssignLots(STOCK_B, 'fifo');
+
+    // $3,000 proceeds - $1,000.01 basis. Duplicating the commission across the
+    // three lots reported $1,999.989999.
+    expect(resB.totalRealizedGain).toBeCloseTo(1999.99, 6);
+    expect(await lotsReportRealizedGain(STOCK_B)).toBeCloseTo(1999.99, 6);
+    expect(await form8949Gain(STOCK_B)).toBeCloseTo(1999.99, 6);
+  });
+});
+
+describe('apportionCarriedBasis', () => {
+  const units = (amount: number) => Math.round(amount * 1e6);
+  const slice = (totalBasis: number, boughtShares: number, sharesOutBefore: number, shares: number) =>
+    apportionCarriedBasis({ totalBasis, boughtShares, sharesOutBefore, shares });
+
+  it('conserves a $0.03 commission across 50,000 one-share transfers', () => {
+    // The reviewer's shape: $50,000.00 + $0.03 over 50,000 shares is
+    // $1.0000006 each, which six-decimal rounding turns into $1.000001 —
+    // $50,000.05 of stored basis, $0.02 of the commission counted twice.
+    const SOURCE_BASIS = 50_000.03;
+    const SHARES = 50_000;
+
+    let carriedOut = 0;
+    for (let share = 0; share < SHARES; share++) {
+      carriedOut += units(slice(SOURCE_BASIS, SHARES, share, 1));
+    }
+
+    expect(carriedOut).toBe(units(SOURCE_BASIS));
+    expect(carriedOut / 1e6).toBe(SOURCE_BASIS);
+    // Selling all 50,000 at $2.00: the stored basis yielded $49,999.95.
+    expect(100_000 - carriedOut / 1e6).toBeCloseTo(49_999.97, 6);
+  });
+
+  it('holds back the residual while the lot still has shares in it', () => {
+    const first = units(slice(1000.01, 3, 0, 1));
+    const second = units(slice(1000.01, 3, 1, 1));
+    // Two of three shares gone: strictly less than the whole basis is out.
+    expect(first + second).toBeLessThan(units(1000.01));
+    expect(first + second + units(slice(1000.01, 3, 2, 1))).toBe(units(1000.01));
+  });
+
+  it('starts a transfer where an earlier sale out of the same lot left off', () => {
+    // A 1-share sale takes the first slice; the 2 shares transferred out after
+    // it carry the REST, not two more first slices.
+    expect(units(slice(1000.01, 3, 1, 2))).toBe(units(1000.01) - units(slice(1000.01, 3, 0, 1)));
+  });
+
+  it('carries the whole basis when the whole lot leaves at once', () => {
+    expect(units(slice(1010, 100, 0, 100))).toBe(units(1010));
   });
 });
 

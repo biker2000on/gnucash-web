@@ -659,12 +659,113 @@ export async function readCarriedBasis(lotGuid: string, tx: PrismaTx): Promise<n
 }
 
 /**
+ * The `carried_basis` slot stores a decimal string with six-decimal
+ * resolution, so basis is apportioned in integer millionths.
+ */
+const BASIS_UNITS_PER_DOLLAR = 1e6;
+
+/** Quantize a basis amount to the slot's stored resolution (integer millionths). */
+function toBasisUnits(amount: number): number {
+  return Math.round(amount * BASIS_UNITS_PER_DOLLAR);
+}
+
+/**
+ * Apportion a source lot's basis to ONE outflow of `shares`, given the shares
+ * that already left the lot ahead of it.
+ *
+ * Rounding each outflow's own pro-rata slice independently duplicates or loses
+ * fractions of a cent, and the slot only holds six decimals: 50,000 shares
+ * bought for $50,000.00 plus a $0.03 commission carry $1.0000006 each, which
+ * every destination lot rounds up to $1.000001 — $50,000.05 of stored basis
+ * against the $50,000.03 actually paid, so a later sale of all of them
+ * understates the aggregate gain by $0.02.
+ *
+ * So round the CUMULATIVE allocation and hand each outflow the difference — a
+ * running-residual carry. The differences telescope, so the apportioned
+ * amounts sum to exactly the quantized source basis once the lot has drained,
+ * however many outflows it took and however the per-share figure rounds.
+ */
+export function apportionCarriedBasis(params: {
+  /** The source lot's whole basis: buy cost + capitalized fees + basis carried in. */
+  totalBasis: number;
+  /** Shares that entered the source lot. */
+  boughtShares: number;
+  /** Shares that left the lot ahead of this outflow (sales included). */
+  sharesOutBefore: number;
+  /** Shares leaving in this outflow. */
+  shares: number;
+}): number {
+  const { totalBasis, boughtShares, sharesOutBefore, shares } = params;
+  if (!(boughtShares > 0) || !(shares > 0)) return 0;
+
+  const totalUnits = toBasisUnits(totalBasis);
+  // Shares are summed from fractions, so "drained" needs a tolerance; at this
+  // scale it is far below the smallest share GnuCash can represent.
+  const drainedEpsilon = Math.max(1e-9, boughtShares * 1e-12);
+  const cumulativeUnitsAt = (sharesOut: number): number => {
+    if (sharesOut <= 0) return 0;
+    // Draining the lot yields the WHOLE basis, never a rounded fraction of it.
+    if (sharesOut >= boughtShares - drainedEpsilon) return totalUnits;
+    return Math.round(totalUnits * (sharesOut / boughtShares));
+  };
+
+  const before = Math.min(Math.max(sharesOutBefore, 0), boughtShares);
+  const after = Math.min(before + shares, boughtShares);
+  return (cumulativeUnitsAt(after) - cumulativeUnitsAt(before)) / BASIS_UNITS_PER_DOLLAR;
+}
+
+/** A source lot's split, as computeCarriedBasis reads it. */
+interface SourceLotSplit {
+  guid: string;
+  quantity_num: bigint;
+  quantity_denom: bigint;
+  transaction?: { post_date: Date | null } | null;
+}
+
+/**
+ * Shares that left the source lot ahead of `splitGuid`, in the lot's own
+ * outflow order (post date, then guid — stable, and independent of the order
+ * the destination accounts happen to be scrubbed in).
+ *
+ * Every outflow counts, sale or transfer: each consumes its slice of the lot's
+ * basis, so a transfer that follows a sale starts where the sale left off
+ * rather than back at zero.
+ *
+ * An outflow that is not in the lot (an unlotted source split, or a caller
+ * that has no split to name) reads as the first one — the pre-existing
+ * straight pro-rata behavior.
+ */
+function sharesOutBeforeSplit(splits: SourceLotSplit[], splitGuid?: string): number {
+  if (!splitGuid) return 0;
+  const outflows = splits
+    .map(s => ({
+      guid: s.guid,
+      qty: toDecimalNumber(s.quantity_num, s.quantity_denom),
+      postedAt: s.transaction?.post_date ? new Date(s.transaction.post_date).getTime() : 0,
+    }))
+    .filter(s => s.qty < 0)
+    .sort((a, b) => a.postedAt - b.postedAt || (a.guid < b.guid ? -1 : a.guid > b.guid ? 1 : 0));
+
+  let sharesOut = 0;
+  for (const outflow of outflows) {
+    if (outflow.guid === splitGuid) return sharesOut;
+    sharesOut += Math.abs(outflow.qty);
+  }
+  return 0;
+}
+
+/**
  * Compute the cost basis carried by `transferredShares` leaving a source lot:
- * pro-rata share of (buy cost + the source lot's own carried basis) over the
- * shares that entered the lot. Chains correctly across repeated transfers —
- * a scrub-created destination lot has one transfer-in split plus a
- * carried_basis slot, so its basis-per-share is carried_basis / shares. A
- * recorded transfer value is not purchase cost and must not create a step-up.
+ * that outflow's slice of (buy cost + the source lot's own carried basis),
+ * apportioned over the shares that entered the lot. Chains correctly across
+ * repeated transfers — a scrub-created destination lot has one transfer-in
+ * split plus a carried_basis slot, so its basis-per-share is
+ * carried_basis / shares. A recorded transfer value is not purchase cost and
+ * must not create a step-up.
+ *
+ * Pass `sourceSplitGuid` (the transfer-out split this basis is leaving on) so
+ * repeated partial transfers out of one lot conserve the basis exactly rather
+ * than each rounding their own slice — see apportionCarriedBasis.
  *
  * Returns null when the source lot has no incoming shares to derive a basis
  * from (nothing to carry).
@@ -673,6 +774,7 @@ export async function computeCarriedBasis(
   sourceLotGuid: string,
   transferredShares: number,
   tx: PrismaTx,
+  sourceSplitGuid?: string,
 ): Promise<number | null> {
   const sourceLotSplits = (await tx.splits.findMany({
     where: { lot_guid: sourceLotGuid },
@@ -683,6 +785,7 @@ export async function computeCarriedBasis(
       quantity_denom: true,
       value_num: true,
       value_denom: true,
+      transaction: { select: { post_date: true } },
     },
   })) ?? [];
   // Classification runs on the FULL account path, exactly as it does on the
@@ -712,12 +815,20 @@ export async function computeCarriedBasis(
   }
   if (boughtShares <= 0) return null;
   const carried = await readCarriedBasis(sourceLotGuid, tx);
-  return ((buyCost + carried) / boughtShares) * transferredShares;
+  return apportionCarriedBasis({
+    totalBasis: buyCost + carried,
+    boughtShares,
+    sharesOutBefore: sharesOutBeforeSplit(sourceLotSplits, sourceSplitGuid),
+    shares: transferredShares,
+  });
 }
 
 /**
  * Store the carried basis on a destination lot as a `carried_basis` slot,
  * tagged like the other transfer-metadata slots. No-op for null/0.
+ *
+ * apportionCarriedBasis already hands over a whole number of millionths, so
+ * quantizing here is a no-op on that path and only guards a hand-built caller.
  */
 async function writeCarriedBasisSlot(
   lotGuid: string,
@@ -730,7 +841,7 @@ async function writeCarriedBasisSlot(
       obj_guid: lotGuid,
       name: 'carried_basis',
       slot_type: 4,
-      string_val: String(Math.round(carriedBasis * 1e6) / 1e6),
+      string_val: String(toBasisUnits(carriedBasis) / BASIS_UNITS_PER_DOLLAR),
     },
   });
 }
@@ -834,7 +945,9 @@ export async function linkTransferToLot(
     // is not a taxable disposition and must not step up the destination lot.
     const transferQty = toDecimalNumber(split.quantity_num, split.quantity_denom);
     if (transferQty > 0) {
-      const carried = await computeCarriedBasis(sourceSplit.lot_guid, transferQty, tx);
+      const carried = await computeCarriedBasis(
+        sourceSplit.lot_guid, transferQty, tx, sourceSplit.guid,
+      );
       await writeCarriedBasisSlot(lotGuid, carried, tx);
     }
 
@@ -979,6 +1092,8 @@ export async function splitTransferAcrossSourceLots(
 
   interface Allocation {
     sourceLotGuid: string;
+    /** The transfer-out split this allocation draws from, for basis apportionment. */
+    sourceSplitGuid: string;
     shares: number;
   }
   const totalSourceQty = lottedSourceSplits.reduce(
@@ -987,6 +1102,7 @@ export async function splitTransferAcrossSourceLots(
 
   const allocations: Allocation[] = lottedSourceSplits.map(s => ({
     sourceLotGuid: s.lot_guid!,
+    sourceSplitGuid: s.guid,
     shares: (Math.abs(toDecimalNumber(s.quantity_num, s.quantity_denom)) / totalSourceQty) * transferQty,
   }));
 
@@ -995,6 +1111,7 @@ export async function splitTransferAcrossSourceLots(
     sourceLotGuid: string,
     postDate: Date | null | undefined,
     allocShares: number,
+    sourceSplitGuid: string,
   ): Promise<string> {
     const lotGuid = generateGuid();
     await tx.lots.create({
@@ -1028,7 +1145,7 @@ export async function splitTransferAcrossSourceLots(
     // Carry original basis for every own-account transfer (see
     // linkTransferToLot — same rule, per source lot here).
     if (allocShares > 0) {
-      const carried = await computeCarriedBasis(sourceLotGuid, allocShares, tx);
+      const carried = await computeCarriedBasis(sourceLotGuid, allocShares, tx, sourceSplitGuid);
       await writeCarriedBasisSlot(lotGuid, carried, tx);
     }
 
@@ -1132,7 +1249,9 @@ export async function splitTransferAcrossSourceLots(
 
   // First allocation reuses the original split
   const firstAlloc = allocations[0];
-  const firstLotGuid = await createDestLot(firstAlloc.sourceLotGuid, split.transaction?.post_date, firstAlloc.shares);
+  const firstLotGuid = await createDestLot(
+    firstAlloc.sourceLotGuid, split.transaction?.post_date, firstAlloc.shares, firstAlloc.sourceSplitGuid,
+  );
   lotGuids.push(firstLotGuid);
 
   const firstQty = fromDecimal(firstAlloc.shares, qtyDenom);
@@ -1158,7 +1277,9 @@ export async function splitTransferAcrossSourceLots(
   for (let i = 1; i < allocations.length; i++) {
     const alloc = allocations[i];
     const isLast = i === allocations.length - 1;
-    const lotGuid = await createDestLot(alloc.sourceLotGuid, split.transaction?.post_date, alloc.shares);
+    const lotGuid = await createDestLot(
+      alloc.sourceLotGuid, split.transaction?.post_date, alloc.shares, alloc.sourceSplitGuid,
+    );
     lotGuids.push(lotGuid);
 
     let subQty: { num: bigint; denom: bigint };
