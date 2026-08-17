@@ -14,6 +14,7 @@
 
 import prisma from './prisma';
 import { toDecimalNumber } from './gnucash';
+import { PRICE_STALENESS_DAYS } from './price-staleness';
 
 /* ------------------------------------------------------------------ */
 /* Types                                                                */
@@ -50,7 +51,7 @@ export interface HealthCheck {
 }
 
 export interface DataHealthOptions {
-    /** Prices older than this many days are "stale". Default 7. */
+    /** Prices older than this many days are "stale". Default `PRICE_STALENESS_DAYS`. */
     staleDays?: number;
     /** Unreconciled splits older than this many days age into the report. Default 90. */
     unreconciledDays?: number;
@@ -711,7 +712,7 @@ export async function runDataHealth(
     bookAccountGuids: string[],
     opts: DataHealthOptions = {},
 ): Promise<DataHealthReport> {
-    const staleDays = opts.staleDays ?? 7;
+    const staleDays = opts.staleDays ?? PRICE_STALENESS_DAYS;
     const unreconciledDays = opts.unreconciledDays ?? 90;
     const asOf = opts.asOf ?? new Date();
     const itemCap = opts.itemCap ?? ITEM_CAP;

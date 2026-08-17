@@ -11,6 +11,7 @@ import {
     BASIS_CONSEQUENCE,
 } from '@/components/investments/CostBasisCoverageMark';
 import { sameCoverageStatement } from '@/lib/holdings-coverage';
+import { PRICE_STALENESS_DAYS, isPriceStale } from '@/lib/price-staleness';
 
 function fmtCurrency(n: number): string {
     return new Intl.NumberFormat('en-US', {
@@ -65,6 +66,28 @@ export function PortfolioTable({ data, onAccountClick }: PortfolioTableProps) {
     const totalsMark = (
         <CostBasisCoverageMark coverage={columnCoverage} consequence={BASIS_CONSEQUENCE} />
     );
+    // Market value and gain are computed from the quote in the Price Date
+    // column, and the report already carried that date here — nothing read it,
+    // so a position last quoted in June rendered exactly like one quoted
+    // yesterday. Age is measured against the report's own as-of date, not the
+    // wall clock: a statement drawn as of March 2020 is not stale for being
+    // about March 2020.
+    //
+    // Marked per row rather than in a caption alone, because staleness differs
+    // row to row: a single sentence cannot say WHICH market values are old.
+    const asOfDate = data.filters.endDate || data.generatedAt;
+    const isStale = (h: PortfolioHolding) => isPriceStale(h.priceDate, asOfDate);
+    const staleCount = holdings.filter(isStale).length;
+    const staleMark = (
+        <span className="ml-1 text-xs text-warning">stale</span>
+    );
+    const staleCaption = staleCount > 0 && (
+        <p className="mb-3 text-left text-xs text-warning">
+            {staleCount} of {holdings.length} holdings {staleCount === 1 ? 'is' : 'are'} priced from
+            a quote more than {PRICE_STALENESS_DAYS} days old (marked stale); their market value and
+            gain may not reflect current prices.
+        </p>
+    );
     const caption = holdings.length > 0 && (
         everyRowMatchesCaption ? (
             <CoverageCaption
@@ -113,7 +136,15 @@ export function PortfolioTable({ data, onAccountClick }: PortfolioTableProps) {
                                     { label: 'Symbol', value: <span className="font-mono">{h.symbol}</span> },
                                     { label: 'Shares', value: <span className="font-mono">{fmtShares(h.shares)}</span> },
                                     { label: 'Price', value: <span className="font-mono">{fmtCurrency(h.latestPrice)}</span> },
-                                    { label: 'Price Date', value: h.priceDate || '-' },
+                                    {
+                                        label: 'Price Date',
+                                        value: (
+                                            <span className={isStale(h) ? 'text-warning' : undefined}>
+                                                {h.priceDate || '-'}
+                                                {isStale(h) && staleMark}
+                                            </span>
+                                        ),
+                                    },
                                     { label: 'Market Value', value: <span className="font-mono">{fmtCurrency(h.marketValue)}</span> },
                                     {
                                         label: 'Cost Basis',
@@ -200,6 +231,7 @@ export function PortfolioTable({ data, onAccountClick }: PortfolioTableProps) {
     return (
         <div className="p-6">
             {caption}
+            {staleCaption}
             <table className="w-full border-collapse">
                 <thead>
                     <tr className="border-b border-border">
@@ -246,7 +278,10 @@ export function PortfolioTable({ data, onAccountClick }: PortfolioTableProps) {
                             <td className="py-2 px-3 text-sm text-foreground-secondary font-mono">{h.symbol}</td>
                             <td className="py-2 px-3 text-sm text-right font-mono text-foreground">{fmtShares(h.shares)}</td>
                             <td className="py-2 px-3 text-sm text-right font-mono text-foreground">{fmtCurrency(h.latestPrice)}</td>
-                            <td className="py-2 px-3 text-sm text-center text-foreground-secondary">{h.priceDate || '-'}</td>
+                            <td className={`py-2 px-3 text-sm text-center ${isStale(h) ? 'text-warning' : 'text-foreground-secondary'}`}>
+                                {h.priceDate || '-'}
+                                {isStale(h) && staleMark}
+                            </td>
                             <td className="py-2 px-3 text-sm text-right font-mono text-foreground">{fmtCurrency(h.marketValue)}</td>
                             <td className="py-2 px-3 text-sm text-right font-mono text-foreground">
                                 {fmtCurrency(h.costBasis)}

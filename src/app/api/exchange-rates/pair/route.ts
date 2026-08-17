@@ -40,6 +40,10 @@ export async function GET(request: NextRequest) {
             rate: rate.rate,
             date: rate.date.toISOString().split('T')[0],
             source: rate.source,
+            // How far back the lookup had to reach for this quote. Without it a
+            // rate from years ago is indistinguishable from this morning's.
+            ageDays: rate.ageDays,
+            stale: rate.stale,
         });
     } catch (error) {
         console.error('Error fetching exchange rate:', error);

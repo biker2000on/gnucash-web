@@ -8,6 +8,7 @@
 import prisma from './prisma';
 import { toDecimalNumber as toDecimal } from './gnucash';
 import { getActiveBookRootGuid } from './book-scope';
+import { PRICE_STALENESS_DAYS, isPriceStale, priceAgeDays } from './price-staleness';
 
 export interface ExchangeRate {
     fromCurrency: string;
@@ -15,6 +16,18 @@ export interface ExchangeRate {
     rate: number;
     date: Date;
     source: string | null;
+    /**
+     * Whole days between `date` and the as-of date the rate was requested for.
+     * Zero for a same-currency identity, which has no quote to age.
+     */
+    ageDays: number;
+    /**
+     * True when `date` is more than `PRICE_STALENESS_DAYS` before the as-of
+     * date. The rate is still returned and still usable — a conversion the
+     * caller can label is better than a conversion it cannot perform — but a
+     * caller that renders the converted figure must say the quote is old.
+     */
+    stale: boolean;
 }
 
 export interface Currency {
@@ -129,6 +142,21 @@ export async function getAllCurrencies(): Promise<Currency[]> {
 }
 
 /**
+ * Age fields for a quote, relative to the date the rate was asked for.
+ *
+ * Every ExchangeRate is built through this so no return path can quietly omit
+ * the age — the omission being the original defect: the lookup selects the
+ * newest quote at or before the as-of date and never says how far back that
+ * reached, so a rate from three years ago reads exactly like this morning's.
+ */
+function ageOf(priceDate: Date, asOfDate: Date): { ageDays: number; stale: boolean } {
+    return {
+        ageDays: priceAgeDays(priceDate, asOfDate),
+        stale: isPriceStale(priceDate, asOfDate, PRICE_STALENESS_DAYS),
+    };
+}
+
+/**
  * Find the exchange rate between two currencies
  */
 export async function findExchangeRate(
@@ -168,6 +196,9 @@ async function findExchangeRateInternal(
             rate: 1.0,
             date: asOfDate,
             source: 'same-currency',
+            // An identity rests on no quote at all, so it can never go stale.
+            ageDays: 0,
+            stale: false,
         };
     }
 
@@ -192,6 +223,7 @@ async function findExchangeRateInternal(
             rate: toDecimal(directRate.value_num, directRate.value_denom),
             date: directRate.date,
             source: directRate.source,
+            ...ageOf(directRate.date, asOfDate),
         };
     }
 
@@ -217,6 +249,8 @@ async function findExchangeRateInternal(
             rate: rate !== 0 ? 1 / rate : 0,
             date: inverseRate.date,
             source: `inverse:${inverseRate.source}`,
+            // Inverting a quote does not refresh it.
+            ...ageOf(inverseRate.date, asOfDate),
         };
     }
 
@@ -241,12 +275,16 @@ async function findExchangeRateInternal(
             !fromToUsd.source?.startsWith('triangulated') &&
             !usdToTo.source?.startsWith('triangulated')
         ) {
+            // The product is only as current as its OLDER leg: one fresh leg
+            // cannot refresh a rate the other leg quoted months ago.
+            const date = fromToUsd.date < usdToTo.date ? fromToUsd.date : usdToTo.date;
             return {
                 fromCurrency: fromToUsd.fromCurrency,
                 toCurrency: usdToTo.toCurrency,
                 rate: fromToUsd.rate * usdToTo.rate,
-                date: fromToUsd.date < usdToTo.date ? fromToUsd.date : usdToTo.date,
+                date,
                 source: 'triangulated:USD',
+                ...ageOf(date, asOfDate),
             };
         }
     }
@@ -265,12 +303,14 @@ async function findExchangeRateInternal(
         );
 
         if (fromToEur && eurToTo && !fromToEur.source?.startsWith('triangulated') && !eurToTo.source?.startsWith('triangulated')) {
+            const date = fromToEur.date < eurToTo.date ? fromToEur.date : eurToTo.date;
             return {
                 fromCurrency: fromToEur.fromCurrency,
                 toCurrency: eurToTo.toCurrency,
                 rate: fromToEur.rate * eurToTo.rate,
-                date: fromToEur.date < eurToTo.date ? fromToEur.date : eurToTo.date,
+                date,
                 source: 'triangulated:EUR',
+                ...ageOf(date, asOfDate),
             };
         }
     }
@@ -299,6 +339,8 @@ export async function convertAmount(
                 rate: 1.0,
                 date: date || new Date(),
                 source: 'same-currency',
+                ageDays: 0,
+                stale: false,
             },
         };
     }

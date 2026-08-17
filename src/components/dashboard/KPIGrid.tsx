@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { ProvenanceModal } from '@/components/provenance/ProvenanceModal';
+import { PRICE_STALENESS_DAYS } from '@/lib/price-staleness';
 
 interface TraceReference {
     traceId: string;
@@ -14,10 +15,26 @@ interface ValuationGap {
     message: string;
 }
 
+/** Mirrors `StalePriceDisclosure`; declared locally like the gap above. */
+interface StalePrice {
+    commodityGuid: string;
+    label: string;
+    priceDate: string;
+    ageDays: number;
+    message: string;
+}
+
 interface ValuationCoverage {
     complete: boolean;
     unvaluedAccountCount: number;
     gaps: ValuationGap[];
+    /**
+     * Included in the totals, priced from an old quote. Optional for the same
+     * reason `coverage` itself is: a payload cached before this existed must
+     * still render, and an absent list means "not known", which shows nothing
+     * rather than claiming the prices were current.
+     */
+    stalePrices?: StalePrice[];
 }
 
 interface ValuationChangeCoverage extends ValuationCoverage {
@@ -251,6 +268,14 @@ export default function KPIGrid({ data, loading }: KPIGridProps) {
     const partialCaveat = unvaluedCount > 0
         ? `Partial: excludes ${unvaluedCount} unvalued ${unvaluedCount === 1 ? 'account' : 'accounts'}`
         : undefined;
+    // The other way a total goes quietly wrong: everything is priced, from
+    // quotes that stopped updating. Unlike the exclusion above, the money IS in
+    // the number -- so this qualifies the figure rather than shrinking it.
+    const stalePrices = coverage?.stalePrices ?? [];
+    const staleCaveat = stalePrices.length > 0
+        ? `Priced from quotes over ${PRICE_STALENESS_DAYS} days old`
+        : undefined;
+    const valuationCaveat = [partialCaveat, staleCaveat].filter(Boolean).join(' · ') || undefined;
     // When the two dates could not value the same holdings, the difference
     // between them is an artifact of the missing data, not a gain or loss.
     // An ABSENT field means unknown, and unknown fails safe to "not shown": a
@@ -265,14 +290,14 @@ export default function KPIGrid({ data, loading }: KPIGridProps) {
         : changeCoverage && !changeCoverage.complete
             ? changeCoverage
             : undefined;
-    const showBanner = bannerCoverage !== undefined || !changeComparable;
+    const showBanner = bannerCoverage !== undefined || !changeComparable || stalePrices.length > 0;
 
     const cards: KPICardProps[] = [
         {
             icon: <IconNetWorth />,
             label: 'Net Worth',
             value: formatCurrency(data.netWorth),
-            caveat: partialCaveat,
+            caveat: valuationCaveat,
             change: changeComparable ? (
                 <div className="flex items-center gap-2">
                     <ChangeIndicator value={data.netWorthChange} />
@@ -319,7 +344,7 @@ export default function KPIGrid({ data, loading }: KPIGridProps) {
             icon: <IconInvestment />,
             label: 'Investment Value',
             value: formatCurrency(data.investmentValue),
-            caveat: partialCaveat,
+            caveat: valuationCaveat,
             traceId: data.traces?.investmentValue?.traceId,
             onExplain: setSelectedTraceId,
         },
@@ -329,13 +354,17 @@ export default function KPIGrid({ data, loading }: KPIGridProps) {
         <>
             {showBanner && (
                 <div
-                    role="alert"
+                    // A missing figure interrupts; a figure that is present but
+                    // priced from an old quote announces politely.
+                    role={bannerCoverage || !changeComparable ? 'alert' : 'status'}
                     className="bg-warning/10 border border-warning/30 rounded-lg px-4 py-3 mb-4 text-sm text-warning"
                 >
                     <div className="font-medium">
                         {bannerCoverage
                             ? 'These totals are incomplete'
-                            : 'Net worth change is not available'}
+                            : !changeComparable
+                                ? 'Net worth change is not available'
+                                : `These totals use prices more than ${PRICE_STALENESS_DAYS} days old`}
                     </div>
                     {bannerCoverage && bannerCoverage.gaps.length > 0 && (
                         <ul className="mt-1.5 space-y-1 text-xs">
@@ -356,6 +385,13 @@ export default function KPIGrid({ data, loading }: KPIGridProps) {
                                 ? 'The start and end dates could not value the same holdings, so the net worth change and percentage are not shown.'
                                 : 'The net worth change could not be checked against both dates, so it is not shown. Reload to recompute.'}
                         </p>
+                    )}
+                    {stalePrices.length > 0 && (
+                        <ul className="mt-1.5 space-y-1 text-xs">
+                            {stalePrices.map(stale => (
+                                <li key={stale.commodityGuid}>{stale.message}</li>
+                            ))}
+                        </ul>
                     )}
                 </div>
             )}

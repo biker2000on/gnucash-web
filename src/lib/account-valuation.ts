@@ -1,6 +1,14 @@
 import prisma from '@/lib/prisma';
 import { toDecimalNumber as toDecimal } from '@/lib/gnucash';
 import { getBaseCurrency, type Currency } from '@/lib/currency';
+import {
+  PRICE_STALENESS_DAYS,
+  describeStalePrice,
+  isPriceStale,
+  type StalePriceDisclosure,
+} from '@/lib/price-staleness';
+
+export type { StalePriceDisclosure } from '@/lib/price-staleness';
 
 const INVESTMENT_TYPES = ['STOCK', 'MUTUAL'];
 const TRIANGULATION_MNEMONICS = ['USD', 'EUR'];
@@ -41,6 +49,19 @@ export interface ValuationCoverage {
   unvaluedAccountCount: number;
   /** The commodities behind those accounts, with user-facing explanations. */
   gaps: ValuationGap[];
+  /**
+   * Commodities that ARE in the total but were priced from a quote older than
+   * `PRICE_STALENESS_DAYS`.
+   *
+   * A distinct list from `gaps` because it makes a distinct statement, and the
+   * two must not be read as one: a gap says a balance was left OUT, so the
+   * statement's balance check cannot be assessed; a stale price says the
+   * balance is IN, at a value that may have moved since it was quoted. Folding
+   * staleness into `gaps` would tell a reader their holdings were excluded when
+   * they were not, and would flip `complete` — and with it the balance check —
+   * over a price age that does not unbalance anything.
+   */
+  stalePrices: StalePriceDisclosure[];
 }
 
 /**
@@ -66,9 +87,13 @@ export function collectValuationCoverage(
 ): ValuationCoverage {
   let unvaluedAccountCount = 0;
   const unvaluedCommodityGuids = new Set<string>();
+  // Same materiality policy as the gaps above: a stale quote for a position the
+  // book no longer holds cannot move a total it does not appear in.
+  const heldCommodityGuids = new Set<string>();
 
   for (const { account, quantity } of balances) {
     if (Math.abs(quantity) <= UNVALUED_QUANTITY_EPSILON) continue;
+    if (account.commodityGuid) heldCommodityGuids.add(account.commodityGuid);
     if (valuation.isConvertible?.(account) === false) {
       unvaluedAccountCount++;
       if (account.commodityGuid) unvaluedCommodityGuids.add(account.commodityGuid);
@@ -79,6 +104,9 @@ export function collectValuationCoverage(
     complete: unvaluedAccountCount === 0,
     unvaluedAccountCount,
     gaps: (valuation.gaps ?? []).filter(gap => unvaluedCommodityGuids.has(gap.commodityGuid)),
+    stalePrices: (valuation.stalePrices ?? []).filter(
+      stale => heldCommodityGuids.has(stale.commodityGuid),
+    ),
   };
 }
 
@@ -93,10 +121,17 @@ export function mergeValuationCoverage(
       gaps.push(gap);
     }
   }
+  const stalePrices = [...(a.stalePrices ?? [])];
+  for (const stale of b.stalePrices ?? []) {
+    if (!stalePrices.some(existing => existing.commodityGuid === stale.commodityGuid)) {
+      stalePrices.push(stale);
+    }
+  }
   return {
     complete: a.complete && b.complete,
     unvaluedAccountCount: Math.max(a.unvaluedAccountCount, b.unvaluedAccountCount),
     gaps,
+    stalePrices,
   };
 }
 
@@ -119,6 +154,12 @@ export interface AccountValuationContext {
   gaps?: ValuationGap[];
   /** Human-readable reasons for each unconvertible commodity, one per gap. */
   warnings?: string[];
+  /**
+   * One entry per commodity that WAS valued, from a quote older than the
+   * staleness bound. Optional so existing test doubles of this context stay
+   * valid; `collectValuationCoverage` reads it through `?? []`.
+   */
+  stalePrices?: StalePriceDisclosure[];
 }
 
 interface PricePairRow {
@@ -128,6 +169,28 @@ interface PricePairRow {
   currency_mnemonic: string;
   value_num: bigint | number | string;
   value_denom: bigint | number | string;
+  /** Quote date of the selected row, for the staleness bound. */
+  date: Date | string | null;
+}
+
+/**
+ * A rate together with the date of the oldest quote it was built from. The date
+ * is null only when no quote was involved at all (a commodity converted to
+ * itself), which is the one rate that cannot age.
+ */
+interface DatedRate {
+  rate: number;
+  date: Date | string | null;
+}
+
+/** The older of two quote dates; null only when neither leg has one. */
+function olderDate(
+  a: Date | string | null,
+  b: Date | string | null,
+): Date | string | null {
+  if (a === null) return b;
+  if (b === null) return a;
+  return new Date(a).getTime() <= new Date(b).getTime() ? a : b;
 }
 
 function isInvestmentAccount(account: AccountValuationInput): boolean {
@@ -146,7 +209,7 @@ async function loadLatestPricePairs(
   commodityGuids: string[],
   asOfDate: Date,
   mnemonics?: Map<string, string>,
-): Promise<Map<string, number>> {
+): Promise<Map<string, DatedRate>> {
   const uniqueGuids = [...new Set(commodityGuids.filter(Boolean))];
   if (uniqueGuids.length === 0) return new Map();
 
@@ -157,7 +220,8 @@ async function loadLatestPricePairs(
       pc.mnemonic AS commodity_mnemonic,
       cc.mnemonic AS currency_mnemonic,
       p.value_num,
-      p.value_denom
+      p.value_denom,
+      p.date
     FROM prices p
     JOIN commodities pc ON pc.guid = p.commodity_guid
     JOIN commodities cc ON cc.guid = p.currency_guid
@@ -178,19 +242,26 @@ async function loadLatestPricePairs(
   return new Map(
     rows.map(row => [
       pairKey(row.commodity_guid, row.currency_guid),
-      toDecimal(row.value_num, row.value_denom),
+      { rate: toDecimal(row.value_num, row.value_denom), date: row.date ?? null },
     ])
   );
 }
 
-function getPairRate(pricePairs: Map<string, number>, fromGuid: string, toGuid: string): number | null {
-  if (fromGuid === toGuid) return 1;
+function getPairRate(
+  pricePairs: Map<string, DatedRate>,
+  fromGuid: string,
+  toGuid: string,
+): DatedRate | null {
+  if (fromGuid === toGuid) return { rate: 1, date: null };
 
   const direct = pricePairs.get(pairKey(fromGuid, toGuid));
   if (direct !== undefined) return direct;
 
   const inverse = pricePairs.get(pairKey(toGuid, fromGuid));
-  if (inverse !== undefined) return inverse !== 0 ? 1 / inverse : 0;
+  if (inverse !== undefined) {
+    // Inverting a quote does not refresh it: the date rides along.
+    return { rate: inverse.rate !== 0 ? 1 / inverse.rate : 0, date: inverse.date };
+  }
 
   return null;
 }
@@ -201,11 +272,11 @@ function getPairRate(pricePairs: Map<string, number>, fromGuid: string, toGuid: 
  * than the report currency.
  */
 function getConversionRate(
-  pricePairs: Map<string, number>,
+  pricePairs: Map<string, DatedRate>,
   fromGuid: string,
   toGuid: string,
   pivotGuids: string[]
-): number | null {
+): DatedRate | null {
   const directOrInverse = getPairRate(pricePairs, fromGuid, toGuid);
   if (directOrInverse !== null) return directOrInverse;
 
@@ -214,7 +285,11 @@ function getConversionRate(
     const fromToPivot = getPairRate(pricePairs, fromGuid, pivotGuid);
     const pivotToTarget = getPairRate(pricePairs, pivotGuid, toGuid);
     if (fromToPivot !== null && pivotToTarget !== null) {
-      return fromToPivot * pivotToTarget;
+      return {
+        rate: fromToPivot.rate * pivotToTarget.rate,
+        // A product is only as current as its older leg.
+        date: olderDate(fromToPivot.date, pivotToTarget.date),
+      };
     }
   }
 
@@ -291,6 +366,10 @@ export async function buildAccountValuationContext(
   const mnemonics = new Map<string, string>();
   const pricePairs = await loadLatestPricePairs([...commodityGuids], asOf, mnemonics);
   const gapReasons = new Map<string, ValuationGapReason>();
+  // Quote date behind each commodity's multiplier, for the staleness bound.
+  // Absent when the multiplier rests on no quote (report currency, or an
+  // account type valued at face value), which cannot go stale.
+  const rateDates = new Map<string, Date | string>();
   const reportMnemonic = reportCurrency?.mnemonic ?? 'the report currency';
 
   for (const account of accounts) {
@@ -305,23 +384,45 @@ export async function buildAccountValuationContext(
       const rate = getConversionRate(pricePairs, commodityGuid, reportCurrencyGuid, pivotGuids);
       if (rate === null) {
         gapReasons.set(commodityGuid, 'missing-security-price');
+      } else if (rate.date !== null) {
+        rateDates.set(commodityGuid, rate.date);
       }
-      multiplierCache.set(commodityGuid, rate ?? 0);
+      multiplierCache.set(commodityGuid, rate?.rate ?? 0);
     } else if (account.commodityNamespace === 'CURRENCY') {
       const rate = getConversionRate(pricePairs, commodityGuid, reportCurrencyGuid, pivotGuids);
       if (rate === null) {
         // Falling back to 1 here would present a made-up parity rate as real.
         // Report the gap and let the caller exclude the balance out loud.
         gapReasons.set(commodityGuid, 'missing-exchange-rate');
+      } else if (rate.date !== null) {
+        rateDates.set(commodityGuid, rate.date);
       }
-      multiplierCache.set(commodityGuid, rate ?? 0);
+      multiplierCache.set(commodityGuid, rate?.rate ?? 0);
     } else {
       multiplierCache.set(commodityGuid, 1);
     }
   }
 
-  if (gapReasons.size > 0) {
-    await resolveMissingMnemonics([...gapReasons.keys()], mnemonics);
+  // A stale quote names the commodity the same way a gap does, so both need the
+  // mnemonic backfill. A fully priced, fully current book still triggers
+  // neither, keeping that path query-for-query identical.
+  const staleGuids = [...rateDates.keys()].filter(
+    guid => isPriceStale(rateDates.get(guid), asOf, PRICE_STALENESS_DAYS),
+  );
+  if (gapReasons.size > 0 || staleGuids.length > 0) {
+    await resolveMissingMnemonics([...gapReasons.keys(), ...staleGuids], mnemonics);
+  }
+
+  const stalePrices: StalePriceDisclosure[] = [];
+  for (const guid of staleGuids) {
+    const disclosure = describeStalePrice(
+      guid,
+      mnemonics.get(guid) ?? guid,
+      rateDates.get(guid),
+      asOf,
+      PRICE_STALENESS_DAYS,
+    );
+    if (disclosure) stalePrices.push(disclosure);
   }
 
   const asOfLabel = asOf.toISOString().slice(0, 10);
@@ -351,5 +452,6 @@ export async function buildAccountValuationContext(
     },
     gaps,
     warnings,
+    stalePrices,
   };
 }

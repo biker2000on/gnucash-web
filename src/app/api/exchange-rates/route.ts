@@ -49,6 +49,10 @@ export async function GET(request: NextRequest) {
                 rate: r.rate,
                 date: r.date.toISOString().split('T')[0],
                 source: r.source,
+                // A rate carries how old its quote is, so a consumer never has
+                // to assume the newest row on file is a recent one.
+                ageDays: r.ageDays,
+                stale: r.stale,
             })),
         });
     } catch (error) {
