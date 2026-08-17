@@ -12,6 +12,11 @@ import { PrismaClient } from '@prisma/client';
 import { Pool } from 'pg';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { validateStartupEnvironment } from './src/lib/startup-env';
+import {
+  msUntilNextUtcTime,
+  normalizeRefreshTime,
+  resolvePriceRefreshTargets,
+} from './src/lib/worker/refresh-schedule';
 
 // Last-resort observability: scheduled callbacks and third-party clients must
 // not fail silently. Individual operations still own their normal retry/error
@@ -246,28 +251,36 @@ async function runRefreshForBook(bookGuid: string) {
 }
 
 /**
- * Calculate milliseconds until the next occurrence of a given HH:MM (UTC).
- * If the time has already passed today, schedules for tomorrow.
+ * Arm a daily price-refresh timer for a book.
+ *
+ * The time is validated here as well as at its source. `setTimeout(fn, NaN)`
+ * coerces the delay to 0, so an unvalidated HH:MM reaching this function would
+ * fire immediately, reschedule, and spin the worker at 100% CPU. Refusing to
+ * schedule is the safe failure: no refresh is far better than a hot loop that
+ * also hammers the price provider.
  */
-function msUntilNext(timeStr: string): number {
-  const [hours, minutes] = timeStr.split(':').map(Number);
-  const now = new Date();
-  const target = new Date(now);
-  target.setUTCHours(hours, minutes, 0, 0);
-
-  // If the target time has already passed today, schedule for tomorrow
-  if (target.getTime() <= now.getTime()) {
-    target.setUTCDate(target.getUTCDate() + 1);
+function setSchedule(bookGuid: string, requestedTime: string) {
+  const validated = normalizeRefreshTime(requestedTime);
+  if (!validated) {
+    console.error(
+      `[schedule] refusing to schedule book ${bookGuid}: ${JSON.stringify(requestedTime)} is not a valid HH:MM (UTC)`,
+    );
+    return;
   }
+  // Re-bound as a plain string so the recursive closure below sees the
+  // post-guard type without a non-null assertion.
+  const refreshTime: string = validated;
 
-  return target.getTime() - now.getTime();
-}
-
-function setSchedule(bookGuid: string, refreshTime: string) {
   clearSchedule(bookGuid);
 
   function scheduleNext() {
-    const ms = msUntilNext(refreshTime);
+    const ms = msUntilNextUtcTime(refreshTime);
+    if (ms === null) {
+      // Unreachable given the guard above; bail rather than loop if it ever
+      // becomes reachable.
+      console.error(`[schedule] book ${bookGuid}: unusable refresh time, chain stopped`);
+      return;
+    }
     const nextRun = new Date(Date.now() + ms);
     console.log(`Next refresh for book ${bookGuid} at ${nextRun.toISOString()} (${refreshTime} UTC)`);
 
@@ -292,7 +305,13 @@ function setScheduleGeneric(name: string, timeUtc: string, callback: () => Promi
   if (existing) clearTimeout(existing);
 
   function scheduleNext() {
-    const ms = msUntilNext(timeUtc);
+    const ms = msUntilNextUtcTime(timeUtc);
+    if (ms === null) {
+      // Callers pass literals, so this means a code change introduced a bad
+      // one. Stop the chain rather than spin on a NaN delay.
+      console.error(`[schedule] ${name}: ${JSON.stringify(timeUtc)} is not a valid HH:MM (UTC); not scheduled`);
+      return;
+    }
     const nextRun = new Date(Date.now() + ms);
     console.log(`[schedule] ${name} next run at ${nextRun.toISOString()} (${timeUtc} UTC)`);
 
@@ -322,43 +341,51 @@ function clearSchedule(bookGuid: string) {
 }
 
 /**
- * On startup, query DB for all users with refresh_enabled=true
- * and set up schedules keyed by their book.
+ * On startup, arm a daily price-refresh timer for every book belonging to a
+ * user who enabled refresh.
+ *
+ * Previously this read the user's preference and then scheduled
+ * `books.findFirst()` — an ARBITRARY book. On a multi-book deployment that
+ * refreshed prices against a book the user may hold no permission on, while
+ * the book they actually enabled refresh for kept stale valuations. Book
+ * selection now goes through `getUserBooks()`, the same membership helper the
+ * API routes authorize with, so a schedule can only ever target a book the
+ * user holds a permission row for.
+ *
+ * Time handling is equally strict: `getPreference` decodes the stored JSON
+ * without throwing, and `resolvePriceRefreshTargets` rejects anything that is
+ * not a valid HH:MM before it can reach a timer.
  */
 async function recoverSchedules() {
   try {
     const prisma = createWorkerPrisma();
 
     try {
-      // Find all users with refresh_enabled = true
-      const enabledPrefs = await prisma.gnucash_web_user_preferences.findMany({
-        where: { preference_key: 'refresh_enabled', preference_value: 'true' },
-        select: { user_id: true },
+      // Same pattern as rebuildSimpleFinSchedules: the short-lived worker
+      // client for the bulk scan, the shared services for per-user lookups.
+      const { getPreference } = await import('./src/lib/user-preferences');
+      const { getUserBooks } = await import('./src/lib/services/permission.service');
+
+      const targets = await resolvePriceRefreshTargets({
+        async listRefreshEnabledUserIds() {
+          const enabled = await prisma.gnucash_web_user_preferences.findMany({
+            where: { preference_key: 'refresh_enabled', preference_value: 'true' },
+            select: { user_id: true },
+          });
+          return enabled.map(p => p.user_id);
+        },
+        // null covers both "unset" and "stored value is not even valid JSON";
+        // either way there is no usable stored time, and the resolver owns the
+        // single definition of the default. A value that IS valid JSON but not
+        // a valid HH:MM ('25:99', 'banana', 7) reaches the resolver intact and
+        // is skipped there rather than silently defaulted.
+        readRefreshTime: userId => getPreference<unknown>(userId, 'refresh_time', null),
+        listAuthorizedBooks: userId => getUserBooks(userId),
       });
 
-      for (const pref of enabledPrefs) {
-        const timePref = await prisma.gnucash_web_user_preferences.findUnique({
-          where: {
-            user_id_preference_key: {
-              user_id: pref.user_id,
-              preference_key: 'refresh_time',
-            },
-          },
-          select: { preference_value: true },
-        });
-
-        const refreshTime = timePref
-          ? JSON.parse(timePref.preference_value) || '21:00'
-          : '21:00';
-
-        // Find books this user has access to (via user_books or all books for admin)
-        const firstBook = await prisma.books.findFirst({
-          select: { guid: true },
-        });
-
-        if (firstBook && !schedules.has(firstBook.guid)) {
-          setSchedule(firstBook.guid, refreshTime);
-        }
+      for (const target of targets) {
+        if (schedules.has(target.bookGuid)) continue;
+        setSchedule(target.bookGuid, target.refreshTime);
       }
 
       console.log(`Recovered ${schedules.size} schedule(s) from DB`);
