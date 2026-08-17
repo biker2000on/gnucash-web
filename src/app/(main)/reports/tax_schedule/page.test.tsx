@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import TaxSchedulePage from './page';
 
@@ -18,5 +18,16 @@ describe('Tax Schedule page', () => {
     render(<TaxSchedulePage />);
     await waitFor(() => expect(screen.getByText('Short-term gain')).toBeInTheDocument());
     expect(screen.getByText('$8,400.00')).toBeInTheDocument();
+  });
+
+  it('shows a download error when the TXF request fails', async () => {
+    const fetch = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => report })
+      .mockResolvedValueOnce({ ok: false, json: async () => ({ error: 'Export unavailable' }) });
+    vi.stubGlobal('fetch', fetch);
+    render(<TaxSchedulePage />);
+    await waitFor(() => expect(screen.getByText('Short-term gain')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: 'Download .txf' }));
+    await waitFor(() => expect(screen.getByText('TXF download failed')).toBeInTheDocument());
   });
 });

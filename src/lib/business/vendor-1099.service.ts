@@ -178,20 +178,23 @@ export function aggregateEligibleVendorPayments(
         paid: number;
         cardFundingAmount: number;
         totalFundingAmount: number;
+        transactionPayableAmount: number;
     }>,
 ): Map<string, number> {
     const totals = new Map<string, number>();
     for (const payment of payments) {
-        // Funding legs are only cash/settlement balance-sheet accounts
-        // (ASSET/BANK/CASH/LIABILITY/CREDIT), never expense, discount, or
-        // rounding splits. Settle at most the A/P amount, then apportion that
-        // settled amount by card vs non-card funding; any residual is explicit
-        // non-cash settlement and is not treated as 1099 cash paid.
+        // When a transaction settles several A/P splits, funding cannot be
+        // matched to a specific payable. Allocate flagged-card funding pro
+        // rata by each payable's magnitude. Only known funding is allocated;
+        // an uncovered or unrecognized remainder is conservatively reportable.
         const totalFunding = Math.max(0, payment.totalFundingAmount);
         const cardFunding = Math.min(totalFunding, Math.max(0, payment.cardFundingAmount));
-        const settledMagnitude = Math.min(Math.abs(payment.paid), totalFunding);
-        const nonCardRatio = totalFunding > 0 ? (totalFunding - cardFunding) / totalFunding : 0;
-        const eligiblePaid = round2(Math.sign(payment.paid) * settledMagnitude * nonCardRatio);
+        const payableMagnitude = Math.abs(payment.paid);
+        const payableShare = payment.transactionPayableAmount > 0
+            ? payableMagnitude / payment.transactionPayableAmount
+            : 0;
+        const cardAllocatedToPayable = Math.min(payableMagnitude, cardFunding * payableShare);
+        const eligiblePaid = round2(Math.sign(payment.paid) * (payableMagnitude - cardAllocatedToPayable));
         totals.set(payment.vendorGuid, round2((totals.get(payment.vendorGuid) ?? 0) + eligiblePaid));
     }
     return totals;
@@ -316,7 +319,7 @@ export async function get1099Summary(
         // network source are excluded: their settlement entity reports them on
         // Form 1099-K, not this payer's 1099-NEC. Payments debit A/P (positive
         // splits), so the sum reads positive.
-        prisma.$queryRaw<{ vendor_guid: string; paid: number; card_funding_amount: number; total_funding_amount: number }[]>`
+        prisma.$queryRaw<{ vendor_guid: string; paid: number; card_funding_amount: number; total_funding_amount: number; transaction_payable_amount: number }[]>`
             WITH inv AS (
                 SELECT
                     i.post_txn, i.post_lot,
@@ -332,7 +335,8 @@ export async function get1099Summary(
                 inv.eff_owner_guid AS vendor_guid,
                 (s.value_num::numeric / NULLIF(s.value_denom, 0)::numeric)::float8 AS paid,
                 funding.card_funding_amount,
-                funding.total_funding_amount
+                funding.total_funding_amount,
+                funding.transaction_payable_amount
             FROM inv
             JOIN splits s ON s.lot_guid = inv.post_lot AND s.tx_guid <> inv.post_txn
             JOIN transactions t ON t.guid = s.tx_guid
@@ -341,6 +345,15 @@ export async function get1099Summary(
                     COALESCE(SUM(ABS(funding.value_num::numeric / NULLIF(funding.value_denom, 0)::numeric))
                       FILTER (WHERE funding_pref.is_card_payment_source = true), 0)::float8 AS card_funding_amount,
                     COALESCE(SUM(ABS(funding.value_num::numeric / NULLIF(funding.value_denom, 0)::numeric)), 0)::float8 AS total_funding_amount
+                    ,COALESCE((
+                        SELECT SUM(ABS(payable.value_num::numeric / NULLIF(payable.value_denom, 0)::numeric))
+                        FROM splits payable
+                        JOIN accounts payable_account ON payable_account.guid = payable.account_guid
+                        WHERE payable.tx_guid = s.tx_guid
+                          AND payable_account.account_type = 'PAYABLE'
+                          AND (payable.value_num::numeric / NULLIF(payable.value_denom, 0)::numeric)
+                              * SIGN(s.value_num::numeric / NULLIF(s.value_denom, 0)::numeric) > 0
+                    ), 0)::float8 AS transaction_payable_amount
                 FROM splits funding
                 JOIN accounts funding_account ON funding_account.guid = funding.account_guid
                 LEFT JOIN gnucash_web_account_preferences funding_pref ON funding_pref.account_guid = funding.account_guid
@@ -365,6 +378,7 @@ export async function get1099Summary(
         paid: r.paid,
         cardFundingAmount: r.card_funding_amount,
         totalFundingAmount: r.total_funding_amount,
+        transactionPayableAmount: r.transaction_payable_amount,
     })));
 
     const guids = vendorRows.map((v) => v.guid);

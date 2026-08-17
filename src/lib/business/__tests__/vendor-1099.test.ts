@@ -117,7 +117,7 @@ describe('corporate classification exemption', () => {
 describe('card-funded payment exclusion', () => {
     it('apportions mixed funding and keeps the checking-funded amount reportable', () => {
         const payments = aggregateEligibleVendorPayments([
-            { vendorGuid: 'vendor-1', paid: 2_900, cardFundingAmount: 400, totalFundingAmount: 2_900 },
+            { vendorGuid: 'vendor-1', paid: 2_900, cardFundingAmount: 400, totalFundingAmount: 2_900, transactionPayableAmount: 2_900 },
         ]);
         expect(payments.get('vendor-1')).toBe(2_500);
         const summary = buildVendor1099Summary(
@@ -133,7 +133,7 @@ describe('card-funded payment exclusion', () => {
 
     it('preserves all payment amount when no card funding is present', () => {
         expect(aggregateEligibleVendorPayments([
-            { vendorGuid: 'vendor-1', paid: 1_500, cardFundingAmount: 0, totalFundingAmount: 1_500 },
+            { vendorGuid: 'vendor-1', paid: 1_500, cardFundingAmount: 0, totalFundingAmount: 1_500, transactionPayableAmount: 1_500 },
         ]).get('vendor-1')).toBe(1_500);
     });
 
@@ -141,13 +141,30 @@ describe('card-funded payment exclusion', () => {
         const payments = aggregateEligibleVendorPayments([
             // A/P $20,000; materials $5,000; flagged Visa $25,000. The
             // expense is not a funding leg, so the payable is fully card-paid.
-            { vendorGuid: 'vendor-1', paid: 20_000, cardFundingAmount: 25_000, totalFundingAmount: 25_000 },
+            { vendorGuid: 'vendor-1', paid: 20_000, cardFundingAmount: 25_000, totalFundingAmount: 25_000, transactionPayableAmount: 20_000 },
         ]);
         const summary = buildVendor1099Summary(
             2026, [{ guid: 'vendor-1', name: 'Ridgeline Fencing LLC', active: true }],
             payments, new Map(), new Map(), 2_000,
         );
         expect(summary.vendors[0]).toMatchObject({ totalPaid: 0, crosses600: false, status: 'below_threshold' });
+    });
+
+    it('treats unknown funding as fully reportable so unflagged books do not change', () => {
+        const payments = aggregateEligibleVendorPayments([
+            // Owner-contribution equity is not a recognized settlement leg.
+            { vendorGuid: 'vendor-1', paid: 9_000, cardFundingAmount: 0, totalFundingAmount: 0, transactionPayableAmount: 9_000 },
+        ]);
+        expect(payments.get('vendor-1')).toBe(9_000);
+    });
+
+    it('allocates card funding pro rata to each payable in a multi-vendor payment', () => {
+        const payments = aggregateEligibleVendorPayments([
+            { vendorGuid: 'vendor-a', paid: 3_000, cardFundingAmount: 1_000, totalFundingAmount: 4_000, transactionPayableAmount: 4_000 },
+            { vendorGuid: 'vendor-b', paid: 1_000, cardFundingAmount: 1_000, totalFundingAmount: 4_000, transactionPayableAmount: 4_000 },
+        ]);
+        expect(payments.get('vendor-a')).toBe(2_250);
+        expect(payments.get('vendor-b')).toBe(750);
     });
 });
 

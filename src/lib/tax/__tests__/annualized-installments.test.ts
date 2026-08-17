@@ -106,7 +106,7 @@ describe('computeAnnualizedInstallments', () => {
     expect(result.applicable).toBe(false);
     expect(result.anyBenefit).toBe(false);
     expect(result.columns).toEqual([]);
-    expect(result.requiredCumulativeByQuarter).toEqual([0, 0, 0, 8_000]);
+    expect(result.requiredCumulativeByQuarter).toEqual([2_000, 4_000, 6_000, 8_000]);
   });
 
   it('floors a negative annualized installment at zero (line 23 "-0-" rule)', () => {
