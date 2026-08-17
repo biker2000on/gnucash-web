@@ -7,6 +7,12 @@ const elapsedTimeAge = (birthday: string, asOf: Date) => Math.floor(
 );
 
 describe('calculateCalendarAge', () => {
+  it('returns null rather than throwing for absent birthdays', () => {
+    const asOf = new Date('2026-03-01T00:00:00Z');
+    expect(calculateCalendarAge(null, asOf)).toBeNull();
+    expect(calculateCalendarAge(undefined, asOf)).toBeNull();
+  });
+
   it('fixes the profile age display regression: elapsed time says 73, calendar age says 74', () => {
     const asOf = new Date('2026-03-01T00:00:00Z');
     expect(elapsedTimeAge('1952-03-01', asOf)).toBe(73);

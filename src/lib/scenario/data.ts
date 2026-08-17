@@ -60,7 +60,7 @@ export function ageFromBirthday(birthday: string | null, asOf: Date): number | n
   return years > 0 && years < 120 ? years : null;
 }
 
-function isAge65PlusAtYearEnd(birthday: string | null, year: number): boolean {
+export function isAge65PlusAtYearEnd(birthday: string | null, year: number): boolean {
   if (!birthday) return false;
   const birthYear = parseInt(birthday.slice(0, 4), 10);
   if (!Number.isFinite(birthYear)) return false;

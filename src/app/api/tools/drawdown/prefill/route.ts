@@ -38,6 +38,12 @@ const BROKERAGE_PATH_PATTERN = /brokerage|invest/i;
 const EARNINGS_CATEGORIES: ReadonlySet<TaxCategory> = new Set(['w2_wages', 'self_employment_income']);
 const EARNINGS_NAME_PATTERN = /salary|wages|paycheck|payroll/i;
 
+/** Current age used to anchor drawdown projections, or null when unsuitable. */
+export function drawdownAgeFromBirthday(birthday: string | null | undefined, asOf = new Date()): number | null {
+    const age = calculateCalendarAge(birthday, asOf, 'utc');
+    return age !== null && age > 0 && age < 120 ? age : null;
+}
+
 interface AccountRow {
     guid: string;
     name: string;
@@ -293,8 +299,7 @@ export async function GET() {
         /* --- Birthday-derived current age --- */
         let currentAge: number | null = null;
         if (birthday) {
-            const ageYears = calculateCalendarAge(birthday, new Date(), 'utc');
-            if (ageYears !== null && ageYears > 0 && ageYears < 120) currentAge = ageYears;
+            currentAge = drawdownAgeFromBirthday(birthday);
         }
 
         return NextResponse.json({

@@ -7,13 +7,15 @@
  * those parts are compared as supplied, preserving their existing contract.
  */
 export function calculateCalendarAge(
-  birthday: string | { year: number; month: number; day: number },
+  birthday: string | { year: number; month: number; day: number } | null | undefined,
   asOf: Date,
   timeZone: 'utc' | 'local' = 'utc',
 ): number | null {
   let year: number;
   let month: number;
   let day: number;
+
+  if (birthday == null) return null;
 
   if (typeof birthday === 'string') {
     const suffix = timeZone === 'utc' ? 'Z' : '';
