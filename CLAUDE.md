@@ -68,7 +68,8 @@ docker run -p 3000:3000 -e DATABASE_URL="..." gnucash-web
 
 - `contribution-summary.ts` - Contribution report generator: batch SQL query, classification, IRS limits
 - `contribution-classifier.ts` - Classifies deposits as contribution/transfer/employer match/dividend/fee
-- `irs-limits.ts` - IRS contribution limit defaults (2024-2026) with DB overrides and catch-up calculation
+- `irs-limit-tables.ts` - Browser-safe leaf: IRS contribution limit tables (2024-2026), 1099-NEC thresholds, and the pure catch-up / SECURE 2.0 super catch-up arithmetic. Client Components must import limits from HERE.
+- `irs-limits.ts` - Server-only: layers DB overrides over `irs-limit-tables` and re-exports it. Imports prisma, so it must never be client-reachable (see `src/__tests__/client-bundle-prisma.test.ts`).
 
 ### Services (src/lib/services/)
 
