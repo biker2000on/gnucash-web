@@ -15,7 +15,11 @@ if (hasTestDatabase) process.env.DATABASE_URL = process.env.TEST_DATABASE_URL;
 let idempotency: IdempotencyModule;
 let prismaModule: PrismaModule;
 let secondPrisma: import('@prisma/client').PrismaClient;
-const bookGuid = 'f'.repeat(32);
+const fixtureId = crypto.randomUUID().replaceAll('-', '');
+const bookGuid = fixtureId;
+const currencyGuid = crypto.randomUUID().replaceAll('-', '');
+const rootAccountGuid = crypto.randomUUID().replaceAll('-', '');
+const postingAccountGuid = crypto.randomUUID().replaceAll('-', '');
 const testKeys: string[] = [];
 
 function key(suffix: string): string {
@@ -37,6 +41,33 @@ describe.skipIf(!hasTestDatabase)('webhook idempotency against PostgreSQL', () =
       adapter: new PrismaPg(new Pool({ connectionString: process.env.TEST_DATABASE_URL, max: 1 })),
     });
     await idempotency.ensureWebhookIdempotencyTable();
+    const prisma = prismaModule.default;
+    // Integration fixtures own all prerequisite GnuCash rows; CI provisions
+    // an empty database, so this suite must not depend on a developer's book.
+    await prisma.$executeRaw`
+      INSERT INTO commodities
+        (guid, namespace, mnemonic, fullname, cusip, fraction, quote_flag, quote_source, quote_tz)
+      VALUES (${currencyGuid}, 'CURRENCY', ${`IT${fixtureId.slice(0, 12)}`}, 'Integration Test Currency',
+              NULL, 100, 0, NULL, NULL)
+    `;
+    await prisma.$executeRaw`
+      INSERT INTO accounts
+        (guid, name, account_type, commodity_guid, commodity_scu, non_std_scu,
+         parent_guid, code, description, hidden, placeholder)
+      VALUES (${rootAccountGuid}, 'Integration Test Root', 'ROOT', ${currencyGuid}, 100, 0,
+              NULL, NULL, NULL, 0, 1)
+    `;
+    await prisma.$executeRaw`
+      INSERT INTO accounts
+        (guid, name, account_type, commodity_guid, commodity_scu, non_std_scu,
+         parent_guid, code, description, hidden, placeholder)
+      VALUES (${postingAccountGuid}, 'Integration Test Posting', 'ASSET', ${currencyGuid}, 100, 0,
+              ${rootAccountGuid}, NULL, NULL, 0, 0)
+    `;
+    await prisma.$executeRaw`
+      INSERT INTO books (guid, root_account_guid, root_template_guid, name, description)
+      VALUES (${bookGuid}, ${rootAccountGuid}, ${rootAccountGuid}, 'Webhook idempotency integration fixture', NULL)
+    `;
   });
 
   afterAll(async () => {
@@ -51,6 +82,10 @@ describe.skipIf(!hasTestDatabase)('webhook idempotency against PostgreSQL', () =
       WHERE book_guid = ${bookGuid} AND idempotency_key = ANY(${testKeys}::text[])
     `;
     expect(rows[0]?.count ?? 0n).toBe(0n);
+    await prisma.$executeRaw`DELETE FROM books WHERE guid = ${bookGuid}`;
+    await prisma.$executeRaw`DELETE FROM accounts WHERE guid = ${postingAccountGuid}`;
+    await prisma.$executeRaw`DELETE FROM accounts WHERE guid = ${rootAccountGuid}`;
+    await prisma.$executeRaw`DELETE FROM commodities WHERE guid = ${currencyGuid}`;
     await secondPrisma.$disconnect();
     await prisma.$disconnect();
   });
@@ -94,15 +129,7 @@ describe.skipIf(!hasTestDatabase)('webhook idempotency against PostgreSQL', () =
     const prisma = prismaModule.default;
     expect(await idempotency.claimWebhookIdempotency(bookGuid, 'transaction', eventKey))
       .toEqual({ status: 'claimed', attempt: 1 });
-    const accounts = await prisma.$queryRaw<Array<{ account_guid: string; currency_guid: string }>>`
-      SELECT a.guid AS account_guid, a.commodity_guid AS currency_guid
-      FROM accounts a
-      JOIN commodities c ON c.guid = a.commodity_guid
-      WHERE a.placeholder = 0
-      LIMIT 1
-    `;
-    expect(accounts).toHaveLength(1);
-    const account = accounts[0]!;
+    const account = { account_guid: postingAccountGuid, currency_guid: currencyGuid };
 
     await expect(prisma.$transaction(async (database) => {
       await idempotency.lockWebhookIdempotencyAttempt(bookGuid, 'transaction', eventKey, 1, database);
