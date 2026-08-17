@@ -5,6 +5,7 @@ import { useTheme } from '@/contexts/ThemeContext';
 import { Abbr } from '@/components/ui/Abbr';
 import { usePWAInstall } from '@/contexts/PWAInstallContext';
 import { product } from '@/lib/product';
+import { calculateCalendarAge } from '@/lib/age';
 
 interface User {
     id: number;
@@ -25,6 +26,11 @@ const OIDC_STATUS_MESSAGES: Record<string, { type: 'success' | 'error'; text: st
     cancelled: { type: 'error', text: 'Linking was cancelled.' },
     error: { type: 'error', text: 'Linking failed. Please try again.' },
 };
+
+/** Calendar age displayed for the saved profile birthday. */
+export function profileAgeFromBirthday(birthday: string | null | undefined, asOf = new Date()): number | null {
+    return calculateCalendarAge(birthday, asOf, 'utc');
+}
 
 const THEME_OPTIONS: { value: 'light' | 'dark' | 'system'; label: string; description: string; icon: string }[] = [
     {
@@ -442,7 +448,7 @@ export default function ProfilePage() {
                 </div>
                 {birthday && !birthdayLoading && (
                     <p className="mt-2 text-xs text-foreground-muted">
-                        Age: {Math.floor((Date.now() - new Date(birthday + 'T00:00:00').getTime()) / (365.25 * 24 * 60 * 60 * 1000))} years
+                        Age: {profileAgeFromBirthday(birthday)} years
                     </p>
                 )}
             </div>
