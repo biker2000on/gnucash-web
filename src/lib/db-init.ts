@@ -693,6 +693,9 @@ async function createExtensionTables() {
 
         ALTER TABLE gnucash_web_account_preferences
         ADD COLUMN IF NOT EXISTS owner VARCHAR(10);
+
+        ALTER TABLE gnucash_web_account_preferences
+        ADD COLUMN IF NOT EXISTS is_card_payment_source BOOLEAN NOT NULL DEFAULT FALSE;
     `;
 
     const contributionLimitsTableDDL = `
@@ -1224,6 +1227,19 @@ async function createExtensionTables() {
         );
         ALTER TABLE gnucash_web_vendor_tax_info
           ADD COLUMN IF NOT EXISTS w9_requested_date DATE;
+        ALTER TABLE gnucash_web_vendor_tax_info
+          ADD COLUMN IF NOT EXISTS exempt_from_1099_override BOOLEAN;
+        ALTER TABLE gnucash_web_vendor_tax_info
+          ADD COLUMN IF NOT EXISTS exempt_from_1099_override_initialized BOOLEAN NOT NULL DEFAULT false;
+        ALTER TABLE gnucash_web_vendor_tax_info
+          ADD COLUMN IF NOT EXISTS attorney_or_medical_payments BOOLEAN NOT NULL DEFAULT false;
+        -- Preserve every legacy checkbox choice as an explicit decision. The
+        -- corporation default applies only to tax-info rows created after this
+        -- one-time migration; existing vendors never silently change status.
+        UPDATE gnucash_web_vendor_tax_info
+          SET exempt_from_1099_override = exempt_from_1099,
+              exempt_from_1099_override_initialized = true
+          WHERE NOT exempt_from_1099_override_initialized;
 
         -- Per-vendor-year 1099-NEC filing status (dates only; no TINs here).
         CREATE TABLE IF NOT EXISTS gnucash_web_vendor_1099_filings (

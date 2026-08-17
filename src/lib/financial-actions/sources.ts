@@ -920,7 +920,13 @@ export async function vendor1099ComplianceActions(
   const linkedByTarget = await linkedDocumentsForType(bookGuid, 'vendor_1099');
 
   for (const taxYear of [currentYear - 1, currentYear]) {
-    const compliance = await get1099Compliance(bookGuid, bookAccountGuids, taxYear, now);
+    let compliance;
+    try {
+      compliance = await get1099Compliance(bookGuid, bookAccountGuids, taxYear, now);
+    } catch (error) {
+      console.warn(`Vendor 1099 compliance unavailable for ${taxYear}:`, error);
+      continue;
+    }
     if (compliance.reportableCount === 0) continue;
     const href = `/business/reports/1099?year=${taxYear}`;
 

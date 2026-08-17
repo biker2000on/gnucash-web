@@ -13,6 +13,46 @@ export type RetirementAccountType = typeof RETIREMENT_ACCOUNT_TYPES[number] | 'b
  */
 const NO_FEDERAL_LIMIT_TYPES = new Set(['brokerage', 'education_529']);
 
+/**
+ * The existing annual-limit override table also stores this non-contribution
+ * statutory threshold under this reserved account_type.  Keeping it here
+ * gives the 1099 tracker the same year-keyed default/DB-override behavior as
+ * the contribution-limit resolver without creating another settings store.
+ */
+export const NEC_THRESHOLD_OVERRIDE_ACCOUNT_TYPE = '1099_nec_threshold';
+
+// IRS: 2025 Instructions for Forms 1099-MISC and 1099-NEC; IRS "Am I
+// required to file a Form 1099?" (updated 2026-07) says $600 for payments
+// before 2026 and $2,000 for payments made in 2026.  Later years are omitted
+// intentionally: the IRS says they are inflation-adjusted.
+const NEC_THRESHOLD_DEFAULTS: Readonly<Record<number, number>> = {
+  2021: 600,
+  2022: 600,
+  2023: 600,
+  2024: 600,
+  2025: 600,
+  2026: 2_000,
+};
+
+/** Built-in 1099-NEC threshold, or null where no verified default exists. */
+export function getDefaultNecThreshold(taxYear: number): number | null {
+  return NEC_THRESHOLD_DEFAULTS[taxYear] ?? null;
+}
+
+/**
+ * Resolve the year's 1099-NEC threshold. A deliberate DB override wins;
+ * unknown years return null rather than guessing an inflation adjustment.
+ */
+export async function getNecThreshold(taxYear: number): Promise<number | null> {
+  const override = await prisma.gnucash_web_contribution_limits.findFirst({
+    where: { tax_year: taxYear, account_type: NEC_THRESHOLD_OVERRIDE_ACCOUNT_TYPE },
+  });
+  if (override && Number.isFinite(Number(override.base_limit)) && Number(override.base_limit) > 0) {
+    return Number(override.base_limit);
+  }
+  return getDefaultNecThreshold(taxYear);
+}
+
 interface LimitDefaults {
   account_type: string;
   base_limit: number;
