@@ -32,7 +32,8 @@ const DEFERRED_SPLIT_DIVISIONS: DivisionException[] = [
     { path: 'lib/tax/book-income.ts', unguarded: 1, perSplitFloat: 0 },
     { path: 'lib/tax/tax-schedule.ts', unguarded: 1, perSplitFloat: 0 },
     // This is non-executable LLM prompt prose, not a code exemption. Follow up
-    // separately to teach generated SQL to use NULLIF for corrupt splits.
+    // separately to teach generated SQL in this file and ai-query/generate.ts
+    // to use NULLIF for corrupt splits.
     { path: 'lib/ai-query/schema-context.ts', unguarded: 2, perSplitFloat: 0, kind: 'prompt-guidance' },
 ];
 
@@ -54,6 +55,8 @@ function sourceFiles(directory: string): string[] {
 }
 
 function countMatches(source: string, pattern: RegExp, promptGuidance: boolean): number {
+    // Silent escape hatches: Prisma.sql fragments composed elsewhere, division
+    // over a view/CTE alias, and $queryRawUnsafe single-quoted SQL strings.
     return [...source.matchAll(pattern)].filter((match) => {
         if (promptGuidance) return true;
         const templateStart = source.lastIndexOf('`', match.index);
@@ -87,8 +90,9 @@ describe('split-fraction aggregate SQL', () => {
     });
 
     // This scan intentionally covers SQL template text only. It does not catch
-    // TypeScript Number(x_num) / Number(x_denom) arithmetic; audit that separately.
-    it('allows only the explicitly deferred unguarded split denominator divisions', () => {
+    // TypeScript Number(x_num) / Number(x_denom) arithmetic (including
+    // trading-accounts.ts:427 and AccountLedger.tsx:923); audit separately.
+    it('keeps the deferred site inventory exact', () => {
         expect(actualDivisionSites()).toEqual(expectedDivisionSites());
     });
 });
