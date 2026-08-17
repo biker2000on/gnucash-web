@@ -82,7 +82,7 @@ export async function GET(request: NextRequest) {
                 a.commodity_guid,
                 c.namespace as commodity_namespace,
                 c.mnemonic as commodity_mnemonic,
-                SUM(CAST(s.quantity_num AS DECIMAL) / NULLIF(CAST(s.quantity_denom AS DECIMAL), 0))::text as total_balance,
+                COALESCE(SUM(CAST(s.quantity_num AS DECIMAL) / NULLIF(CAST(s.quantity_denom AS DECIMAL), 0)), 0)::text as total_balance,
                 SUM(
                     CASE
                         WHEN t.post_date >= ${startDate ? new Date(startDate) : new Date('1970-01-01')}::date
@@ -90,7 +90,7 @@ export async function GET(request: NextRequest) {
                         THEN CAST(s.quantity_num AS DECIMAL) / NULLIF(CAST(s.quantity_denom AS DECIMAL), 0)
                         ELSE 0
                     END
-                )::text as period_balance
+                ), 0)::text as period_balance
             FROM splits s
             JOIN transactions t ON s.tx_guid = t.guid
             JOIN accounts a ON s.account_guid = a.guid

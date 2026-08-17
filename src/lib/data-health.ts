@@ -454,6 +454,7 @@ async function loadZeroDenominators(
     return {
         id: 'zero-denominators',
         label: 'Zero split denominators',
+        // Follow-up: expand this copy when deferred value-denominator report paths are NULLIF-protected.
         description: 'Splits with a zero quantity or value denominator are excluded from NULLIF-protected balances.',
         severity: count > 0 ? 'error' : 'ok',
         count,
