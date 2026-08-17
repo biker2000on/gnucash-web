@@ -85,14 +85,10 @@ const expectedDivisionSites = () => [...DEFERRED_SPLIT_DIVISIONS]
     .sort((a, b) => a.path.localeCompare(b.path));
 
 describe('split-fraction aggregate SQL', () => {
-    it('allows only the explicitly deferred per-split float divisions', () => {
-        expect(actualDivisionSites()).toEqual(expectedDivisionSites());
-    });
-
     // This scan intentionally covers SQL template text only. It does not catch
     // TypeScript Number(x_num) / Number(x_denom) arithmetic (including
     // trading-accounts.ts:427 and AccountLedger.tsx:923); audit separately.
-    it('keeps the deferred site inventory exact', () => {
+    it('keeps the deferred split-division site inventory exact', () => {
         expect(actualDivisionSites()).toEqual(expectedDivisionSites());
     });
 });

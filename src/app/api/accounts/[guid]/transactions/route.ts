@@ -739,6 +739,8 @@ export async function GET(
                 account_splits: accountSplits.map((split) => ({
                     guid: split.guid,
                     reconcile_state: split.reconcile_state || 'n',
+                    // Intentional fixed-point wire format: avoids exponential notation and
+                    // safely renders zero-denominator imports as the shared "0" fallback.
                     amount: toDecimal(split.quantity_num, split.quantity_denom),
                 })),
                 // Transaction meta: reviewed status, source, preserved payee
