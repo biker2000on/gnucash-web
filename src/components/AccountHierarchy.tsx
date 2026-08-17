@@ -1418,6 +1418,7 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                             tax_related: (selectedAccount as unknown as { tax_related?: boolean }).tax_related ?? false,
                             is_retirement: (selectedAccount as unknown as { is_retirement?: boolean }).is_retirement ?? false,
                             retirement_account_type: (selectedAccount as unknown as { retirement_account_type?: string | null }).retirement_account_type ?? null,
+                            is_card_payment_source: (selectedAccount as unknown as { is_card_payment_source?: boolean }).is_card_payment_source ?? false,
                         } : undefined}
                         parentGuid={parentGuid}
                         onSave={handleSave}

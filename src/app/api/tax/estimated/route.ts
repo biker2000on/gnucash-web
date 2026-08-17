@@ -216,7 +216,6 @@ export async function GET(request: NextRequest) {
     const pinned = await loadPinnedPriorYear(user.id, bookGuid);
     const priorYearTax = parseMoney(searchParams.get('priorYearTax')) ?? pinned.priorYearTax ?? null;
     const priorYearAgi = parseMoney(searchParams.get('priorYearAgi')) ?? pinned.priorYearAgi ?? null;
-
     const safeHarbor = computeSafeHarbor({
       year,
       filingStatus,
@@ -224,6 +223,7 @@ export async function GET(request: NextRequest) {
       priorYearTax,
       priorYearAgi,
       withholding: annualized.withholding,
+      isQualifyingFarmer: false,
     });
 
     /* --- Form 2210 Schedule AI annualized installments ------------------ */
@@ -285,6 +285,7 @@ export async function GET(request: NextRequest) {
     const annualizedMethod = computeAnnualizedInstallments({
       requiredAnnualPayment: safeHarbor.requiredAnnualPayment,
       annualizedTaxByColumn,
+      isQualifyingFarmer: false,
     });
 
     /* --- Quarterly progress --------------------------------------------- */

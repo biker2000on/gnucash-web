@@ -21,17 +21,14 @@ import prisma from '@/lib/prisma';
 import { getAccountGuidsForBook } from '@/lib/book-scope';
 import { OWNER_TYPE_JOB, OWNER_TYPE_VENDOR } from '@/lib/business/business-reports';
 import {
-    NEC_THRESHOLD,
     summarizeVendor1099Compliance,
     type Vendor1099ComplianceSummary,
 } from '@/lib/business/vendor-1099-compliance';
+import { getNecThreshold } from '@/lib/reports/irs-limits';
 
 /* ------------------------------------------------------------------ */
 /* Constants + pure helpers (unit-tested)                              */
 /* ------------------------------------------------------------------ */
-
-/** 1099-NEC reporting threshold — canonical value lives in the pure engine. */
-export { NEC_THRESHOLD } from '@/lib/business/vendor-1099-compliance';
 
 export const TAX_CLASSIFICATIONS = [
     'individual/sole_prop',
@@ -45,6 +42,18 @@ export type TaxClassification = (typeof TAX_CLASSIFICATIONS)[number];
 
 /** Classifications that are generally exempt from 1099-NEC reporting. */
 export const CORP_CLASSIFICATIONS: ReadonlySet<string> = new Set(['c_corp', 's_corp']);
+
+/**
+ * The general 1099-NEC corporate exemption. A vendor marked as receiving
+ * attorney or medical payments remains reportable regardless of classification.
+ */
+export function isVendor1099Exempt(taxInfo: VendorTaxInfo | null | undefined): boolean {
+    if (taxInfo?.attorneyOrMedicalPayments) return false;
+    if (taxInfo?.exemptFrom1099Override !== null && taxInfo?.exemptFrom1099Override !== undefined) {
+        return taxInfo.exemptFrom1099Override;
+    }
+    return CORP_CLASSIFICATIONS.has(taxInfo?.taxClassification ?? '');
+}
 
 export function isValidTaxClassification(value: unknown): value is TaxClassification {
     return typeof value === 'string' && (TAX_CLASSIFICATIONS as readonly string[]).includes(value);
@@ -69,9 +78,9 @@ export function maskTin(last4: string, classification?: string | null): string {
     return classification === 'individual/sole_prop' ? `***-**-${last4}` : `**-***${last4}`;
 }
 
-/** Parse and bound a ?year= query param (defaults to the current UTC year). */
+/** Parse and bound a ?year= query param (defaults to the newest verified built-in year). */
 export function parseYearParam(raw: string | null): number | null {
-    if (raw === null || raw === '') return new Date().getUTCFullYear();
+    if (raw === null || raw === '') return 2026;
     const year = parseInt(raw, 10);
     if (!Number.isInteger(year) || year < 1990 || year > 2100) return null;
     return year;
@@ -90,9 +99,10 @@ export function derive1099Status(input: {
     totalPaid: number;
     exempt: boolean;
     w9Received: boolean;
+    threshold: number;
 }): Vendor1099Status {
     if (input.exempt) return 'exempt';
-    if (input.totalPaid < NEC_THRESHOLD) return 'below_threshold';
+    if (input.totalPaid < input.threshold) return 'below_threshold';
     if (!input.w9Received) return 'missing_w9';
     return 'ready';
 }
@@ -112,6 +122,10 @@ export interface VendorTaxInfo {
     /** ISO date (YYYY-MM-DD) the W-9 was requested from the vendor, or null. */
     w9RequestedDate: string | null;
     exemptFrom1099: boolean;
+    /** null = corporation default; boolean = an explicit user decision. */
+    exemptFrom1099Override: boolean | null;
+    /** Attorney-fee or medical/health-care payments remain reportable to corporations. */
+    attorneyOrMedicalPayments?: boolean;
     address: string | null;
     notes: string | null;
 }
@@ -130,6 +144,7 @@ export interface Vendor1099Row {
 
 export interface Vendor1099Summary {
     year: number;
+    threshold: number;
     vendors: Vendor1099Row[];
     totals: {
         /** Vendors at/over the $600 threshold (exempt included in count). */
@@ -156,6 +171,35 @@ export interface VendorListEntry {
     active: boolean;
 }
 
+/** A card/network-funded payment is reported by the settlement entity on 1099-K. */
+export function aggregateEligibleVendorPayments(
+    payments: ReadonlyArray<{
+        vendorGuid: string;
+        paid: number;
+        cardFundingAmount: number;
+        totalFundingAmount: number;
+        transactionPayableAmount: number;
+    }>,
+): Map<string, number> {
+    const totals = new Map<string, number>();
+    for (const payment of payments) {
+        // When a transaction settles several A/P splits, funding cannot be
+        // matched to a specific payable. Allocate flagged-card funding pro
+        // rata by each payable's magnitude. Only known funding is allocated;
+        // an uncovered or unrecognized remainder is conservatively reportable.
+        const totalFunding = Math.max(0, payment.totalFundingAmount);
+        const cardFunding = Math.min(totalFunding, Math.max(0, payment.cardFundingAmount));
+        const payableMagnitude = Math.abs(payment.paid);
+        const payableShare = payment.transactionPayableAmount > 0
+            ? payableMagnitude / payment.transactionPayableAmount
+            : 0;
+        const cardAllocatedToPayable = Math.min(payableMagnitude, cardFunding * payableShare);
+        const eligiblePaid = round2(Math.sign(payment.paid) * (payableMagnitude - cardAllocatedToPayable));
+        totals.set(payment.vendorGuid, round2((totals.get(payment.vendorGuid) ?? 0) + eligiblePaid));
+    }
+    return totals;
+}
+
 /** Assemble summary rows: active vendors plus anyone actually paid in-year. */
 export function buildVendor1099Summary(
     year: number,
@@ -163,6 +207,7 @@ export function buildVendor1099Summary(
     paidByVendor: ReadonlyMap<string, number>,
     taxInfoByVendor: ReadonlyMap<string, VendorTaxInfo>,
     filedByVendor: ReadonlyMap<string, string> = new Map(),
+    threshold: number,
 ): Vendor1099Summary {
     const rows: Vendor1099Row[] = [];
 
@@ -175,12 +220,13 @@ export function buildVendor1099Summary(
             vendorGuid: vendor.guid,
             name: vendor.name,
             totalPaid,
-            crosses600: totalPaid >= NEC_THRESHOLD,
+            crosses600: totalPaid >= threshold,
             taxInfo,
             status: derive1099Status({
                 totalPaid,
-                exempt: taxInfo?.exemptFrom1099 ?? false,
+                exempt: isVendor1099Exempt(taxInfo),
                 w9Received: taxInfo?.w9Received ?? false,
+                threshold,
             }),
             filedDate: filedByVendor.get(vendor.guid) ?? null,
         });
@@ -192,6 +238,7 @@ export function buildVendor1099Summary(
     const nonExempt = reportable.filter((r) => r.status !== 'exempt');
     return {
         year,
+        threshold,
         vendors: rows,
         totals: {
             reportableCount: reportable.length,
@@ -207,7 +254,7 @@ export function buildVendor1099Summary(
 
 const toIsoDate = (d: Date | null): string | null => (d ? d.toISOString().slice(0, 10) : null);
 
-interface TaxInfoDbRow {
+export interface TaxInfoDbRow {
     vendor_guid: string;
     legal_name: string | null;
     tax_classification: string | null;
@@ -216,22 +263,29 @@ interface TaxInfoDbRow {
     w9_received_date: Date | null;
     w9_requested_date: Date | null;
     exempt_from_1099: boolean;
+    exempt_from_1099_override?: boolean | null;
+    exempt_from_1099_override_initialized?: boolean;
+    attorney_or_medical_payments?: boolean;
     address: string | null;
     notes: string | null;
 }
 
-function mapTaxInfo(row: TaxInfoDbRow): VendorTaxInfo {
-    return {
+export function mapTaxInfo(row: TaxInfoDbRow): VendorTaxInfo {
+    const taxInfo: VendorTaxInfo = {
         legalName: row.legal_name,
         taxClassification: row.tax_classification,
         taxIdMasked: row.tax_id_masked,
         w9Received: row.w9_received,
         w9ReceivedDate: toIsoDate(row.w9_received_date),
         w9RequestedDate: toIsoDate(row.w9_requested_date),
-        exemptFrom1099: row.exempt_from_1099,
+        exemptFrom1099: false,
+        exemptFrom1099Override: row.exempt_from_1099_override ?? null,
+        attorneyOrMedicalPayments: row.attorney_or_medical_payments ?? false,
         address: row.address,
         notes: row.notes,
     };
+    taxInfo.exemptFrom1099 = isVendor1099Exempt(taxInfo);
+    return taxInfo;
 }
 
 /**
@@ -247,7 +301,7 @@ export async function get1099Summary(
     const start = new Date(Date.UTC(year, 0, 1));
     const end = new Date(Date.UTC(year, 11, 31, 23, 59, 59, 999));
 
-    const [vendorRows, paidRows] = await Promise.all([
+    const [vendorRows, paidRows, threshold] = await Promise.all([
         // Vendors with any bill posted into this book (jobs resolved to owner).
         prisma.$queryRaw<{ guid: string; name: string; active: number }[]>`
             SELECT DISTINCT v.guid, v.name, v.active
@@ -261,8 +315,11 @@ export async function get1099Summary(
               AND (CASE WHEN i.owner_type = ${OWNER_TYPE_JOB} THEN j.owner_type ELSE i.owner_type END) = ${OWNER_TYPE_VENDOR}
         `,
         // Cash paid in-year: A/P bill-lot splits excluding the posting txn.
-        // Payments debit A/P (positive splits), so the sum reads positive.
-        prisma.$queryRaw<{ vendor_guid: string; paid: number }[]>`
+        // Payments funded by an account marked as a payment-card / third-party
+        // network source are excluded: their settlement entity reports them on
+        // Form 1099-K, not this payer's 1099-NEC. Payments debit A/P (positive
+        // splits), so the sum reads positive.
+        prisma.$queryRaw<{ vendor_guid: string; paid: number; card_funding_amount: number; total_funding_amount: number; transaction_payable_amount: number }[]>`
             WITH inv AS (
                 SELECT
                     i.post_txn, i.post_lot,
@@ -276,17 +333,53 @@ export async function get1099Summary(
             )
             SELECT
                 inv.eff_owner_guid AS vendor_guid,
-                COALESCE(SUM(s.value_num::numeric / NULLIF(s.value_denom, 0)::numeric), 0)::float8 AS paid
+                (s.value_num::numeric / NULLIF(s.value_denom, 0)::numeric)::float8 AS paid,
+                funding.card_funding_amount,
+                funding.total_funding_amount,
+                funding.transaction_payable_amount
             FROM inv
             JOIN splits s ON s.lot_guid = inv.post_lot AND s.tx_guid <> inv.post_txn
             JOIN transactions t ON t.guid = s.tx_guid
+            CROSS JOIN LATERAL (
+                SELECT
+                    COALESCE(SUM(ABS(funding.value_num::numeric / NULLIF(funding.value_denom, 0)::numeric))
+                      FILTER (WHERE funding_pref.is_card_payment_source = true), 0)::float8 AS card_funding_amount,
+                    COALESCE(SUM(ABS(funding.value_num::numeric / NULLIF(funding.value_denom, 0)::numeric)), 0)::float8 AS total_funding_amount
+                    ,COALESCE((
+                        SELECT SUM(ABS(payable.value_num::numeric / NULLIF(payable.value_denom, 0)::numeric))
+                        FROM splits payable
+                        JOIN accounts payable_account ON payable_account.guid = payable.account_guid
+                        WHERE payable.tx_guid = s.tx_guid
+                          AND payable_account.account_type = 'PAYABLE'
+                          AND (payable.value_num::numeric / NULLIF(payable.value_denom, 0)::numeric)
+                              * SIGN(s.value_num::numeric / NULLIF(s.value_denom, 0)::numeric) > 0
+                    ), 0)::float8 AS transaction_payable_amount
+                FROM splits funding
+                JOIN accounts funding_account ON funding_account.guid = funding.account_guid
+                LEFT JOIN gnucash_web_account_preferences funding_pref ON funding_pref.account_guid = funding.account_guid
+                WHERE funding.tx_guid = s.tx_guid
+                  AND funding.guid <> s.guid
+                  AND funding_account.account_type IN ('ASSET', 'BANK', 'CASH', 'LIABILITY', 'CREDIT')
+            ) funding
             WHERE inv.eff_owner_type = ${OWNER_TYPE_VENDOR}
               AND t.post_date >= ${start} AND t.post_date <= ${end}
-            GROUP BY inv.eff_owner_guid
         `,
+        getNecThreshold(year),
     ]);
 
-    const paidByVendor = new Map(paidRows.map((r) => [r.vendor_guid, r.paid]));
+    if (threshold === null) {
+        throw new Vendor1099ValidationError(
+            `No verified 1099-NEC threshold is configured for tax year ${year}`,
+        );
+    }
+
+    const paidByVendor = aggregateEligibleVendorPayments(paidRows.map((r) => ({
+        vendorGuid: r.vendor_guid,
+        paid: r.paid,
+        cardFundingAmount: r.card_funding_amount,
+        totalFundingAmount: r.total_funding_amount,
+        transactionPayableAmount: r.transaction_payable_amount,
+    })));
 
     const guids = vendorRows.map((v) => v.guid);
     const [taxRows, filingRows] = guids.length
@@ -313,6 +406,7 @@ export async function get1099Summary(
         paidByVendor,
         taxInfoByVendor,
         filedByVendor,
+        threshold,
     );
 }
 
@@ -331,20 +425,29 @@ export async function get1099Compliance(
     taxYear: number,
     asOf: Date = new Date(),
 ): Promise<Vendor1099ComplianceSummary> {
-    const summary = await get1099Summary(bookGuid, bookAccountGuids, taxYear);
+    const [summary, threshold] = await Promise.all([
+        get1099Summary(bookGuid, bookAccountGuids, taxYear),
+        getNecThreshold(taxYear),
+    ]);
+    if (threshold === null) {
+        throw new Vendor1099ValidationError(
+            `No verified 1099-NEC threshold is configured for tax year ${taxYear}`,
+        );
+    }
     return summarizeVendor1099Compliance(
         taxYear,
         summary.vendors.map((row) => ({
             vendorGuid: row.vendorGuid,
             name: row.name,
             totalPaid: row.totalPaid,
-            exemptFrom1099: row.taxInfo?.exemptFrom1099 ?? false,
+            exemptFrom1099: isVendor1099Exempt(row.taxInfo),
             w9Received: row.taxInfo?.w9Received ?? false,
             w9RequestedDate: row.taxInfo?.w9RequestedDate ?? null,
             tinOnFile: (row.taxInfo?.taxIdMasked ?? null) !== null,
             filedDate: row.filedDate,
         })),
         asOf,
+        threshold,
     );
 }
 
@@ -455,7 +558,10 @@ export interface UpsertVendorTaxInfoInput {
     w9ReceivedDate?: string | null;
     /** ISO date (YYYY-MM-DD) the W-9 was requested, or null. */
     w9RequestedDate?: string | null;
-    exemptFrom1099?: boolean;
+    /** Explicit override; null restores the corporation-default behavior. */
+    exemptFrom1099Override?: boolean | null;
+    /** Set when this vendor receives attorney or medical/health-care payments. */
+    attorneyOrMedicalPayments?: boolean;
     address?: string | null;
     notes?: string | null;
 }
@@ -539,7 +645,15 @@ export async function upsertVendorTaxInfo(
         ...(input.w9Received !== undefined && { w9_received: input.w9Received }),
         ...(w9Date !== undefined && { w9_received_date: w9Date }),
         ...(w9Requested !== undefined && { w9_requested_date: w9Requested }),
-        ...(input.exemptFrom1099 !== undefined && { exempt_from_1099: input.exemptFrom1099 }),
+        ...(input.exemptFrom1099Override !== undefined && {
+            exempt_from_1099_override: input.exemptFrom1099Override,
+            // Kept populated for compatibility with old readers/migrations.
+            exempt_from_1099: input.exemptFrom1099Override ?? false,
+        }),
+        ...(input.attorneyOrMedicalPayments !== undefined && {
+            attorney_or_medical_payments: input.attorneyOrMedicalPayments,
+        }),
+        ...(ownership === null && { exempt_from_1099_override_initialized: true }),
         ...(input.address !== undefined && { address: input.address }),
         ...(input.notes !== undefined && { notes: input.notes }),
         updated_at: new Date(),
