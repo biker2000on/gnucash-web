@@ -11,6 +11,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useToast } from '@/contexts/ToastContext';
 import { CollapsibleConfigSection } from '@/components/ui/CollapsibleConfigSection';
+import { ErrorLiveRegion } from '@/components/a11y/LiveRegion';
 import { product } from '@/lib/product';
 
 interface TotpStatus {
@@ -218,6 +219,8 @@ export function TwoFactorSection() {
             storageKey="settings.twoFactorOpen"
         >
             <div className="space-y-4">
+                {/* Mounted for the whole section: enroll and disable share formError. */}
+                <ErrorLiveRegion message={formError} />
                 <p className="text-sm text-foreground-muted">
                     Add an optional second step to password sign-in using a time-based code from an
                     authenticator app (Aegis, Google Authenticator, 1Password, …). This is entirely

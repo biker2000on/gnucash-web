@@ -10,6 +10,7 @@
 
 import { useState, useRef, useCallback } from 'react';
 import Link from 'next/link';
+import { ErrorLiveRegion } from '@/components/a11y/LiveRegion';
 import { useBooks } from '@/contexts/BookContext';
 
 interface PreviewAccount {
@@ -259,6 +260,8 @@ export default function BusinessImportWizard({ config }: { config: BusinessImpor
 
     return (
         <div className="space-y-8">
+            {/* Mounted for the whole wizard so a failure in any step is announced. */}
+            <ErrorLiveRegion message={error} />
             <header>
                 <h1 className="text-3xl font-bold text-foreground">{config.title}</h1>
                 <p className="text-foreground-muted mt-1">

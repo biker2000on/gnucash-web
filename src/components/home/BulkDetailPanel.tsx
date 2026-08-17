@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { HomeRoom, HomeItem } from '@/lib/services/home.service';
 import { useToast } from '@/contexts/ToastContext';
+import { ErrorLiveRegion } from '@/components/a11y/LiveRegion';
 import { CATEGORY_OPTIONS, inputClass, labelClass, TNUM } from './home-shared';
 
 interface BulkDetailPanelProps {
@@ -71,6 +72,7 @@ export function BulkDetailPanel({ rooms, onBack, onChanged }: BulkDetailPanelPro
                 )}
             </div>
 
+            <ErrorLiveRegion message={error} />
             {error && (
                 <div className="border border-error/30 bg-surface/30 rounded-xl p-4">
                     <p className="text-sm text-error">{error}</p>

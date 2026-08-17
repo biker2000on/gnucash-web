@@ -222,6 +222,7 @@ export default function CustomWidgetForm({ isOpen, onClose, initial, onSave }: C
                                 <button
                                     type="button"
                                     onClick={() => removeAccountAt(index)}
+                                    aria-label="Remove account"
                                     title="Remove account"
                                     className="p-1.5 rounded-md text-foreground-muted hover:text-negative hover:bg-surface-hover transition-colors"
                                 >

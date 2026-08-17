@@ -12,6 +12,8 @@
     "test": "vitest",
     "test:run": "vitest run",
     "test:coverage": "vitest run --coverage",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "test:integration:schema": "tsx src/__tests__/integration/setup-schema.ts",
     "docs:check": "tsx scripts/check-docs-coverage.ts",
     "worker": "tsx worker.ts",
     "prices:audit": "tsx utilities/run-price-audit.ts"
