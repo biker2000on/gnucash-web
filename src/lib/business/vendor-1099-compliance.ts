@@ -9,10 +9,9 @@
  * Money Timeline filing-deadline source.
  */
 
-const DAY_MS = 86_400_000;
+import { getDefaultNecThreshold } from '@/lib/reports/irs-limits';
 
-/** 1099-NEC reporting threshold (box 1 total for the calendar year). */
-export const NEC_THRESHOLD = 600;
+const DAY_MS = 86_400_000;
 
 const round2 = (n: number): number => {
     const r = Math.round(n * 100) / 100;
@@ -110,9 +109,13 @@ export function evaluateVendor1099Compliance(
     taxYear: number,
     vendor: Vendor1099ComplianceInput,
     asOf = new Date(),
+    threshold = getDefaultNecThreshold(taxYear),
 ): Vendor1099ComplianceRow {
+    if (threshold === null) {
+        throw new Error(`No verified 1099-NEC threshold is configured for tax year ${taxYear}`);
+    }
     const totalPaid = round2(vendor.totalPaid);
-    const overThreshold = totalPaid >= NEC_THRESHOLD;
+    const overThreshold = totalPaid >= threshold;
     const requiresFiling = overThreshold && !vendor.exemptFrom1099;
     const w9State = deriveW9State(vendor);
     const dueDate = filingDueDate(taxYear);
@@ -145,9 +148,13 @@ export function summarizeVendor1099Compliance(
     taxYear: number,
     vendors: ReadonlyArray<Vendor1099ComplianceInput>,
     asOf = new Date(),
+    threshold = getDefaultNecThreshold(taxYear),
 ): Vendor1099ComplianceSummary {
+    if (threshold === null) {
+        throw new Error(`No verified 1099-NEC threshold is configured for tax year ${taxYear}`);
+    }
     const rows = vendors
-        .map(vendor => evaluateVendor1099Compliance(taxYear, vendor, asOf))
+        .map(vendor => evaluateVendor1099Compliance(taxYear, vendor, asOf, threshold))
         .sort((a, b) => b.totalPaid - a.totalPaid || a.name.localeCompare(b.name));
 
     const reportable = rows.filter(row => row.requiresFiling);

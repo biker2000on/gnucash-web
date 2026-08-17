@@ -632,6 +632,7 @@ model gnucash_web_account_preferences {
   retirement_account_type String?  @db.VarChar(20)
   tax_related             Boolean  @default(false)
   owner                   String?  @db.VarChar(10) // 'self', 'spouse', 'joint'
+  is_card_payment_source  Boolean  @default(false)
 
   @@map("gnucash_web_account_preferences")
 }
@@ -1088,6 +1089,10 @@ model gnucash_web_vendor_tax_info {
   w9_received_date   DateTime? @db.Date
   w9_requested_date  DateTime? @db.Date
   exempt_from_1099   Boolean   @default(false)
+  /// null = default from tax classification; true/false = explicit user choice
+  exempt_from_1099_override Boolean?
+  exempt_from_1099_override_initialized Boolean @default(false)
+  attorney_or_medical_payments Boolean @default(false)
   address            String?   @db.Text
   notes              String?   @db.Text
   updated_at         DateTime  @default(now())

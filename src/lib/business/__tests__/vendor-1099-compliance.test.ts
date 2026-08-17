@@ -11,7 +11,6 @@
 
 import { describe, it, expect } from 'vitest';
 import {
-    NEC_THRESHOLD,
     daysUntilFilingDue,
     deriveW9State,
     evaluateVendor1099Compliance,
@@ -19,13 +18,15 @@ import {
     summarizeVendor1099Compliance,
     type Vendor1099ComplianceInput,
 } from '../vendor-1099-compliance';
+import { getDefaultNecThreshold } from '../../reports/irs-limits';
 
 const ASOF = new Date('2026-08-01T12:00:00Z');
+const NEC_THRESHOLD = getDefaultNecThreshold(2026)!;
 
 const vendor = (overrides: Partial<Vendor1099ComplianceInput> = {}): Vendor1099ComplianceInput => ({
     vendorGuid: 'a'.repeat(32),
     name: 'Plumber LLC',
-    totalPaid: 1500,
+    totalPaid: 3_000,
     exemptFrom1099: false,
     w9Received: false,
     w9RequestedDate: null,
@@ -70,11 +71,11 @@ describe('deriveW9State', () => {
 
 describe('evaluateVendor1099Compliance', () => {
     it('spreads the input into the output with derived fields', () => {
-        const row = evaluateVendor1099Compliance(2026, vendor({ totalPaid: 1234.567 }), ASOF);
+        const row = evaluateVendor1099Compliance(2026, vendor({ totalPaid: 3_234.567 }), ASOF);
         expect(row).toMatchObject({
             vendorGuid: 'a'.repeat(32),
             name: 'Plumber LLC',
-            totalPaid: 1234.57,
+            totalPaid: 3234.57,
             taxYear: 2026,
             overThreshold: true,
             requiresFiling: true,
@@ -87,7 +88,7 @@ describe('evaluateVendor1099Compliance', () => {
 
     it('treats the $600 threshold as inclusive', () => {
         expect(evaluateVendor1099Compliance(2026, vendor({ totalPaid: NEC_THRESHOLD }), ASOF).overThreshold).toBe(true);
-        const below = evaluateVendor1099Compliance(2026, vendor({ totalPaid: 599.99 }), ASOF);
+        const below = evaluateVendor1099Compliance(2026, vendor({ totalPaid: NEC_THRESHOLD - 0.01 }), ASOF);
         expect(below.overThreshold).toBe(false);
         expect(below.requiresFiling).toBe(false);
         expect(below.status).toBe('below_threshold');

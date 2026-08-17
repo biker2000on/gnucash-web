@@ -693,6 +693,9 @@ async function createExtensionTables() {
 
         ALTER TABLE gnucash_web_account_preferences
         ADD COLUMN IF NOT EXISTS owner VARCHAR(10);
+
+        ALTER TABLE gnucash_web_account_preferences
+        ADD COLUMN IF NOT EXISTS is_card_payment_source BOOLEAN NOT NULL DEFAULT FALSE;
     `;
 
     const contributionLimitsTableDDL = `
@@ -1224,6 +1227,19 @@ async function createExtensionTables() {
         );
         ALTER TABLE gnucash_web_vendor_tax_info
           ADD COLUMN IF NOT EXISTS w9_requested_date DATE;
+        ALTER TABLE gnucash_web_vendor_tax_info
+          ADD COLUMN IF NOT EXISTS exempt_from_1099_override BOOLEAN;
+        ALTER TABLE gnucash_web_vendor_tax_info
+          ADD COLUMN IF NOT EXISTS exempt_from_1099_override_initialized BOOLEAN NOT NULL DEFAULT false;
+        ALTER TABLE gnucash_web_vendor_tax_info
+          ADD COLUMN IF NOT EXISTS attorney_or_medical_payments BOOLEAN NOT NULL DEFAULT false;
+        -- Preserve every legacy checkbox choice as an explicit decision. The
+        -- corporation default applies only to tax-info rows created after this
+        -- one-time migration; existing vendors never silently change status.
+        UPDATE gnucash_web_vendor_tax_info
+          SET exempt_from_1099_override = exempt_from_1099,
+              exempt_from_1099_override_initialized = true
+          WHERE NOT exempt_from_1099_override_initialized;
 
         -- Per-vendor-year 1099-NEC filing status (dates only; no TINs here).
         CREATE TABLE IF NOT EXISTS gnucash_web_vendor_1099_filings (
@@ -2110,9 +2126,45 @@ async function createExtensionTables() {
             endpoint VARCHAR(64) NOT NULL,
             idempotency_key VARCHAR(200) NOT NULL,
             result JSONB,
+            state VARCHAR(32) NOT NULL DEFAULT 'processing',
+            attempts INTEGER NOT NULL DEFAULT 1,
+            -- Kept as TIMESTAMP for compatibility. The claim/reclaim queries
+            -- use NOW() in the same session; migrate all timestamp columns to
+            -- TIMESTAMPTZ together before allowing mixed pool TimeZones.
+            claim_started_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            detail TEXT,
             completed_at TIMESTAMP,
             created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
+
+        -- Avoid steady-state ALTER locks: PostgreSQL locks before an
+        -- IF NOT EXISTS ALTER can discover that the column is present.
+        DO $$
+        BEGIN
+          PERFORM pg_advisory_xact_lock(hashtext('gnucash_web_webhook_idempotency_schema'));
+          IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = current_schema()
+              AND table_name = 'gnucash_web_webhook_idempotency'
+              AND column_name = 'state'
+          ) THEN
+            ALTER TABLE gnucash_web_webhook_idempotency
+              ADD COLUMN state VARCHAR(32) NOT NULL DEFAULT 'processing';
+            ALTER TABLE gnucash_web_webhook_idempotency
+              ADD COLUMN attempts INTEGER NOT NULL DEFAULT 1;
+            ALTER TABLE gnucash_web_webhook_idempotency
+              ADD COLUMN claim_started_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP;
+            ALTER TABLE gnucash_web_webhook_idempotency
+              ADD COLUMN detail TEXT;
+
+            -- Upgrade only the pre-attempt schema; no cold-start table scan.
+            UPDATE gnucash_web_webhook_idempotency
+            SET state = CASE WHEN result IS NOT NULL OR completed_at IS NOT NULL
+                             THEN 'completed' ELSE 'processing' END,
+                attempts = 1,
+                claim_started_at = created_at;
+          END IF;
+        END $$;
 
         CREATE UNIQUE INDEX IF NOT EXISTS uq_webhook_idempotency
             ON gnucash_web_webhook_idempotency (book_guid, endpoint, idempotency_key);

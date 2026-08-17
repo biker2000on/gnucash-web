@@ -564,6 +564,11 @@ export interface RecordPaymentResult {
     hasLifetime: boolean;
 }
 
+type PaymentDatabase = Pick<
+    typeof prisma,
+    'gnucash_web_members' | 'gnucash_web_membership_types' | 'gnucash_web_membership_payments'
+>;
+
 /**
  * Record a dues payment. The coverage period comes from the membership
  * type's renewal mode against the member's current paid-through date, unless
@@ -573,9 +578,10 @@ export interface RecordPaymentResult {
 export async function recordPayment(
     bookGuid: string,
     memberId: number,
-    input: PaymentInput
+    input: PaymentInput,
+    database: PaymentDatabase = prisma,
 ): Promise<RecordPaymentResult | null> {
-    const member = await prisma.gnucash_web_members.findUnique({
+    const member = await database.gnucash_web_members.findUnique({
         where: { id: memberId },
         include: { payments: { select: { period_end: true } } },
     });
@@ -587,7 +593,7 @@ export async function recordPayment(
             'Member has no membership type — pick one for this payment'
         );
     }
-    const type = await prisma.gnucash_web_membership_types.findUnique({ where: { id: typeId } });
+    const type = await database.gnucash_web_membership_types.findUnique({ where: { id: typeId } });
     if (!type || type.book_guid !== bookGuid) {
         throw new MembershipValidationError('Membership type not found');
     }
@@ -602,7 +608,7 @@ export async function recordPayment(
             : undefined
     );
 
-    const row = await prisma.gnucash_web_membership_payments.create({
+    const row = await database.gnucash_web_membership_payments.create({
         data: {
             book_guid: bookGuid,
             member_id: memberId,

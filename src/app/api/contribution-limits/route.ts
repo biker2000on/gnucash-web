@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { requireRole } from '@/lib/auth';
-import { getAllLimitsForYear, RETIREMENT_ACCOUNT_TYPES } from '@/lib/reports/irs-limits';
+import { getAllLimitsForYear, NEC_THRESHOLD_OVERRIDE_ACCOUNT_TYPE, RETIREMENT_ACCOUNT_TYPES } from '@/lib/reports/irs-limits';
 
-const VALID_ACCOUNT_TYPES: string[] = [...RETIREMENT_ACCOUNT_TYPES, 'brokerage'];
+const VALID_ACCOUNT_TYPES: string[] = [...RETIREMENT_ACCOUNT_TYPES, 'brokerage', NEC_THRESHOLD_OVERRIDE_ACCOUNT_TYPE];
 
 export async function GET(request: NextRequest) {
   try {

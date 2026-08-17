@@ -30,9 +30,11 @@ import { inboundTransactionSchema, parseInbound, toCents } from '@/lib/inbound-w
 import {
     claimWebhookIdempotency,
     completeWebhookIdempotency,
+    lockWebhookIdempotencyAttempt,
     readIdempotencyKey,
     releaseWebhookIdempotency,
     validateIdempotencyKey,
+    WebhookClaimSupersededError,
 } from '@/lib/webhook-idempotency';
 
 export async function POST(request: Request) {
@@ -96,6 +98,7 @@ export async function POST(request: Request) {
         if (!root?.commodity_guid) {
             return NextResponse.json({ error: 'Book has no base currency' }, { status: 500 });
         }
+        const rootCommodityGuid = root.commodity_guid;
         for (const account of accounts) {
             if (account.placeholder === 1) {
                 return NextResponse.json(
@@ -113,6 +116,7 @@ export async function POST(request: Request) {
 
         // Claim the idempotency key BEFORE the write. The UNIQUE index picks
         // the winner, so a concurrent replay can never also reach the insert.
+        let claimAttempt: number | null = null;
         if (idempotencyKey) {
             const claim = await claimWebhookIdempotency(bookGuid, 'transaction', idempotencyKey);
             if (claim.status === 'replay') {
@@ -127,26 +131,46 @@ export async function POST(request: Request) {
                     { status: 409 }
                 );
             }
+            if (claim.status === 'terminal') {
+                return NextResponse.json(
+                    {
+                        error: 'This idempotency key exhausted its retry budget and needs operator attention',
+                        idempotencyState: claim.state,
+                        attempts: claim.attempts,
+                        detail: claim.detail,
+                    },
+                    { status: 409 }
+                );
+            }
+            claimAttempt = claim.attempt;
         }
 
         const cents = toCents(input.amount);
         const txGuid = generateGuid();
         const now = new Date();
         const postDate = new Date(`${input.date}T12:00:00Z`);
+        const payload = {
+            success: true,
+            transactionGuid: txGuid,
+            date: input.date,
+            description: input.description,
+            amount: input.amount,
+        };
 
-        try {
-            await prisma.$transaction([
-            prisma.transactions.create({
+        const writeTransaction = async (
+            database: Pick<typeof prisma, 'transactions' | 'splits'>
+        ) => {
+            await database.transactions.create({
                 data: {
                     guid: txGuid,
-                    currency_guid: root.commodity_guid,
+                    currency_guid: rootCommodityGuid,
                     num: '',
                     post_date: postDate,
                     enter_date: now,
                     description: input.description,
                 },
-            }),
-            prisma.splits.createMany({
+            });
+            await database.splits.createMany({
                 data: [
                     {
                         guid: generateGuid(),
@@ -177,13 +201,38 @@ export async function POST(request: Request) {
                         lot_guid: null,
                     },
                 ],
-            }),
-            ]);
+            });
+        };
+
+        try {
+            if (idempotencyKey) {
+                // The fence lock, ledger write, and idempotency completion are
+                // one transaction. A crash rolls all three back; a newer
+                // claimant makes this worker fail before it can write.
+                await prisma.$transaction(async (database) => {
+                    await lockWebhookIdempotencyAttempt(
+                        bookGuid, 'transaction', idempotencyKey, claimAttempt!, database
+                    );
+                    await writeTransaction(database);
+                    const completed = await completeWebhookIdempotency(
+                        bookGuid, 'transaction', idempotencyKey, claimAttempt!, payload, database
+                    );
+                    if (!completed) throw new WebhookClaimSupersededError();
+                });
+            } else {
+                await prisma.$transaction(async (database) => writeTransaction(database));
+            }
         } catch (writeError) {
+            if (writeError instanceof WebhookClaimSupersededError) {
+                return NextResponse.json(
+                    { error: 'A newer request with this idempotencyKey is already in progress' },
+                    { status: 409 }
+                );
+            }
             // The write failed, so the key must not stay burned — a genuine
             // retry has to be able to proceed.
             if (idempotencyKey) {
-                await releaseWebhookIdempotency(bookGuid, 'transaction', idempotencyKey);
+                await releaseWebhookIdempotency(bookGuid, 'transaction', idempotencyKey, claimAttempt!);
             }
             throw writeError;
         }
@@ -203,17 +252,6 @@ export async function POST(request: Request) {
             console.warn('Inbound webhook: cache invalidation failed:', err);
         }
         void publishDataChange(bookGuid, 'transactions', { guid: txGuid, action: 'create' });
-
-        const payload = {
-            success: true,
-            transactionGuid: txGuid,
-            date: input.date,
-            description: input.description,
-            amount: input.amount,
-        };
-        if (idempotencyKey) {
-            await completeWebhookIdempotency(bookGuid, 'transaction', idempotencyKey, payload);
-        }
 
         return NextResponse.json(payload, { status: 201 });
     } catch (error) {

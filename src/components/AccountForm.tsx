@@ -41,6 +41,7 @@ interface AccountFormData {
     is_retirement: boolean;
     retirement_account_type: string | null;
     owner: string | null; // 'self' | 'spouse' | 'joint' | null (null = unset; retirement code treats unset as self)
+    is_card_payment_source: boolean;
 }
 
 interface FlatAccount {
@@ -105,6 +106,7 @@ export function AccountForm({ mode, accountGuid, initialData, parentGuid, onSave
         is_retirement: initialData?.is_retirement ?? false,
         retirement_account_type: initialData?.retirement_account_type ?? null,
         owner: initialData?.owner ?? null,
+        is_card_payment_source: initialData?.is_card_payment_source ?? false,
     });
 
     const [accounts, setAccounts] = useState<FlatAccount[]>([]);
@@ -650,6 +652,16 @@ export function AccountForm({ mode, accountGuid, initialData, parentGuid, onSave
                         </p>
                     )}
 
+                    <label className="flex items-center gap-3 cursor-pointer">
+                        <input
+                            type="checkbox"
+                            checked={formData.is_card_payment_source}
+                            onChange={e => setFormData(prev => ({ ...prev, is_card_payment_source: e.target.checked }))}
+                            className="w-5 h-5 rounded border-border-hover bg-background text-primary focus:ring-primary/50"
+                        />
+                        <span className="text-sm text-foreground-secondary">Payment card / third-party network source</span>
+                    </label>
+
                     {OWNER_ELIGIBLE_ACCOUNT_TYPES.has(formData.account_type) && (
                         <label className="flex items-center gap-2 cursor-pointer">
                             <span className="text-sm text-foreground-secondary">Owner</span>
@@ -704,6 +716,7 @@ export function AccountForm({ mode, accountGuid, initialData, parentGuid, onSave
                     Owner attributes the account to you, your spouse, or both: it drives
                     per-person limit tracking for retirement accounts and ownership reporting
                     (Net Worth by Owner). Children inherit the nearest ancestor&apos;s owner.
+                    Mark a card or payment-network funding account so vendor payments from it are excluded from 1099-NEC totals.
                 </p>
             </div>
 

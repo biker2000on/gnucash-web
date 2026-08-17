@@ -120,7 +120,10 @@ export default function TaxSchedulePage() {
   const downloadTxf = useCallback(async () => {
     try {
       const res = await fetch(`/api/reports/tax-schedule?year=${year}&format=txf`);
-      if (!res.ok) throw new Error('Download failed');
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.error ?? 'Download failed');
+      }
       const text = await res.text();
       const blob = new Blob([text], { type: 'text/plain;charset=us-ascii' });
       const link = document.createElement('a');
