@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { Modal } from '@/components/ui/Modal';
+import { ErrorLiveRegion } from '@/components/a11y/LiveRegion';
 import { SavedReport, SavedReportInput, ReportType, ReportFilters } from '@/lib/reports/types';
 
 interface SaveReportDialogProps {
@@ -127,8 +128,9 @@ export default function SaveReportDialog({
           </label>
         </div>
 
+        <ErrorLiveRegion message={error} />
         {error && (
-          <div role="alert" className="px-3 py-2 bg-error/10 border border-error/30 rounded-lg text-sm text-error">
+          <div className="px-3 py-2 bg-error/10 border border-error/30 rounded-lg text-sm text-error">
             {error}
           </div>
         )}

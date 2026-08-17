@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import type { ChartDefaults } from './PerformanceChart';
+import { ErrorLiveRegion } from '@/components/a11y/LiveRegion';
 
 interface ChartSettingsPanelProps {
   currentDefaults?: ChartDefaults;
@@ -222,9 +223,10 @@ export function ChartSettingsPanel({ currentDefaults, onSettingsChange }: ChartS
           >
             {saveError ? 'Save failed' : saved ? 'Saved!' : saving ? 'Saving...' : 'Save Defaults'}
           </button>
-          <p aria-live="polite" className="sr-only">
-            {saveError ? 'Save failed' : saved ? 'Settings saved' : ''}
-          </p>
+          <ErrorLiveRegion
+            politeness="polite"
+            message={saveError ? 'Save failed' : saved ? 'Settings saved' : ''}
+          />
         </div>
       )}
     </div>

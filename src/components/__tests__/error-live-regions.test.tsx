@@ -3,9 +3,16 @@
  *
  * Error text rendered as ordinary markup is silent: a screen-reader user who
  * submits a form that fails hears nothing, and the form simply appears not to
- * respond. Every error surface that reports a *failed user action* is therefore
- * an assertive live region (`role="alert"`); status and success messages, which
- * must not interrupt, are polite (`role="status"` / `aria-live="polite"`).
+ * respond.
+ *
+ * The subtlety this file exists to pin down is *when* the live region must
+ * exist. A `role="alert"` node announces a change to its contents; a node that
+ * arrives already carrying its message is a new subtree, and assistive
+ * technology is under no obligation to read it. So the familiar
+ * `{error && <div role="alert">{error}</div>}` reliably announces the *second*
+ * failure and swallows the first — the one that matters. Every surface below
+ * therefore mounts `<ErrorLiveRegion>` (src/components/a11y/LiveRegion.tsx)
+ * unconditionally and lets its text change.
  *
  * Deliberately NOT covered: validation that recomputes on every keystroke.
  * A live region there produces continuous chatter and is worse than silence.
@@ -13,89 +20,80 @@
 
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { BudgetForm } from '../BudgetForm';
+import { LoginForm } from '../LoginForm';
+import BookEditorModal from '../BookEditorModal';
+import SaveReportDialog from '../reports/SaveReportDialog';
+import { ReportType } from '@/lib/reports/types';
+import { BatchEditModal } from '../budget/BatchEditModal';
+import { ChartSettingsPanel } from '../investments/ChartSettingsPanel';
 
 /**
- * Error surfaces reporting a failed submit or action, identified by a stable
- * fragment of the container's class list. Each must be assertive: the user is
- * blocked until they act on it.
+ * Every surface that announces a failed action or a status change. The rule is
+ * uniform, so the check is uniform: route through the shared component, and
+ * never hand-roll a `role` onto markup that is mounted together with its text.
  */
-const ASSERTIVE_SURFACES: Array<[file: string, marker: string, count: number]> = [
-    ['src/components/LoginForm.tsx', 'mb-6 p-4 bg-negative/10', 2],
-    ['src/components/AccountForm.tsx', 'bg-negative/10 border border-negative/30 rounded-lg p-4 text-negative', 1],
-    ['src/components/BudgetForm.tsx', 'bg-negative/10 border border-negative/30 rounded-lg p-4 text-negative', 1],
-    ['src/components/BookEditorModal.tsx', 'px-3 py-2 bg-error/10', 1],
-    ['src/components/CreateBookWizard.tsx', 'mb-4 p-3 bg-negative/10', 2],
-    ['src/components/books/NewBookForm.tsx', 'px-3 py-2 bg-negative/10', 1],
-    ['src/components/budget/BatchEditModal.tsx', 'mt-1 text-sm text-negative', 1],
-    ['src/components/budget/EstimateModal.tsx', 'p-3 bg-error-light text-error', 1],
-    ['src/components/reports/SaveReportDialog.tsx', 'px-3 py-2 bg-error/10', 1],
-    ['src/components/scheduled-transactions/CreateScheduledPanel.tsx', 'text-negative text-sm">{error}', 1],
-    ['src/components/settings/TwoFactorSection.tsx', 'text-xs text-negative">{formError}', 2],
-    ['src/components/investments/ScrubAllButton.tsx', 'mb-4 bg-error-light', 1],
-    ['src/components/documents/LinkedDocumentsPanel.tsx', 'border-negative/30 bg-negative/10 px-3 py-2', 1],
-    ['src/components/import/BusinessImportWizard.tsx', 'bg-negative/10 border border-negative/30 rounded-lg p-4 text-sm', 2],
-    ['src/components/import/PersonalImportWizard.tsx', 'bg-negative/10 border border-negative/30 rounded-lg p-4 text-sm', 2],
-    ['src/components/provenance/ProvenanceModal.tsx', 'text-sm text-negative">{error}', 1],
-    ['src/components/reports/TransactionDrilldownModal.tsx', 'px-4 py-6 text-sm text-negative', 1],
-    ['src/components/home/BulkDetailPanel.tsx', 'border border-error/30 bg-surface/30 rounded-xl p-4', 1],
-    ['src/components/home/RoomDetailPanel.tsx', 'border border-error/30 bg-surface/30 rounded-xl p-4', 1],
-    ['src/components/InvestmentTransactionForm.tsx', 'bg-negative/10 border border-negative/30 rounded-lg p-4"', 1],
+const ANNOUNCING_SURFACES: string[] = [
+    'src/components/AccountForm.tsx',
+    'src/components/BookEditorModal.tsx',
+    'src/components/BudgetForm.tsx',
+    'src/components/CreateBookWizard.tsx',
+    'src/components/InvestmentTransactionForm.tsx',
+    'src/components/LoginForm.tsx',
+    'src/components/books/NewBookForm.tsx',
+    'src/components/budget/BatchEditModal.tsx',
+    'src/components/budget/EstimateModal.tsx',
+    'src/components/documents/LinkedDocumentsPanel.tsx',
+    'src/components/home/BulkDetailPanel.tsx',
+    'src/components/home/RoomDetailPanel.tsx',
+    'src/components/import/BusinessImportWizard.tsx',
+    'src/components/import/PersonalImportWizard.tsx',
+    'src/components/investments/ChartSettingsPanel.tsx',
+    'src/components/investments/ScrubAllButton.tsx',
+    'src/components/mortgage/MortgageAutoDetect.tsx',
+    'src/components/provenance/ProvenanceModal.tsx',
+    'src/components/reports/SaveReportDialog.tsx',
+    'src/components/reports/TransactionDrilldownModal.tsx',
+    'src/components/scheduled-transactions/CreateScheduledPanel.tsx',
+    'src/components/settings/TwoFactorSection.tsx',
 ];
 
-/**
- * Surfaces that report state rather than a blocked action. These must stay
- * polite so they never cut across what the user is doing.
- */
-const POLITE_SURFACES: Array<[file: string, marker: string]> = [
-    ['src/components/mortgage/MortgageAutoDetect.tsx', 'bg-error/10 border border-error/30 rounded-xl p-5'],
-    ['src/components/investments/ChartSettingsPanel.tsx', "saved ? 'Settings saved'"],
-];
-
-function linesContaining(file: string, marker: string): string[] {
-    const src = readFileSync(resolve(process.cwd(), file), 'utf8');
-    return src.split(/\r?\n/).filter((line) => line.includes(marker));
+function source(file: string): string {
+    return readFileSync(resolve(process.cwd(), file), 'utf8');
 }
 
-describe('error surfaces are assertive live regions', () => {
-    it.each(ASSERTIVE_SURFACES)('%s (%s)', (file, marker, count) => {
-        const lines = linesContaining(file, marker);
-        expect(lines, `marker no longer matches anything in ${file}`).toHaveLength(count);
-        for (const line of lines) {
-            expect(line, `${file}: this error surface is not announced`).toContain(
-                'role="alert"'
-            );
-        }
-    });
-});
+describe('announced surfaces route through the shared live region', () => {
+    it.each(ANNOUNCING_SURFACES)('%s', (file) => {
+        const src = source(file);
 
-describe('status surfaces are polite live regions', () => {
-    it.each(POLITE_SURFACES)('%s (%s)', (file, marker) => {
-        const lines = linesContaining(file, marker);
-        expect(lines.length, `marker no longer matches anything in ${file}`).toBeGreaterThan(0);
-        const region = readFileSync(resolve(process.cwd(), file), 'utf8');
-        expect(region).toMatch(/role="status"|aria-live="polite"/);
-        for (const line of lines) {
-            expect(line, `${file}: a status message must not be assertive`).not.toContain(
-                'role="alert"'
-            );
-        }
-    });
-});
-
-describe('BudgetForm announces a failed save', () => {
-    afterEach(cleanup);
-
-    it('exposes nothing before the user submits', () => {
-        render(
-            <BudgetForm mode="create" onSave={async () => {}} onCancel={() => {}} />
+        expect(src, `${file}: no live region — a failure here is silent`).toContain(
+            '<ErrorLiveRegion'
         );
-        expect(screen.queryByRole('alert')).toBeNull();
+        expect(src).toContain("from '@/components/a11y/LiveRegion'");
+
+        // A hand-rolled role is how the mount-with-the-message bug comes back:
+        // the node and its text appear together and nothing is announced.
+        expect(
+            src,
+            `${file}: hand-rolled live-region role — use <ErrorLiveRegion> instead`
+        ).not.toMatch(/role="(alert|status)"/);
+    });
+});
+
+describe('the shared region is mounted before it has anything to say', () => {
+    afterEach(() => {
+        cleanup();
+        vi.restoreAllMocks();
     });
 
-    it('announces the rejection through an alert region', async () => {
+    /** The always-mounted region, whatever else the component has rendered. */
+    function region(role: 'alert' | 'status' = 'alert'): HTMLElement {
+        return screen.getByRole(role);
+    }
+
+    it('BudgetForm: a rejected save', async () => {
         render(
             <BudgetForm
                 mode="create"
@@ -106,12 +104,109 @@ describe('BudgetForm announces a failed save', () => {
             />
         );
 
+        expect(region().textContent).toBe('');
+
         fireEvent.change(screen.getByPlaceholderText(/annual budget/i), {
             target: { value: 'Household' },
         });
         fireEvent.click(screen.getByRole('button', { name: /create budget/i }));
 
-        const alert = await screen.findByRole('alert');
-        expect(alert).toHaveTextContent('Budget name already exists');
+        await waitFor(() => expect(region()).toHaveTextContent('Budget name already exists'));
+    });
+
+    it('LoginForm: rejected credentials', async () => {
+        vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+            ok: false,
+            json: async () => ({ error: 'Invalid username or password' }),
+        } as Response);
+
+        render(<LoginForm mode="login" onToggleMode={() => {}} />);
+
+        expect(region().textContent).toBe('');
+
+        fireEvent.change(screen.getByPlaceholderText(/enter username/i), {
+            target: { value: 'ada' },
+        });
+        fireEvent.change(screen.getByPlaceholderText(/enter password/i), {
+            target: { value: 'hunter2' },
+        });
+        fireEvent.click(screen.getByRole('button', { name: /sign in/i }));
+
+        await waitFor(() => expect(region()).toHaveTextContent('Invalid username or password'));
+    });
+
+    it('BookEditorModal: a rejected rename', () => {
+        render(
+            <BookEditorModal
+                book={{ guid: 'book-1', name: 'Household', description: null }}
+                isOpen
+                onClose={() => {}}
+                onSaved={() => {}}
+                onDeleted={() => {}}
+            />
+        );
+
+        expect(region().textContent).toBe('');
+
+        fireEvent.change(screen.getByPlaceholderText(/book name/i), { target: { value: '  ' } });
+        fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+        expect(region()).toHaveTextContent('Name is required');
+    });
+
+    it('SaveReportDialog: a save with no name', () => {
+        render(
+            <SaveReportDialog
+                isOpen
+                onClose={() => {}}
+                onSave={async () => {}}
+                baseReportType={ReportType.BALANCE_SHEET}
+                currentConfig={{}}
+            />
+        );
+
+        expect(region().textContent).toBe('');
+
+        fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+        expect(region()).toHaveTextContent('Name is required');
+    });
+
+    it('BatchEditModal: an unparseable amount', () => {
+        render(
+            <BatchEditModal
+                isOpen
+                onClose={() => {}}
+                budgetGuid="budget-1"
+                accountGuid="account-1"
+                accountName="Groceries"
+                numPeriods={12}
+                onUpdate={() => {}}
+            />
+        );
+
+        expect(region().textContent).toBe('');
+
+        fireEvent.change(screen.getByLabelText(/amount per period/i), {
+            target: { value: 'a lot' },
+        });
+        fireEvent.click(screen.getByRole('button', { name: /apply to all periods/i }));
+
+        expect(region()).toHaveTextContent('Please enter a valid number');
+    });
+
+    it('ChartSettingsPanel: a failed save, announced politely', async () => {
+        vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: false } as Response);
+
+        render(<ChartSettingsPanel onSettingsChange={() => {}} />);
+        fireEvent.click(screen.getByRole('button', { name: /chart settings/i }));
+
+        // Status, not alert: this must not interrupt whatever is being read.
+        expect(screen.queryByRole('alert')).toBeNull();
+        expect(region('status').textContent).toBe('');
+
+        fireEvent.click(screen.getByRole('button', { name: /save defaults/i }));
+
+        await waitFor(() => expect(region('status')).toHaveTextContent('Save failed'));
     });
 });

@@ -2,6 +2,7 @@
 
 import { useState, type ReactNode } from 'react';
 import { Abbr } from '@/components/ui/Abbr';
+import { ErrorLiveRegion } from '@/components/a11y/LiveRegion';
 import { formatCurrency } from '@/lib/format';
 
 type ScrubMethod = 'fifo' | 'lifo' | 'average';
@@ -168,8 +169,9 @@ export function ScrubAllButton() {
                   </div>
                 </label>
 
+                <ErrorLiveRegion message={error} />
                 {error && (
-                  <div role="alert" className="mb-4 bg-error-light border border-error/50 rounded-lg px-4 py-3 text-sm text-error">
+                  <div className="mb-4 bg-error-light border border-error/50 rounded-lg px-4 py-3 text-sm text-error">
                     {error}
                   </div>
                 )}

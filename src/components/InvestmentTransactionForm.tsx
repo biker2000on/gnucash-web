@@ -10,6 +10,7 @@ import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 import { toLocalDateString } from '@/lib/datePresets';
 import { AccountSelector } from '@/components/ui/AccountSelector';
 import { FieldGrid } from '@/components/ui/form';
+import { ErrorLiveRegion } from '@/components/a11y/LiveRegion';
 
 export type InvestmentAction = 'Buy' | 'Sell' | 'Dividend' | 'ReturnOfCapital' | 'Split';
 
@@ -614,8 +615,9 @@ export function InvestmentTransactionForm({
             )}
 
             {/* Error Messages */}
+            <ErrorLiveRegion message={errors.join('. ')} />
             {errors.length > 0 && (
-                <div role="alert" className="bg-negative/10 border border-negative/30 rounded-lg p-4">
+                <div className="bg-negative/10 border border-negative/30 rounded-lg p-4">
                     <ul className="list-disc list-inside text-sm text-negative space-y-1">
                         {errors.map((error, i) => (
                             <li key={i}>{error}</li>

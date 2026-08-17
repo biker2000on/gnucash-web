@@ -8,6 +8,7 @@ import { AccountSelector } from '@/components/ui/AccountSelector';
 import { Abbr } from '@/components/ui/Abbr';
 import { TagPicker, type SelectedTag } from '@/components/tags/TagPicker';
 import type { Tag } from '@/lib/tags';
+import { ErrorLiveRegion } from '@/components/a11y/LiveRegion';
 
 const ACCOUNT_TYPES = [
     { value: 'ASSET', label: 'Asset', group: 'Assets' },
@@ -340,8 +341,9 @@ export function AccountForm({ mode, accountGuid, initialData, parentGuid, onSave
 
     return (
         <form onSubmit={handleSubmit} className="space-y-6">
+            <ErrorLiveRegion message={error} />
             {error && (
-                <div role="alert" className="bg-negative/10 border border-negative/30 rounded-lg p-4 text-negative text-sm">
+                <div className="bg-negative/10 border border-negative/30 rounded-lg p-4 text-negative text-sm">
                     {error}
                 </div>
             )}

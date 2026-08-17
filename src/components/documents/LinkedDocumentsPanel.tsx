@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { INPUT, LABEL } from '@/components/ui/form';
+import { ErrorLiveRegion } from '@/components/a11y/LiveRegion';
 import { useCurrentUser } from '@/hooks/useCurrentUser';
 
 export interface LinkedDocumentRole {
@@ -441,8 +442,9 @@ export function LinkedDocumentsPanel({
                 </>
             )}
 
+            <ErrorLiveRegion message={error} />
             {error && (
-                <div role="alert" className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-negative/30 bg-negative/10 px-3 py-2 text-xs text-negative">
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-negative/30 bg-negative/10 px-3 py-2 text-xs text-negative">
                     <span>{error}</span>
                     <button type="button" onClick={() => void load()} className="font-medium underline underline-offset-2">
                         Retry

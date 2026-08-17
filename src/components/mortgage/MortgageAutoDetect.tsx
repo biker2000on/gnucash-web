@@ -2,6 +2,7 @@
 
 import { useState, useCallback } from 'react';
 import { AccountSelector } from '@/components/ui/AccountSelector';
+import { ErrorLiveRegion } from '@/components/a11y/LiveRegion';
 
 /* ------------------------------------------------------------------ */
 /* Types                                                               */
@@ -134,8 +135,8 @@ function EditableValue({
             setEditing(true);
           }}
           className="text-xs text-foreground-muted hover:text-primary transition-colors"
-          aria-label="Edit value"
-          title="Edit value"
+          aria-label={`Edit ${label}`}
+          title={`Edit ${label}`}
         >
           <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
@@ -305,8 +306,12 @@ export function MortgageAutoDetect({ onDetectionComplete }: MortgageAutoDetectPr
       {loading && <DetectionSkeleton />}
 
       {/* Error state */}
+      <ErrorLiveRegion
+        message={error && !loading ? `Couldn't analyze payments. ${error}` : null}
+        politeness="polite"
+      />
       {error && !loading && (
-        <div role="status" className="bg-error/10 border border-error/30 rounded-xl p-5">
+        <div className="bg-error/10 border border-error/30 rounded-xl p-5">
           <div className="flex items-start gap-3">
             <svg className="w-5 h-5 text-negative shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />

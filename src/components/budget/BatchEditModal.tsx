@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { Modal } from '@/components/ui/Modal';
+import { ErrorLiveRegion } from '@/components/a11y/LiveRegion';
 import { applyBalanceReversal, BalanceReversal } from '@/lib/format';
 
 interface BatchEditModalProps {
@@ -101,8 +102,9 @@ export function BatchEditModal({
                             autoFocus
                         />
                     </div>
+                    <ErrorLiveRegion message={error} />
                     {error && (
-                        <p role="alert" className="mt-1 text-sm text-negative">{error}</p>
+                        <p className="mt-1 text-sm text-negative">{error}</p>
                     )}
                 </div>
 

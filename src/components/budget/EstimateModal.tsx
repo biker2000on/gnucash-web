@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { Modal } from '@/components/ui/Modal';
+import { ErrorLiveRegion } from '@/components/a11y/LiveRegion';
 import { formatCurrency, applyBalanceReversal, BalanceReversal } from '@/lib/format';
 // Type-only: keep the server-side estimate lib (prisma) out of the client bundle.
 import type { EstimateMethod, BudgetEstimateResult } from '@/lib/budget-estimate';
@@ -179,8 +180,9 @@ export function EstimateModal({
                     </label>
                 )}
 
+                <ErrorLiveRegion message={error} />
                 {error && (
-                    <div role="alert" className="p-3 bg-error-light text-error border border-error/50 rounded-md text-sm">
+                    <div className="p-3 bg-error-light text-error border border-error/50 rounded-md text-sm">
                         {error}
                     </div>
                 )}

@@ -11,6 +11,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useToast } from '@/contexts/ToastContext';
 import { CollapsibleConfigSection } from '@/components/ui/CollapsibleConfigSection';
+import { ErrorLiveRegion } from '@/components/a11y/LiveRegion';
 import { product } from '@/lib/product';
 
 interface TotpStatus {
@@ -218,6 +219,8 @@ export function TwoFactorSection() {
             storageKey="settings.twoFactorOpen"
         >
             <div className="space-y-4">
+                {/* Mounted for the whole section: enroll and disable share formError. */}
+                <ErrorLiveRegion message={formError} />
                 <p className="text-sm text-foreground-muted">
                     Add an optional second step to password sign-in using a time-based code from an
                     authenticator app (Aegis, Google Authenticator, 1Password, …). This is entirely
@@ -321,7 +324,7 @@ export function TwoFactorSection() {
 
                         <form onSubmit={confirmEnroll} className="space-y-2">
                             <div className="text-sm font-medium text-foreground">2. Enter the 6-digit code it shows</div>
-                            {formError && <p role="alert" className="text-xs text-negative">{formError}</p>}
+                            {formError && <p className="text-xs text-negative">{formError}</p>}
                             <div className="flex items-center gap-2">
                                 {codeInput(confirmCode, setConfirmCode, false)}
                                 <button
@@ -383,7 +386,7 @@ export function TwoFactorSection() {
                                 ? 'Enter a current authenticator code (or an unused recovery code) to confirm. Password-only sign-in will be restored.'
                                 : 'Enter a current authenticator code (or an unused recovery code). All previous recovery codes stop working.'}
                         </p>
-                        {formError && <p role="alert" className="text-xs text-negative">{formError}</p>}
+                        {formError && <p className="text-xs text-negative">{formError}</p>}
                         <div className="flex items-center gap-2">
                             {codeInput(actionCode, setActionCode, true)}
                             <button

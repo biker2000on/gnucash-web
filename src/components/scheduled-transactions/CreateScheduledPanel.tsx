@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { AccountSelector } from '@/components/ui/AccountSelector';
+import { ErrorLiveRegion } from '@/components/a11y/LiveRegion';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -448,8 +449,9 @@ export function CreateScheduledPanel({
           </fieldset>
 
           {/* Error message */}
+          <ErrorLiveRegion message={error} />
           {error && (
-            <p role="alert" className="text-negative text-sm">{error}</p>
+            <p className="text-negative text-sm">{error}</p>
           )}
 
           {command && (

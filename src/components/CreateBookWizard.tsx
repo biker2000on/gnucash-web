@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { ErrorLiveRegion } from '@/components/a11y/LiveRegion';
 import { CurrencySelect } from '@/components/CurrencySelect';
 import NewBookForm from '@/components/books/NewBookForm';
 import { product } from '@/lib/product';
@@ -154,8 +155,9 @@ export function CreateBookWizard({ onBookCreated, isOnboarding = false }: Create
           explore accounts, reports, and tools. You can delete it at any time.
         </p>
 
+        <ErrorLiveRegion message={error} />
         {error && (
-          <div role="alert" className="mb-4 p-3 bg-negative/10 border border-negative/30 rounded-lg text-negative text-sm">
+          <div className="mb-4 p-3 bg-negative/10 border border-negative/30 rounded-lg text-negative text-sm">
             {error}
           </div>
         )}
@@ -211,8 +213,9 @@ export function CreateBookWizard({ onBookCreated, isOnboarding = false }: Create
           First, create a book with a name and currency. You can then import your GnuCash data from the Import/Export page.
         </p>
 
+        <ErrorLiveRegion message={error} />
         {error && (
-          <div role="alert" className="mb-4 p-3 bg-negative/10 border border-negative/30 rounded-lg text-negative text-sm">
+          <div className="mb-4 p-3 bg-negative/10 border border-negative/30 rounded-lg text-negative text-sm">
             {error}
           </div>
         )}

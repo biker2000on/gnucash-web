@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { BrandLockup } from '@/components/brand/BrandLockup';
+import { ErrorLiveRegion } from '@/components/a11y/LiveRegion';
 
 interface LoginFormProps {
     mode: 'login' | 'register';
@@ -150,8 +151,9 @@ export function LoginForm({ mode, onToggleMode, redirectTo = '/dashboard', oidcP
                         </p>
                     </div>
 
+                    <ErrorLiveRegion message={error} />
                     {error && (
-                        <div role="alert" className="mb-6 p-4 bg-negative/10 border border-negative/30 rounded-lg text-negative text-sm">
+                        <div className="mb-6 p-4 bg-negative/10 border border-negative/30 rounded-lg text-negative text-sm">
                             {error}
                         </div>
                     )}
@@ -244,8 +246,9 @@ export function LoginForm({ mode, onToggleMode, redirectTo = '/dashboard', oidcP
                     </div>
                 )}
 
+                <ErrorLiveRegion message={error || flowError} />
                 {(error || flowError) && (
-                    <div role="alert" className="mb-6 p-4 bg-negative/10 border border-negative/30 rounded-lg text-negative text-sm">
+                    <div className="mb-6 p-4 bg-negative/10 border border-negative/30 rounded-lg text-negative text-sm">
                         {error || flowError}
                     </div>
                 )}

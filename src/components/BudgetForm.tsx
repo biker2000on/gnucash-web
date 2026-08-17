@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { ErrorLiveRegion } from '@/components/a11y/LiveRegion';
 
 interface BudgetFormData {
     name: string;
@@ -58,8 +59,9 @@ export function BudgetForm({ mode, initialData, onSave, onCancel }: BudgetFormPr
 
     return (
         <form onSubmit={handleSubmit} className="space-y-6">
+            <ErrorLiveRegion message={error} />
             {error && (
-                <div role="alert" className="bg-negative/10 border border-negative/30 rounded-lg p-4 text-negative text-sm">
+                <div className="bg-negative/10 border border-negative/30 rounded-lg p-4 text-negative text-sm">
                     {error}
                 </div>
             )}

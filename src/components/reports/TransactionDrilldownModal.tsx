@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { ErrorLiveRegion } from '@/components/a11y/LiveRegion';
 import Link from 'next/link';
 import { formatCurrency } from '@/lib/format';
 
@@ -213,8 +214,9 @@ export function TransactionDrilldownModal({ target, onClose, endpoint = '/api/re
                 {/* Body */}
                 <div className="flex-1 overflow-y-auto">
                     {isLoading && <DrilldownSkeleton />}
+                    <ErrorLiveRegion message={error} />
                     {error && (
-                        <div role="alert" className="px-4 py-6 text-sm text-negative">
+                        <div className="px-4 py-6 text-sm text-negative">
                             {error}
                         </div>
                     )}

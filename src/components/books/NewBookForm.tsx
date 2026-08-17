@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { CurrencySelect } from '@/components/CurrencySelect';
+import { ErrorLiveRegion } from '@/components/a11y/LiveRegion';
 import {
   BUSINESS_ACTIVITY_OPTIONS,
   ENTITY_TYPE_OPTIONS,
@@ -221,8 +222,9 @@ export default function NewBookForm({
         </div>
       </div>
 
+      <ErrorLiveRegion message={error} />
       {error && (
-        <div role="alert" className="px-3 py-2 bg-negative/10 border border-negative/30 rounded-lg text-sm text-negative">
+        <div className="px-3 py-2 bg-negative/10 border border-negative/30 rounded-lg text-sm text-negative">
           {error}
         </div>
       )}
