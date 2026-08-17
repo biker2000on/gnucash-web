@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback, useImperativeHandle, type Ref } from 'react';
 import { SplitFormData, TransactionFormData, CreateTransactionRequest, Transaction, Account } from '@/lib/types';
 import { SplitRow } from './SplitRow';
 import { AccountSelector } from './ui/AccountSelector';
@@ -23,6 +23,16 @@ import {
     parseExchangeRate,
 } from '@/lib/transaction-currency';
 
+export interface TransactionFormHandle {
+    /**
+     * Whether the form now holds content the user typed (or picked) that
+     * differs from what it was seeded with. Read on the way out of the modal:
+     * true means closing would destroy work. Same shape as the ledger's
+     * inline editors (EditableSplitRowsHandle, InvestmentEditRowHandle).
+     */
+    isDirty: () => boolean;
+}
+
 interface TransactionFormProps {
     transaction?: Transaction | null;
     onSave: (data: CreateTransactionRequest) => Promise<void>;
@@ -32,6 +42,15 @@ interface TransactionFormProps {
     defaultFromAccount?: string;
     defaultToAccount?: string;
     onSaveAndAnother?: (data: CreateTransactionRequest) => Promise<void>;
+    /** React 19 ref-as-prop; exposes {@link TransactionFormHandle}. */
+    ref?: Ref<TransactionFormHandle>;
+}
+
+interface SimpleModeData {
+    amount: string;
+    fromAccountGuid: string;
+    toAccountGuid: string;
+    memo: string;
 }
 
 const createEmptySplit = (): SplitFormData => ({
@@ -67,6 +86,75 @@ export function parseAmountField(text: string): number | null {
 export function parseSplitAmountField(text: string): number | null {
     if (!text.trim()) return 0;
     return parseAmountField(text);
+}
+
+/**
+ * One amount box, reduced to a form two spellings of the same number share.
+ * Unparseable text is kept verbatim so a half-typed "12+" still counts as
+ * content the user would lose.
+ */
+const normalizeAmountText = (text: string): string => {
+    const trimmed = text.trim();
+    if (!trimmed) return '';
+    const value = parseAmountField(trimmed);
+    return value === null ? trimmed : value.toFixed(4);
+};
+
+/** A split row is content only once something has been chosen or typed in it. */
+const splitHasContent = (split: SplitFormData): boolean => Boolean(
+    split.account_guid
+    || split.debit.trim()
+    || split.credit.trim()
+    || (split.memo ?? '').trim()
+);
+
+/**
+ * Canonical text for everything the user can actually type or pick in this
+ * form. Compared against the baseline captured when the form was seeded, this
+ * is the definition of "dirty" behind {@link TransactionFormHandle.isDirty}.
+ *
+ * Deliberately EXCLUDED, because none of it is user work and all of it moves
+ * on its own after the form opens:
+ *  - `currency_guid`, which the async default-currency fetch fills in;
+ *  - split `id`s, a fresh crypto.randomUUID() per blank row;
+ *  - `account_name`, `dateDisplay`, errors and saving flags — derived or
+ *    presentational;
+ *  - the Simple/Advanced toggle itself: switching carries the same content
+ *    across, so a bare look at the other mode must not read as an edit.
+ *
+ * Blank split rows are dropped, so neither the two pre-seeded empty rows nor
+ * an empty row added with "Add Split" counts as content. Amounts are compared
+ * numerically because a Simple/Advanced round-trip rewrites "25" as "25.00".
+ * Rows are sorted because that same round-trip can reorder them; there is no
+ * UI to reorder rows, so order carries no user intent.
+ */
+export function serializeFormContent(formData: TransactionFormData, simple: SimpleModeData): string {
+    const splits = formData.splits
+        .filter(splitHasContent)
+        .map(split => [
+            split.account_guid,
+            normalizeAmountText(split.debit),
+            normalizeAmountText(split.credit),
+            split.memo ?? '',
+            split.reconcile_state,
+            normalizeAmountText(split.exchange_rate ?? ''),
+        ].join('\u001f'))
+        .sort();
+
+    return JSON.stringify({
+        post_date: formData.post_date,
+        description: formData.description,
+        num: formData.num,
+        splits,
+        // Simple mode keeps the entry in its own state until save, so it has
+        // to be compared whichever mode is showing.
+        simple: {
+            amount: normalizeAmountText(simple.amount),
+            fromAccountGuid: simple.fromAccountGuid,
+            toAccountGuid: simple.toAccountGuid,
+            memo: simple.memo,
+        },
+    });
 }
 
 /**
@@ -129,6 +217,7 @@ export function TransactionForm({
     defaultFromAccount = '',
     defaultToAccount = '',
     onSaveAndAnother,
+    ref,
 }: TransactionFormProps) {
     const [formData, setFormData] = useState<TransactionFormData>({
         post_date: toLocalDateString(new Date()),
@@ -141,12 +230,22 @@ export function TransactionForm({
     const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
     const [saving, setSaving] = useState(false);
     const [isSimpleMode, setIsSimpleMode] = useState(simpleMode);
-    const [simpleData, setSimpleData] = useState({
+    const [simpleData, setSimpleData] = useState<SimpleModeData>({
         amount: '',
         fromAccountGuid: defaultFromAccount,
         toAccountGuid: defaultToAccount,
         memo: '',
     });
+    // What the form was seeded with, in serializeFormContent's canonical form.
+    // Captured here on the first render (so the pre-populated date, the two
+    // empty split rows and any defaultFrom/ToAccount are part of "pristine"),
+    // and re-captured whenever the form is re-seeded: when an edited
+    // transaction finishes loading, and after Save & New clears it. isDirty is
+    // this string against the live one — never a comparison with "empty".
+    const baselineRef = useRef<string | null>(null);
+    if (baselineRef.current === null) {
+        baselineRef.current = serializeFormContent(formData, simpleData);
+    }
     // The memo value simple mode was seeded with. While the field still holds
     // this value the user hasn't touched it, and buildSimpleModeSplits keeps
     // each split's own stored memo instead of overwriting both.
@@ -263,14 +362,24 @@ export function TransactionForm({
             }) || [createEmptySplit(), createEmptySplit()];
 
             const postDate = transaction.post_date.toString().split('T')[0];
-            setFormData({
+            const loadedForm: TransactionFormData = {
                 post_date: postDate,
                 description: transaction.description,
                 num: transaction.num || '',
                 currency_guid: transaction.currency_guid,
                 splits,
-            });
+            };
+            setFormData(loadedForm);
             setDateDisplay(formatDateForDisplay(postDate, dateFormat));
+
+            // Simple mode is only seeded for a 2-split transaction; otherwise
+            // it stays at the untouched initial values below.
+            let loadedSimple: SimpleModeData = {
+                amount: '',
+                fromAccountGuid: defaultFromAccount,
+                toAccountGuid: defaultToAccount,
+                memo: '',
+            };
 
             // If editing a transaction with more than 2 splits, use advanced mode
             if (splits.length > 2) {
@@ -286,16 +395,22 @@ export function TransactionForm({
                     // leave it blank and preserve per-split memos on save.
                     const sharedMemo = debitSplit.memo === creditSplit.memo ? debitSplit.memo : '';
                     initialSimpleMemoRef.current = sharedMemo;
-                    setSimpleData({
+                    loadedSimple = {
                         amount: debitSplit.debit,
                         fromAccountGuid: creditSplit.account_guid,
                         toAccountGuid: debitSplit.account_guid,
                         memo: sharedMemo,
-                    });
+                    };
+                    setSimpleData(loadedSimple);
                 }
             }
+
+            // In edit mode "dirty" means "differs from the loaded
+            // transaction", so the baseline moves to what was just loaded
+            // rather than the empty form this component mounted with.
+            baselineRef.current = serializeFormContent(loadedForm, loadedSimple);
         }
-    }, [transaction, dateFormat]);
+    }, [transaction, dateFormat, defaultFromAccount, defaultToAccount]);
 
     // Fetch default currency if not provided
     useEffect(() => {
@@ -752,19 +867,24 @@ export function TransactionForm({
         // The saved entry owns the previous guid; the next one needs its own.
         clientTxGuidRef.current = newClientTxGuid();
         // Keep the current date but clear everything else
-        setFormData(prev => ({
-            ...prev,
+        const nextForm: TransactionFormData = {
+            ...formData,
             description: '',
             num: '',
             splits: [createEmptySplit(), createEmptySplit()],
-        }));
-        initialSimpleMemoRef.current = '';
-        setSimpleData({
+        };
+        const nextSimple: SimpleModeData = {
             amount: '',
             fromAccountGuid: defaultFromAccount,
             toAccountGuid: defaultToAccount,
             memo: '',
-        });
+        };
+        setFormData(nextForm);
+        initialSimpleMemoRef.current = '';
+        setSimpleData(nextSimple);
+        // The previous entry is saved; the cleared form is the new pristine
+        // state, so Escape right after Save & New must not prompt.
+        baselineRef.current = serializeFormContent(nextForm, nextSimple);
         setErrors([]);
         setFieldErrors({});
     };
@@ -871,6 +991,14 @@ export function TransactionForm({
             setSaving(false);
         }
     };
+
+    // Read by TransactionFormModal on every exit path (Escape, the header
+    // close button, Cancel) to decide whether closing would destroy work.
+    const isDirty = useCallback(
+        () => serializeFormContent(formData, simpleData) !== baselineRef.current,
+        [formData, simpleData],
+    );
+    useImperativeHandle(ref, () => ({ isDirty }), [isDirty]);
 
     const { totalDebit, totalCredit, submittedDifference } = calculateBalance();
 

@@ -39,20 +39,43 @@ export interface AdjustToTargetValueParams {
  * from quantity, so it must not be used to calculate a target adjustment.
  */
 export async function getAssetBalance(accountGuid: string): Promise<number> {
+  const balances = await getAssetBalances([accountGuid]);
+  return balances.get(accountGuid) ?? 0;
+}
+
+/**
+ * Batch form of {@link getAssetBalance}: the quantity balance for many asset
+ * accounts in one query, keyed by account guid. Every requested guid is
+ * present in the result, with 0 for accounts that have no splits.
+ *
+ * This is the single implementation of the asset balance; the singular helper
+ * delegates here so the asset list and the asset detail view cannot drift.
+ */
+export async function getAssetBalances(
+  accountGuids: string[]
+): Promise<Map<string, number>> {
+  const balances = new Map<string, number>(accountGuids.map((guid) => [guid, 0]));
+  if (accountGuids.length === 0) return balances;
+
   // Preserve each GnuCash fraction until conversion through the shared exact
   // fraction helper. Split denominators are not necessarily powers of ten.
   const splits = await prisma.$queryRaw<{
+    account_guid: string;
     quantity_num: bigint;
     quantity_denom: bigint;
   }[]>`
-    SELECT quantity_num, quantity_denom
+    SELECT account_guid, quantity_num, quantity_denom
     FROM splits
-    WHERE account_guid = ${accountGuid}
+    WHERE account_guid = ANY(${accountGuids})
   `;
-  return splits.reduce(
-    (balance, split) => balance + toDecimalNumber(split.quantity_num, split.quantity_denom),
-    0
-  );
+  for (const split of splits) {
+    balances.set(
+      split.account_guid,
+      (balances.get(split.account_guid) ?? 0) +
+        toDecimalNumber(split.quantity_num, split.quantity_denom)
+    );
+  }
+  return balances;
 }
 
 /**

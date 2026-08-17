@@ -1,8 +1,9 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Modal } from './ui/Modal';
-import { TransactionForm } from './TransactionForm';
+import { ConfirmationDialog } from './ui/ConfirmationDialog';
+import { TransactionForm, type TransactionFormHandle } from './TransactionForm';
 import { Transaction, CreateTransactionRequest } from '@/lib/types';
 import { useToast } from '@/contexts/ToastContext';
 
@@ -27,6 +28,12 @@ export function TransactionFormModal({
     const [fullTransaction, setFullTransaction] = useState<Transaction | null>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [discardPromptOpen, setDiscardPromptOpen] = useState(false);
+    const formHandleRef = useRef<TransactionFormHandle>(null);
+    // Where focus was when the discard prompt opened — the field the user was
+    // typing in, or the button they clicked. Declining returns it there
+    // instead of dropping focus on the page body.
+    const focusBeforePromptRef = useRef<HTMLElement | null>(null);
 
     const isEditMode = transaction !== null && transaction !== undefined;
 
@@ -36,6 +43,7 @@ export function TransactionFormModal({
             setFullTransaction(null);
             setLoading(false);
             setError(null);
+            setDiscardPromptOpen(false);
             return;
         }
 
@@ -149,10 +157,42 @@ export function TransactionFormModal({
         }
     };
 
-    const handleCancel = () => {
+    /** Close for real, throwing away whatever is in the form. */
+    const discardAndClose = useCallback(() => {
+        setDiscardPromptOpen(false);
+        focusBeforePromptRef.current = null;
         setError(null);
         onClose();
-    };
+    }, [onClose]);
+
+    /**
+     * Every way out of this modal that is not a successful save — Escape, the
+     * header close button and the form's own Cancel button all land here. A
+     * pristine form closes straight away; one holding typed work asks first,
+     * so a single keystroke cannot destroy a half-entered transaction.
+     * (The backdrop is not an exit path: closeOnBackdrop is false below.)
+     */
+    const handleCancel = useCallback(() => {
+        if (formHandleRef.current?.isDirty()) {
+            focusBeforePromptRef.current = document.activeElement as HTMLElement | null;
+            setDiscardPromptOpen(true);
+            return;
+        }
+        discardAndClose();
+    }, [discardAndClose]);
+
+    const keepEditing = useCallback(() => {
+        setDiscardPromptOpen(false);
+    }, []);
+
+    // Runs after the prompt has unmounted, so focus lands back on the field or
+    // button the user left rather than on the page body.
+    useEffect(() => {
+        if (discardPromptOpen) return;
+        const previous = focusBeforePromptRef.current;
+        focusBeforePromptRef.current = null;
+        if (previous?.isConnected) previous.focus({ preventScroll: true });
+    }, [discardPromptOpen]);
 
     return (
         <Modal
@@ -161,7 +201,9 @@ export function TransactionFormModal({
             title={isEditMode ? 'Edit Transaction' : 'New Transaction'}
             size="2xl"
             closeOnBackdrop={false}
-            closeOnEscape={true}
+            // While the discard prompt is up it owns Escape; otherwise both
+            // dialogs would answer the same keystroke.
+            closeOnEscape={!discardPromptOpen}
             resetKey={transaction?.guid ?? 'new'}
         >
             <div className="px-6 py-4">
@@ -180,6 +222,7 @@ export function TransactionFormModal({
                     </div>
                 ) : (
                     <TransactionForm
+                        ref={formHandleRef}
                         transaction={isEditMode ? fullTransaction : null}
                         onSave={handleSave}
                         onCancel={handleCancel}
@@ -188,6 +231,23 @@ export function TransactionFormModal({
                     />
                 )}
             </div>
+
+            <ConfirmationDialog
+                isOpen={discardPromptOpen}
+                onConfirm={discardAndClose}
+                onCancel={keepEditing}
+                title="Discard this transaction?"
+                message={isEditMode
+                    ? 'This transaction has unsaved changes. Closing now discards them.'
+                    : 'This transaction has not been saved. Closing now discards what you entered.'}
+                confirmLabel="Discard"
+                cancelLabel="Keep editing"
+                confirmVariant="danger"
+                // Discarding is the irreversible half, so it is not the button
+                // sitting under a reflexive Enter.
+                defaultFocus="cancel"
+                confirmOnEnter={false}
+            />
         </Modal>
     );
 }

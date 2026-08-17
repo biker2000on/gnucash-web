@@ -8,7 +8,7 @@ import {
   gainHeading,
   BASIS_CONSEQUENCE,
 } from '@/components/investments/CostBasisCoverageMark';
-import type { CostBasisCoverage } from '@/lib/commodities';
+import type { CostBasisCoverage } from '@/lib/holdings-coverage';
 
 interface PortfolioSummaryCardsProps {
   totalValue: number;
