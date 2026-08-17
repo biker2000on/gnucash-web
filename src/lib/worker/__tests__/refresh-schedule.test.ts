@@ -18,9 +18,12 @@ import { describe, it, expect, vi } from 'vitest';
 import {
     applyScheduleChange,
     DEFAULT_REFRESH_TIME,
+    isRefreshEnabled,
+    isRefreshEnabledStoredValue,
     msUntilNextUtcTime,
     normalizeRefreshTime,
     resolvePriceRefreshTargets,
+    selectRefreshEnabledUserIds,
     type RefreshScheduleSources,
 } from '@/lib/worker/refresh-schedule';
 
@@ -107,6 +110,113 @@ describe('msUntilNextUtcTime', () => {
                 expect(Number.isFinite(ms)).toBe(true);
             }
         }
+    });
+});
+
+/**
+ * Restart recovery: who gets their timers rebuilt.
+ *
+ * The fail-closed `schedule-changed` handler below leans on one promise —
+ * "nothing is lost, recovery rebuilds every timer on the next worker start".
+ * That promise was FALSE for a real population of rows. Recovery asked Postgres
+ * `preference_value = 'true'`, which matches a boolean-true row and misses the
+ * JSON string `"true"` — a representation the settings route explicitly accepts
+ * as enabled (`enabled === true || enabled === 'true'`) and `setPreference`
+ * happily stores. Such a user was ENABLED on every PATCH and INVISIBLE to every
+ * restart: lose the in-memory timer in a deploy and their prices stop
+ * refreshing until someone saves settings again, with nothing logged.
+ *
+ * The repair is not a second literal in the query. Enablement is decided in ONE
+ * predicate that the settings route and recovery both call; recovery selects
+ * candidate rows and evaluates them here, in code.
+ */
+describe('refresh_enabled — the single enablement predicate', () => {
+    // Every persisted representation, stated as the raw column text that
+    // `setPreference`'s JSON.stringify actually writes.
+    const REPRESENTATIONS: Array<[label: string, storedColumnText: string, enabled: boolean]> = [
+        ['boolean true', 'true', true],
+        ['boolean false', 'false', false],
+        ['JSON string "true"', '"true"', true],
+        ['JSON string "false"', '"false"', false],
+        ['malformed JSON', 'not json at all', false],
+        ['empty text', '', false],
+        ['JSON null', 'null', false],
+        ['number 1', '1', false],
+        ['object', '{"enabled":true}', false],
+        ['string that merely mentions true', '"untrue"', false],
+    ];
+
+    it.each(REPRESENTATIONS)('stored %s resolves to enabled=%j -> %j', (_label, stored, expected) => {
+        expect(isRefreshEnabledStoredValue(stored)).toBe(expected);
+    });
+
+    it('treats an absent row as disabled', () => {
+        expect(isRefreshEnabledStoredValue(undefined)).toBe(false);
+        expect(isRefreshEnabledStoredValue(null)).toBe(false);
+    });
+
+    it('agrees with the settings route on the PARSED value it checks', () => {
+        // The route's own condition, verbatim, over the same domain.
+        for (const parsed of [true, false, 'true', 'false', null, undefined, 1, 0, {}, [], 'TRUE', ' true']) {
+            expect(isRefreshEnabled(parsed)).toBe(parsed === true || parsed === 'true');
+        }
+    });
+
+    it('never mistakes a disabled value for an enabled one', () => {
+        // Truthiness would flip 'false' to enabled; this must not.
+        expect(Boolean('false')).toBe(true);
+        expect(isRefreshEnabled('false')).toBe(false);
+        expect(isRefreshEnabledStoredValue('"false"')).toBe(false);
+    });
+});
+
+describe('selectRefreshEnabledUserIds — restart recovery', () => {
+    it('RECOVERS a user whose stored preference is the JSON string "true"', () => {
+        // The regression. The old query (`preference_value = 'true'`) returned
+        // no row for user 7, so their price refresh silently stayed unscheduled
+        // across every restart.
+        expect(selectRefreshEnabledUserIds([{ user_id: 7, preference_value: '"true"' }])).toEqual([7]);
+    });
+
+    it('does NOT recover a user whose stored preference is the JSON string "false"', () => {
+        // The other direction: a user who switched refresh OFF must not have it
+        // switched back on by a restart.
+        expect(selectRefreshEnabledUserIds([{ user_id: 8, preference_value: '"false"' }])).toEqual([]);
+    });
+
+    it('recovers boolean true and skips boolean false', () => {
+        expect(selectRefreshEnabledUserIds([
+            { user_id: 1, preference_value: 'true' },
+            { user_id: 2, preference_value: 'false' },
+        ])).toEqual([1]);
+    });
+
+    it('selects every enabled representation and no disabled one, in one scan', () => {
+        const ids = selectRefreshEnabledUserIds([
+            { user_id: 1, preference_value: 'true' },
+            { user_id: 2, preference_value: 'false' },
+            { user_id: 3, preference_value: '"true"' },
+            { user_id: 4, preference_value: '"false"' },
+            { user_id: 5, preference_value: 'garbage' },
+            { user_id: 6, preference_value: '' },
+        ]);
+
+        expect(ids).toEqual([1, 3]);
+    });
+
+    it('feeds recovery end to end: the "true"-string user gets a schedule armed', async () => {
+        const rows = [
+            { user_id: 1, preference_value: '"true"' },
+            { user_id: 2, preference_value: '"false"' },
+        ];
+
+        const targets = await resolvePriceRefreshTargets(
+            sources({ listRefreshEnabledUserIds: async () => selectRefreshEnabledUserIds(rows) }),
+        );
+
+        expect(targets).toEqual([
+            { userId: 1, bookGuid: 'book-alice', refreshTime: '06:30' },
+        ]);
     });
 });
 

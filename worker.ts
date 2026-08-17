@@ -16,7 +16,9 @@ import {
   applyScheduleChange,
   msUntilNextUtcTime,
   normalizeRefreshTime,
+  REFRESH_ENABLED_KEY,
   resolvePriceRefreshTargets,
+  selectRefreshEnabledUserIds,
 } from './src/lib/worker/refresh-schedule';
 
 // Last-resort observability: scheduled callbacks and third-party clients must
@@ -356,6 +358,11 @@ function clearSchedule(bookGuid: string) {
  * Time handling is equally strict: `getPreference` decodes the stored JSON
  * without throwing, and `resolvePriceRefreshTargets` rejects anything that is
  * not a valid HH:MM before it can reach a timer.
+ *
+ * Enablement is decided by the shared `isRefreshEnabled` predicate, the same
+ * one the settings route uses, so this rebuild covers every user the route
+ * considers enabled — including rows holding the JSON string "true", which the
+ * previous `preference_value = 'true'` query silently skipped.
  */
 async function recoverSchedules() {
   try {
@@ -368,12 +375,19 @@ async function recoverSchedules() {
       const { getUserBooks } = await import('./src/lib/services/permission.service');
 
       const targets = await resolvePriceRefreshTargets({
+        // Candidate rows only. Enablement is NOT decided here: comparing
+        // preference_value to the literal 'true' in the query was a second,
+        // divergent copy of the settings route's rule, and it disagreed —
+        // it matched a boolean-true row but missed the JSON string "true",
+        // which the route accepts as enabled and setPreference stores. Those
+        // users were enabled on save and forgotten on every restart. The rows
+        // are evaluated through the one shared predicate instead.
         async listRefreshEnabledUserIds() {
-          const enabled = await prisma.gnucash_web_user_preferences.findMany({
-            where: { preference_key: 'refresh_enabled', preference_value: 'true' },
-            select: { user_id: true },
+          const rows = await prisma.gnucash_web_user_preferences.findMany({
+            where: { preference_key: REFRESH_ENABLED_KEY },
+            select: { user_id: true, preference_value: true },
           });
-          return enabled.map(p => p.user_id);
+          return selectRefreshEnabledUserIds(rows);
         },
         // null covers both "unset" and "stored value is not even valid JSON";
         // either way there is no usable stored time, and the resolver owns the

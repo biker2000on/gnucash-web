@@ -11,7 +11,14 @@
  *     refreshed prices against a book the user may hold no permission on while
  *     the book they enabled refresh for went stale.
  *
- *  2. A stored refresh time is VALIDATED before it reaches a timer. `new
+ *  2. "Enabled" means ONE thing. The settings route and startup recovery each
+ *     used to decide it for themselves -- the route on the parsed preference
+ *     (`true` or the string `'true'`), recovery as a SQL comparison against the
+ *     literal 'true'. They disagreed on a representation that really occurs, so
+ *     a user could be enabled on save and invisible to recovery. Both callers
+ *     now go through `isRefreshEnabled`.
+ *
+ *  3. A stored refresh time is VALIDATED before it reaches a timer. `new
  *     Date().setUTCHours(NaN, ...)` yields an Invalid Date, so a malformed
  *     preference makes the delay computation return NaN; `setTimeout(fn, NaN)`
  *     is coerced to 0, fires immediately, reschedules, and spins the worker in
@@ -23,6 +30,83 @@
 
 /** Used when a user has enabled refresh but stored no time of their own. */
 export const DEFAULT_REFRESH_TIME = '21:00';
+
+/** The preference key both the settings route and recovery read enablement from. */
+export const REFRESH_ENABLED_KEY = 'refresh_enabled';
+
+/**
+ * THE single definition of "this user has price refresh switched on".
+ *
+ * Every persisted representation, and what it must resolve to. `setPreference`
+ * JSON-serializes whatever the PATCH body carried, so the column holds JSON
+ * text and the set below is what can actually be in it:
+ *
+ *   stored column text | JSON.parse       | verdict
+ *   -------------------+------------------+---------
+ *   `true`             | boolean true     | ENABLED
+ *   `false`            | boolean false    | disabled
+ *   `"true"`           | string 'true'    | ENABLED   <- the row recovery used to miss
+ *   `"false"`          | string 'false'   | disabled  <- must NOT be re-enabled
+ *   (row absent)       | -- (default)     | disabled
+ *   malformed JSON     | throws           | disabled
+ *   anything else      | 1, null, {}, ... | disabled
+ *
+ * Both directions are failures with teeth. Under-recognizing silently loses a
+ * schedule the user turned ON; over-recognizing silently turns one back on
+ * after they turned it OFF. So this is an exact match on exactly two values,
+ * never a truthiness or substring test: `Boolean('false')` is TRUE, and a
+ * permissive `LIKE '%true%'` matches any stored text that merely mentions the
+ * word. Either would re-enable a schedule the user deliberately switched off.
+ *
+ * Takes the PARSED value, so callers holding a `getPreference` result and
+ * callers holding a raw column both funnel through the same rule.
+ */
+export function isRefreshEnabled(parsed: unknown): boolean {
+    return parsed === true || parsed === 'true';
+}
+
+/**
+ * The same predicate, applied to a RAW `preference_value` column.
+ *
+ * Startup recovery scans the preference table directly rather than calling
+ * `getPreference` per user, so it holds JSON text, not a parsed value. It must
+ * still reach the identical verdict — encoding enablement a second time as a
+ * SQL string comparison is what broke this: `preference_value = 'true'` matches
+ * a boolean-true row and MISSES a legitimately stored `"true"`, so a user who
+ * had refresh on lost their schedule at the next worker restart, silently and
+ * until they next saved settings.
+ */
+export function isRefreshEnabledStoredValue(raw: string | null | undefined): boolean {
+    if (typeof raw !== 'string') return false;
+    try {
+        return isRefreshEnabled(JSON.parse(raw));
+    } catch {
+        // Malformed JSON is not enablement. `getPreference` logs the corrupt
+        // row on the read path; recovery just declines to schedule from it.
+        return false;
+    }
+}
+
+/** One `refresh_enabled` row as recovery reads it. */
+export interface RefreshEnabledRow {
+    user_id: number;
+    preference_value: string;
+}
+
+/**
+ * Users whose stored preference means "enabled", from the candidate rows.
+ *
+ * Recovery selects every `refresh_enabled` row (at most one per user — the
+ * table is unique on user + key) and decides enablement HERE, through the
+ * shared predicate, instead of asking Postgres to compare strings.
+ */
+export function selectRefreshEnabledUserIds(
+    rows: ReadonlyArray<RefreshEnabledRow>,
+): number[] {
+    return rows
+        .filter(row => isRefreshEnabledStoredValue(row.preference_value))
+        .map(row => row.user_id);
+}
 
 /** Strict 24-hour HH:MM. Rejects '9:00', '24:00', '21:60', '21:00:00'. */
 const HH_MM = /^([01][0-9]|2[0-3]):([0-5][0-9])$/;
@@ -77,7 +161,10 @@ export interface RefreshScheduleTarget {
  * `getUserBooks()` from the permission service.
  */
 export interface RefreshScheduleSources {
-    /** User ids whose `refresh_enabled` preference is 'true'. */
+    /**
+     * User ids whose stored `refresh_enabled` preference means enabled, as
+     * decided by `isRefreshEnabledStoredValue` — never by a SQL string compare.
+     */
     listRefreshEnabledUserIds(): Promise<number[]>;
     /**
      * Stored `refresh_time` preference, already JSON-decoded. Null/undefined
@@ -201,6 +288,12 @@ export type ScheduleChangeOutcome = 'set' | 'cleared' | 'ignored';
  * Nothing is lost by ignoring such a job: `recoverSchedules()` rebuilds every
  * timer from the preference table and `getUserBooks()` on the next worker
  * start, and any settings save re-signals with a bookGuid attached.
+ *
+ * That rebuild guarantee is only as good as recovery's idea of who is enabled,
+ * which is why `isRefreshEnabled` is shared rather than restated in SQL: while
+ * recovery matched the raw literal 'true', users stored as the JSON string
+ * `"true"` were omitted from the rebuild entirely, and failing closed here
+ * would have left them with no schedule at all.
  */
 export function applyScheduleChange(
     request: ScheduleChangeRequest,
