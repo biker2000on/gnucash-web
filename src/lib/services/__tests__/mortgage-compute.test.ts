@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import prisma from '@/lib/prisma';
 import { MortgageService } from '../mortgage.service';
 
@@ -8,6 +8,10 @@ vi.mock('@/lib/prisma', () => ({
     splits: { findMany: vi.fn() },
   },
 }));
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe('Mortgage Payment Computation', () => {
   it('should compute correct principal/interest for standard amortization', () => {
@@ -57,7 +61,7 @@ describe('Mortgage Payment Computation', () => {
     expect(principal).toBe(-500);
   });
 
-  it('refuses to split a payment using a low-confidence 40% inferred rate', async () => {
+  it('refuses to split a payment using a low-confidence 40% inferred rate without warnings', async () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (prisma.$queryRaw as any).mockResolvedValue([{ balance: '-100000' }]);
     vi.spyOn(MortgageService, 'detectMortgageDetails').mockResolvedValue({
@@ -66,13 +70,32 @@ describe('Mortgage Payment Computation', () => {
       monthlyPayment: 0,
       paymentsAnalyzed: 3,
       confidence: 'low',
-      warnings: ['Original principal not determinable from ledger — estimated'],
+      warnings: [],
       paymentHistory: [],
     });
 
     // Before this regression fix, this returned { interest: 3333.33, principal: 1666.67 }.
     await expect(MortgageService.computePaymentForDate('mortgage', 'interest', 5000)).resolves.toEqual({
-      reason: 'Original principal not determinable from ledger — estimated',
+      reason: 'Mortgage rate confidence is too low to split this payment safely',
+    });
+  });
+
+  it('uses a high-confidence ARM rate even when variable-rate detection warns', async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (prisma.$queryRaw as any).mockResolvedValue([{ balance: '-100000' }]);
+    vi.spyOn(MortgageService, 'detectMortgageDetails').mockResolvedValue({
+      originalAmount: 100000,
+      interestRate: 7.46664,
+      monthlyPayment: 1013.37,
+      paymentsAnalyzed: 12,
+      confidence: 'high',
+      warnings: ['Variable rate detected'],
+      paymentHistory: [],
+    });
+
+    await expect(MortgageService.computePaymentForDate('mortgage', 'interest', 1013.37)).resolves.toEqual({
+      interest: 622.22,
+      principal: 391.15,
     });
   });
 });

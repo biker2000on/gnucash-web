@@ -946,7 +946,7 @@ Closes every "worth building" gap from the GnuCash desktop parity audit
 - **"Since Last Run" batch mode**: contextual amber banner in the Upcoming view shows overdue count with a "Process All" button that batch-executes all overdue occurrences
 - **Enable/disable toggle**: interactive toggle switch on each scheduled transaction row replaces the static enabled/disabled badge. Optimistic UI with rollback on failure.
 - **Create new scheduled transactions**: slide-over panel with name, recurrence pattern (all 9 GnuCash period types), start/end dates, multi-split account picker, auto-create/notify options. Creates full GnuCash template structure (root account, child accounts, slot mappings, template transaction/splits, schedxaction, recurrence)
-- **Mortgage dynamic amounts**: `MortgageService.computePaymentForDate()` computes principal/interest splits from current balance and detected rate for mortgage-linked scheduled transactions
+- **Mortgage dynamic amounts**: `MortgageService.computePaymentForDate()` provides a reusable principal/interest split calculation from current balance and detected rate; it is not yet wired to scheduled-transaction posting
 - **Account editing modal**: notes, tax_related, retirement flags, reparenting support in account service
 - Concurrency protection prevents double-execution when processing scheduled transactions from multiple tabs
 - 18 new tests covering execute/skip, create, and mortgage payment computation

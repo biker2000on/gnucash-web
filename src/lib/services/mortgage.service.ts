@@ -181,17 +181,22 @@ export class MortgageService {
       (s) => s.post_date.getTime() === firstDate
     );
 
-    // More than one credit means the ledger records more than one draw against
-    // this liability. Summing the credits is the best representation of the
-    // amount drawn, but the splits alone cannot prove that every draw belongs
-    // to one original loan (rather than a later advance or adjustment). Do not
-    // present that amount as an established opening principal.
+    // Material additional credits indicate more than one draw against this
+    // liability. Small later credits are commonly fees, escrow adjustments, or
+    // prepaid escrow and must not override a clearly dominant opening balance.
+    // Five percent keeps the 6.25% secondary draw in T2b conservative while
+    // allowing ordinary servicing adjustments to retain high confidence.
     const creditSplits = mortgageSplits.filter((s) => s.value < 0);
     if (creditSplits.length > 1) {
-      return {
-        amount: creditSplits.reduce((sum, s) => sum + Math.abs(s.value), 0),
-        estimated: true,
-      };
+      const creditAmounts = creditSplits.map((s) => Math.abs(s.value));
+      const largestCredit = Math.max(...creditAmounts);
+      const otherCredits = creditAmounts.reduce((sum, amount) => sum + amount, 0) - largestCredit;
+      if (otherCredits > largestCredit * 0.05) {
+        return {
+          amount: largestCredit + otherCredits,
+          estimated: true,
+        };
+      }
     }
 
     // Find the largest absolute value on the first date
@@ -366,8 +371,7 @@ export class MortgageService {
       if (
         details.interestRate <= 0 ||
         details.paymentsAnalyzed < 3 ||
-        details.confidence === 'low' ||
-        details.warnings.length > 0
+        details.confidence === 'low'
       ) {
         return {
           reason: details.warnings[0] ??
