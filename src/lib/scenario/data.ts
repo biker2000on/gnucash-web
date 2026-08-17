@@ -14,6 +14,7 @@ import { getAccountGuidsForBook, getActiveBookGuid, getBookAccountGuids } from '
 import { getBaseCurrency, getBaseCurrencyForBook } from '@/lib/currency';
 import { getPreference } from '@/lib/user-preferences';
 import { getEntityProfile } from '@/lib/services/entity.service';
+import { calculateCalendarAge } from '@/lib/age';
 import { FinancialSummaryService } from '@/lib/services/financial-summary.service';
 import { aggregateBookTaxData } from '@/lib/tax/book-income';
 import { annualizeInputs, buildFederalInputsFromBook } from '@/lib/withholding';
@@ -54,12 +55,8 @@ async function loadLiquidBalance(bookAccountGuids: string[], asOf: Date): Promis
 
 export function ageFromBirthday(birthday: string | null, asOf: Date): number | null {
   if (!birthday) return null;
-  const parsed = new Date(`${birthday.slice(0, 10)}T00:00:00Z`);
-  if (Number.isNaN(parsed.getTime())) return null;
-  let years = asOf.getUTCFullYear() - parsed.getUTCFullYear();
-  const beforeBirthday = asOf.getUTCMonth() < parsed.getUTCMonth()
-    || (asOf.getUTCMonth() === parsed.getUTCMonth() && asOf.getUTCDate() < parsed.getUTCDate());
-  if (beforeBirthday) years -= 1;
+  const years = calculateCalendarAge(birthday, asOf, 'utc');
+  if (years === null) return null;
   return years > 0 && years < 120 ? years : null;
 }
 
@@ -67,15 +64,9 @@ function isAge65PlusAtYearEnd(birthday: string | null, year: number): boolean {
   if (!birthday) return false;
   const birthYear = parseInt(birthday.slice(0, 4), 10);
   if (!Number.isFinite(birthYear)) return false;
-  const parsed = new Date(`${birthday}T00:00:00`);
-  if (Number.isNaN(parsed.getTime())) return false;
   const yearEnd = new Date(year, 11, 31);
-  let age = yearEnd.getFullYear() - parsed.getFullYear();
-  const beforeBirthday =
-    yearEnd.getMonth() < parsed.getMonth() ||
-    (yearEnd.getMonth() === parsed.getMonth() && yearEnd.getDate() < parsed.getDate());
-  if (beforeBirthday) age -= 1;
-  return age >= 65;
+  const age = calculateCalendarAge(birthday, yearEnd, 'local');
+  return age !== null && age >= 65;
 }
 
 function toIsoDate(d: Date): string {

@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
 import { getBookAccountGuids } from '@/lib/book-scope';
 import { getPreference } from '@/lib/user-preferences';
+import { calculateCalendarAge } from '@/lib/age';
 import prisma from '@/lib/prisma';
 import { expandMappingsToDescendants } from '@/lib/tax/book-income';
 import { isTaxCategory, type TaxCategory } from '@/lib/tax/types';
@@ -292,11 +293,8 @@ export async function GET() {
         /* --- Birthday-derived current age --- */
         let currentAge: number | null = null;
         if (birthday) {
-            const ageYears = Math.floor(
-                (Date.now() - new Date(birthday + 'T00:00:00').getTime()) /
-                (365.25 * 24 * 60 * 60 * 1000),
-            );
-            if (ageYears > 0 && ageYears < 120) currentAge = ageYears;
+            const ageYears = calculateCalendarAge(birthday, new Date(), 'utc');
+            if (ageYears !== null && ageYears > 0 && ageYears < 120) currentAge = ageYears;
         }
 
         return NextResponse.json({

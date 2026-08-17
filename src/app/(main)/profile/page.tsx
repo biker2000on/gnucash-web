@@ -5,6 +5,7 @@ import { useTheme } from '@/contexts/ThemeContext';
 import { Abbr } from '@/components/ui/Abbr';
 import { usePWAInstall } from '@/contexts/PWAInstallContext';
 import { product } from '@/lib/product';
+import { calculateCalendarAge } from '@/lib/age';
 
 interface User {
     id: number;
@@ -442,7 +443,7 @@ export default function ProfilePage() {
                 </div>
                 {birthday && !birthdayLoading && (
                     <p className="mt-2 text-xs text-foreground-muted">
-                        Age: {Math.floor((Date.now() - new Date(birthday + 'T00:00:00').getTime()) / (365.25 * 24 * 60 * 60 * 1000))} years
+                        Age: {calculateCalendarAge(birthday, new Date(), 'utc')} years
                     </p>
                 )}
             </div>
