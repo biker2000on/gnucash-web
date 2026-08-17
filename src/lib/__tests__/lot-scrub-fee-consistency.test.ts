@@ -46,6 +46,23 @@ vi.mock('../commodities', () => ({
   getLatestPrice: vi.fn().mockResolvedValue(null),
 }));
 
+/**
+ * Hook for making the engine's FRESHLY GENERATED guids deterministic.
+ *
+ * Null for every test here but the residual-stability one, which needs the
+ * sub-split guids it produces to be chosen rather than random — see
+ * `installOrderedSubSplitGuids`. Everything else gets the real random generator.
+ */
+const guidHolder = vi.hoisted(() => ({ next: null as null | (() => string) }));
+
+vi.mock('../gnucash', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../gnucash')>();
+  return {
+    ...actual,
+    generateGuid: () => (guidHolder.next ? guidHolder.next() : actual.generateGuid()),
+  };
+});
+
 import { apportionCarriedBasis } from '../lot-scrub';
 import { autoAssignLots, revertScrubRun } from '../lot-assignment';
 import { getAccountLots } from '../lots';
@@ -88,6 +105,8 @@ let db: FakePrisma;
 beforeEach(() => {
   db = new FakePrisma();
   (dbHolder as { current: any }).current = db;
+  // Real random guids unless a test opts in.
+  guidHolder.next = null;
 });
 
 /** Root, cash, two brokerages holding AAPL, and the expense chart. */
@@ -493,16 +512,47 @@ describe('residual assignment is stable across revert and re-scrub', () => {
    * so this fails both if the result drifts and if it settles on the wrong lot.
    */
   /**
-   * The two surviving splits are named to start with '7' and '8' on purpose.
-   * A regenerated sub-split's guid is random hex, so under the OLD guid
-   * tiebreak it lands before both (~7/16 of runs), between them (~1/16) or
-   * after both (~1/2) — a different lot takes the residual in most runs, and
-   * the round-to-round comparison below sees it. Readable names alone
-   * ("a-out-…") would sort the sub-split into one bucket far too often for
-   * this test to discriminate.
+   * The two surviving splits are named to start with '7' and '8' on purpose:
+   * under a guid tiebreak a sub-split guid can land before both, between them,
+   * or after both, and these two names make each of those a DIFFERENT residual
+   * assignment that the round-to-round comparison below can see. Readable names
+   * alone ("a-out-…") would sort every sub-split into one bucket.
    */
   const OUT_X2 = '7-a-out-x2-guid-00000000000000';
   const OUT_X3 = '8-a-out-x3-guid-00000000000000';
+
+  /**
+   * The guid prefix the engine's generated splits get in each round, chosen so
+   * a guid-keyed order MUST disagree between rounds 0 and 1.
+   *
+   * This is what makes the test a deterministic negative control instead of a
+   * probabilistic one. Left to the real random generator, a regenerated
+   * sub-split guid lands before OUT_X2, between the two, or after OUT_X3 with
+   * some probability each — so a tree with the broken guid-keyed order still
+   * produced identical rounds roughly one run in eight, and a test that goes
+   * green one run in eight on a broken tree eventually goes green on a broken
+   * tree. Pinning the prefix removes the coin flip: '0' sorts below OUT_X2 and
+   * 'f' sorts above OUT_X3, so under a guid key round 0 puts the sub-split
+   * FIRST among the lot's outflows and round 1 puts it LAST, which moves the
+   * residual millionth between destination lots every single run.
+   *
+   * Under the shipped order the prefix is irrelevant — the key is the outflow's
+   * tx_guid, which no round regenerates — so all four rounds agree.
+   */
+  const ROUND_GUID_PREFIXES = ['0', 'f', '0', 'f'] as const;
+
+  /**
+   * Makes every guid the engine generates deterministic: `<prefix><counter>`,
+   * 32 chars wide like a real one. The counter never resets, so guids stay
+   * unique across rounds while the prefix decides where the round's sub-splits
+   * fall in a guid-keyed sort.
+   */
+  function installOrderedSubSplitGuids(): (prefix: string) => void {
+    let counter = 0;
+    let prefix: string = ROUND_GUID_PREFIXES[0];
+    guidHolder.next = () => `${prefix}${String(counter++).padStart(31, '0')}`;
+    return (next: string) => { prefix = next; };
+  }
 
   function seedSameDayTransfersOutOfThreeLots() {
     seedBook();
@@ -557,10 +607,14 @@ describe('residual assignment is stable across revert and re-scrub', () => {
 
   it('gives the residual millionth to the same lot, and the same gain, every scrub', async () => {
     seedSameDayTransfersOutOfThreeLots();
+    const setRoundPrefix = installOrderedSubSplitGuids();
 
     const rounds: Array<{ basis: string[]; gains: string[]; total: number }> = [];
-    const ROUNDS = 4;
+    const ROUNDS = ROUND_GUID_PREFIXES.length;
     for (let round = 0; round < ROUNDS; round++) {
+      // Alternates the guid prefix so a guid-keyed order cannot agree with
+      // itself between rounds. See ROUND_GUID_PREFIXES.
+      setRoundPrefix(ROUND_GUID_PREFIXES[round]);
       const resA = await autoAssignLots(STOCK_A, 'fifo');
       const resB = await autoAssignLots(STOCK_B, 'fifo');
 
@@ -592,6 +646,162 @@ describe('residual assignment is stable across revert and re-scrub', () => {
     ]);
     // $4,000 proceeds - ($500 + $1,000.01) of basis, conserved exactly.
     expect(rounds[0].total).toBe(2_499_990_000);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// (f) A transfer chain LONGER than any plausible hop cap
+// ---------------------------------------------------------------------------
+
+describe('carried basis propagates the whole length of a transfer chain', () => {
+  /**
+   * reconcileCarriedBasisForSourceLots walks from a rewritten lot to the lots
+   * that carry ITS basis onward, and it used to stop after 25 hops.
+   *
+   * A depth cap there is not a safety net, it is a silent wrong answer. The
+   * lots past the cap keep the basis they were handed when their own transfer
+   * was first linked, so a change at the head of the chain never reaches them —
+   * and nothing reports that it did not. The number that goes stale is a cost
+   * basis, which lands on Form 8949. So the walk now terminates on its visited
+   * set alone and the chain length is irrelevant; this test is what holds that
+   * open, by using a chain nobody would pick a cap above.
+   *
+   * The book: 3 shares bought for $1,000.00 plus a $0.01 commission, so
+   * $1,000.01 of basis over 3 shares — a figure that does not divide evenly, and
+   * whose cumulative apportionment is therefore sensitive to outflow ORDER:
+   *
+   *     cum(1) = 333.336667   cum(2) = 666.673333   cum(3) = 1,000.01
+   *
+   * One share then walks CHAIN_LENGTH accounts, hop by hop. Because the whole
+   * balance of each intermediate lot moves on, every hop carries the head's
+   * slice unchanged, so the far end must read exactly what the head apportioned.
+   *
+   * Then the staleness is provoked exactly as ordinary bookkeeping would: a
+   * BACKDATED transfer of another share out of the head lot is entered, and only
+   * the HEAD account is re-scrubbed. That demotes the chain's outflow from the
+   * lot's first to its second, changing its slice from cum(1) = 333.336667 to
+   * cum(2) - cum(1) = 333.336666. The reconcile pass has to carry that one
+   * millionth all the way down. Under the old cap, hops 1-25 moved and hops
+   * 26-40 kept 333.336667 — a chain reporting two different bases for the same
+   * share.
+   */
+  const CHAIN_LENGTH = 40;
+
+  /** guid of the Nth chain account. 0 is the head the shares were bought in. */
+  const chainAcct = (i: number) => `chain-${String(i).padStart(2, '0')}-acct-guid-000000`;
+  /** Where the backdated transfer's share goes; not part of the chain. */
+  const SINK = 'chain-sink-acct-guid-0000000000';
+
+  /**
+   * Hop N's post date: one day per hop from 2024-06-01, computed rather than
+   * string-formatted because a 40-hop chain runs off the end of the month.
+   * Every hop still lands after the buy and after the backdated transfer.
+   */
+  function chainDate(hop: number): string {
+    const d = new Date(Date.UTC(2024, 5, 1));
+    d.setUTCDate(d.getUTCDate() + hop);
+    return d.toISOString().slice(0, 10);
+  }
+
+  function seedChain() {
+    seedBook();
+    for (let i = 0; i <= CHAIN_LENGTH; i++) {
+      db.t.accounts.push(acct(chainAcct(i), 'AAPL', 'STOCK', ASSETS, AAPL));
+    }
+    db.t.accounts.push(acct(SINK, 'AAPL', 'STOCK', ASSETS, AAPL));
+
+    addTx('tx-chain-buy', '2022-01-10', [
+      ['chain-buy', chainAcct(0), 3, 1000],
+      ['chain-buy-comm', COMMISSIONS, 0.01, 0.01],
+      ['chain-buy-cash', CASH, -1000.01, -1000.01],
+    ]);
+    // One share, hop by hop, each transfer a day later than the last so the
+    // chain's own ordering is never in question.
+    for (let hop = 1; hop <= CHAIN_LENGTH; hop++) {
+      addTx(`tx-hop-${hop}`, chainDate(hop), [
+        [`out-${hop}`, chainAcct(hop - 1), -1, 0],
+        [`in-${hop}`, chainAcct(hop), 1, 0],
+      ]);
+    }
+  }
+
+  /** Scrubs head first, then each hop, so every link is made in order. */
+  async function scrubWholeChain() {
+    for (let i = 0; i <= CHAIN_LENGTH; i++) {
+      await autoAssignLots(chainAcct(i), 'fifo');
+    }
+  }
+
+  /** The carried basis, in millionths, of the lot holding hop N's share. */
+  function hopBasisUnits(hop: number): number {
+    const lotGuid = split(`in-${hop}`).lot_guid as string;
+    return carriedBasisUnits(lotGuid);
+  }
+
+  /** Every hop's carried basis, so a divergence names the hop it starts at. */
+  function chainBasisUnits(): number[] {
+    return Array.from({ length: CHAIN_LENGTH }, (_, i) => hopBasisUnits(i + 1));
+  }
+
+  it('carries the head lot\'s slice to hop 40, not just to the old 25-hop cap', async () => {
+    seedChain();
+    await scrubWholeChain();
+
+    // Every hop, including the ones past 25, reads the head's first-outflow
+    // slice. Asserted as the whole array so a failure names the hop.
+    expect(chainBasisUnits()).toEqual(Array(CHAIN_LENGTH).fill(333_336_667));
+  });
+
+  it('re-apportions all 40 hops when a backdated outflow demotes the chain', async () => {
+    seedChain();
+    await scrubWholeChain();
+    expect(hopBasisUnits(CHAIN_LENGTH)).toBe(333_336_667);
+
+    // The missed earlier transfer, entered afterwards. Only the HEAD account is
+    // re-scrubbed: propagating from there is the reconcile pass's whole job.
+    addTx('tx-backdated', '2024-05-20', [
+      ['back-out', chainAcct(0), -1, 0],
+      ['back-in', SINK, 1, 0],
+    ]);
+    await autoAssignLots(chainAcct(0), 'fifo');
+    await autoAssignLots(SINK, 'fifo');
+
+    // The chain's outflow is now the head lot's SECOND, so its slice drops by
+    // the residual millionth — and that has to reach hop 40, not hop 25.
+    expect(chainBasisUnits()).toEqual(Array(CHAIN_LENGTH).fill(333_336_666));
+    // Named explicitly: this exact hop is the one the old cap left stale.
+    expect(hopBasisUnits(26)).toBe(333_336_666);
+    expect(hopBasisUnits(CHAIN_LENGTH)).toBe(333_336_666);
+
+    // And the head lot's basis is still conserved across all three outflows:
+    // the backdated share, the chain's share, and the share left in the lot.
+    expect(carriedBasisUnits(split('back-in').lot_guid as string)).toBe(333_336_667);
+  });
+
+  it('reports the far end\'s gain on the conserved basis, not the stale one', async () => {
+    seedChain();
+    await scrubWholeChain();
+    addTx('tx-backdated', '2024-05-20', [
+      ['back-out', chainAcct(0), -1, 0],
+      ['back-in', SINK, 1, 0],
+    ]);
+    await autoAssignLots(chainAcct(0), 'fifo');
+    await autoAssignLots(SINK, 'fifo');
+
+    // Sell at the far end. $1,000 proceeds against $333.336666 of basis.
+    addTx('tx-chain-sell', '2025-03-03', [
+      ['chain-sell', chainAcct(CHAIN_LENGTH), -1, -1000],
+      ['chain-sell-cash', CASH, 1000, 1000],
+    ]);
+    const res = await autoAssignLots(chainAcct(CHAIN_LENGTH), 'fifo');
+
+    // A stale far end would report 666.663333 here — one millionth adrift, on
+    // the number that reaches Form 8949.
+    expect(Math.round(res.totalRealizedGain * 1e6)).toBe(666_663_334);
+    expect(Math.round(await lotsReportRealizedGain(chainAcct(CHAIN_LENGTH)) * 1e6))
+      .toBe(666_663_334);
+    expect(Math.round(await form8949Gain(chainAcct(CHAIN_LENGTH)) * 1e6))
+      .toBe(666_663_334);
   });
 });
 

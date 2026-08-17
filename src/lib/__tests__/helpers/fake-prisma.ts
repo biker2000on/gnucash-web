@@ -31,6 +31,36 @@ function cmpVal(a: any, b: any): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
+/**
+ * One ORDER BY key, with PostgreSQL's NULL placement.
+ *
+ * Postgres treats NULL as larger than every non-null value, so the DEFAULTS
+ * are NULLS LAST for ASC and NULLS FIRST for DESC — and none of this app's
+ * queries write an explicit NULLS clause, which Prisma could not emit for a
+ * relation key anyway. Getting this wrong in the fake is not a cosmetic
+ * difference: `transactions.post_date` is nullable, it is the FIRST key of the
+ * ordering the lot engine's determinism rests on (loadUnassignedSplits in
+ * lot-assignment.ts), and a fake that sorted a missing post_date FIRST — which
+ * is what coercing it to epoch 0 does — would grade the engine against an
+ * order the real database never produces.
+ *
+ * The returned value is ALREADY signed for `dir`; callers must not multiply it
+ * again. That is why the null cases return `dir` rather than a fixed ±1: on
+ * ASC (dir = 1) a null sorts after a non-null, and DESC flips exactly that.
+ *
+ * Pinned against real PostgreSQL by
+ * src/lib/__tests__/lot-outflow-ordering.integration.test.ts, which runs the
+ * engine's own orderBy over the SAME shared fixture this fake is asserted on.
+ */
+function cmpNullable(a: any, b: any, dir: 1 | -1): number {
+  const aNull = a === null || a === undefined;
+  const bNull = b === null || b === undefined;
+  if (aNull && bNull) return 0;
+  if (aNull) return dir;
+  if (bNull) return -dir;
+  return cmpVal(a, b) * dir;
+}
+
 function matchCond(value: any, cond: any): boolean {
   if (cond !== null && typeof cond === 'object' && !(cond instanceof Date) && !Array.isArray(cond)) {
     if ('in' in cond && !(cond.in as any[]).some(x => eqVal(value, x))) return false;
@@ -140,19 +170,25 @@ export class FakePrisma {
    * One orderBy term -> comparator. Supports `{ transaction: { post_date } }`
    * and plain scalar columns, which is the whole vocabulary the lot engine
    * uses; an array of terms compares them left to right, as SQL does.
+   *
+   * NULLs go where PostgreSQL puts them — see cmpNullable. A null is never
+   * coerced to a stand-in value (epoch 0, empty string, zero): that silently
+   * moves it to the OPPOSITE end from the real database.
    */
   private cmpTerm(term: Rec, a: Rec, b: Rec): number {
     if (term?.transaction?.post_date) {
       const dir = term.transaction.post_date === 'desc' ? -1 : 1;
-      const ta = this.txOf(a)?.post_date?.getTime?.() ?? 0;
-      const tb = this.txOf(b)?.post_date?.getTime?.() ?? 0;
-      return (ta - tb) * dir;
+      return cmpNullable(
+        this.txOf(a)?.post_date ?? null,
+        this.txOf(b)?.post_date ?? null,
+        dir,
+      );
     }
     for (const [column, direction] of Object.entries(term ?? {})) {
       if (typeof direction !== 'string') continue;
       const dir = direction === 'desc' ? -1 : 1;
-      const diff = cmpVal(a[column] ?? null, b[column] ?? null);
-      if (diff !== 0) return diff * dir;
+      const diff = cmpNullable(a[column] ?? null, b[column] ?? null, dir);
+      if (diff !== 0) return diff;
     }
     return 0;
   }

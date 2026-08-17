@@ -769,11 +769,39 @@ export interface LotOutflow {
  *      one lot, which the engine itself never produces (each sub-split of a
  *      repartitioned outflow lands in a DIFFERENT lot) but a hand-edited book
  *      can hold;
- *   4. split guid — last resort. Only reachable for outflows identical in
- *      date, transaction and size, where the two slices are interchangeable:
- *      swapping them permutes which of two otherwise-identical destination
- *      lots holds which slice, and leaves the multiset of lot bases — and so
- *      every reported total — unchanged.
+ *   4. split guid — last resort, reachable only for outflows identical in date,
+ *      transaction AND size.
+ *
+ * WHAT KEY 4 DOES AND DOES NOT GUARANTEE. Being last resort, it is the one key
+ * that is not stable across a revert-and-re-scrub, so its limits are worth
+ * stating exactly rather than waving at.
+ *
+ * Guaranteed. The keys ahead of it — date, tx_guid, shares — are all stable
+ * (tx_guid in particular survives, because a repartitioned outflow's sub-splits
+ * inherit their parent's tx_guid), so key 4 is never consulted unless the
+ * outflows it is separating agree on all three. Whatever permutation it picks,
+ * the MULTISET of slices apportioned out of the source lot is the same, because
+ * apportionCarriedBasis derives each slice from the cumulative shares ahead of
+ * it and these outflows are the same size. So the source lot's basis is fully
+ * conserved, and any figure that aggregates over the whole set — the account's
+ * total basis, its total realized gain, the Form 8949 total — is unaffected by
+ * which permutation was chosen.
+ *
+ * NOT guaranteed. The slices in that multiset are not necessarily equal: when
+ * the source basis does not divide evenly, one of them carries the residual
+ * millionth. Two same-date, same-transaction, same-size outflows can land in
+ * DISTINCT destination lots, and those lots can later be disposed of
+ * separately — different years, different holding periods, one sold and one
+ * held. Which of them carries the residual therefore does affect an INDIVIDUAL
+ * lot's reported basis and its individual taxable gain, and a re-scrub can move
+ * it between them. The slices are interchangeable in aggregate, NOT per lot.
+ *
+ * Why that is acceptable here rather than merely tolerated: reaching key 4 at
+ * all requires a book the engine does not produce (see key 3), the two outflows
+ * differ by at most one millionth of a dollar, and no total moves. The
+ * regression this ordering exists to fix — a FRESHLY GENERATED guid reshuffling
+ * ordinary engine-produced outflows on every scrub, moving whole slices between
+ * lots — is fixed by keys 1-3, which never fall through to here.
  */
 export function orderLotOutflows(splits: LotOutflowInput[]): LotOutflow[] {
   return splits
@@ -993,16 +1021,30 @@ export async function reconcileCarriedBasisForSourceLots(
   // source of any onward transfer, and that lot's slices are derived from the
   // basis this pass rewrote. Follow the chain from each rewritten lot rather
   // than leaving the far end stale until its own account is next scrubbed.
-  // Bounded so a corrupted source_lot_guid cycle cannot loop forever, and
-  // `seen` stops a diamond from being walked twice.
+  //
+  // WALKED TO EXHAUSTION, with `visited` as the ONLY termination condition.
+  // There is deliberately no hop limit. A depth cap here would silently stop
+  // partway down a long A -> B -> C -> ... chain and leave every lot beyond it
+  // holding a stale carried basis, with no error and no signal: a wrong cost
+  // basis presented as correct, on a figure that ends up on a tax return. A
+  // chain of 30 accounts is unusual bookkeeping but it is not corruption, and
+  // it must not be silently mis-costed.
+  //
+  // Termination is structural rather than numeric. Every lot enters `frontier`
+  // at most once — each iteration adds its whole frontier to `visited` and the
+  // next frontier is filtered against it — so `visited` grows by at least one
+  // lot per iteration and is bounded by the number of lots in the book. That
+  // holds for a corrupted source_lot_guid CYCLE too: the cycle's lots are all
+  // visited on the way in, so the walk closes instead of looping. It also stops
+  // a diamond (two source lots feeding one destination) being walked twice.
   const rewritten: ReconciledDestinationLot[] = [];
-  const seen = new Set<string>();
+  const visited = new Set<string>();
   let frontier = [...new Set(sourceLotGuids.filter(Boolean))];
-  for (let depth = 0; depth < 25 && frontier.length > 0; depth++) {
-    frontier.forEach(guid => seen.add(guid));
+  while (frontier.length > 0) {
+    frontier.forEach(guid => visited.add(guid));
     const level = await reconcileOneTransferLevel(frontier, tx);
     rewritten.push(...level);
-    frontier = [...new Set(level.map(l => l.lotGuid))].filter(guid => !seen.has(guid));
+    frontier = [...new Set(level.map(l => l.lotGuid))].filter(guid => !visited.has(guid));
   }
   return rewritten;
 }
