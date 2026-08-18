@@ -22,7 +22,14 @@ export interface PaymentSplit {
 
 /** Why a dynamic payment split could not be safely calculated. */
 export interface PaymentComputationFailure {
+  kind: 'refusal';
   reason: string;
+}
+
+export interface PaymentComputationSplit {
+  kind: 'split';
+  principal: number;
+  interest: number;
 }
 
 /**
@@ -57,15 +64,13 @@ interface OriginalAmountDetection {
   warnings?: string[];
 }
 
-// Additional liability credits are judged against the largest observed credit,
-// which is normally the opening balance. The largest benign fixture is a
-// $2,500 prepaid-escrow credit on a $300,000 mortgage (0.833%). Keeping the
-// silent floor below that shape avoids warning for ordinary servicing noise;
-// 0.5% is also large enough to exclude a $50 fee on a $200,000 mortgage
-// (0.025%). The 2% draw threshold leaves 2.4x headroom above that 0.833%
-// fixture before changing principal and confidence.
+// A later credit must satisfy both tests to be treated as another draw. The
+// $10,000 floor is twice the largest documented ordinary point charge ($5,000)
+// and exceeds the known escrow/modification shapes ($1,200-$2,500); it keeps
+// those normal charges from changing a small loan's detected principal.
 const SILENT_ABSORBED_CREDIT_RATIO = 0.005;
 const MATERIAL_ADDITIONAL_DRAW_RATIO = 0.02;
+const MATERIAL_ADDITIONAL_DRAW_FLOOR = 10_000;
 
 /**
  * Service class for mortgage detection and analysis
@@ -192,32 +197,43 @@ export class MortgageService {
       (s) => s.post_date.getTime() === firstDate
     );
 
-    // Material additional credits indicate more than one draw against this
-    // liability. Small later credits are commonly fees, escrow adjustments, or
-    // prepaid escrow and must not override a clearly dominant opening balance.
-    // The constants above are derived from the benign servicing fixtures, not
-    // from the HELOC fixture: sub-0.5% credits are silent; 0.5%-2% credits
-    // remain absorbed but are disclosed; credits above 2% are additional draws.
-    const creditSplits = mortgageSplits.filter((s) => s.value < 0);
-    let absorbedCreditWarnings: string[] | undefined;
-    if (creditSplits.length > 1) {
-      const creditAmounts = creditSplits.map((s) => Math.abs(s.value));
-      const largestCredit = Math.max(...creditAmounts);
-      const otherCredits = creditAmounts.reduce((sum, amount) => sum + amount, 0) - largestCredit;
-      if (otherCredits > largestCredit * MATERIAL_ADDITIONAL_DRAW_RATIO) {
-        return {
-          amount: largestCredit + otherCredits,
-          estimated: true,
-        };
-      }
-      if (otherCredits >= largestCredit * SILENT_ABSORBED_CREDIT_RATIO) {
-        absorbedCreditWarnings = [
-          `Secondary liability credits of $${otherCredits.toLocaleString('en-US', {
-            maximumFractionDigits: 2,
-          })} absorbed into the opening balance`,
-        ];
-      }
+    // All credits on the opening date make up the booked opening principal.
+    // They are exact opening entries (for example principal plus capitalized
+    // closing costs), not later draws or an estimate.
+    const openingCreditTotal = openingSplits
+      .filter((s) => s.value < 0)
+      .reduce((sum, s) => sum + Math.abs(s.value), 0);
+    const laterCredits = mortgageSplits
+      .filter((s) => s.post_date.getTime() !== firstDate && s.value < 0)
+      .map((s) => Math.abs(s.value));
+
+    // Assess every later credit independently. A long, well-maintained ledger
+    // of small servicing charges must never add up into a phantom draw.
+    const materialLaterCredits = laterCredits.filter((credit) =>
+      credit >= MATERIAL_ADDITIONAL_DRAW_FLOOR &&
+      credit > openingCreditTotal * MATERIAL_ADDITIONAL_DRAW_RATIO
+    );
+    if (openingCreditTotal > 0 && materialLaterCredits.length > 0) {
+      return {
+        amount: openingCreditTotal + materialLaterCredits.reduce((sum, credit) => sum + credit, 0),
+        estimated: true,
+      };
     }
+
+    // Disclose a sizeable-but-not-draw-like later credit only when it clears
+    // the absolute fee floor. Smaller charges stay silent even on small loans.
+    const absorbedCreditWarnings = openingCreditTotal > 0
+      ? laterCredits
+        .filter((credit) =>
+          credit >= MATERIAL_ADDITIONAL_DRAW_FLOOR &&
+          credit >= openingCreditTotal * SILENT_ABSORBED_CREDIT_RATIO
+        )
+        .map((credit) =>
+          `Secondary liability credit of $${credit.toLocaleString('en-US', {
+            maximumFractionDigits: 2,
+          })} absorbed into the opening balance`
+        )
+      : [];
 
     // Find the largest absolute value on the first date
     let maxAbsValue = 0;
@@ -241,22 +257,20 @@ export class MortgageService {
 
         // If opening is at least 3x the average subsequent payment, use it
         if (maxAbsValue > avgSubsequent * 3) {
-          return { amount: maxAbsValue, estimated: false, warnings: absorbedCreditWarnings };
+          return { amount: openingCreditTotal || maxAbsValue, estimated: false, warnings: absorbedCreditWarnings };
         }
       } else {
         // Only one date of transactions, return the max
-        return { amount: maxAbsValue, estimated: false, warnings: absorbedCreditWarnings };
+        return { amount: openingCreditTotal || maxAbsValue, estimated: false, warnings: absorbedCreditWarnings };
       }
     } else {
-      return { amount: maxAbsValue, estimated: false, warnings: absorbedCreditWarnings };
+      return { amount: openingCreditTotal || maxAbsValue, estimated: false, warnings: absorbedCreditWarnings };
     }
 
     // At the 3x boundary, a first-date credit only identifies opening principal
     // when it also accounts for all later principal movement. This retains an
     // imported opening balance while rejecting a small first draw/adjustment.
-    const openingCredit = openingSplits
-      .filter((s) => s.value < 0)
-      .reduce((max, s) => Math.max(max, Math.abs(s.value)), 0);
+    const openingCredit = openingCreditTotal;
     const subsequentPrincipal = mortgageSplits
       .filter((s) => s.post_date.getTime() !== firstDate)
       .reduce((sum, s) => sum + Math.abs(s.value), 0);
@@ -368,7 +382,7 @@ export class MortgageService {
     liabilityAccountGuid: string,
     interestAccountGuid: string,
     totalPayment: number,
-  ): Promise<{ principal: number; interest: number } | PaymentComputationFailure | null> {
+  ): Promise<PaymentComputationSplit | PaymentComputationFailure | null> {
     try {
       // Get current balance of the liability account
       const balanceRows = await prisma.$queryRaw<{ balance: string }[]>`
@@ -394,6 +408,7 @@ export class MortgageService {
         details.confidence === 'low'
       ) {
         return {
+          kind: 'refusal',
           reason: details.warnings[0] ??
             'Mortgage rate confidence is too low to split this payment safely',
         };
@@ -405,7 +420,7 @@ export class MortgageService {
 
       if (principal <= 0) return null;
 
-      return { principal, interest };
+      return { kind: 'split', principal, interest };
     } catch {
       return null;
     }

@@ -76,6 +76,7 @@ describe('Mortgage Payment Computation', () => {
 
     // Before this regression fix, this returned { interest: 3333.33, principal: 1666.67 }.
     await expect(MortgageService.computePaymentForDate('mortgage', 'interest', 5000)).resolves.toEqual({
+      kind: 'refusal',
       reason: 'Mortgage rate confidence is too low to split this payment safely',
     });
   });
@@ -94,6 +95,7 @@ describe('Mortgage Payment Computation', () => {
     });
 
     await expect(MortgageService.computePaymentForDate('mortgage', 'interest', 1013.37)).resolves.toEqual({
+      kind: 'split',
       interest: 622.22,
       principal: 391.15,
     });

@@ -13,11 +13,13 @@ Covers work landed since 0.23.2.0 (2026-07-29).
   previously reported a $50,000 original amount, 7.06% rate, and high
   confidence. It now reports $130,000, 2.45%, and low confidence with an
   explanation, preventing the first draw from being treated as the whole loan.
-  Later liability credits below 0.5% of the opening credit remain silent to
-  avoid routine fee and rounding noise; credits from 0.5% through 2% stay
-  absorbed but are shown as a warning while confidence remains high. Credits
-  above 2% now increase detected principal and mark the result estimated, so
-  the displayed principal, APR, and confidence can change for HELOC users.
+  Credits posted on the opening date are now summed as exact opening principal.
+  Later credits are assessed individually against the opening principal, so
+  recurring small servicing charges do not accumulate into a draw. A later
+  credit must exceed 2% *and* $10,000 before it increases principal and marks
+  the result estimated; ordinary fees, escrow, points, and modifications stay
+  high confidence even on small-balance loans. The displayed principal, APR,
+  and confidence can therefore change for HELOC and small-loan users.
 
 - **Unposting an invoice or bill now records a reversing transaction instead of
   deleting the original posting.** The ledger keeps both entries — the original
