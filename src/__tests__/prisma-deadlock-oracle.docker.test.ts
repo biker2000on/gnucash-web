@@ -43,7 +43,7 @@ async function docker(...args: string[]): Promise<string> {
 
 async function waitForDatabase(url: string): Promise<void> {
     let lastError: unknown;
-    for (let attempt = 0; attempt < 120; attempt += 1) {
+    for (let attempt = 0; attempt < 240; attempt += 1) {
         const pool = new Pool({ connectionString: url, max: 1 });
         try {
             await pool.query('SELECT 1');
@@ -99,7 +99,7 @@ describe('Prisma deadlock oracle against a disposable PostgreSQL container', () 
         ]);
         firstPrisma = new PrismaClient({ adapter: new PrismaPg(firstPool) });
         secondPrisma = new PrismaClient({ adapter: new PrismaPg(secondPool) });
-    }, 30_000);
+    }, 60_000);
 
     afterAll(async () => {
         await firstPrisma?.$disconnect().catch(() => undefined);
