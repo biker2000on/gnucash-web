@@ -166,6 +166,28 @@ export interface PortfolioHolding {
   shares: number;
   latestPrice: number;
   priceDate: string;
+  /**
+   * The commodity's GnuCash namespace, carried so the table can decide how old
+   * `priceDate` is allowed to be before it says so. A continuously-traded
+   * commodity gets a tighter bound than a listed security; without the namespace
+   * the browser would have to hold both to the looser one. Optional because a
+   * report payload cached before this existed has no namespace to offer, and the
+   * fallback in `stalenessDaysFor` is the safe direction.
+   *
+   * Authoritative in ONE direction: when it names a venue that closes (NASDAQ,
+   * FUND, CURRENCY …) that settles the bound at the looser figure and nothing
+   * else is consulted. When it names no venue this app recognises — free text, so
+   * it may say `Coinbase`, a wallet name, or nothing — `priceContinuousWeekends`
+   * is consulted instead.
+   */
+  commodityNamespace?: string | null;
+  /**
+   * Complete weekends — a Saturday and the Sunday after it, both carrying a
+   * fetched quote — in the recent window. Evidence that the venue stayed open,
+   * used only when the namespace names nothing recognisable. Optional for the
+   * same cached-payload reason as the namespace above.
+   */
+  priceContinuousWeekends?: number | null;
   marketValue: number;
   /** Basis of the shares `costBasisCoverage` describes, not always all of them. */
   costBasis: number;

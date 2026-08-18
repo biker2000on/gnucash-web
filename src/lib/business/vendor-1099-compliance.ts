@@ -9,7 +9,10 @@
  * Money Timeline filing-deadline source.
  */
 
-import { getDefaultNecThreshold } from '@/lib/reports/irs-limits';
+// The pure tables module, NOT '@/lib/reports/irs-limits' — this file is
+// reachable from the 'use client' 1099 tracker page, and irs-limits imports
+// prisma (which drags the Postgres driver into the browser bundle).
+import { getDefaultNecThreshold } from '@/lib/reports/irs-limit-tables';
 
 const DAY_MS = 86_400_000;
 

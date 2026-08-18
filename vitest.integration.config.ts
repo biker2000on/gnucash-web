@@ -1,6 +1,10 @@
 import { defineConfig } from 'vitest/config';
 import tsconfigPaths from 'vite-tsconfig-paths';
 
+// Keep both Vitest tiers on the same deliberate clock. `VITEST_TZ` is the
+// only override so an ambient shell TZ cannot weaken date-boundary tests.
+process.env.TZ = process.env.VITEST_TZ ?? 'America/Los_Angeles';
+
 /**
  * Integration tier - the tests that need a REAL PostgreSQL database.
  *

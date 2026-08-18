@@ -15,7 +15,16 @@ vi.mock('@/lib/currency', () => ({
 
 import prisma from '@/lib/prisma';
 import { getBaseCurrency } from '@/lib/currency';
-import { buildAccountValuationContext } from '../account-valuation';
+import {
+  buildAccountValuationContext,
+  collectValuationCoverage,
+  mergeValuationCoverage,
+} from '../account-valuation';
+import {
+  CONTINUOUS_STALENESS_DAYS,
+  CONTINUOUS_WEEKEND_EVIDENCE,
+  PRICE_STALENESS_DAYS,
+} from '../price-staleness';
 
 const mockPrisma = prisma as unknown as {
   $queryRaw: Mock;
@@ -44,15 +53,23 @@ const GBP = {
   fraction: 100,
 };
 
-function pricePair(commodityGuid: string, currencyGuid: string, value: number) {
+function pricePair(
+  commodityGuid: string,
+  currencyGuid: string,
+  value: number,
+  opts: { date?: Date; commodityMnemonic?: string; continuousWeekends?: number } = {},
+) {
   const denom = 1000000;
   return {
     commodity_guid: commodityGuid,
     currency_guid: currencyGuid,
-    commodity_mnemonic: commodityGuid,
+    commodity_mnemonic: opts.commodityMnemonic ?? commodityGuid,
     currency_mnemonic: currencyGuid,
     value_num: BigInt(Math.round(value * denom)),
     value_denom: BigInt(denom),
+    date: opts.date ?? null,
+    // COUNT() arrives from Postgres as a bigint, so the double sends one.
+    continuous_weekends: BigInt(opts.continuousWeekends ?? 0),
   };
 }
 
@@ -286,6 +303,318 @@ describe('buildAccountValuationContext', () => {
     // when nothing is missing.
     expect(mockPrisma.$queryRaw).toHaveBeenCalledTimes(1);
     expect(mockPrisma.commodities.findMany).toHaveBeenCalledTimes(1);
+  });
+
+  describe('price staleness', () => {
+    const ASOF = new Date('2026-08-17T13:00:00.000Z');
+    const stock = {
+      accountType: 'STOCK',
+      commodityGuid: 'stock-guid',
+      commodityNamespace: 'NASDAQ',
+    };
+
+    it('says nothing about a quote from the last trading session', async () => {
+      mockPrisma.$queryRaw.mockResolvedValue([
+        pricePair('stock-guid', 'usd-guid', 123.45, {
+          date: new Date('2026-08-14T20:00:00.000Z'),
+          commodityMnemonic: 'AAPL',
+        }),
+      ]);
+
+      const valuation = await buildAccountValuationContext([stock], ASOF, USD);
+
+      expect(valuation.getMultiplier(stock)).toBe(123.45);
+      expect(valuation.stalePrices).toEqual([]);
+    });
+
+    it('says nothing about a quote sitting exactly on the bound', async () => {
+      mockPrisma.$queryRaw.mockResolvedValue([
+        pricePair('stock-guid', 'usd-guid', 123.45, {
+          date: new Date(ASOF.getTime() - PRICE_STALENESS_DAYS * 86_400_000),
+          commodityMnemonic: 'AAPL',
+        }),
+      ]);
+
+      const valuation = await buildAccountValuationContext([stock], ASOF, USD);
+
+      expect(valuation.stalePrices).toEqual([]);
+    });
+
+    it('discloses a quote past the bound while still valuing the holding', async () => {
+      mockPrisma.$queryRaw.mockResolvedValue([
+        pricePair('stock-guid', 'usd-guid', 123.45, {
+          date: new Date('2026-06-01T00:00:00.000Z'),
+          commodityMnemonic: 'AAPL',
+        }),
+      ]);
+
+      const valuation = await buildAccountValuationContext([stock], ASOF, USD);
+
+      // Still valued -- an unpriced portfolio is a worse answer than a priced
+      // one with the age of the quote stated.
+      expect(valuation.getMultiplier(stock)).toBe(123.45);
+      expect(valuation.isConvertible?.(stock)).toBe(true);
+      expect(valuation.stalePrices).toEqual([
+        expect.objectContaining({
+          commodityGuid: 'stock-guid',
+          label: 'AAPL',
+          priceDate: '2026-06-01',
+          ageDays: 77,
+        }),
+      ]);
+      expect(valuation.stalePrices?.[0].message).toContain('AAPL');
+      expect(valuation.stalePrices?.[0].message).toContain('77 days old');
+    });
+
+    it('holds a continuously-traded commodity to its own, tighter bound', async () => {
+      // Same quote date, same as-of date, two verdicts. Four days back: within
+      // the gap a closed exchange can explain over a long weekend, and four days
+      // of trading nobody recorded on a market that never shut.
+      const friday = new Date('2026-08-12T20:00:00.000Z');
+      const btc = {
+        accountType: 'STOCK',
+        commodityGuid: 'btc-guid',
+        commodityNamespace: 'CRYPTO',
+      };
+      mockPrisma.$queryRaw.mockResolvedValue([
+        pricePair('stock-guid', 'usd-guid', 123.45, {
+          date: friday,
+          commodityMnemonic: 'AAPL',
+        }),
+        pricePair('btc-guid', 'usd-guid', 61000, {
+          date: friday,
+          commodityMnemonic: 'BTC',
+        }),
+      ]);
+
+      const valuation = await buildAccountValuationContext([stock, btc], ASOF, USD);
+
+      // Both still valued; only one is disclosed as old.
+      expect(valuation.getMultiplier(btc)).toBe(61000);
+      expect(valuation.stalePrices).toEqual([
+        expect.objectContaining({ commodityGuid: 'btc-guid', label: 'BTC' }),
+      ]);
+      expect(valuation.stalePrices?.[0].message).toContain(
+        `older than ${CONTINUOUS_STALENESS_DAYS} days`,
+      );
+    });
+
+    it('applies the tighter bound to crypto filed under a made-up namespace', async () => {
+      // `commodities.namespace` is free text and the commodities API accepts
+      // any string, so an imported book's crypto may be filed under a wallet
+      // name. That namespace names no venue, so the price history decides —
+      // complete weekends of fetched quotes, which only a market that stayed
+      // open produces.
+      const btc = {
+        accountType: 'STOCK',
+        commodityGuid: 'btc-guid',
+        commodityNamespace: 'Ledger Nano X',
+      };
+      mockPrisma.$queryRaw.mockResolvedValue([
+        pricePair('btc-guid', 'usd-guid', 61000, {
+          date: new Date(ASOF.getTime() - 4 * 86_400_000),
+          commodityMnemonic: 'BTC',
+          continuousWeekends: CONTINUOUS_WEEKEND_EVIDENCE,
+        }),
+      ]);
+
+      const valuation = await buildAccountValuationContext([btc], ASOF, USD);
+
+      expect(valuation.stalePrices).toEqual([
+        expect.objectContaining({ commodityGuid: 'btc-guid', label: 'BTC', ageDays: 4 }),
+      ]);
+      expect(valuation.stalePrices?.[0].message).toContain(
+        `older than ${CONTINUOUS_STALENESS_DAYS} days`,
+      );
+    });
+
+    it('keeps the exchange bound for a security with no weekend quotes', async () => {
+      // The same four-day gap, on an instrument whose history shows it stops
+      // for the weekend: within what the calendar explains, so nothing is said.
+      const stockAcct = {
+        accountType: 'STOCK',
+        commodityGuid: 'stock-guid',
+        commodityNamespace: 'Fidelity Import',
+      };
+      mockPrisma.$queryRaw.mockResolvedValue([
+        pricePair('stock-guid', 'usd-guid', 123.45, {
+          date: new Date(ASOF.getTime() - 4 * 86_400_000),
+          commodityMnemonic: 'AAPL',
+          continuousWeekends: 0,
+        }),
+      ]);
+
+      const valuation = await buildAccountValuationContext([stockAcct], ASOF, USD);
+
+      expect(valuation.stalePrices).toEqual([]);
+    });
+
+    it('keeps the exchange bound for a listed security whose history has weekend rows', async () => {
+      // The namespace names a venue with a weekend, so it is authoritative and
+      // the history is not consulted. Weekend-dated rows reach a listed
+      // security's price table by several ordinary routes — a week-ending
+      // custodian import, a monthly valuation, a timezone-shifted timestamp —
+      // and none of them mean NASDAQ opened on a Saturday. Letting them decide
+      // would put a recurring four-day warning on a healthy equity, which is the
+      // cry-wolf failure the looser bound exists to prevent.
+      const stockAcct = {
+        accountType: 'STOCK',
+        commodityGuid: 'nasdaq-guid',
+        commodityNamespace: 'NASDAQ',
+      };
+      mockPrisma.$queryRaw.mockResolvedValue([
+        pricePair('nasdaq-guid', 'usd-guid', 61000, {
+          date: new Date(ASOF.getTime() - 4 * 86_400_000),
+          // A crypto ticker too: a spot-crypto ETF is exactly this shape.
+          commodityMnemonic: 'BTC',
+          continuousWeekends: 13,
+        }),
+      ]);
+
+      const valuation = await buildAccountValuationContext([stockAcct], ASOF, USD);
+
+      expect(valuation.stalePrices).toEqual([]);
+    });
+
+    it('leaves a crypto quote inside the tighter bound alone', async () => {
+      const btc = {
+        accountType: 'STOCK',
+        commodityGuid: 'btc-guid',
+        commodityNamespace: 'CRYPTO',
+      };
+      mockPrisma.$queryRaw.mockResolvedValue([
+        pricePair('btc-guid', 'usd-guid', 61000, {
+          date: new Date(ASOF.getTime() - CONTINUOUS_STALENESS_DAYS * 86_400_000),
+          commodityMnemonic: 'BTC',
+        }),
+      ]);
+
+      const valuation = await buildAccountValuationContext([btc], ASOF, USD);
+
+      expect(valuation.stalePrices).toEqual([]);
+    });
+
+    it('discloses a stale exchange rate for a foreign-currency balance', async () => {
+      mockPrisma.$queryRaw.mockResolvedValue([
+        pricePair('eur-guid', 'usd-guid', 1.08, {
+          date: new Date('2026-06-01T00:00:00.000Z'),
+          commodityMnemonic: 'EUR',
+        }),
+      ]);
+
+      const cash = {
+        accountType: 'CASH',
+        commodityGuid: 'eur-guid',
+        commodityNamespace: 'CURRENCY',
+      };
+      const valuation = await buildAccountValuationContext([cash], ASOF, USD);
+
+      expect(valuation.getMultiplier(cash)).toBeCloseTo(1.08);
+      expect(valuation.stalePrices).toHaveLength(1);
+      expect(valuation.stalePrices?.[0].commodityGuid).toBe('eur-guid');
+    });
+
+    it('dates a triangulated rate by its older leg', async () => {
+      mockPrisma.$queryRaw.mockResolvedValue([
+        pricePair('gbp-guid', 'eur-guid', 1.17, {
+          date: new Date('2026-08-16T00:00:00.000Z'),
+          commodityMnemonic: 'GBP',
+        }),
+        pricePair('eur-guid', 'usd-guid', 1.08, {
+          date: new Date('2026-06-01T00:00:00.000Z'),
+          commodityMnemonic: 'EUR',
+        }),
+      ]);
+
+      const cash = {
+        accountType: 'CASH',
+        commodityGuid: 'gbp-guid',
+        commodityNamespace: 'CURRENCY',
+      };
+      const valuation = await buildAccountValuationContext([cash], ASOF, USD);
+
+      expect(valuation.getMultiplier(cash)).toBeCloseTo(1.17 * 1.08);
+      // A fresh GBP->EUR leg does not make the GBP->USD product fresh.
+      expect(valuation.stalePrices).toEqual([
+        expect.objectContaining({ commodityGuid: 'gbp-guid', priceDate: '2026-06-01' }),
+      ]);
+    });
+
+    it('carries the disclosure into the coverage record the statements render', async () => {
+      mockPrisma.$queryRaw.mockResolvedValue([
+        pricePair('stock-guid', 'usd-guid', 123.45, {
+          date: new Date('2026-06-01T00:00:00.000Z'),
+          commodityMnemonic: 'AAPL',
+        }),
+      ]);
+
+      const valuation = await buildAccountValuationContext([stock], ASOF, USD);
+      const coverage = collectValuationCoverage(valuation, [
+        { account: stock, quantity: 100 },
+      ]);
+
+      // The total is whole -- nothing was excluded -- but it rests on an old quote.
+      expect(coverage.complete).toBe(true);
+      expect(coverage.stalePrices).toHaveLength(1);
+      expect(coverage.stalePrices[0].label).toBe('AAPL');
+    });
+
+    it('keeps a stale quote for a closed position out of the disclosure', async () => {
+      mockPrisma.$queryRaw.mockResolvedValue([
+        pricePair('stock-guid', 'usd-guid', 123.45, {
+          date: new Date('2026-06-01T00:00:00.000Z'),
+          commodityMnemonic: 'AAPL',
+        }),
+      ]);
+
+      const valuation = await buildAccountValuationContext([stock], ASOF, USD);
+      const coverage = collectValuationCoverage(valuation, [
+        { account: stock, quantity: 0 },
+      ]);
+
+      // A dead commodity cannot move a total it does not appear in.
+      expect(coverage.stalePrices).toEqual([]);
+    });
+
+    it('unions stale disclosures across two merged coverages', async () => {
+      const a = {
+        complete: true,
+        unvaluedAccountCount: 0,
+        gaps: [],
+        stalePrices: [{
+          commodityGuid: 'stock-guid',
+          label: 'AAPL',
+          priceDate: '2026-06-01',
+          ageDays: 77,
+          message: 'AAPL message',
+        }],
+      };
+      const b = {
+        complete: true,
+        unvaluedAccountCount: 0,
+        gaps: [],
+        stalePrices: [
+          {
+            commodityGuid: 'stock-guid',
+            label: 'AAPL',
+            priceDate: '2026-06-01',
+            ageDays: 77,
+            message: 'AAPL message',
+          },
+          {
+            commodityGuid: 'eur-guid',
+            label: 'EUR',
+            priceDate: '2026-05-01',
+            ageDays: 108,
+            message: 'EUR message',
+          },
+        ],
+      };
+
+      const merged = mergeValuationCoverage(a, b);
+
+      expect(merged.stalePrices.map(s => s.commodityGuid)).toEqual(['stock-guid', 'eur-guid']);
+    });
   });
 
   it('uses an explicit report currency for cross-book valuation', async () => {
