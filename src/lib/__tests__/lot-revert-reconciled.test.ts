@@ -60,10 +60,10 @@ const { prismaMock, tryAcquireBookLockMock } = vi.hoisted(() => ({
 }));
 
 vi.mock('@/lib/prisma', () => ({ default: prismaMock }));
-vi.mock('@/lib/book-lock', () => {
-  class BookBusyError extends Error {}
+vi.mock('@/lib/book-lock', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/book-lock')>();
   return {
-    BookBusyError,
+    ...actual,
     bookLockKey: vi.fn(() => 'k'),
     tryAcquireBookLock: tryAcquireBookLockMock,
   };
