@@ -1538,6 +1538,47 @@ describe('classifyAccountTax', () => {
     expect(result).toBe('TAX_EXEMPT');
   });
 
+  /**
+   * The ancestor walk had a 20-level cap. Both signals classifyAccountTax
+   * reads live in the ANCESTORS, so the cap did not shorten a label — it
+   * stopped the climb before the "Roth IRA" node and silently answered
+   * TAX_NORMAL, booking a sheltered sale as taxable. Walked to exhaustion now,
+   * with a visited set as the only termination condition.
+   */
+  it('reads a Roth ancestor sitting past the old 20-level cap', async () => {
+    // VTSAX -> Level 01 .. Level 24 -> Roth IRA -> Root: 27 accounts deep.
+    const chain: Record<string, { name: string; parent_guid: string | null }> = {
+      'deep-leaf': { name: 'VTSAX', parent_guid: 'lvl-01' },
+      'roth-guid': { name: 'Roth IRA', parent_guid: 'root-guid' },
+      'root-guid': { name: 'Root', parent_guid: null },
+    };
+    const lvl = (i: number) => `lvl-${String(i).padStart(2, '0')}`;
+    for (let i = 1; i <= 24; i++) {
+      chain[lvl(i)] = { name: `Level ${i}`, parent_guid: i < 24 ? lvl(i + 1) : 'roth-guid' };
+    }
+    mockAccountsFindUnique.mockImplementation(
+      ({ where }: { where: { guid: string } }) => Promise.resolve(chain[where.guid] ?? null),
+    );
+
+    // Under the 20-level cap this returned TAX_NORMAL: the walk never saw "Roth".
+    expect(await classifyAccountTax('deep-leaf', tx)).toBe('TAX_EXEMPT');
+    expect(mockAccountsFindUnique.mock.calls.length).toBe(27);
+  });
+
+  it('terminates on a corrupt parent cycle instead of looping forever', async () => {
+    const chain: Record<string, { name: string; parent_guid: string | null }> = {
+      'cyc-a': { name: 'Brokerage A', parent_guid: 'cyc-b' },
+      'cyc-b': { name: 'Brokerage B', parent_guid: 'cyc-a' },
+    };
+    mockAccountsFindUnique.mockImplementation(
+      ({ where }: { where: { guid: string } }) => Promise.resolve(chain[where.guid] ?? null),
+    );
+
+    expect(await classifyAccountTax('cyc-a', tx)).toBe('TAX_NORMAL');
+    // Each node read exactly once — the visited set closed the cycle.
+    expect(mockAccountsFindUnique.mock.calls.length).toBe(2);
+  });
+
   it('returns TAX_DEFERRED for 403b accounts', async () => {
     mockAccountsFindUnique
       .mockResolvedValueOnce({ name: 'Fund B', parent_guid: '403b-guid' })

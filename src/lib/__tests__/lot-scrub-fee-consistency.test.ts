@@ -67,7 +67,7 @@ import { apportionCarriedBasis } from '../lot-scrub';
 import { autoAssignLots, revertScrubRun } from '../lot-assignment';
 import { getAccountLots } from '../lots';
 import { lotToRealizedSales } from '../reports/capital-gains';
-import { loadTradeFees } from '../trade-fees';
+import { classifyFeeAccount, loadTradeFees } from '../trade-fees';
 import { buildAccountPathMap } from '../reports/utils';
 
 // ---------------------------------------------------------------------------
@@ -964,5 +964,270 @@ describe('a fee never decides whether a disposal happened', () => {
     // leak into it.
     const bLot = split('b-in').lot_guid as string;
     expect(slotVal(bLot, 'carried_basis')).toBe('1000');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// (f) The account-path walk has NO depth cap
+// ---------------------------------------------------------------------------
+
+/**
+ * A deep chart of accounts must not silently change a fee decision.
+ *
+ * buildFeeAccountPaths used to pull ancestors for at most 25 rounds. The walk
+ * climbs from the SEED upward, so the cap drops the TOP of the path — and the
+ * top is exactly where the words that REFUSE a charge live ("Expenses:Margin
+ * Interest:..."). A charge the classifier must expense therefore read as a
+ * plain commission and was capitalized into COST BASIS, with no error and no
+ * warning, while the lots report and Form 8949 — whose buildAccountPathMap
+ * (@/lib/reports/utils) has always walked to exhaustion — kept the correct
+ * figure. Same sale, two numbers, the wrong one on the tax return.
+ *
+ * The fixture below is the smallest chart that reaches past the old cap.
+ */
+
+/** Depth of the intermediate chain; 26 puts the deny word past a 25-round cap. */
+const DEEP_LEVELS = 26;
+/** "Expenses:Margin Interest" — the DENY ancestor, 28 hops above the leaf. */
+const DEEP_INTEREST = 'deep-interest-acct-guid-0000000';
+const deepLevelGuid = (i: number) => `deep-level-${String(i).padStart(2, '0')}-guid-000000`;
+const deepLevelName = (i: number) => `Level ${String(i).padStart(2, '0')}`;
+/** "…:Commissions" — the leaf the fee split posts to. */
+const DEEP_COMMISSIONS = 'deep-commissions-acct-guid-0000';
+
+/** The full ":"-joined path of DEEP_COMMISSIONS, root excluded. */
+const DEEP_FULL_PATH = [
+  'Expenses',
+  'Margin Interest',
+  ...Array.from({ length: DEEP_LEVELS }, (_, i) => deepLevelName(i + 1)),
+  'Commissions',
+].join(':');
+
+/**
+ * Add "Expenses:Margin Interest:Level 01:…:Level 26:Commissions" to the book
+ * seeded by seedBook(). Every node is an EXPENSE account, so nothing but the
+ * PATH distinguishes it from an ordinary commission account.
+ */
+function seedDeepFeeChart() {
+  db.t.accounts.push(acct(DEEP_INTEREST, 'Margin Interest', 'EXPENSE', EXPENSES, USD));
+  let parent = DEEP_INTEREST;
+  for (let i = 1; i <= DEEP_LEVELS; i++) {
+    db.t.accounts.push(acct(deepLevelGuid(i), deepLevelName(i), 'EXPENSE', parent, USD));
+    parent = deepLevelGuid(i);
+  }
+  db.t.accounts.push(acct(DEEP_COMMISSIONS, 'Commissions', 'EXPENSE', parent, USD));
+}
+
+/**
+ * buildFeeAccountPaths is module-private, so this is a faithful replica of its
+ * ancestor walk over the same fake book, parameterised by the round cap the
+ * production copy used to carry. `cap = Infinity` is the shipped behaviour;
+ * `cap = 25` is what shipped before this fix. Keeping both here is what lets
+ * the test show the OLD WRONG PATH rather than merely exercising a deep tree.
+ */
+function feePathUnderCap(seedGuid: string, cap: number): string {
+  const byGuid = new Map<string, Rec>();
+  const seed = db.t.accounts.find(a => a.guid === seedGuid);
+  if (seed) byGuid.set(seed.guid, seed);
+
+  for (let round = 0; round < cap; round++) {
+    const missing = [...new Set(
+      [...byGuid.values()]
+        .map(node => node.parent_guid as string | null)
+        .filter((guid): guid is string => !!guid && !byGuid.has(guid)),
+    )];
+    if (missing.length === 0) break;
+    const parents = db.t.accounts.filter(a => missing.includes(a.guid as string));
+    if (parents.length === 0) break;
+    for (const parent of parents) byGuid.set(parent.guid as string, parent);
+  }
+
+  const paths = new Map<string, string>();
+  const resolve = (guid: string, seen: Set<string>): string => {
+    const cached = paths.get(guid);
+    if (cached !== undefined) return cached;
+    const node = byGuid.get(guid);
+    if (!node || seen.has(guid)) return '';
+    if (node.account_type === 'ROOT') { paths.set(guid, ''); return ''; }
+    seen.add(guid);
+    const parentPath = node.parent_guid ? resolve(node.parent_guid as string, seen) : '';
+    const own = (node.name as string) ?? '';
+    const path = parentPath ? `${parentPath}:${own}` : own;
+    paths.set(guid, path);
+    return path;
+  };
+  return resolve(seedGuid, new Set());
+}
+
+describe('fee account paths are walked to exhaustion', () => {
+  /**
+   * Buy 100 @ $10 = $1,000, with $60 of accrued margin interest on the same
+   * ticket, booked 28 levels down the chart. Sell all 100 for $1,500.
+   *
+   * Correct: margin interest is NOT basis (Pub. 550), so basis is $1,000 and
+   * the gain is $500. Under the old cap the engine capitalized the $60 and
+   * booked $440.
+   */
+  function seedDeepChartedInterestOnAPurchase() {
+    seedBook();
+    seedDeepFeeChart();
+    addTx('tx-buy', '2022-01-10', [
+      ['a-buy', STOCK_A, 100, 1000],
+      ['a-buy-int', DEEP_COMMISSIONS, 60, 60],
+      ['a-buy-cash', CASH, -1060, -1060],
+    ]);
+    addTx('tx-sell', '2024-11-02', [
+      ['a-sell', STOCK_A, -100, -1500],
+      ['a-sell-cash', CASH, 1500, 1500],
+    ]);
+  }
+
+  it('shows the old 25-round cap truncating the path into the WRONG verdict', () => {
+    seedBook();
+    seedDeepFeeChart();
+
+    // Exhaustive walk: the whole path, deny word and all.
+    const full = feePathUnderCap(DEEP_COMMISSIONS, Infinity);
+    expect(full).toBe(DEEP_FULL_PATH);
+    expect(full).toContain('Margin Interest');
+    expect(classifyFeeAccount(full)).toBe('ambiguous'); // deny beats allow => NOT basis
+
+    // The old cap: 25 rounds load 25 ancestors (Level 26 .. Level 02), so the
+    // path starts at Level 02 and "Expenses:Margin Interest:Level 01" is gone.
+    const capped = feePathUnderCap(DEEP_COMMISSIONS, 25);
+    expect(capped).toBe(
+      [...Array.from({ length: DEEP_LEVELS - 1 }, (_, i) => deepLevelName(i + 2)), 'Commissions']
+        .join(':'),
+    );
+    expect(capped).not.toContain('Interest');
+    expect(capped).not.toContain('Expenses');
+    // The wrong verdict, with nothing to signal it: a plain capitalizable fee.
+    expect(classifyFeeAccount(capped)).toBe('fee');
+    expect(classifyFeeAccount(capped)).not.toBe(classifyFeeAccount(full));
+  });
+
+  it('books the correct $500 gain — the $60 is expensed, not capitalized', async () => {
+    seedDeepChartedInterestOnAPurchase();
+
+    const res = await autoAssignLots(STOCK_A, 'fifo');
+
+    // Under the old cap this was 440: basis $1,060 instead of $1,000.
+    expect(res.totalRealizedGain).toBeCloseTo(500, 6);
+    expect(bookedGainsIncome('Long Term')).toBeCloseTo(-500, 6);
+  });
+
+  it('puts the engine back on the same number as both reports', async () => {
+    seedDeepChartedInterestOnAPurchase();
+
+    await autoAssignLots(STOCK_A, 'fifo');
+
+    // buildAccountPathMap never had the cap, so these two were RIGHT while the
+    // engine was wrong. The divergence is what this branch exists to close.
+    expect(await lotsReportRealizedGain(STOCK_A)).toBeCloseTo(500, 6);
+    expect(await form8949Gain(STOCK_A)).toBeCloseTo(500, 6);
+
+    const booked = -bookedGainsIncome('Long Term');
+    expect(await lotsReportRealizedGain(STOCK_A)).toBeCloseTo(booked, 6);
+    expect(await form8949Gain(STOCK_A)).toBeCloseTo(booked, 6);
+  });
+
+  it('reports the deep charge rather than dropping it silently', async () => {
+    seedDeepChartedInterestOnAPurchase();
+    await autoAssignLots(STOCK_A, 'fifo');
+
+    const accountPaths = await buildAccountPathMap();
+    const { warnings, capitalizedFeeSplitGuids } = await loadTradeFees(
+      ['tx-buy', 'tx-sell'],
+      { accountPaths },
+    );
+
+    // Refused, and said so — the charge stays deductible on the expense side.
+    expect(capitalizedFeeSplitGuids).not.toContain('a-buy-int');
+    expect(warnings.some(w => w.includes(DEEP_FULL_PATH))).toBe(true);
+  });
+
+  it('terminates on a parent CYCLE instead of looping forever', async () => {
+    // A corrupt chart: Level 01's parent points back at the leaf below it.
+    // The walk must close (visited set) and simply yield a truncated path.
+    seedBook();
+    seedDeepFeeChart();
+    const level01 = db.t.accounts.find(a => a.guid === deepLevelGuid(1))!;
+    level01.parent_guid = DEEP_COMMISSIONS;
+
+    addTx('tx-buy', '2022-01-10', [
+      ['a-buy', STOCK_A, 100, 1000],
+      ['a-buy-int', DEEP_COMMISSIONS, 60, 60],
+      ['a-buy-cash', CASH, -1060, -1060],
+    ]);
+    addTx('tx-sell', '2024-11-02', [
+      ['a-sell', STOCK_A, -100, -1500],
+      ['a-sell-cash', CASH, 1500, 1500],
+    ]);
+
+    const res = await autoAssignLots(STOCK_A, 'fifo');
+    expect(res.gainsTransactions).toBe(1);
+    // The cycle hides the deny word, so the charge reads as a fee and is
+    // capitalized: $1,060 basis, $440 gain. That is corrupt DATA producing a
+    // defensible answer, not a cap producing a wrong one on sound data.
+    expect(res.totalRealizedGain).toBeCloseTo(440, 6);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// (g) The gains-account walk has no depth cap either
+// ---------------------------------------------------------------------------
+
+/**
+ * `fullnameOf`, which decides WHICH capital-gains account a realized gain is
+ * booked to, carried the same 25-hop cap. It climbs too, so overrunning it
+ * returned a fullname with no book root attached — and the candidate filter
+ * drops anything whose root is not the lot's book. A perfectly good, deeply
+ * filed "Income:…:Capital Gains:Long Term" was therefore invisible and the
+ * engine created a DUPLICATE beside it, splitting one year's gains across two
+ * accounts. (The same truncation drops a "Tax-Deferred" ancestor, which is
+ * how a sheltered sale reaches the taxable gains account.)
+ */
+const DEEP_INCOME = 'deep-income-acct-guid-000000000';
+const deepIncomeGuid = (i: number) => `deep-inc-${String(i).padStart(2, '0')}-guid-0000`;
+const DEEP_CAPGAINS = 'deep-capgains-acct-guid-0000000';
+const DEEP_LONG_TERM = 'deep-longterm-acct-guid-0000000';
+
+/** "Income:Level 01:…:Level 26:Capital Gains:Long Term" — 29 hops to the root. */
+function seedDeepGainsAccount() {
+  db.t.accounts.push(acct(DEEP_INCOME, 'Income', 'INCOME', ROOT, USD));
+  let parent = DEEP_INCOME;
+  for (let i = 1; i <= DEEP_LEVELS; i++) {
+    db.t.accounts.push(acct(deepIncomeGuid(i), deepLevelName(i), 'INCOME', parent, USD));
+    parent = deepIncomeGuid(i);
+  }
+  db.t.accounts.push(acct(DEEP_CAPGAINS, 'Capital Gains', 'INCOME', parent, USD));
+  db.t.accounts.push(acct(DEEP_LONG_TERM, 'Long Term', 'INCOME', DEEP_CAPGAINS, USD));
+}
+
+describe('a deeply filed capital-gains account is found, not duplicated', () => {
+  it('books into the existing account instead of creating a second one', async () => {
+    seedBook();
+    seedDeepGainsAccount();
+    addTx('tx-buy', '2022-01-10', [
+      ['a-buy', STOCK_A, 100, 1000],
+      ['a-buy-cash', CASH, -1000, -1000],
+    ]);
+    addTx('tx-sell', '2024-11-02', [
+      ['a-sell', STOCK_A, -100, -1500],
+      ['a-sell-cash', CASH, 1500, 1500],
+    ]);
+
+    const before = db.t.accounts.length;
+    const res = await autoAssignLots(STOCK_A, 'fifo');
+    expect(res.totalRealizedGain).toBeCloseTo(500, 6);
+
+    // Under the 25-hop cap this created "Income:Capital Gains:Long Term" as a
+    // SECOND account and booked the $500 there.
+    expect(db.t.accounts.length).toBe(before);
+    expect(db.t.accounts.filter(a => a.name === 'Long Term')).toHaveLength(1);
+    const booked = db.t.splits
+      .filter(s => s.account_guid === DEEP_LONG_TERM)
+      .reduce((sum, s) => sum + Number(s.value_num) / Number(s.value_denom), 0);
+    expect(booked).toBeCloseTo(-500, 6);
   });
 });

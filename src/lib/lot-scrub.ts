@@ -206,9 +206,16 @@ export async function classifyAccountTax(
   const names: string[] = [];
   const walkGuids: string[] = [];
 
+  // Walk to the root. No level cap: BOTH signals this function reads live in
+  // the ANCESTORS — the name patterns below, and the explicit is_retirement
+  // preference looked up over `walkGuids`. A cap stops the climb before the
+  // "Roth IRA" / "401k" ancestor and the account silently reads TAX_NORMAL, so
+  // a sheltered sale is booked as taxable and routed to the taxable gains
+  // account. Termination is `seen`, so a corrupt parent cycle closes.
+  const seen = new Set<string>();
   let currentGuid: string | null = accountGuid;
-  // Walk up to 20 levels to avoid infinite loops
-  for (let i = 0; i < 20 && currentGuid; i++) {
+  while (currentGuid && !seen.has(currentGuid)) {
+    seen.add(currentGuid);
     const acct: { name: string; parent_guid: string | null } | null =
       await db.accounts.findUnique({
         where: { guid: currentGuid },
@@ -546,9 +553,33 @@ async function buildFeeAccountPaths(
   const byGuid = new Map<string, FeeAccountNode>();
   for (const node of seeds) if (node.guid) byGuid.set(node.guid, node);
 
-  // Pull in the ancestors the seed rows do not already carry, in batches.
-  // Bounded so a corrupt parent chain cannot loop forever.
-  for (let depth = 0; depth < 25; depth++) {
+  // Pull in the ancestors the seed rows do not already carry, one level of
+  // the chart per round.
+  //
+  // WALKED TO EXHAUSTION, with `byGuid` itself as the visited set. There is
+  // deliberately no depth cap. A cap here does not merely shorten a display
+  // string: fee classification reads this path, and the words that REFUSE a
+  // charge ("Interest", "Taxes", "Accrued") normally sit HIGH in the chart,
+  // near "Expenses" — exactly the part a cap drops first. Truncating the top
+  // of "Expenses:Margin Interest:...:Commissions" leaves a path that reads as
+  // a plain commission, so a charge that must be expensed is capitalized into
+  // COST BASIS instead, with no error and no warning: a wrong gain presented
+  // as correct, on a figure that ends up on a tax return. A 30-level chart of
+  // accounts is unusual bookkeeping, not corruption, and it must not be
+  // silently mis-costed. (This is the same termination rule
+  // reconcileCarriedBasisForSourceLots uses for transfer chains, and it
+  // matches buildAccountPathMap (@/lib/reports/utils), whose paths the lots
+  // report and Form 8949 read for the SAME sale — a cap only here would put
+  // the engine and the reports back on different numbers.)
+  //
+  // Termination is structural rather than numeric. A guid is queried only
+  // while it is absent from `byGuid`, and every row returned is inserted, so
+  // each account enters at most once and the walk is bounded by the number of
+  // accounts in the book. That holds for a corrupt parent CYCLE too: the
+  // cycle's accounts are all resolved on the way up, after which nothing is
+  // missing and the loop ends. `resolve` below carries its own `seen` set, so
+  // a cycle yields a truncated path rather than infinite recursion.
+  for (;;) {
     const missing = [...new Set(
       [...byGuid.values()]
         .map(node => node.parent_guid)
@@ -559,8 +590,14 @@ async function buildFeeAccountPaths(
       where: { guid: { in: missing } },
       select: { guid: true, name: true, parent_guid: true, account_type: true },
     })) ?? [];
-    if (parents.length === 0) break;
+    const before = byGuid.size;
     for (const parent of parents) byGuid.set(parent.guid, parent as FeeAccountNode);
+    // Nothing NEW resolved: the outstanding parent guids are dangling
+    // references, not a deeper chart. Stop rather than re-issue the same
+    // query forever. Checking growth rather than `parents.length` keeps the
+    // loop terminating even if a driver ever answered with rows it was not
+    // asked for.
+    if (byGuid.size === before) break;
   }
 
   const paths = new Map<string, string>();
@@ -2372,8 +2409,13 @@ export async function generateCapitalGains(
   } else {
     // Walk up the investment account's ancestors and use the first account
     // whose commodity is a currency.
+    // No level cap. Overrunning one does not truncate a string here, it leaves
+    // currencyGuid null and throws below — a deep-but-valid book would simply
+    // refuse to scrub. `seenAncestors` is the termination condition.
+    const seenAncestors = new Set<string>();
     let ancestorGuid = lot.account.parent_guid;
-    for (let i = 0; i < 20 && ancestorGuid && !currencyGuid; i++) {
+    while (ancestorGuid && !currencyGuid && !seenAncestors.has(ancestorGuid)) {
+      seenAncestors.add(ancestorGuid);
       const ancestor = accountsByGuid.get(ancestorGuid);
       if (!ancestor) break;
       const commodity = await getCommodity(ancestor.commodity_guid);
@@ -2415,11 +2457,16 @@ export async function generateCapitalGains(
   }
 
   // --- Resolve the gains account ---------------------------------------------
-  // Walk up from the lot's account to its book root.
+  // Walk up from the lot's account to its book root. No hop cap: a cap here
+  // silently disowns a deeply filed security account from its own book, and
+  // the fallback below then answers with SOME book's root. Termination is the
+  // `seen` set — a corrupt parent cycle closes instead of looping.
   let rootGuid: string | null = null;
   {
+    const seen = new Set<string>();
     let cursor = accountsByGuid.get(lot.account.guid) ?? null;
-    for (let i = 0; i < 20 && cursor; i++) {
+    while (cursor && !seen.has(cursor.guid)) {
+      seen.add(cursor.guid);
       if (!cursor.parent_guid) {
         rootGuid = cursor.guid;
         break;
@@ -2437,11 +2484,21 @@ export async function generateCapitalGains(
   }
 
   // Build a fullname (root excluded, ":"-joined) plus the root it belongs to.
+  //
+  // No hop cap, for the same reason buildFeeAccountPaths has none: the walk
+  // climbs, so a cap drops the TOP of the fullname — and the top is what the
+  // matching below reads. A truncated fullname loses the book root (so the
+  // account is filtered out of its own book and a DUPLICATE gains account is
+  // created beside it) and loses the "Tax-Deferred" ancestor (so a sheltered
+  // sale can be booked to the taxable gains account). Termination is the
+  // `seen` set, so a corrupt parent cycle closes rather than looping.
   const fullnameOf = (guid: string): { fullname: string; root: string | null } => {
     const parts: string[] = [];
+    const seen = new Set<string>();
     let cur = accountsByGuid.get(guid) ?? null;
     let root: string | null = null;
-    for (let i = 0; i < 25 && cur; i++) {
+    while (cur && !seen.has(cur.guid)) {
+      seen.add(cur.guid);
       if (!cur.parent_guid) {
         root = cur.guid;
         break;
