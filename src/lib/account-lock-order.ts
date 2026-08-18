@@ -19,7 +19,10 @@
  *     name lock must be acquired at a position >= the greatest one already
  *     held, under the total order defined by {@link compareLockOrder}. Two
  *     transactions that each acquire a subsequence of one global total order
- *     cannot close a wait-for cycle, which is the whole argument.
+ *     cannot close a wait-for cycle, which is the whole argument. The claim is
+ *     RECORDED SYNCHRONOUSLY, before the acquisition is awaited, so two claims
+ *     in flight at once are judged against each other rather than both seeing
+ *     an empty scope — see {@link claimReserved}.
  *
  *   RULE 2 (level 2 before level 3). A transaction must not ACQUIRE a row
  *     lock on an account row while it holds a name lock. `AccountService`
@@ -224,6 +227,58 @@ function currentScope(): AccountLockScope {
 }
 
 /**
+ * Records the claim in `scope.held` and THEN acquires the lock, rolling the
+ * record back if the acquisition fails.
+ *
+ * ## Why the record goes first
+ *
+ * Both claim functions used to read `scope.held`, `await` the acquisition, and
+ * append only afterwards. That is a check-then-act straddling an await, and
+ * within one transaction scope it is defeated by two claims in flight at once:
+ *
+ *     await Promise.all([
+ *       acquireSoleAccountNameLock(tx, parent, 'Z'),
+ *       acquireSoleAccountNameLock(tx, parent, 'A'),
+ *     ]);
+ *
+ * Both observed an EMPTY `held`, both concluded they were the only claim, both
+ * acquired, and two different keys ended up held under a function whose entire
+ * contract is "exactly one". No error was raised. The invariant did not
+ * enforce what it claimed — which is worse than not having it, because the
+ * proofs that lean on it read as guarantees.
+ *
+ * Appending BEFORE the first await closes it: JavaScript runs each call
+ * synchronously up to its first await, so the second call observes the first
+ * call's entry and is judged against it. There is no window between deciding
+ * and recording, because there is no await between them.
+ *
+ * ## Why the rollback matters
+ *
+ * A failed acquisition that left its entry behind would strand a PHANTOM key:
+ * the transaction holds nothing, but `held` says it does, so the next
+ * legitimate claim is refused (sole) or ordered against a lock nobody has
+ * (ordered). Callers do catch and retry — `withAdoptionRetry`
+ * (src/lib/book-lock.ts) is built on exactly that — so the phantom would break
+ * the retry rather than the attempt that failed, which is the harder failure
+ * to read. The entry is removed BY IDENTITY, so a concurrent claim of the same
+ * key keeps its own record.
+ */
+async function claimReserved(
+    tx: MaybeRawClient,
+    scope: AccountLockScope,
+    held: HeldLock,
+): Promise<boolean> {
+    scope.held.push(held);
+    try {
+        return await acquireAccountKeyLockUnchecked(tx, held.key);
+    } catch (error) {
+        const at = scope.held.indexOf(held); // identity: never another claim's entry
+        if (at !== -1) scope.held.splice(at, 1);
+        throw error;
+    }
+}
+
+/**
  * Sites that claim sibling keys in an order this module cannot yet check,
  * with what it would take to fix each. A registered site LOGS its violation
  * instead of throwing.
@@ -333,7 +388,7 @@ export async function acquireAccountNameLock(
     // against the OTHER keys held and rejects a walk that legitimately
     // revisits a shallow segment after a deeper one.
     if (scope.held.some(heldLock => heldLock.key === key)) {
-        return acquireAccountKeyLockUnchecked(tx, key);
+        return claimReserved(tx, scope, { key, order });
     }
 
     for (const heldLock of scope.held) {
@@ -360,9 +415,8 @@ export async function acquireAccountNameLock(
         }
     }
 
-    const locked = await acquireAccountKeyLockUnchecked(tx, key);
-    scope.held.push({ key, order });
-    return locked;
+    // Reserved synchronously, before the first await — see claimReserved.
+    return claimReserved(tx, scope, { key, order });
 }
 
 /**
@@ -384,7 +438,7 @@ export async function acquireSoleAccountNameLock(
 
     // Re-entrant, exactly as in acquireAccountNameLock above.
     if (scope.held.some(heldLock => heldLock.key === key)) {
-        return acquireAccountKeyLockUnchecked(tx, key);
+        return claimReserved(tx, scope, { key, order: null });
     }
 
     if (scope.held.length > 0) {
@@ -395,9 +449,8 @@ export async function acquireSoleAccountNameLock(
         );
     }
 
-    const locked = await acquireAccountKeyLockUnchecked(tx, key);
-    scope.held.push({ key, order: null });
-    return locked;
+    // Reserved synchronously, before the first await — see claimReserved.
+    return claimReserved(tx, scope, { key, order: null });
 }
 
 /** Records an account row this transaction INSERTed. RULE 2's exemption. */

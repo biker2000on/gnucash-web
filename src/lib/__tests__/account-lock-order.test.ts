@@ -59,6 +59,22 @@ function txClient(locked: string[] = []) {
     } as never;
 }
 
+/**
+ * A transaction client whose lock acquisition FAILS.
+ *
+ * Not a contrived shape: `acquireAccountKeyLockUnchecked` runs a real
+ * statement, and a statement can fail — the server can abort the transaction
+ * (deadlock, cancellation, timeout) between the claim being recorded and the
+ * lock being granted.
+ */
+const ACQUIRE_FAILURE = 'lock acquisition failed at the server';
+function failingTxClient() {
+    return {
+        _isTransactionClient: true,
+        $queryRaw: async () => { throw new Error(ACQUIRE_FAILURE); },
+    } as never;
+}
+
 const order = (path: string[], root = ROOT): AccountLockOrder => ({ bookRootGuid: root, path });
 
 describe('compareLockOrder — the total order the whole protocol rests on', () => {
@@ -354,6 +370,125 @@ describe('MUTATION PROOF — the invariant is load-bearing where a source scan i
         await withAccountLockScope(async () => {
             await acquireSoleAccountNameLock(txClient(), PARENT, 'Cash');
             expect(reconcileAnExistingRow).toThrow(AccountRowWriteUnderNameLockError);
+        });
+    });
+});
+
+describe('TOCTOU — the invariant must survive two claims in flight at once', () => {
+    /**
+     * The evasion. Both claims used to read `scope.held`, `await` the
+     * acquisition, and append only afterwards; two calls started together both
+     * observed an empty scope, both acquired, and nothing was raised.
+     */
+    it('THROWS on two concurrent SOLE claims that both saw an empty scope', async () => {
+        await withAccountLockScope(async () => {
+            const tx = txClient();
+            await expect(
+                Promise.all([
+                    acquireSoleAccountNameLock(tx, PARENT, 'Zebra'),
+                    acquireSoleAccountNameLock(tx, PARENT, 'Apple'),
+                ]),
+            ).rejects.toBeInstanceOf(AccountLockOrderError);
+        });
+    });
+
+    it('THROWS on two concurrent ORDERED claims taken backwards', async () => {
+        // Claiming USD then EUR concurrently is the trading-account ABBA
+        // itself; sequentially it already threw, and it must not become legal
+        // merely by being issued in parallel.
+        await withAccountLockScope(async () => {
+            const tx = txClient();
+            await expect(
+                Promise.all([
+                    acquireAccountNameLock(tx, PARENT, 'USD', order(['Trading', 'CURRENCY', 'USD'])),
+                    acquireAccountNameLock(tx, PARENT, 'EUR', order(['Trading', 'CURRENCY', 'EUR'])),
+                ]),
+            ).rejects.toThrow(/Out-of-order account name lock/);
+        });
+    });
+
+    it('records the claim BEFORE awaiting, observably', async () => {
+        // The mechanism, asserted directly rather than only through its
+        // effect: the entry exists while the acquisition is still in flight.
+        await withAccountLockScope(async () => {
+            const inFlight = acquireSoleAccountNameLock(txClient(), PARENT, 'Cash');
+            expect(currentAccountLockScope()?.held.map(h => h.key))
+                .toEqual([`account:${PARENT}:Cash`]);
+            await inFlight;
+        });
+    });
+
+    it('still allows two concurrent claims that ASCEND the order', async () => {
+        // The fix must not turn every parallel claim into an error — only the
+        // ones that actually run the order backwards.
+        const locked: string[] = [];
+        await withAccountLockScope(async () => {
+            const tx = txClient(locked);
+            await Promise.all([
+                acquireAccountNameLock(tx, PARENT, 'EUR', order(['Trading', 'CURRENCY', 'EUR'])),
+                acquireAccountNameLock(tx, PARENT, 'USD', order(['Trading', 'CURRENCY', 'USD'])),
+            ]);
+        });
+        expect(locked).toHaveLength(2);
+    });
+});
+
+describe('ROLLBACK — a failed acquisition must not strand a phantom key', () => {
+    it('removes a SOLE claim whose acquisition failed', async () => {
+        await withAccountLockScope(async () => {
+            await expect(acquireSoleAccountNameLock(failingTxClient(), PARENT, 'Cash'))
+                .rejects.toThrow(ACQUIRE_FAILURE);
+            expect(currentAccountLockScope()?.held).toEqual([]);
+        });
+    });
+
+    it('lets the NEXT legitimate sole claim through after a failure', async () => {
+        // The failure mode that matters. Callers catch and retry — withAdoptionRetry
+        // (src/lib/book-lock.ts) is built on exactly that — so a stranded entry
+        // breaks the RETRY, not the attempt that failed.
+        await withAccountLockScope(async () => {
+            await expect(acquireSoleAccountNameLock(failingTxClient(), PARENT, 'Cash'))
+                .rejects.toThrow(ACQUIRE_FAILURE);
+            await expect(acquireSoleAccountNameLock(txClient(), PARENT, 'Savings'))
+                .resolves.toBe(true);
+        });
+    });
+
+    it('removes an ORDERED claim whose acquisition failed', async () => {
+        await withAccountLockScope(async () => {
+            await expect(
+                acquireAccountNameLock(failingTxClient(), PARENT, 'USD', order(['Trading', 'CURRENCY', 'USD'])),
+            ).rejects.toThrow(ACQUIRE_FAILURE);
+            expect(currentAccountLockScope()?.held).toEqual([]);
+        });
+    });
+
+    it('lets a LOWER-sorting key through after a higher one failed', async () => {
+        // A stranded 'USD' would make this legitimate claim of 'EUR' look like
+        // the ABBA violation — a false alarm on a transaction holding nothing.
+        await withAccountLockScope(async () => {
+            await expect(
+                acquireAccountNameLock(failingTxClient(), PARENT, 'USD', order(['Trading', 'CURRENCY', 'USD'])),
+            ).rejects.toThrow(ACQUIRE_FAILURE);
+            await expect(
+                acquireAccountNameLock(txClient(), PARENT, 'EUR', order(['Trading', 'CURRENCY', 'EUR'])),
+            ).resolves.toBe(true);
+        });
+    });
+
+    it('rolls back BY IDENTITY, keeping a concurrent same-key claim\'s record', async () => {
+        // Two claims of the SAME key in flight, one failing. The survivor's
+        // record must remain, or the transaction goes on holding a lock the
+        // invariant no longer knows about.
+        await withAccountLockScope(async () => {
+            const good = txClient();
+            const settled = await Promise.allSettled([
+                acquireSoleAccountNameLock(good, PARENT, 'Cash'),
+                acquireSoleAccountNameLock(failingTxClient(), PARENT, 'Cash'),
+            ]);
+            expect(settled.map(s => s.status)).toEqual(['fulfilled', 'rejected']);
+            expect(currentAccountLockScope()?.held.map(h => h.key))
+                .toEqual([`account:${PARENT}:Cash`]);
         });
     });
 });
