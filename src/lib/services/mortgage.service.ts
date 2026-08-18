@@ -20,6 +20,18 @@ export interface PaymentSplit {
   total: number;
 }
 
+/** Why a dynamic payment split could not be safely calculated. */
+export interface PaymentComputationFailure {
+  kind: 'refusal';
+  reason: string;
+}
+
+export interface PaymentComputationSplit {
+  kind: 'split';
+  principal: number;
+  interest: number;
+}
+
 /**
  * Result of interest rate detection via Newton-Raphson
  */
@@ -49,6 +61,56 @@ export interface MortgageDetectionResult {
 interface OriginalAmountDetection {
   amount: number;
   estimated: boolean;
+  warnings?: string[];
+}
+
+// A candidate credit must satisfy both tests to be treated as another draw.
+// The $10,000 floor is a per-credit risk cap, not a fee-size claim: it bounds
+// each absorbed candidate below $10,000, while aggregate absorption remains
+// unbounded and silent when each credit is below the 0.5% disclosure ratio.
+// It binds below a $500,000 opening balance; above that, the 2% ratio is the
+// controlling materiality policy.
+const SILENT_ABSORBED_CREDIT_RATIO = 0.005;
+const MATERIAL_ADDITIONAL_DRAW_RATIO = 0.02;
+const MATERIAL_ADDITIONAL_DRAW_FLOOR = 10_000;
+
+interface CreditOccurrence {
+  amount: number;
+  txGuid: string;
+  date: Date;
+}
+
+function formatCreditAmount(amount: number): string {
+  return amount.toLocaleString('en-US', {
+    minimumFractionDigits: Number.isInteger(amount) ? 0 : 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+function absorbedCreditWarnings(credits: CreditOccurrence[]): string[] {
+  if (credits.length === 0) return [];
+  const grouped = new Map<string, CreditOccurrence & { occurrences: number }>();
+  for (const credit of credits) {
+    const key = `${credit.txGuid}:${credit.date.toISOString()}:${credit.amount}`;
+    const current = grouped.get(key);
+    grouped.set(key, { ...credit, occurrences: (current?.occurrences ?? 0) + 1 });
+  }
+
+  const uniqueCredits = [...grouped.values()];
+  const occurrences = uniqueCredits.reduce((sum, credit) => sum + credit.occurrences, 0);
+  const total = uniqueCredits.reduce((sum, credit) => sum + credit.amount * credit.occurrences, 0);
+  const transactions = new Set(uniqueCredits.map((credit) => credit.txGuid)).size;
+  const dates = new Set(uniqueCredits.map((credit) => credit.date.toISOString())).size;
+  return [`${occurrences} liability credit${occurrences === 1 ? '' : 's'} across ${transactions} transaction${transactions === 1 ? '' : 's'} and ${dates} posting date${dates === 1 ? '' : 's'} totaling $${formatCreditAmount(total)} ${occurrences === 1 ? 'was' : 'were'} absorbed; detected principal excludes ${occurrences === 1 ? 'it' : 'them'} and APR may be overstated`];
+}
+
+function identicalOpeningWarnings(credits: number[]): string[] {
+  const grouped = new Map<number, number>();
+  for (const credit of credits) grouped.set(credit, (grouped.get(credit) ?? 0) + 1);
+
+  return [...grouped.entries()].map(([credit, occurrences]) => {
+    return `Identical same-day opening credits found: $${formatCreditAmount(credit)} in ${occurrences} transactions were included in detected principal; if duplicated by an import, opening principal may be overstated`;
+  });
 }
 
 /**
@@ -176,6 +238,48 @@ export class MortgageService {
       (s) => s.post_date.getTime() === firstDate
     );
 
+    // Every opening-date credit is included in principal. Separate equal-sized
+    // transactions are ambiguous (a split-recorded opening or duplicate import)
+    // and are disclosed, never excluded: ordinary books must not lose principal.
+    const openingCreditByTransaction = new Map<string, number>();
+    for (const split of openingSplits.filter((s) => s.value < 0)) {
+      openingCreditByTransaction.set(
+        split.tx_guid,
+        (openingCreditByTransaction.get(split.tx_guid) ?? 0) + Math.abs(split.value)
+      );
+    }
+    const openingCreditGroups = [...openingCreditByTransaction.entries()]
+      .map(([txGuid, amount]) => ({ txGuid, amount }))
+      .sort((a, b) => b.amount - a.amount);
+    const openingCreditTotal = openingCreditGroups.reduce((sum, group) => sum + group.amount, 0);
+    const laterCredits = mortgageSplits
+      .filter((s) => s.post_date.getTime() !== firstDate && s.value < 0)
+      .map((s) => ({ amount: Math.abs(s.value), txGuid: s.tx_guid, date: s.post_date }));
+    const materialCredits = laterCredits.filter((credit) =>
+      credit.amount >= MATERIAL_ADDITIONAL_DRAW_FLOOR &&
+      credit.amount > openingCreditTotal * MATERIAL_ADDITIONAL_DRAW_RATIO
+    );
+    const absorbedCredits = laterCredits.filter((credit) =>
+      !materialCredits.includes(credit) &&
+      credit.amount >= openingCreditTotal * SILENT_ABSORBED_CREDIT_RATIO
+    );
+    const equalOpeningCredits = openingCreditGroups
+      .filter((group, _index, groups) => groups.filter((other) => other.amount === group.amount).length > 1)
+      .map((group) => group.amount);
+    const detectionWarnings = [
+      ...absorbedCreditWarnings(absorbedCredits),
+      ...identicalOpeningWarnings(equalOpeningCredits.filter((credit) =>
+        credit >= openingCreditTotal * SILENT_ABSORBED_CREDIT_RATIO
+      )),
+    ];
+    if (openingCreditTotal > 0 && materialCredits.length > 0) {
+      return {
+        amount: openingCreditTotal + materialCredits.reduce((sum, credit) => sum + credit.amount, 0),
+        estimated: true,
+        warnings: detectionWarnings,
+      };
+    }
+
     // Find the largest absolute value on the first date
     let maxAbsValue = 0;
     for (const s of openingSplits) {
@@ -198,27 +302,25 @@ export class MortgageService {
 
         // If opening is at least 3x the average subsequent payment, use it
         if (maxAbsValue > avgSubsequent * 3) {
-          return { amount: maxAbsValue, estimated: false };
+          return { amount: openingCreditTotal || maxAbsValue, estimated: false, warnings: detectionWarnings };
         }
       } else {
         // Only one date of transactions, return the max
-        return { amount: maxAbsValue, estimated: false };
+        return { amount: openingCreditTotal || maxAbsValue, estimated: false, warnings: detectionWarnings };
       }
     } else {
-      return { amount: maxAbsValue, estimated: false };
+      return { amount: openingCreditTotal || maxAbsValue, estimated: false, warnings: detectionWarnings };
     }
 
     // At the 3x boundary, a first-date credit only identifies opening principal
     // when it also accounts for all later principal movement. This retains an
     // imported opening balance while rejecting a small first draw/adjustment.
-    const openingCredit = openingSplits
-      .filter((s) => s.value < 0)
-      .reduce((max, s) => Math.max(max, Math.abs(s.value)), 0);
+    const openingCredit = openingCreditTotal;
     const subsequentPrincipal = mortgageSplits
       .filter((s) => s.post_date.getTime() !== firstDate)
       .reduce((sum, s) => sum + Math.abs(s.value), 0);
     if (openingCredit > 0 && openingCredit >= subsequentPrincipal) {
-      return { amount: openingCredit, estimated: false };
+      return { amount: openingCredit, estimated: false, warnings: detectionWarnings };
     }
 
     // No opening credit is available, so retain the existing best-effort
@@ -318,13 +420,14 @@ export class MortgageService {
    * Compute the principal/interest split for a mortgage payment at a given date.
    * Uses the current account balance and detected interest rate.
    *
-   * Returns null if computation fails (balance zero, rate not detected).
+   * Returns a reason if detection data is not reliable enough to split a
+   * scheduled payment; returns null for a transient computation failure.
    */
   static async computePaymentForDate(
     liabilityAccountGuid: string,
     interestAccountGuid: string,
     totalPayment: number,
-  ): Promise<{ principal: number; interest: number } | null> {
+  ): Promise<PaymentComputationSplit | PaymentComputationFailure | null> {
     try {
       // Get current balance of the liability account
       const balanceRows = await prisma.$queryRaw<{ balance: string }[]>`
@@ -342,7 +445,19 @@ export class MortgageService {
         interestAccountGuid,
       );
 
-      if (details.interestRate <= 0 || details.paymentsAnalyzed < 3) return null;
+      // A rate inferred from an estimated principal or insufficient payment
+      // history must not be used to create a real transaction split.
+      if (
+        details.interestRate <= 0 ||
+        details.paymentsAnalyzed < 3 ||
+        details.confidence === 'low'
+      ) {
+        return {
+          kind: 'refusal',
+          reason: details.warnings[0] ??
+            'Mortgage rate confidence is too low to split this payment safely',
+        };
+      }
 
       const monthlyRate = details.interestRate / 100 / 12;
       const interest = Math.round(balance * monthlyRate * 100) / 100;
@@ -350,7 +465,7 @@ export class MortgageService {
 
       if (principal <= 0) return null;
 
-      return { principal, interest };
+      return { kind: 'split', principal, interest };
     } catch {
       return null;
     }
@@ -412,6 +527,7 @@ export class MortgageService {
       mortgageAccountGuid
     );
     const originalAmount = originalAmountDetection.amount;
+    warnings.push(...(originalAmountDetection.warnings ?? []));
 
     // Calculate interest rate directly from interest/balance ratios.
     // This avoids contamination from escrow splits that also post to the mortgage account.
