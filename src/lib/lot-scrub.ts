@@ -1862,7 +1862,17 @@ export async function generateCapitalGains(
       taxClassification === 'TAX_DEFERRED'
         ? `Income:Capital Gains:Tax-Deferred:${periodLabel}`
         : `Income:Capital Gains:${periodLabel}`;
-    gainsAccountGuid = await findOrCreateAccount(gainsAccountPath, rootGuid, currencyGuid, tx);
+    // A scrub closes many lots in one transaction and each closed lot lands
+    // here, so a run that closes a short-term lot before a long-term one
+    // claims the two sibling leaves in the wrong order. Registered rather than
+    // fixed: ordering the loop needs the per-lot holding period, which is
+    // computed halfway through this function's own work. See
+    // UNORDERED_CLAIM_SITES in src/lib/account-lock-order.ts.
+    gainsAccountGuid = await findOrCreateAccount(gainsAccountPath, rootGuid, currencyGuid, tx, {
+      bookRootGuid: rootGuid,
+      prefix: [],
+      unorderedSite: 'lot-scrub:capital-gains',
+    });
   }
 
   // Split VALUES are denominated in the transaction currency's fraction;

@@ -27,6 +27,7 @@ import {
   ReconciledSplitError,
   reconciledSplitResponse,
 } from '@/lib/services/reconciled-split.service';
+import { isSiblingKeyAdopted, siblingKeyAdoptedResponse } from '@/lib/sibling-key-adopted-response';
 
 /** Maps recurring-invoice service errors (falls through to invoice errors). */
 export function mapRecurringError(error: unknown): NextResponse {
@@ -40,6 +41,10 @@ export function mapRecurringError(error: unknown): NextResponse {
 }
 
 export function mapInvoiceError(error: unknown): NextResponse {
+  // Transient and retryable — never a 500. See sibling-key-adopted-response.ts.
+  if (isSiblingKeyAdopted(error)) {
+    return siblingKeyAdoptedResponse(error);
+  }
   if (error instanceof PeriodLockedError) {
     return periodLockedResponse(error);
   }

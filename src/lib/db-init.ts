@@ -2747,9 +2747,15 @@ async function tuneAutovacuum() {
  * second line of defence that is redundant where the protocol already holds
  * and would not reach the exemptions anyway.
  *
- * So the enforcement for real accounts stays where it can be correct:
- * `acquireNamedXactLock(accountNameLockKey(parent, name))`, claimed inside the
- * writing transaction with a re-check under it.
+ * So the enforcement for real accounts stays where it can be correct: the
+ * `account:(parent, name)` advisory key, claimed inside the writing
+ * transaction with a re-check under it. It is claimed through
+ * `acquireAccountNameLock` / `acquireSoleAccountNameLock`
+ * (src/lib/account-lock-order.ts) and NOT through the generic
+ * `acquireNamedXactLock`, which refuses the `account:` namespace outright:
+ * two holders that take the same pair of keys in opposite orders deadlock
+ * (SQLSTATE 40P01), so every claim has to pass the funnel that knows the
+ * canonical acquisition order and can check it at runtime.
  *
  * WHAT THAT COVERS, EXACTLY — the lock is the only arbiter, so a writer that
  * does not take it is not "slightly racy", it is unconstrained. Covered:
@@ -2763,7 +2769,7 @@ async function tuneAutovacuum() {
  *     also has to reconcile an account that already exists and the two cannot
  *     happen under one lock — see the ordering rule on `accountNameLockKey`
  *     (src/lib/book-lock.ts).
- *   - `ensureAccountPath` (services/packages.service.ts).
+ *   - `ensureTypedAccount` (services/packages.service.ts).
  *   - `trading-accounts.ts` (Trading root, namespace group, per-commodity leaf).
  *   - `simplefin-sync.service.ts` (imbalance, per-symbol child, cash child) —
  *     see ACCOUNT_SIBLING_UNIQUE_MARKERS there for the adopt-the-winner path

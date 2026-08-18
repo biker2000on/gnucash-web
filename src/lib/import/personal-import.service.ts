@@ -15,6 +15,8 @@
 
 import prisma from '@/lib/prisma';
 import { generateGuid, fromDecimal, findOrCreateAccountDetailed, toDecimalNumber } from '@/lib/gnucash';
+import { acquireBookLock } from '@/lib/book-lock';
+import { sortByLockOrder } from '@/lib/account-lock-order';
 import { invalidateBookAccountGuidsCache } from '@/lib/book-scope';
 import { getCachedLockDate } from '@/lib/services/period-lock.service';
 import { resolveImportLocale, type ImportLocaleId } from './parse-locale';
@@ -486,9 +488,25 @@ export async function commitPersonalImport(
 
     await prisma.$transaction(
         async (tx) => {
-            // 1. Accounts (few; sequential findOrCreateAccount is fine)
+            // Serialize the import against other book-level operations. Same
+            // reasoning as the QIF executor (src/lib/qif/importer.ts): the
+            // account set below is walked from USER INPUT, so two concurrent
+            // imports into one book claim shared sibling keys in whatever
+            // order their two files happened to list them — an ABBA deadlock
+            // on `account:(parent, name)` that Postgres breaks by aborting one
+            // import with SQLSTATE 40P01.
+            await acquireBookLock(tx, ctx.bookGuid, 'personal-import');
+
+            // 1. Accounts (few; sequential findOrCreateAccount is fine), taken
+            // in canonical lock order (src/lib/account-lock-order.ts). Every
+            // planned path is relative to the book root, so sorting the paths
+            // is sorting the keys.
             const newAccountGuids = new Map<string, string>();
-            for (const planned of accountsToCreate) {
+            const orderedAccounts = sortByLockOrder(accountsToCreate, (planned) => ({
+                bookRootGuid: ctx.rootGuid,
+                path: planned.path.split(':').filter((segment) => segment.trim() !== ''),
+            }));
+            for (const planned of orderedAccounts) {
                 const { guid, created } = await createPlannedAccount(
                     tx,
                     planned,

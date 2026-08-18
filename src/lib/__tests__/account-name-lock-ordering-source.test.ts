@@ -1,26 +1,46 @@
 /**
- * Source guard for the lock-ordering rule on `accountNameLockKey`
- * (src/lib/book-lock.ts): a transaction holding a sibling-name lock must not
- * acquire a row-level lock on an account row it did not itself INSERT.
+ * A CHEAP TRIPWIRE over the sibling-name lock rules — NOT their enforcement.
  *
- * Why a source guard rather than a behavioural test. The rule binds every
- * module that holds one of those keys, including the ones that hold it
- * TRANSITIVELY by calling `findOrCreateAccount` / `findOrCreateAccountDetailed`
- * / `ensureTypedAccount` — and that transitive set is exactly where it kept
- * getting broken. `addTemplateAccounts` broke it directly;
- * `bootstrapInventoryAccounts`, the invoice A/R–A/P bootstrap and the two
- * importers broke it through a find-or-create call. Each break is a deadlock
- * against a concurrent rename, reproduced as a real SQLSTATE 40P01 in
- * src/lib/services/__tests__/account-lock-hierarchy-deadlock.integration.test.ts,
- * and none of them is visible from the module that defines the ordering.
+ * ## Read this before trusting anything below
  *
- * So the inventory below is exact: a NEW account-row write in any module that
- * can hold a name lock fails this test and has to be justified here, at which
- * point whoever adds it has to work out which phase it belongs in.
+ * This file greps source text. It cannot see what a program DOES, and the two
+ * rules on `accountNameLockKey` (src/lib/book-lock.ts) are both properties of
+ * an execution:
  *
- * This guard covers the level-2/level-3 ordering only. Ordering between two
- * name locks is a separate, partly open question — see the closing section of
- * `accountNameLockKey`.
+ *   - The inventory below is a REGEX INVENTORY. It matches
+ *     `.accounts.update(...)` and a `FROM accounts ... FOR UPDATE` shape. A row
+ *     write reached through an ORM helper, a raw `UPDATE accounts SET ...`, a
+ *     `$executeRaw` built from a template, or any other spelling is invisible
+ *     to it.
+ *   - The positional check is POSITIONAL. It compares byte offsets of the last
+ *     row write and the first key claim WITHIN ONE FILE. Moving a row write
+ *     into a helper defined ABOVE the claim keeps the offsets in order while
+ *     the program still executes name-lock-then-row-update, which is exactly
+ *     the bug. It also says nothing about a write in a different module called
+ *     from between the two.
+ *
+ * Both rules are actually enforced at RUNTIME, against the execution, by
+ * src/lib/account-lock-order.ts:
+ *
+ *   - ordering between two name locks — every claim goes through
+ *     `acquireAccountNameLock`/`acquireSoleAccountNameLock`, and
+ *     `acquireNamedXactLock` refuses `account:` keys outright so there is no
+ *     way around the funnel;
+ *   - account-row writes under a held name lock — a Prisma query extension in
+ *     src/lib/prisma.ts checks every `accounts` update/delete against the
+ *     guids the same transaction INSERTed.
+ *
+ * See src/lib/__tests__/account-lock-order.test.ts and
+ * src/lib/services/__tests__/trading-account-lock-order.integration.test.ts.
+ *
+ * ## So why keep this file
+ *
+ * Because it is nearly free and it fails EARLY — at `vitest run`, with a
+ * filename, before anything opens a database. A new `.accounts.update(...)` in
+ * a module that can hold a name lock is worth a second look even when the
+ * runtime invariant would also catch it, and the justifications below are a
+ * useful record of why each existing write is safe. Treat a pass here as "no
+ * obvious new writer", never as "the ordering rules hold".
  */
 import { readFileSync, readdirSync } from 'node:fs';
 import { relative, resolve } from 'node:path';
@@ -83,7 +103,7 @@ const AUDITED_ACCOUNT_ROW_WRITERS: AuditedWriter[] = [
  * find-or-create helper that claims one.
  */
 const NAME_LOCK_HOLDER =
-    /\baccountNameLockKey\b|\bfindOrCreateAccount(?:Detailed)?\b|\bensureTypedAccount\b/;
+    /\bacquire(?:Sole)?AccountNameLock\b|\bfindOrCreateAccount(?:Detailed)?\b|\bensureTypedAccount\b/;
 
 /** Prisma writes against an existing `accounts` row. `create` is exempt by design. */
 const PRISMA_ACCOUNT_WRITE = /\.accounts\.(?:update|updateMany|delete|deleteMany|upsert)\(/g;
@@ -141,7 +161,7 @@ describe('account name-lock ordering source guard', () => {
         for (const relPath of twoPhase) {
             const source = readFileSync(resolve(SOURCE_ROOT, relPath), 'utf8');
             const writes = [...source.matchAll(PRISMA_ACCOUNT_WRITE)];
-            const claims = [...source.matchAll(/acquireNamedXactLock\(\s*\w+\s*,\s*accountNameLockKey/g)];
+            const claims = [...source.matchAll(/acquireAccountNameLock\(/g)];
             expect(writes.length, `${relPath}: expected an account-row write`).toBeGreaterThan(0);
             expect(claims.length, `${relPath}: expected a sibling-key claim`).toBeGreaterThan(0);
             const lastWrite = writes[writes.length - 1].index!;

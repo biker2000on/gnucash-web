@@ -23,7 +23,7 @@
 
 import prisma from '@/lib/prisma';
 import { generateGuid } from '@/lib/gnucash';
-import { accountNameLockKey, acquireNamedXactLock } from '@/lib/book-lock';
+import { acquireSoleAccountNameLock } from '@/lib/account-lock-order';
 import { createDefaultBook } from '@/lib/default-book';
 import { saveEntityProfile } from '@/lib/services/entity.service';
 import { grantRole } from '@/lib/services/permission.service';
@@ -154,7 +154,7 @@ async function ensurePlanAccounts(
         // was never atomic to begin with — a failure part-way already left the
         // accounts it had created.
         const guid = await prisma.$transaction(async (tx) => {
-            await acquireNamedXactLock(tx, accountNameLockKey(parentGuid, name));
+            await acquireSoleAccountNameLock(tx, parentGuid, name);
             const winner = await tx.accounts.findFirst({
                 where: { parent_guid: parentGuid, name },
                 select: { guid: true },

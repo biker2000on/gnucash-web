@@ -85,7 +85,10 @@ describe('findOrCreateAccount without a caller-supplied transaction', () => {
 
         // And if something ever did, the helper refuses rather than no-op.
         const { acquireNamedXactLock } = await import('../book-lock');
-        await expect(acquireNamedXactLock(prismaMock as never, 'account:root:Expenses'))
+        // A non-account key, because account keys are refused by namespace
+        // before the transaction-scope check is even reached — see
+        // book-lock-transaction-scope.test.ts.
+        await expect(acquireNamedXactLock(prismaMock as never, 'commodity:CURRENCY:USD'))
             .rejects.toBeInstanceOf(AdvisoryLockOutsideTransactionError);
     });
 });

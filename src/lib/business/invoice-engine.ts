@@ -54,11 +54,10 @@ import { Prisma } from '@prisma/client';
 import prisma from '@/lib/prisma';
 import { generateGuid, toDecimalNumber, fromDecimal } from '@/lib/gnucash';
 import {
-  accountNameLockKey,
-  acquireNamedXactLock,
   SiblingKeyAdoptedError,
   withAdoptionRetry,
 } from '@/lib/book-lock';
+import { acquireAccountNameLock } from '@/lib/account-lock-order';
 import {
   assertNotLocked,
   getBookGuidForAccount,
@@ -765,7 +764,7 @@ async function findOrCreatePostAccount(
 
   // Phase 3: claim the key and INSERT, already carrying the A/R–A/P type so
   // there is nothing left to coerce.
-  await acquireNamedXactLock(db, accountNameLockKey(bookRootGuid, name));
+  await acquireAccountNameLock(db, bookRootGuid, name, { bookRootGuid, path: [name] });
   const won = await db.accounts.findFirst({
     where: { parent_guid: bookRootGuid, name },
     select: { guid: true },

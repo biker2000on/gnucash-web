@@ -9,13 +9,13 @@
 import prisma from './prisma';
 import { generateGuid } from './gnucash';
 import {
-  accountNameLockKey,
   acquireBookLock,
   acquireNamedXactLock,
   commodityLockKey,
   SiblingKeyAdoptedError,
   withAdoptionRetry,
 } from './book-lock';
+import { acquireAccountNameLock, sortByLockOrder } from './account-lock-order';
 import { getCurrencyName } from './currencies';
 import { getEntityAccountTemplate, type TemplateAccountDef } from './book-templates';
 import type { BusinessActivity, EntityType } from '@/lib/services/entity.service';
@@ -248,13 +248,24 @@ export async function addTemplateAccounts(
     let created = 0;
     let existing = 0;
 
-    /** Root of a subtree that has no row yet: created in phase 3. */
-    const missing: Array<{ parent: string; def: TemplateAccountDef }> = [];
+    /**
+     * Root of a subtree that has no row yet: created in phase 3.
+     *
+     * `path` is the BOOK-ROOT-RELATIVE path of the node, which is what phase 3
+     * sorts by — see the claim loop below.
+     */
+    const missing: Array<{ parent: string; def: TemplateAccountDef; path: string[] }> = [];
+    /** Prefix that turns a template-relative path into a root-relative one. */
+    const anchorPath = parentName ? [parentName] : [];
 
     // ---- PHASE 2 — reconcile the accounts that already exist -------------
     // Reads and row-level UPDATEs. No sibling-name lock is held at any point
     // in here, which is precisely what makes taking row locks safe.
-    const reconcile = async (accounts: TemplateAccountDef[], parent: string) => {
+    const reconcile = async (
+      accounts: TemplateAccountDef[],
+      parent: string,
+      path: string[],
+    ) => {
       for (const def of accounts) {
         const current = await tx.accounts.findFirst({
           where: { parent_guid: parent, name: def.name },
@@ -264,7 +275,7 @@ export async function addTemplateAccounts(
           // Defer to phase 3, and do NOT descend: everything beneath a node
           // that does not exist yet will be created wholesale under a guid
           // generated in this transaction, so none of it can need a row lock.
-          missing.push({ parent, def });
+          missing.push({ parent, def, path: [...path, def.name] });
           continue;
         }
         assertTemplateType(def, current.account_type);
@@ -276,11 +287,11 @@ export async function addTemplateAccounts(
               data: { placeholder: 1 },
             });
           }
-          await reconcile(def.children, current.guid);
+          await reconcile(def.children, current.guid, [...path, def.name]);
         }
       }
     };
-    await reconcile(defs, parentGuid);
+    await reconcile(defs, parentGuid, anchorPath);
 
     // ---- PHASE 3 — create what is missing --------------------------------
     // From the first claim below until COMMIT this transaction holds sibling-
@@ -316,7 +327,22 @@ export async function addTemplateAccounts(
       }
     };
 
-    for (const { parent, def } of missing) {
+    // Phase 3 claims are taken in CANONICAL ORDER, not in template order.
+    // `missing` comes out of phase 2's depth-first walk, so its order is the
+    // order the template happens to list its nodes in — and two different
+    // templates grafted into one book can list shared names the other way
+    // round. The book lock above hides that from graft-vs-graft, but it does
+    // not order this graft against a holder that takes no book lock. Sorting
+    // by root-relative path puts every claim on the one order in
+    // src/lib/account-lock-order.ts. The entries are mutually incomparable
+    // subtree ROOTS (phase 2 never descends into a missing node), so sorting
+    // them cannot separate a parent from a child.
+    const orderedMissing = sortByLockOrder(missing, ({ path }) => ({
+      bookRootGuid: root.guid,
+      path,
+    }));
+
+    for (const { parent, def, path } of orderedMissing) {
       // The book lock above serializes this graft against other BOOK-LOCKED
       // operations only. Account creation is not one of them: AccountService
       // .create, findOrCreateAccount and the SimpleFin sync all take the
@@ -324,7 +350,10 @@ export async function addTemplateAccounts(
       // here a concurrent create lands a duplicate real sibling — and
       // accounts(parent_guid, name) has no unique index to catch it
       // (src/lib/db-init.ts, ACCOUNTS_SIBLING_NAME_INDEX).
-      await acquireNamedXactLock(tx, accountNameLockKey(parent, def.name));
+      await acquireAccountNameLock(tx, parent, def.name, {
+        bookRootGuid: root.guid,
+        path,
+      });
       const won = await tx.accounts.findFirst({
         where: { parent_guid: parent, name: def.name },
         select: { guid: true, account_type: true },

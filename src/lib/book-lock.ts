@@ -162,6 +162,31 @@ export async function acquireNamedXactLock(
     tx: MaybeRawClient,
     key: string,
 ): Promise<boolean> {
+    if (key.startsWith(ACCOUNT_KEY_PREFIX)) {
+        throw new Error(
+            `acquireNamedXactLock refused "${key}": account sibling-name keys must be claimed through ` +
+            'acquireAccountNameLock / acquireSoleAccountNameLock in src/lib/account-lock-order.ts, which ' +
+            'enforce the canonical acquisition order at runtime. Claiming one here would take a lock the ' +
+            'ordering invariant cannot see.',
+        );
+    }
+    return acquireAccountKeyLockUnchecked(tx, key);
+}
+
+/** The `accountNameLockKey` namespace, reserved from {@link acquireNamedXactLock}. */
+const ACCOUNT_KEY_PREFIX = 'account:';
+
+/**
+ * {@link acquireNamedXactLock} without the account-key refusal.
+ *
+ * INTERNAL: the only legitimate caller is src/lib/account-lock-order.ts, which
+ * has already recorded the claim against the transaction's acquisition order.
+ * Calling it from anywhere else re-opens the hole the refusal above closes.
+ */
+export async function acquireAccountKeyLockUnchecked(
+    tx: MaybeRawClient,
+    key: string,
+): Promise<boolean> {
     if (typeof tx.$queryRaw !== 'function') return false; // test double — no raw support
     assertTransactionScoped(tx, key);
     // ::text cast — see acquireBookLock: void columns break $queryRaw.

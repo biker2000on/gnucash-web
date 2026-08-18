@@ -23,6 +23,8 @@ vi.mock('@/lib/prisma', () => ({
 
 vi.mock('@/lib/book-lock', () => ({
   acquireNamedXactLock: mocks.acquireNamedXactLock,
+  // The account-key funnel in account-lock-order.ts locks through this.
+  acquireAccountKeyLockUnchecked: mocks.acquireNamedXactLock,
   accountNameLockKey: mocks.accountNameLockKey,
   commodityLockKey: mocks.commodityLockKey,
 }));

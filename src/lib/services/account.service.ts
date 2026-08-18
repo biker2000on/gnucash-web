@@ -14,9 +14,8 @@ import {
     tryAcquireBookLock,
     resolveBookLockGuidForAccount,
     BookBusyError,
-    accountNameLockKey,
-    acquireNamedXactLock,
 } from '@/lib/book-lock';
+import { acquireSoleAccountNameLock, noteAccountRowLocked } from '@/lib/account-lock-order';
 
 type PrismaTxClient = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
 
@@ -86,7 +85,11 @@ async function claimSiblingName(
     // refused for being a duplicate of the template rows beside it.
     if (name === '') return;
 
-    await acquireNamedXactLock(tx, accountNameLockKey(parentGuid, name));
+    // Sole claim. `create` claims and INSERTs; `update`/`.move` take the row
+    // lock FIRST and then this one key. Neither ever holds two, which is why
+    // neither needs a root-relative path to order by — and the sole form makes
+    // that a checked property rather than a claim in a comment.
+    await acquireSoleAccountNameLock(tx, parentGuid, name);
     const clash = await tx.accounts.findFirst({
         where: {
             parent_guid: parentGuid,
@@ -199,6 +202,11 @@ async function lockAccountKey(
         // to a Prisma-read one. Under READ COMMITTED the second statement takes
         // a fresh snapshot, so it sees whatever the writer we just waited out
         // committed.
+        // Declared to the ordering invariant BEFORE the statement runs, so a
+        // transaction that already holds a sibling key is refused rather than
+        // parking on a row lock in the wrong order — that reversal is what
+        // deadlocks against .update/.move (see noteAccountRowLocked).
+        noteAccountRowLocked(guid);
         await tx.$queryRaw`SELECT 1 AS locked FROM accounts WHERE guid = ${guid} FOR UPDATE`;
     }
     return tx.accounts.findUnique({

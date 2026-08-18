@@ -70,7 +70,7 @@ describe('transaction-scoped advisory locks', () => {
         const sent: string[] = [];
         const client = topLevelClient(sent);
 
-        await expect(acquireNamedXactLock(asClient(client), 'account:parent:Cash'))
+        await expect(acquireNamedXactLock(asClient(client), 'commodity:CURRENCY:USD'))
             .rejects.toBeInstanceOf(AdvisoryLockOutsideTransactionError);
 
         // And it did not send the lock statement: a lock that excludes nobody
@@ -79,10 +79,24 @@ describe('transaction-scoped advisory locks', () => {
     });
 
     it('names the key it refused, so the failure points at the call site', async () => {
-        await expect(acquireNamedXactLock(asClient(topLevelClient()), 'account:p:Cash'))
-            .rejects.toThrow(/account:p:Cash/);
-        await expect(acquireNamedXactLock(asClient(topLevelClient()), 'account:p:Cash'))
+        await expect(acquireNamedXactLock(asClient(topLevelClient()), 'commodity:CURRENCY:USD'))
+            .rejects.toThrow(/commodity:CURRENCY:USD/);
+        await expect(acquireNamedXactLock(asClient(topLevelClient()), 'commodity:CURRENCY:USD'))
             .rejects.toThrow(/outside a transaction/);
+    });
+
+    it('refuses an ACCOUNT key outright, whatever the client', async () => {
+        // Account sibling-name keys carry an acquisition order, and the order
+        // can only be checked by the funnel that knows it
+        // (src/lib/account-lock-order.ts). A claim taken through the generic
+        // helper would be invisible to that check — so the generic helper does
+        // not take them at all, on a transaction client or otherwise.
+        const sent: string[] = [];
+        await expect(acquireNamedXactLock(asClient(transactionClient(sent)), 'account:parent:Cash'))
+            .rejects.toThrow(/acquireAccountNameLock/);
+        expect(sent).toEqual([]);
+        await expect(acquireNamedXactLock(asClient(topLevelClient()), 'account:parent:Cash'))
+            .rejects.toThrow(/account-lock-order/);
     });
 
     it('applies the same refusal to the book locks', async () => {
@@ -95,7 +109,7 @@ describe('transaction-scoped advisory locks', () => {
     it('locks normally on an interactive-transaction client', async () => {
         const sent: string[] = [];
 
-        await expect(acquireNamedXactLock(asClient(transactionClient(sent)), 'account:parent:Cash'))
+        await expect(acquireNamedXactLock(asClient(transactionClient(sent)), 'commodity:CURRENCY:USD'))
             .resolves.toBe(true);
         expect(sent).toHaveLength(1);
         expect(sent[0]).toContain('pg_advisory_xact_lock');
@@ -105,7 +119,7 @@ describe('transaction-scoped advisory locks', () => {
         // These cannot exist in production (a real Prisma client always has
         // $queryRaw), and they answer honestly rather than claiming a lock, so
         // callers skip the re-check that would prove nothing.
-        await expect(acquireNamedXactLock(asClient(testDouble()), 'account:parent:Cash')).resolves.toBe(false);
+        await expect(acquireNamedXactLock(asClient(testDouble()), 'commodity:CURRENCY:USD')).resolves.toBe(false);
         await expect(acquireBookLock(asClient(testDouble()), 'book-guid')).resolves.toBeUndefined();
     });
 });

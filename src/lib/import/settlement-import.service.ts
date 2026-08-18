@@ -22,6 +22,7 @@
 
 import prisma from '@/lib/prisma';
 import { generateGuid, fromDecimal } from '@/lib/gnucash';
+import { sortByLockOrder } from '@/lib/account-lock-order';
 import { invalidateBookAccountGuidsCache } from '@/lib/book-scope';
 import { getCachedLockDate } from '@/lib/services/period-lock.service';
 import { resolveImportLocale, type ImportLocaleId } from './parse-locale';
@@ -543,10 +544,23 @@ export async function commitSettlementImport(
     await prisma.$transaction(
         async (tx) => {
             // 1. Resolve/create the role accounts actually used
+            // Roles are resolved in CANONICAL LOCK ORDER (by the path each
+            // one creates), not in the fixed role order they are written in.
+            // Each role is a different account path, so claiming them in role
+            // order puts this importer on a different order from every holder
+            // that sorts by path — the QIF and personal importers, the
+            // template graft — and a shared key claimed by two orders is an
+            // ABBA deadlock. See src/lib/account-lock-order.ts.
             const guidByRole = new Map<SettlementRole, string>();
-            for (const role of ['income', 'fees', 'clearing', 'bank'] as const) {
+            const orderedRoles = sortByLockOrder(
+                (['income', 'fees', 'clearing', 'bank'] as const).filter((role) => roles[role].used),
+                (role) => ({
+                    bookRootGuid: ctx.rootGuid,
+                    path: roles[role].path.split(':').filter((segment) => segment.trim() !== ''),
+                }),
+            );
+            for (const role of orderedRoles) {
                 const res = roles[role];
-                if (!res.used) continue;
                 if (res.targetGuid) {
                     guidByRole.set(role, res.targetGuid);
                 } else {

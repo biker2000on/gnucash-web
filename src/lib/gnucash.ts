@@ -187,7 +187,8 @@ export function serializeBigInts<T>(obj: T): T {
 }
 
 import prisma from './prisma';
-import { accountNameLockKey, acquireNamedXactLock, isTopLevelPrismaClient } from './book-lock';
+import { isTopLevelPrismaClient } from './book-lock';
+import { acquireAccountNameLock } from './account-lock-order';
 
 type PrismaTxClient = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
 
@@ -207,9 +208,10 @@ export async function findOrCreateAccount(
   path: string,
   bookRootGuid: string,
   currencyGuid: string,
-  tx?: PrismaTxClient
+  tx?: PrismaTxClient,
+  order?: LockOrderBase,
 ): Promise<string> {
-  const { guid } = await findOrCreateAccountDetailed(path, bookRootGuid, currencyGuid, tx);
+  const { guid } = await findOrCreateAccountDetailed(path, bookRootGuid, currencyGuid, tx, order);
   return guid;
 }
 
@@ -240,15 +242,39 @@ export async function findOrCreateAccountDetailed(
   path: string,
   bookRootGuid: string,
   currencyGuid: string,
-  tx?: PrismaTxClient
+  tx?: PrismaTxClient,
+  order?: LockOrderBase,
 ): Promise<FindOrCreateAccountResult> {
   const client = (tx ?? prisma) as PrismaTxClient;
   if (isTopLevelPrismaClient(client)) {
     return (client as unknown as typeof prisma).$transaction(inner =>
-      findOrCreateAccountWithin(inner, path, bookRootGuid, currencyGuid),
+      findOrCreateAccountWithin(inner, path, bookRootGuid, currencyGuid, order),
     );
   }
-  return findOrCreateAccountWithin(client, path, bookRootGuid, currencyGuid);
+  return findOrCreateAccountWithin(client, path, bookRootGuid, currencyGuid, order);
+}
+
+/**
+ * Where a walk that starts BELOW the book root sits in the canonical
+ * acquisition order (src/lib/account-lock-order.ts).
+ *
+ * `bookRootGuid` here is only an anchor for the walk, not necessarily the book
+ * root: the QIF importer walks paths under a user-chosen parent. The order,
+ * though, has to be expressed against the real book root, or two holders
+ * approaching the same key from different anchors sort it differently and the
+ * shared order stops being shared. Callers that walk from somewhere other than
+ * the root pass the real root here, plus the path prefix that leads to their
+ * anchor.
+ */
+export interface LockOrderBase {
+  bookRootGuid: string;
+  prefix: readonly string[];
+  /**
+   * Id of a site in `UNORDERED_CLAIM_SITES` (src/lib/account-lock-order.ts)
+   * that is known to claim siblings out of order. Downgrades the ordering
+   * violation from a throw to a logged error. Never set this for new code.
+   */
+  unorderedSite?: string;
 }
 
 /** The path walk itself, always running inside a transaction in production. */
@@ -257,6 +283,7 @@ async function findOrCreateAccountWithin(
   path: string,
   bookRootGuid: string,
   currencyGuid: string,
+  order: LockOrderBase = { bookRootGuid, prefix: [] },
 ): Promise<FindOrCreateAccountResult> {
   const segments = path.split(':');
   const createdGuids: string[] = [];
@@ -282,7 +309,22 @@ async function findOrCreateAccountWithin(
       // `db` is always transactional here (see findOrCreateAccount); only
       // in-memory test doubles without $queryRaw skip the lock, and they say
       // so by returning false rather than pretending to have locked.
-      const locked = await acquireNamedXactLock(db, accountNameLockKey(parentGuid, segment));
+      //
+      // The walk descends, so the segments it claims are already in canonical
+      // order: `bookRootGuid` plus a strictly growing prefix of `segments` is
+      // increasing at every step (src/lib/account-lock-order.ts). Passing that
+      // prefix as the order is not bookkeeping — it is what lets a caller
+      // holding OTHER account keys be checked against this walk.
+      const locked = await acquireAccountNameLock(
+        db,
+        parentGuid,
+        segment,
+        {
+          bookRootGuid: order.bookRootGuid,
+          path: [...order.prefix, ...segments.slice(0, i + 1)],
+        },
+        order.unorderedSite,
+      );
       if (locked) {
         existing = await db.accounts.findFirst({
           where: { name: segment, parent_guid: parentGuid },

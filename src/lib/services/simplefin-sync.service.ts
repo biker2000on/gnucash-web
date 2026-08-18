@@ -8,7 +8,8 @@
 import prisma, { generateGuid } from '@/lib/prisma';
 import { tryWithDatabaseAdvisoryLock } from '@/lib/db';
 import { getAccountGuidsForBook } from '@/lib/book-scope';
-import { acquireNamedXactLock, accountNameLockKey, commodityLockKey } from '@/lib/book-lock';
+import { acquireNamedXactLock, commodityLockKey } from '@/lib/book-lock';
+import { acquireSoleAccountNameLock } from '@/lib/account-lock-order';
 import { decryptAccessUrl, fetchAccountsChunked, SimpleFinTransaction, SimpleFinAccessRevokedError, SimpleFinHolding } from './simplefin.service';
 import { toNumDenom } from '@/lib/validation';
 import { buildSymbolSet, parseSymbol } from './simplefin-symbol-parser';
@@ -1576,7 +1577,10 @@ export async function getOrCreateImbalanceAccount(
       // Deliberately do not take the broader blocking book lock: an XML import
       // can hold it longer than Prisma's interactive-transaction timeout,
       // whereas unrelated book work cannot affect this (parent, name) race.
-      await acquireNamedXactLock(tx, accountNameLockKey(rootGuid, imbalanceName));
+      // Sole claim: this transaction takes exactly one account name key, so
+      // there is no order to keep — and acquireSoleAccountNameLock refuses a
+      // second one rather than let that stay true only by accident.
+      await acquireSoleAccountNameLock(tx, rootGuid, imbalanceName);
 
       const existing = await tx.accounts.findFirst({
         // The initial book scope admits pre-existing Imbalance accounts at any
@@ -1688,7 +1692,7 @@ export async function getOrCreateChildAccount(
   let outcome: { guid: string; createdNew: boolean };
   try {
     outcome = await prisma.$transaction(async tx => {
-      await acquireNamedXactLock(tx, accountNameLockKey(parentGuid, mnemonic));
+      await acquireSoleAccountNameLock(tx, parentGuid, mnemonic);
 
       const won = await findChildAccountBySymbol(tx, parentGuid, mnemonic);
       if (won) return { guid: won, createdNew: false };
@@ -1834,7 +1838,7 @@ export async function getOrCreateCashChild(
   let outcome: { guid: string; createdNew: boolean };
   try {
     outcome = await prisma.$transaction(async tx => {
-      await acquireNamedXactLock(tx, accountNameLockKey(parentGuid, CASH_CHILD_NAME));
+      await acquireSoleAccountNameLock(tx, parentGuid, CASH_CHILD_NAME);
 
       const won = await tx.accounts.findFirst({
         where: { parent_guid: parentGuid, name: CASH_CHILD_NAME },

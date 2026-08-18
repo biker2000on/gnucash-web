@@ -6,6 +6,7 @@
  *   InventoryNotFoundError   → 404  (unknown item/location/BOM/invoice)
  *   InventoryStockError      → 409  (movement would drive stock below zero)
  *   InventoryStateError      → 409  (duplicate SKU/name, unposted invoice)
+ *   SiblingKeyAdoptedError   → 503  (concurrent creator won; retry the request)
  *   anything else            → 500
  */
 
@@ -17,8 +18,13 @@ import {
   InventoryStateError,
 } from '@/lib/services/inventory.service';
 import { PeriodLockedError, periodLockedResponse } from '@/lib/services/period-lock.service';
+import { isSiblingKeyAdopted, siblingKeyAdoptedResponse } from '@/lib/sibling-key-adopted-response';
 
 export function mapInventoryError(error: unknown): NextResponse {
+  // Transient and retryable — never a 500. See sibling-key-adopted-response.ts.
+  if (isSiblingKeyAdopted(error)) {
+    return siblingKeyAdoptedResponse(error);
+  }
   if (error instanceof PeriodLockedError) {
     return periodLockedResponse(error);
   }

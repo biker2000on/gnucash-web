@@ -84,11 +84,10 @@
 import prisma from '@/lib/prisma';
 import { generateGuid, fromDecimal, toDecimalNumber } from '@/lib/gnucash';
 import {
-  accountNameLockKey,
-  acquireNamedXactLock,
   SiblingKeyAdoptedError,
   withAdoptionRetry,
 } from '@/lib/book-lock';
+import { acquireAccountNameLock, sortByLockOrder } from '@/lib/account-lock-order';
 import { assertAccountNotLocked } from '@/lib/services/period-lock.service';
 import { isEntityOwnedByBook } from '@/lib/business/entity-ownership';
 import {
@@ -916,8 +915,15 @@ export async function bootstrapInventoryAccounts(
     // ---- Phase 3 — claim and INSERT what is missing. No row lock beyond
     // this point: these accounts are created with their final type, so there
     // is nothing left to coerce.
-    for (const spec of missing) {
-      await acquireNamedXactLock(tx, accountNameLockKey(bookRootGuid, spec.name));
+    // Canonical order (src/lib/account-lock-order.ts), not the order the spec
+    // list happens to be written in: these are book-root children, so another
+    // multi-key holder can want the same names, and only a shared order keeps
+    // the two off a wait-for cycle.
+    for (const spec of sortByLockOrder(missing, ({ name }) => ({ bookRootGuid, path: [name] }))) {
+      await acquireAccountNameLock(tx, bookRootGuid, spec.name, {
+        bookRootGuid,
+        path: [spec.name],
+      });
       const won = await tx.accounts.findFirst({
         where: { parent_guid: bookRootGuid, name: spec.name },
         select: { guid: true },

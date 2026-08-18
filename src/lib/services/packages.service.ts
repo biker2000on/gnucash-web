@@ -23,7 +23,7 @@ import {
     type EntityOwnershipClient,
 } from '@/lib/business/entity-ownership';
 import { getAccountGuidsForBook } from '@/lib/book-scope';
-import { accountNameLockKey, acquireNamedXactLock } from '@/lib/book-lock';
+import { acquireAccountNameLock } from '@/lib/account-lock-order';
 import { assertNotLocked } from '@/lib/services/period-lock.service';
 import { assertNoReconciledSplits } from '@/lib/services/reconciled-split.service';
 
@@ -205,7 +205,12 @@ export async function ensureTypedAccount(
         });
 
         if (!existing) {
-            const locked = await acquireNamedXactLock(db, accountNameLockKey(parentGuid, segment));
+            // Descending a path claims a growing prefix, which is already the
+            // canonical order (src/lib/account-lock-order.ts).
+            const locked = await acquireAccountNameLock(db, parentGuid, segment, {
+                bookRootGuid,
+                path: segments.slice(0, i + 1),
+            });
             if (locked) {
                 existing = await db.accounts.findFirst({
                     where: { name: segment, parent_guid: parentGuid },
