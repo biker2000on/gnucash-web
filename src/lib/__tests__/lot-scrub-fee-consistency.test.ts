@@ -63,7 +63,7 @@ vi.mock('../gnucash', async (importOriginal) => {
   };
 });
 
-import { apportionCarriedBasis, classifyAccountTax } from '../lot-scrub';
+import { apportionCarriedBasis, buildFeeAccountPaths, classifyAccountTax } from '../lot-scrub';
 import { autoAssignLots, revertScrubRun } from '../lot-assignment';
 import { getAccountLots } from '../lots';
 import { lotToRealizedSales } from '../reports/capital-gains';
@@ -1030,13 +1030,13 @@ function seedDeepFeeChart() {
 }
 
 /**
- * buildFeeAccountPaths is module-private, so this is a faithful replica of its
- * ancestor walk over the same fake book, parameterised by the round cap the
- * production copy used to carry. `cap = Infinity` is the shipped behaviour;
- * `cap = 25` is what shipped before this fix. Keeping both here is what lets
- * the test show the OLD WRONG PATH rather than merely exercising a deep tree.
+ * This is a historical model of the old 25-round cap, retained solely to show
+ * the former wrong path and verdict. It is NOT used to represent the shipped
+ * engine or to test engine/report equivalence: that guard calls the real
+ * buildFeeAccountPaths below through the same transaction client used by the
+ * scrub engine.
  */
-function feePathUnderCap(seedGuid: string, cap: number): string {
+function feePathWithHistoricCap(seedGuid: string, cap: number): string {
   const byGuid = new Map<string, Rec>();
   const seed = db.t.accounts.find(a => a.guid === seedGuid);
   if (seed) byGuid.set(seed.guid, seed);
@@ -1098,14 +1098,14 @@ describe('fee account paths are walked to exhaustion', () => {
     seedDeepFeeChart();
 
     // Exhaustive walk: the whole path, deny word and all.
-    const full = feePathUnderCap(DEEP_COMMISSIONS, Infinity);
+    const full = feePathWithHistoricCap(DEEP_COMMISSIONS, Infinity);
     expect(full).toBe(DEEP_FULL_PATH);
     expect(full).toContain('Margin Interest');
     expect(classifyFeeAccount(full)).toBe('ambiguous'); // deny beats allow => NOT basis
 
     // The old cap: 25 rounds load 25 ancestors (Level 26 .. Level 02), so the
     // path starts at Level 02 and "Expenses:Margin Interest:Level 01" is gone.
-    const capped = feePathUnderCap(DEEP_COMMISSIONS, 25);
+    const capped = feePathWithHistoricCap(DEEP_COMMISSIONS, 25);
     expect(capped).toBe(
       [...Array.from({ length: DEEP_LEVELS - 1 }, (_, i) => deepLevelName(i + 2)), 'Commissions']
         .join(':'),
@@ -1461,14 +1461,16 @@ describe('a deeply filed security account resolves its OWN book', () => {
     ]);
   }
 
-  it('books the gain into Book A’s gains account, not the first book’s', async () => {
+  it('books the gain into Book A’s gains account', async () => {
     seedDeeplyFiledSale();
 
     const res = await autoAssignLots(DEEP_STOCK_A, 'fifo');
     expect(res.totalRealizedGain).toBeCloseTo(500, 6);
 
-    // Under the 20-hop cap the walk never reached Book A's root, fell back to
-    // books.findFirst() = Book B, and credited BOOK B's Long Term account.
+    // Restoring the 20-hop cap makes the walk miss Book A's root. It now
+    // refuses with "Cannot determine book root for gains transaction" rather
+    // than posting to Book B: the old findFirst() fallback that made that
+    // cross-book posting possible has deliberately been removed.
     expect(bookedInto(LT_B)).toBeCloseTo(0, 6);
     expect(bookedInto(LT_A)).toBeCloseTo(-500, 6);
   });
@@ -1650,12 +1652,15 @@ describe('engine and report derive the same account path', () => {
 
     // The report's walker.
     const reportPath = (await buildAccountPathMap()).get(DEEP_COMMISSIONS);
-    // The engine's walker, over the same book.
-    const enginePath = feePathUnderCap(DEEP_COMMISSIONS, Infinity);
+    // The engine's real walker, through the same transaction client used by
+    // autoAssignLots. This is deliberately not a test-local path model.
+    const enginePath = (await buildFeeAccountPaths([
+      db.t.accounts.find(account => account.guid === DEEP_COMMISSIONS) as any,
+    ], db as any)).get(DEEP_COMMISSIONS);
 
     expect(enginePath).toBe(DEEP_FULL_PATH);
     expect(reportPath).toBe(enginePath);
     // And the same verdict falls out of both.
-    expect(classifyFeeAccount(reportPath!)).toBe(classifyFeeAccount(enginePath));
+    expect(classifyFeeAccount(reportPath!)).toBe(classifyFeeAccount(enginePath!));
   });
 });

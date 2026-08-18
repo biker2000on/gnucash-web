@@ -628,7 +628,7 @@ interface FeeAccountNode {
  * path can never turn a non-fee into a fee; it can only recover a fee or
  * refuse one. That is the conservative direction.
  */
-async function buildFeeAccountPaths(
+export async function buildFeeAccountPaths(
   seeds: FeeAccountNode[],
   tx: PrismaTx,
 ): Promise<Map<string, string>> {
