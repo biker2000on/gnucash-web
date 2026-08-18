@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
 import { scrubAllAccounts } from '@/lib/lot-assignment';
 import { BookBusyError } from '@/lib/book-lock';
+import { AvgBasisHistoryRepairRequiredError } from '@/lib/avg-basis-history';
 import {
   ReconciledSplitError,
   reconciledSplitResponse,
@@ -70,6 +71,16 @@ export async function POST(request: Request) {
       return NextResponse.json(
         { error: 'Another operation on this book is in progress. Try again shortly.' },
         { status: 409 },
+      );
+    }
+    if (error instanceof AvgBasisHistoryRepairRequiredError) {
+      // 422, never 500: the request is well-formed and the database is
+      // healthy — one lot's pooled-basis history is damaged, and the engine
+      // refused to substitute the lot's own purchase cost for it. Surfacing
+      // the message verbatim is the point; it names the lot and the repair.
+      return NextResponse.json(
+        { error: error.message, code: error.code, lotGuid: error.lotGuid },
+        { status: 422 },
       );
     }
     console.error('Error scrubbing all accounts:', error);

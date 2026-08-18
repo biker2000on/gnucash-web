@@ -29,6 +29,15 @@ import { isLongTerm } from './holding-period';
 import { isOwnAccountCommodityTransfer } from './account-transfer';
 import { allocateTradeFees } from './trade-fees';
 import {
+  AvgBasisHistoryRepairRequiredError,
+  appendAvgBasisHistory,
+  isCorruptBasisValue,
+  popAvgBasisHistoryTopForRun,
+  readAvgBasisHistory,
+  replaceAvgBasisHistory,
+  type AvgBasisWrite,
+} from './avg-basis-history';
+import {
   assertSplitsNotProtected,
   lockTransactionsForSplits,
 } from './services/reconciled-split.service';
@@ -170,12 +179,30 @@ export const AVG_BASIS_REMAINING_RUN_SLOT = 'avg_cost_basis_remaining_run';
  * cannot resurrect an already-reverted run's number, because that run's entry
  * was removed when it was reverted.
  *
- * The stack lives in ONE row — a JSON array of `{run, value}`, `run` omitted
- * for a legacy value written before provenance existed — rather than one row
- * per entry: `slots` has no uniqueness or ordering column to lean on, and
- * GnuCash desktop folds duplicate names on an object into a single KVP entry,
- * so multi-row history would be silently truncated by a round trip through the
- * desktop app.
+ * ## THIS SLOT IS LEGACY — the history moved to an app-owned table
+ *
+ * The stack used to live here, as one JSON array in one slot row. That shape
+ * was forced by `slots`: it has no uniqueness or ordering column to lean on,
+ * and GnuCash desktop folds duplicate names on an object into a single KVP
+ * entry, so a multi-row history in `slots` would be silently truncated by a
+ * round trip through the desktop app.
+ *
+ * But `slots.string_val` is VARCHAR(4096), so the stack could hold only some
+ * 48-80 writes; past that the code DROPPED the oldest entries and logged a
+ * `console.warn`. Reverting an old run then fell back to per-lot basis, which
+ * is the wrong-number-on-a-filed-return this provenance exists to prevent,
+ * merely relocated to depth — and a warning in a server log is not a signal a
+ * user can act on. Worse, one JSON document means one malformed character
+ * erases the ENTIRE stack.
+ *
+ * The history therefore lives in `gnucash_web_avg_basis_history` — one row per
+ * write, no ceiling, one damaged row costing one entry — which is app-owned
+ * and so outside anything GnuCash desktop reads or reformats. The slot below
+ * is no longer written; it is still READ, so a book last touched by an older
+ * deploy keeps its history, and adopted into the table on first read. The
+ * startup migration in db-init.ts carries the rest over in bulk.
+ *
+ * @see avg-basis-history.ts
  */
 export const AVG_BASIS_REMAINING_PREV_SLOT = 'avg_cost_basis_remaining_prev';
 
@@ -249,54 +276,24 @@ export async function writeAvgCostBasis(
   });
 }
 
-/**
- * One write of a lot's pooled remaining basis: the value, and the run that
- * wrote it (`null` only for a legacy value written before provenance existed).
- */
-export interface AvgBasisWrite {
-  run: string | null;
-  /** The formatted slot value, kept as written so a restore is byte-identical. */
-  value: string;
-}
-
-/** Serialize the displaced-write history for AVG_BASIS_REMAINING_PREV_SLOT. */
-export function encodeAvgBasisHistory(history: readonly AvgBasisWrite[]): string {
-  return JSON.stringify(
-    history.map(entry => (entry.run === null ? { value: entry.value } : { run: entry.run, value: entry.value })),
-  );
-}
+export type { AvgBasisWrite };
+export { AvgBasisHistoryRepairRequiredError, isCorruptBasisValue };
 
 /**
- * `slots.string_val` is VARCHAR(4096), so the history cannot grow forever: a
- * book scrubbed under the average election a hundred times would eventually
- * make the insert fail and take the whole scrub down with it.
+ * Parse a LEGACY JSON history document out of {@link AVG_BASIS_REMAINING_PREV_SLOT}.
  *
- * The bound is applied by dropping the OLDEST entries — the ones only a revert
- * of an equally old run would ever restore, which then falls back to per-lot
- * basis exactly as a book with no history at all does. Every recent run keeps
- * its predecessor, which is what an undo actually reaches for.
- */
-const MAX_HISTORY_CHARS = 4000;
-
-function encodeAvgBasisHistoryForColumn(
-  history: readonly AvgBasisWrite[],
-): { encoded: string; dropped: number } {
-  let dropped = 0;
-  let encoded = encodeAvgBasisHistory(history);
-  while (encoded.length > MAX_HISTORY_CHARS && dropped < history.length) {
-    dropped++;
-    encoded = encodeAvgBasisHistory(history.slice(dropped));
-  }
-  return { encoded, dropped };
-}
-
-/**
- * Parse the displaced-write history.
+ * Retained for exactly two callers: the first-read adoption in
+ * {@link readAvgBasisWrites}, and the revert-time scan that has to find an
+ * un-adopted book's stashes by owner. Nothing writes this shape any more.
  *
- * Tolerant of the PRE-HISTORY shape a book may already carry: a bare number in
- * the slot, its owner in the legacy `_prev_run` companion. Anything else
- * unparseable yields no history rather than throwing — a corrupt stash must not
- * be able to fail a revert, and losing it is what deleting it would do anyway.
+ * Tolerant of the PRE-HISTORY shape a book may also carry: a bare number in
+ * the slot, its owner in the legacy `_prev_run` companion.
+ *
+ * A document that will not parse yields NO entries here. That is not a silent
+ * fallback: the caller adopts what it can and the live slot is untouched, and
+ * a lot whose pooled value is genuinely unrecoverable raises
+ * {@link AvgBasisHistoryRepairRequiredError} rather than quietly reverting to
+ * per-lot basis.
  */
 export function decodeAvgBasisHistory(
   raw: string | null,
@@ -314,8 +311,10 @@ export function decodeAvgBasisHistory(
     for (const entry of parsed) {
       if (typeof entry !== 'object' || entry === null) continue;
       const { run, value } = entry as { run?: unknown; value?: unknown };
-      if (typeof value !== 'string' || !Number.isFinite(parseFloat(value))) continue;
-      out.push({ run: typeof run === 'string' ? run : null, value });
+      if (typeof value !== 'string') continue;
+      const write: AvgBasisWrite = { run: typeof run === 'string' ? run : null, value };
+      if (isCorruptBasisValue(value)) write.corrupt = true;
+      out.push(write);
     }
     return out;
   }
@@ -325,58 +324,98 @@ export function decodeAvgBasisHistory(
 }
 
 /**
- * Every pooled-basis write a lot carries, oldest first — the displaced history
- * plus the live value as its top entry.
+ * Carry a legacy JSON slot history into the table, once, for one lot.
+ *
+ * Runs on first read of a lot whose history the bulk startup migration has
+ * not reached — an app process that writes before `initializeDatabase()` has
+ * run, or a database restored from an older deploy. The legacy slots are
+ * deleted afterwards so there is never a second source of truth.
  */
-export async function readAvgBasisWrites(
+async function adoptLegacyAvgBasisHistory(
   lotGuid: string,
   tx: PrismaTx,
 ): Promise<AvgBasisWrite[]> {
-  const stack = decodeAvgBasisHistory(
-    await readSlotString(lotGuid, AVG_BASIS_REMAINING_PREV_SLOT, tx),
-    await readSlotString(lotGuid, AVG_BASIS_REMAINING_PREV_RUN_SLOT, tx),
-  );
+  const legacyRaw = await readSlotString(lotGuid, AVG_BASIS_REMAINING_PREV_SLOT, tx);
+  const legacyRun = await readSlotString(lotGuid, AVG_BASIS_REMAINING_PREV_RUN_SLOT, tx);
+  const stack = decodeAvgBasisHistory(legacyRaw, legacyRun);
+
   const current = await readSlotString(lotGuid, AVG_BASIS_REMAINING_SLOT, tx);
   if (current !== null) {
-    stack.push({ run: await readSlotString(lotGuid, AVG_BASIS_REMAINING_RUN_SLOT, tx), value: current });
+    const top: AvgBasisWrite = {
+      run: await readSlotString(lotGuid, AVG_BASIS_REMAINING_RUN_SLOT, tx),
+      value: current,
+    };
+    if (isCorruptBasisValue(current)) top.corrupt = true;
+    stack.push(top);
+  }
+
+  if (stack.length > 0) await replaceAvgBasisHistory(lotGuid, stack, tx);
+  if (legacyRaw !== null || legacyRun !== null) {
+    await tx.slots.deleteMany({
+      where: {
+        obj_guid: lotGuid,
+        name: { in: [AVG_BASIS_REMAINING_PREV_SLOT, AVG_BASIS_REMAINING_PREV_RUN_SLOT] },
+      },
+    });
   }
   return stack;
 }
 
 /**
- * Replace a lot's pooled-basis slots with exactly this stack: the top entry
- * materialized into the live slots every reader looks at, the rest kept as
- * history. An empty stack leaves the lot with no average-cost slots at all.
+ * Every pooled-basis write a lot carries, oldest first. The last entry is the
+ * live value mirrored into `avg_cost_basis_remaining`.
+ *
+ * Reads the durable table. A lot with nothing there yet is adopted from the
+ * legacy JSON slots on the spot, so no book loses its history to a deploy.
+ */
+export async function readAvgBasisWrites(
+  lotGuid: string,
+  tx: PrismaTx,
+): Promise<AvgBasisWrite[]> {
+  const stored = await readAvgBasisHistory(lotGuid, tx);
+  if (stored.length > 0) return stored;
+  return adoptLegacyAvgBasisHistory(lotGuid, tx);
+}
+
+/**
+ * Replace a lot's pooled-basis writes with exactly this stack: the whole stack
+ * into the durable table, its top entry mirrored into the live slots every
+ * reader looks at. An empty stack leaves the lot with no average-cost state.
+ *
+ * A stack whose TOP is unreadable is refused. Writing it would put a
+ * non-numeric string where `lots.ts`, `openingBasisForExistingLot` and Form
+ * 8949 expect a basis, and every one of them would quietly fall back to the
+ * lot's own purchase cost — a wrong number on a filed return, produced by an
+ * operation reporting success. The entry is left exactly as stored so a repair
+ * can see it.
  */
 export async function writeAvgBasisWrites(
   lotGuid: string,
   stack: readonly AvgBasisWrite[],
   tx: PrismaTx,
 ): Promise<void> {
+  const top = stack.length > 0 ? stack[stack.length - 1] : null;
+  if (top !== null && (top.corrupt || isCorruptBasisValue(top.value))) {
+    throw new AvgBasisHistoryRepairRequiredError(
+      lotGuid,
+      `the pooled basis that would become live is not a number: ${JSON.stringify(top.value)}`,
+    );
+  }
+
+  await replaceAvgBasisHistory(lotGuid, stack, tx);
   await tx.slots.deleteMany({
     where: { obj_guid: lotGuid, name: { in: [...AVG_LOT_SLOT_NAMES] } },
   });
-  if (stack.length === 0) return;
+  if (top === null) return;
+  await materializeAvgBasisTop(lotGuid, top, tx);
+}
 
-  const history = stack.slice(0, -1);
-  const top = stack[stack.length - 1];
-  if (history.length > 0) {
-    const { encoded, dropped } = encodeAvgBasisHistoryForColumn(history);
-    if (dropped > 0) {
-      console.warn(
-        `Lot ${lotGuid}: dropped the ${dropped} oldest average-cost basis write(s) ` +
-        `to fit the slot column; reverting those runs will fall back to per-lot basis.`,
-      );
-    }
-    await tx.slots.create({
-      data: {
-        obj_guid: lotGuid,
-        name: AVG_BASIS_REMAINING_PREV_SLOT,
-        slot_type: 4,
-        string_val: encoded,
-      },
-    });
-  }
+/** Mirror the top of the stack into the slots every reader uses. */
+async function materializeAvgBasisTop(
+  lotGuid: string,
+  top: AvgBasisWrite,
+  tx: PrismaTx,
+): Promise<void> {
   await tx.slots.create({
     data: {
       obj_guid: lotGuid,
@@ -401,6 +440,9 @@ export async function writeAvgBasisWrites(
 /**
  * Record this run's remaining pooled basis for an open lot, pushing whatever
  * value it displaces onto the lot's write history rather than over it.
+ *
+ * One INSERT plus the slot mirror, whatever the depth — the stack is never
+ * read back or rewritten wholesale on this path.
  */
 export async function writeAvgBasisRemaining(
   lotGuid: string,
@@ -408,12 +450,61 @@ export async function writeAvgBasisRemaining(
   runId: string,
   tx: PrismaTx,
 ): Promise<void> {
-  const stack = await readAvgBasisWrites(lotGuid, tx);
+  // A lot still carrying its history in the legacy slots is adopted first, so
+  // this run's write lands on top of that history instead of beside it.
+  await readAvgBasisWrites(lotGuid, tx);
+
+  const entry: AvgBasisWrite = { run: runId, value: formatBasis(basis) };
   // This run touching the same lot twice is one write, not two: the second
   // value supersedes the first, and both would be dropped by the same revert.
-  if (stack.length > 0 && stack[stack.length - 1].run === runId) stack.pop();
-  stack.push({ run: runId, value: formatBasis(basis) });
-  await writeAvgBasisWrites(lotGuid, stack, tx);
+  await popAvgBasisHistoryTopForRun(lotGuid, runId, tx);
+  await appendAvgBasisHistory(lotGuid, entry, tx);
+
+  await tx.slots.deleteMany({
+    where: { obj_guid: lotGuid, name: { in: [...AVG_LOT_SLOT_NAMES] } },
+  });
+  await materializeAvgBasisTop(lotGuid, entry, tx);
+}
+
+/**
+ * The pooled basis a reader should use for an open lot, or a refusal.
+ *
+ * The live slot is the fast path and is what every other reader consults. This
+ * is the one place that also asks whether the slot's ABSENCE is meaningful: a
+ * lot with recorded writes but no live value has lost its pooled basis, and
+ * the caller's fallback (the lot's own purchase cost) would double-count basis
+ * an earlier run's disposal slot already says was spent. That is refused
+ * rather than guessed.
+ *
+ * Returns null when the lot has no average-cost state at all — a lot the
+ * average method has never seen, where the per-lot fallback is correct.
+ */
+export async function readLiveAvgBasisRemaining(
+  lotGuid: string,
+  tx: PrismaTx,
+): Promise<number | null> {
+  const raw = await readSlotString(lotGuid, AVG_BASIS_REMAINING_SLOT, tx);
+  if (raw !== null && !isCorruptBasisValue(raw)) return parseFloat(raw);
+
+  const stack = await readAvgBasisWrites(lotGuid, tx);
+  if (stack.length === 0) return null;
+  const top = stack[stack.length - 1];
+  if (top.corrupt || isCorruptBasisValue(top.value)) {
+    throw new AvgBasisHistoryRepairRequiredError(
+      lotGuid,
+      `its most recent pooled-basis write is not a number: ${JSON.stringify(top.value)}`,
+    );
+  }
+  if (raw === null) {
+    throw new AvgBasisHistoryRepairRequiredError(
+      lotGuid,
+      'its live pooled basis is missing while its write history survives',
+    );
+  }
+  throw new AvgBasisHistoryRepairRequiredError(
+    lotGuid,
+    `its live pooled basis is not a number: ${JSON.stringify(raw)}`,
+  );
 }
 
 /** Batch-read `avg_cost_basis` slots for the given splits. Missing = absent. */

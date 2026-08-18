@@ -22,219 +22,13 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
-const { db, fakePrisma, resetDb } = vi.hoisted(() => {
-  interface Row { [k: string]: unknown }
 
-  const db = {
-    accounts: [] as Row[],
-    transactions: [] as Row[],
-    splits: [] as Row[],
-    lots: [] as Row[],
-    slots: [] as Row[],
-    commodities: [] as Row[],
-    prices: [] as Row[],
-  };
-
-  function resetDb() {
-    for (const key of Object.keys(db) as Array<keyof typeof db>) db[key] = [];
-  }
-
-  function matchesWhere(row: Row, where: Row | undefined): boolean {
-    for (const [k, v] of Object.entries(where ?? {})) {
-      if (k === 'transaction') continue; // nested relation filters unused here
-      if (v === null) {
-        if (row[k] !== null && row[k] !== undefined) return false;
-      } else if (typeof v === 'object' && typeof v !== 'bigint') {
-        const cond = v as Row;
-        if ('in' in cond) {
-          if (!(cond.in as unknown[]).includes(row[k])) return false;
-        } else if ('not' in cond) {
-          if (row[k] === cond.not) return false;
-        } else if ('gt' in cond) {
-          if (!((row[k] as number) > (cond.gt as number))) return false;
-        } else if ('lte' in cond) {
-          if (!((row[k] as Date) <= (cond.lte as Date))) return false;
-        } else {
-          return false;
-        }
-      } else if (row[k] !== v) {
-        return false;
-      }
-    }
-    return true;
-  }
-
-  const accountByGuid = (guid: unknown) => db.accounts.find(a => a.guid === guid) ?? null;
-  const txByGuid = (guid: unknown) => db.transactions.find(t => t.guid === guid) ?? null;
-
-  /** Sibling splits of a transaction, each with its account joined. */
-  const siblingsOf = (txGuid: unknown) =>
-    db.splits.filter(x => x.tx_guid === txGuid).map(x => ({ ...x, account: accountByGuid(x.account_guid) }));
-
-  function hydrateSplit(s: Row, include?: Row): Row {
-    const out: Row = { ...s };
-    if (include?.account || include === undefined) {
-      out.account = accountByGuid(s.account_guid);
-    }
-    if (include?.transaction) {
-      const t = txByGuid(s.tx_guid);
-      const txOut: Row | null = t ? { ...t } : null;
-      const txInclude = include.transaction as Row;
-      const wantsSiblings =
-        typeof txInclude === 'object' &&
-        ((txInclude.include as Row | undefined)?.splits || (txInclude.select as Row | undefined)?.splits);
-      if (txOut && wantsSiblings) txOut.splits = siblingsOf(s.tx_guid);
-      out.transaction = txOut;
-    }
-    return out;
-  }
-
-  function sortByPostDate(rows: Row[]): Row[] {
-    return [...rows].sort((a, b) => {
-      const ta = (txByGuid(a.tx_guid)?.post_date as Date | undefined)?.getTime() ?? 0;
-      const tb = (txByGuid(b.tx_guid)?.post_date as Date | undefined)?.getTime() ?? 0;
-      return ta - tb;
-    });
-  }
-
-  const splitsApi = {
-    findMany: async (args: Row = {}) => {
-      let rows = db.splits.filter(r => matchesWhere(r, args.where as Row));
-      if (args.orderBy) rows = sortByPostDate(rows);
-      if (typeof args.take === 'number') rows = rows.slice(0, args.take);
-      return rows.map(r => hydrateSplit(r, (args.include as Row) ?? { transaction: { select: { post_date: true } }, account: true }));
-    },
-    findUnique: async (args: Row) => {
-      const row = db.splits.find(r => r.guid === (args.where as Row).guid);
-      if (!row) return null;
-      return hydrateSplit(row, (args.include as Row) ?? undefined);
-    },
-    create: async (args: Row) => {
-      const row = { lot_guid: null, ...(args.data as Row) };
-      db.splits.push(row);
-      return row;
-    },
-    update: async (args: Row) => {
-      const row = db.splits.find(r => r.guid === (args.where as Row).guid);
-      if (!row) throw new Error('split not found');
-      Object.assign(row, args.data as Row);
-      return row;
-    },
-    updateMany: async (args: Row) => {
-      const rows = db.splits.filter(r => matchesWhere(r, args.where as Row));
-      for (const r of rows) Object.assign(r, args.data as Row);
-      return { count: rows.length };
-    },
-    deleteMany: async (args: Row) => {
-      const doomed = db.splits.filter(r => matchesWhere(r, args.where as Row));
-      db.splits = db.splits.filter(r => !doomed.includes(r));
-      return { count: doomed.length };
-    },
-  };
-
-  /** Lot rows shaped like the `include` getLotsForAccounts asks for. */
-  const lotWithSplits = (lot: Row) => ({
-    ...lot,
-    splits: db.splits
-      .filter(s => s.lot_guid === lot.guid)
-      .map(s => {
-        const t = txByGuid(s.tx_guid);
-        return {
-          ...s,
-          transaction: t ? { ...t, splits: siblingsOf(s.tx_guid) } : null,
-        };
-      }),
-  });
-
-  const lotsApi = {
-    findMany: async (args: Row = {}) =>
-      db.lots.filter(r => matchesWhere(r, args.where as Row)).map(lotWithSplits),
-    findUnique: async (args: Row) => {
-      const row = db.lots.find(r => r.guid === (args.where as Row).guid);
-      if (!row) return null;
-      return { ...lotWithSplits(row), account: accountByGuid(row.account_guid) };
-    },
-    create: async (args: Row) => {
-      db.lots.push({ ...(args.data as Row) });
-      return args.data;
-    },
-    update: async (args: Row) => {
-      const row = db.lots.find(r => r.guid === (args.where as Row).guid);
-      if (!row) throw new Error('lot not found');
-      Object.assign(row, args.data as Row);
-      return row;
-    },
-    // Real implementations (not stubs): the revert-provenance tests below
-    // drive revertScrubRun, which deletes run-created lots and reopens the
-    // ones it closed. A no-op here would let those assertions pass vacuously.
-    updateMany: async (args: Row) => {
-      const rows = db.lots.filter(r => matchesWhere(r, args.where as Row));
-      for (const r of rows) Object.assign(r, args.data as Row);
-      return { count: rows.length };
-    },
-    deleteMany: async (args: Row) => {
-      const doomed = db.lots.filter(r => matchesWhere(r, args.where as Row));
-      db.lots = db.lots.filter(r => !doomed.includes(r));
-      return { count: doomed.length };
-    },
-  };
-
-  const slotsApi = {
-    findFirst: async (args: Row) => db.slots.find(r => matchesWhere(r, (args.where as Row) ?? {})) ?? null,
-    findMany: async (args: Row = {}) => db.slots.filter(r => matchesWhere(r, args.where as Row)),
-    create: async (args: Row) => {
-      db.slots.push({ ...(args.data as Row) });
-      return args.data;
-    },
-    count: async (args: Row = {}) => db.slots.filter(r => matchesWhere(r, args.where as Row)).length,
-    deleteMany: async (args: Row) => {
-      const doomed = db.slots.filter(r => matchesWhere(r, args.where as Row));
-      db.slots = db.slots.filter(r => !doomed.includes(r));
-      return { count: doomed.length };
-    },
-  };
-
-  const fakePrisma = {
-    $transaction: async (cb: (tx: unknown) => Promise<unknown>) => cb(fakePrisma),
-    accounts: {
-      findUnique: async (args: Row) => accountByGuid((args.where as Row).guid),
-      findFirst: async (args: Row) => db.accounts.find(r => matchesWhere(r, args.where as Row)) ?? null,
-      findMany: async (args: Row = {}) => db.accounts.filter(r => matchesWhere(r, args.where as Row)),
-      create: async (args: Row) => {
-        db.accounts.push({ ...(args.data as Row) });
-        return args.data;
-      },
-    },
-    transactions: {
-      create: async (args: Row) => {
-        db.transactions.push({ ...(args.data as Row) });
-        return args.data;
-      },
-      findMany: async (args: Row = {}) => db.transactions.filter(r => matchesWhere(r, args.where as Row)),
-      deleteMany: async (args: Row) => {
-        const doomed = db.transactions.filter(r => matchesWhere(r, args.where as Row));
-        db.transactions = db.transactions.filter(r => !doomed.includes(r));
-        return { count: doomed.length };
-      },
-    },
-    commodities: {
-      findUnique: async (args: Row) => db.commodities.find(c => c.guid === (args.where as Row).guid) ?? null,
-      findFirst: async (args: Row) => db.commodities.find(r => matchesWhere(r, args.where as Row)) ?? null,
-      findMany: async (args: Row = {}) => db.commodities.filter(r => matchesWhere(r, args.where as Row)),
-    },
-    prices: { findFirst: async (args: Row) => db.prices.find(r => matchesWhere(r, args.where as Row)) ?? null },
-    books: { findFirst: async () => null },
-    splits: splitsApi,
-    lots: lotsApi,
-    slots: slotsApi,
-    $queryRaw: async () => [],
-    $executeRaw: async () => 0,
-  };
-
-  return { db, fakePrisma, resetDb };
-});
-
-vi.mock('../prisma', () => ({ default: fakePrisma }));
+// The fake Prisma lives in ./helpers/avg-cost-book so the depth/repair proof
+// file can drive the same book. The factory is async because vi.mock is
+// hoisted above the imports below - it cannot close over an imported binding.
+vi.mock('../prisma', async () => ({
+  default: (await import('./helpers/avg-cost-book')).fakePrisma,
+}));
 vi.mock('../db', () => ({ tryWithDatabaseAdvisoryLock: vi.fn() }));
 vi.mock('../book-lock', () => ({
   BookBusyError: class BookBusyError extends Error {},
@@ -248,190 +42,53 @@ vi.mock('../book-lock', () => ({
 vi.mock('../commodities', () => ({ getLatestPrice: vi.fn(async () => null) }));
 
 import { autoAssignLots, revertScrubRun } from '../lot-assignment';
-import { decodeAvgBasisHistory, writeAvgBasisWrites, type PrismaTx } from '../lot-scrub';
+import {
+  AvgBasisHistoryRepairRequiredError,
+  writeAvgBasisWrites,
+  writeAvgBasisRemaining,
+  readAvgBasisWrites,
+  readLiveAvgBasisRemaining,
+  type PrismaTx,
+} from '../lot-scrub';
 import { getAccountLots, computeRealizedGain, remainingCostBasis } from '../lots';
 import { loadTradeFees } from '../trade-fees';
 import { lotToRealizedSales } from '../reports/capital-gains';
+import {
+  AVG_SLOT_NAMES,
+  STOCK_ACCT,
+  STOCK_ACCT_2,
+  addOwnAccountTransfer,
+  addTrade,
+  allLotGuids,
+  avgBasisHistory,
+  avgBasisOf,
+  avgRunOf,
+  db,
+  fakePrisma,
+  gainsPostings,
+  generatedFor,
+  lotOfSplit,
+  nextGuid,
+  qtyFrac,
+  resetGuidSeq,
+  USD,
+  rawSlotOf,
+  remainingOf,
+  remainingRunOf,
+  resetDb,
+  seedBaseAccounts,
+  slotOf,
+  slotsNamed,
+  stashHistory,
+  stashOf,
+  stashRunOf,
+  writeHistory,
+} from './helpers/avg-cost-book';
 
-const USD = 'usd-commodity';
-const AAPL = 'aapl-commodity';
-const STOCK_ACCT = 'stock-acct';
-const STOCK_ACCT_2 = 'stock-acct-2';
-const CASH_ACCT = 'cash-acct';
-const FEE_ACCT = 'fee-acct';
-
-let guidSeq = 0;
-const nextGuid = (prefix: string) => `${prefix}-${(guidSeq++).toString().padStart(4, '0')}`;
-
-const qtyFrac = (shares: number) => BigInt(Math.round(shares * 100));
-const cents = (dollars: number) => BigInt(Math.round(dollars * 100));
-
-function seedBaseAccounts() {
-  db.commodities.push(
-    { guid: USD, namespace: 'CURRENCY', mnemonic: 'USD', fraction: 100 },
-    { guid: AAPL, namespace: 'NASDAQ', mnemonic: 'AAPL', fraction: 100 },
-  );
-  db.accounts.push(
-    { guid: 'root', name: 'Root', parent_guid: null, account_type: 'ROOT', commodity_guid: USD, commodity_scu: 100 },
-    { guid: STOCK_ACCT, name: 'AAPL', parent_guid: 'root', account_type: 'STOCK', commodity_guid: AAPL, commodity_scu: 100 },
-    { guid: STOCK_ACCT_2, name: 'AAPL 2', parent_guid: 'root', account_type: 'STOCK', commodity_guid: AAPL, commodity_scu: 100 },
-    { guid: CASH_ACCT, name: 'Cash', parent_guid: 'root', account_type: 'BANK', commodity_guid: USD, commodity_scu: 100 },
-    { guid: FEE_ACCT, name: 'Commissions', parent_guid: 'root', account_type: 'EXPENSE', commodity_guid: USD, commodity_scu: 100 },
-  );
-}
-
-/**
- * One stock trade: `shares` (+buy / −sell) for `totalValue` dollars, with an
- * optional brokerage commission booked to Expenses:Commissions the way GnuCash
- * records it — a separate EXPENSE split of the same transaction.
- * Returns the stock split's GUID.
- */
-function addTrade(
-  date: string,
-  shares: number,
-  totalValue: number,
-  commission = 0,
-  stockAccount: string = STOCK_ACCT,
-): string {
-  const txGuid = nextGuid('tx');
-  db.transactions.push({ guid: txGuid, post_date: new Date(date), currency_guid: USD, description: 'trade' });
-  const stockSplitGuid = nextGuid('stock-split');
-  const stockValue = shares > 0 ? totalValue : -totalValue;
-  db.splits.push({
-    guid: stockSplitGuid,
-    tx_guid: txGuid,
-    account_guid: stockAccount,
-    memo: '', action: '', reconcile_state: 'n', reconcile_date: null,
-    quantity_num: qtyFrac(shares), quantity_denom: 100n,
-    value_num: cents(stockValue), value_denom: 100n,
-    lot_guid: null,
-  });
-  if (commission > 0) {
-    db.splits.push({
-      guid: nextGuid('fee-split'),
-      tx_guid: txGuid,
-      account_guid: FEE_ACCT,
-      memo: '', action: '', reconcile_state: 'n', reconcile_date: null,
-      quantity_num: cents(commission), quantity_denom: 100n,
-      value_num: cents(commission), value_denom: 100n,
-      lot_guid: null,
-    });
-  }
-  db.splits.push({
-    guid: nextGuid('cash-split'),
-    tx_guid: txGuid,
-    account_guid: CASH_ACCT,
-    memo: '', action: '', reconcile_state: 'n', reconcile_date: null,
-    quantity_num: cents(-stockValue - commission), quantity_denom: 100n,
-    value_num: cents(-stockValue - commission), value_denom: 100n,
-    lot_guid: null,
-  });
-  return stockSplitGuid;
-}
-
-/**
- * An in-kind, same-commodity move between two of the user's own accounts:
- * shares out of `from`, shares into `to`, $0 recorded value on both legs.
- * Returns { out, in } split GUIDs.
- */
-function addOwnAccountTransfer(
-  date: string,
-  shares: number,
-  from: string,
-  to: string,
-): { out: string; in: string } {
-  const txGuid = nextGuid('tx');
-  db.transactions.push({ guid: txGuid, post_date: new Date(date), currency_guid: USD, description: 'transfer' });
-  const outGuid = nextGuid('xferout-split');
-  const inGuid = nextGuid('xferin-split');
-  for (const [guid, account, qty] of [[outGuid, from, -shares], [inGuid, to, shares]] as const) {
-    db.splits.push({
-      guid,
-      tx_guid: txGuid,
-      account_guid: account,
-      memo: '', action: '', reconcile_state: 'n', reconcile_date: null,
-      quantity_num: qtyFrac(qty), quantity_denom: 100n,
-      value_num: 0n, value_denom: 100n,
-      lot_guid: null,
-    });
-  }
-  return { out: outGuid, in: inGuid };
-}
-
-const lotOfSplit = (splitGuid: string): string | null =>
-  (db.splits.find(s => s.guid === splitGuid)?.lot_guid as string | null) ?? null;
-
-const slotOf = (objGuid: string | null, name: string): number | undefined => {
-  if (!objGuid) return undefined;
-  const raw = db.slots.find(s => s.obj_guid === objGuid && s.name === name)?.string_val as string | undefined;
-  return raw === undefined ? undefined : parseFloat(raw);
-};
-
-/** Average-cost basis recorded on one disposal split. */
-const avgBasisOf = (splitGuid: string) => slotOf(splitGuid, 'avg_cost_basis');
-
-/** Every slot name the average-cost election can write. */
-const AVG_SLOT_NAMES = [
-  'avg_cost_basis',
-  'avg_cost_basis_run',
-  'avg_cost_basis_remaining',
-  'avg_cost_basis_remaining_run',
-  'avg_cost_basis_remaining_prev',
-  'avg_cost_basis_remaining_prev_run',
-] as const;
-
-/** Raw (unparsed) slot value — provenance slots hold run ids, not numbers. */
-const rawSlotOf = (objGuid: string, name: string): string | undefined =>
-  db.slots.find(s => s.obj_guid === objGuid && s.name === name)?.string_val as string | undefined;
-
-/** The run that wrote a disposal split's pooled basis. */
-const avgRunOf = (splitGuid: string) => rawSlotOf(splitGuid, 'avg_cost_basis_run');
-/** An open lot's remaining pooled basis, and the run that wrote it. */
-const remainingOf = (lotGuid: string) => slotOf(lotGuid, 'avg_cost_basis_remaining');
-const remainingRunOf = (lotGuid: string) => rawSlotOf(lotGuid, 'avg_cost_basis_remaining_run');
-/**
- * The displaced writes a lot carries, oldest first — decoded the way the
- * engine decodes them, so these helpers describe the stack rather than one
- * slot's raw text.
- */
-const stashHistory = (lotGuid: string) =>
-  decodeAvgBasisHistory(
-    rawSlotOf(lotGuid, 'avg_cost_basis_remaining_prev') ?? null,
-    rawSlotOf(lotGuid, 'avg_cost_basis_remaining_prev_run') ?? null,
-  );
-/** The most recently displaced value on a lot, and the run it belonged to. */
-const stashOf = (lotGuid: string): number | undefined => {
-  const history = stashHistory(lotGuid);
-  return history.length > 0 ? parseFloat(history[history.length - 1].value) : undefined;
-};
-const stashRunOf = (lotGuid: string): string | undefined => {
-  const history = stashHistory(lotGuid);
-  return history.length > 0 ? (history[history.length - 1].run ?? undefined) : undefined;
-};
-
-const allLotGuids = (): string[] => db.lots.map(l => l.guid as string);
-const slotsNamed = (name: string) => db.slots.filter(s => s.name === name);
-const generatedFor = (runId: string) =>
-  db.slots.filter(s => s.name === 'gnucash_web_generated' && s.string_val === runId);
-
-/** All generated "Realized Gain/Loss" postings, with their income account. */
-function gainsPostings(): Array<{ amount: number; incomeAccount: string }> {
-  return db.transactions
-    .filter(t => String(t.description ?? '').startsWith('Realized '))
-    .map(t => {
-      const splits = db.splits.filter(s => s.tx_guid === t.guid);
-      const invest = splits.find(s => s.account_guid === STOCK_ACCT)!;
-      const income = splits.find(s => s.account_guid !== STOCK_ACCT)!;
-      return {
-        amount: Number(invest.value_num) / Number(invest.value_denom),
-        incomeAccount: String(db.accounts.find(a => a.guid === income.account_guid)?.name ?? ''),
-      };
-    });
-}
 
 beforeEach(() => {
   resetDb();
-  guidSeq = 0;
+  resetGuidSeq();
   seedBaseAccounts();
 });
 
@@ -1318,33 +975,177 @@ describe('average-cost run provenance', () => {
   });
 
   /**
-   * The history lives in `slots.string_val`, a VARCHAR(4096). A book scrubbed
-   * enough times must not push it past that and take the whole scrub down with
-   * a column-width error, so the OLDEST writes are dropped — the ones only an
-   * equally old revert would restore.
+   * The history used to live in `slots.string_val`, a VARCHAR(4096), which
+   * capped it at roughly 48-80 writes per lot; past that the OLDEST entries
+   * were dropped with a `console.warn` and reverting an old run fell back to
+   * per-lot basis. The durable table has no such ceiling.
    */
-  it('bounds the write history to the slot column, newest writes first to survive', async () => {
+  it('keeps every write, far past the old ~48-80 entry slot ceiling', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const lot = 'lot-deep-history';
-    const stack = Array.from({ length: 200 }, (_, i) => ({
+    const stack = Array.from({ length: 500 }, (_, i) => ({
       run: `run-${String(i).padStart(28, '0')}`,
       value: String(1000 + i),
     }));
 
     await writeAvgBasisWrites(lot, stack, fakePrisma as unknown as PrismaTx);
 
-    const raw = rawSlotOf(lot, 'avg_cost_basis_remaining_prev')!;
-    expect(raw.length).toBeLessThanOrEqual(4096);
-    expect(warn).toHaveBeenCalled();
+    // Not one entry given up, and nothing warned about - the two symptoms of
+    // the column bound.
+    const kept = writeHistory(lot);
+    expect(kept).toHaveLength(500);
+    expect(kept[0]).toEqual({ run: stack[0].run, value: '1000' });
+    expect(kept[499]).toEqual({ run: stack[499].run, value: '1499' });
+    expect(warn).not.toHaveBeenCalled();
     warn.mockRestore();
 
-    // The live value is the newest write, and the history under it ends with
-    // the one it displaced. Only the far end of the stack was given up.
-    expect(remainingOf(lot)).toBeCloseTo(1199, 6);
-    expect(remainingRunOf(lot)).toBe(stack[199].run);
-    const kept = decodeAvgBasisHistory(raw, null);
-    expect(kept[kept.length - 1].value).toBe('1198');
-    expect(kept.some(e => e.value === '1000')).toBe(false);
+    // The live slot still mirrors the top, so every reader is untouched.
+    expect(remainingOf(lot)).toBeCloseTo(1499, 6);
+    expect(remainingRunOf(lot)).toBe(stack[499].run);
+    // And the legacy JSON slot is not written at all any more.
+    expect(rawSlotOf(lot, 'avg_cost_basis_remaining_prev')).toBeUndefined();
+
+    // The oldest entry is still restorable, which is the whole point: at the
+    // old bound this run's value had been dropped and the revert fell through
+    // to per-lot basis.
+    const tx = fakePrisma as unknown as PrismaTx;
+    await writeAvgBasisWrites(lot, kept.filter(e => e.run !== stack[499].run), tx);
+    expect(remainingOf(lot)).toBeCloseTo(1498, 6);
+    await writeAvgBasisWrites(lot, [stack[0]], tx);
+    expect(remainingOf(lot)).toBeCloseTo(1000, 6);
+  });
+
+  /**
+   * One row per write, not one JSON document: a damaged entry costs that entry
+   * and nothing else. Under the JSON stash a single bad character made
+   * `JSON.parse` throw and the decoder returned NOTHING - one byte erased the
+   * whole stack.
+   */
+  it('a damaged deep entry costs one entry, not the whole stack', async () => {
+    const tx = fakePrisma as unknown as PrismaTx;
+    const lot = 'lot-damaged-entry';
+    const stack = [
+      { run: 'run-aaaa', value: '1000' },
+      { run: 'run-bbbb', value: '2000' },
+      { run: 'run-cccc', value: '3000' },
+      { run: 'run-dddd', value: '4000' },
+    ];
+    await writeAvgBasisWrites(lot, stack, tx);
+
+    // Damage one row in the middle, the way a bad byte would.
+    avgBasisHistory.rows.find(r => r.lot_guid === lot && r.seq_no === 1)!.basis_val = '20 00';
+
+    const read = await readAvgBasisWrites(lot, tx);
+    expect(read).toHaveLength(4);
+    expect(read.map(e => e.run)).toEqual(['run-aaaa', 'run-bbbb', 'run-cccc', 'run-dddd']);
+    expect(read[1].corrupt).toBe(true);
+    // Every OTHER write is intact and still usable.
+    expect(read.filter(e => e.corrupt).length).toBe(1);
+    expect(read[0].value).toBe('1000');
+    expect(read[3].value).toBe('4000');
+
+    // And the live value is untouched: readers never saw the damage.
+    expect(remainingOf(lot)).toBeCloseTo(4000, 6);
+
+    // Reverting the run ABOVE the damaged entry still lands on a good value.
+    await writeAvgBasisWrites(lot, read.filter(e => e.run !== 'run-dddd'), tx);
+    expect(remainingOf(lot)).toBeCloseTo(3000, 6);
+  });
+
+  /**
+   * When the value that would become LIVE is the damaged one, there is no
+   * honest number left. The old code wrote it anyway; every reader then failed
+   * to parse it and fell through to the lot's own purchase cost - a wrong
+   * basis on Form 8949, from an operation that reported success.
+   */
+  it('raises a repair-required error rather than materializing a damaged write', async () => {
+    const tx = fakePrisma as unknown as PrismaTx;
+    const lot = 'lot-damaged-top';
+    await writeAvgBasisWrites(lot, [
+      { run: 'run-aaaa', value: '1000' },
+      { run: 'run-bbbb', value: '2000' },
+    ], tx);
+    avgBasisHistory.rows.find(r => r.lot_guid === lot && r.seq_no === 0)!.basis_val = 'not-a-number';
+
+    const stack = await readAvgBasisWrites(lot, tx);
+    // Reverting run B would put the damaged entry on top.
+    await expect(
+      writeAvgBasisWrites(lot, stack.filter(e => e.run !== 'run-bbbb'), tx),
+    ).rejects.toThrow(AvgBasisHistoryRepairRequiredError);
+
+    // Nothing was half-written: the live value is still run B's.
+    expect(remainingOf(lot)).toBeCloseTo(2000, 6);
+  });
+
+  /**
+   * The other unrecoverable shape: the history survives but the live value is
+   * gone. Falling back to the lot's own purchase cost double-counts basis an
+   * earlier run's disposal slot already says was spent.
+   */
+  it('refuses to seed the pool from per-lot cost when a priced lot lost its live value', async () => {
+    const buyGuid = addTrade('2024-01-01', 10, 1000);
+    await autoAssignLots(STOCK_ACCT, 'average');
+    const lot = lotOfSplit(buyGuid)!;
+    expect(remainingOf(lot)).toBeCloseTo(1000, 6);
+
+    // The mirror is destroyed out of band; the durable history stands.
+    db.slots = db.slots.filter(
+      s => !(s.obj_guid === lot && String(s.name).startsWith('avg_cost_basis_remaining')),
+    );
+    expect(writeHistory(lot).length).toBeGreaterThan(0);
+
+    await expect(
+      readLiveAvgBasisRemaining(lot, fakePrisma as unknown as PrismaTx),
+    ).rejects.toThrow(/cannot be read/);
+
+    // A lot the average method has never seen is NOT an error - that is the
+    // case the per-lot fallback is correct for.
+    const virginLot = 'lot-never-averaged';
+    db.lots.push({ guid: virginLot, account_guid: STOCK_ACCT, is_closed: 0 });
+    await expect(
+      readLiveAvgBasisRemaining(virginLot, fakePrisma as unknown as PrismaTx),
+    ).resolves.toBeNull();
+  });
+
+  /**
+   * A book written by an older deploy carries its stack in the legacy JSON
+   * slot. It must be carried into the table, not abandoned - the bulk
+   * migration in db-init.ts does the same thing set-based at startup.
+   */
+  it('adopts a legacy JSON-slot history on first read, then stops reading the slot', async () => {
+    const tx = fakePrisma as unknown as PrismaTx;
+    const lot = 'lot-legacy-json';
+    db.lots.push({ guid: lot, account_guid: STOCK_ACCT, is_closed: 0 });
+    db.slots.push(
+      {
+        obj_guid: lot, name: 'avg_cost_basis_remaining_prev', slot_type: 4,
+        string_val: JSON.stringify([
+          { run: 'run-old-a', value: '1000' },
+          { run: 'run-old-b', value: '2000' },
+        ]),
+      },
+      { obj_guid: lot, name: 'avg_cost_basis_remaining', slot_type: 4, string_val: '3000' },
+      { obj_guid: lot, name: 'avg_cost_basis_remaining_run', slot_type: 4, string_val: 'run-old-c' },
+    );
+
+    const adopted = await readAvgBasisWrites(lot, tx);
+    expect(adopted).toEqual([
+      { run: 'run-old-a', value: '1000' },
+      { run: 'run-old-b', value: '2000' },
+      { run: 'run-old-c', value: '3000' },
+    ]);
+    // Carried into the table, and the legacy slot dropped so there is never a
+    // second source of truth for a filed number.
+    expect(writeHistory(lot)).toHaveLength(3);
+    expect(rawSlotOf(lot, 'avg_cost_basis_remaining_prev')).toBeUndefined();
+    // The live mirror is untouched by adoption.
+    expect(remainingOf(lot)).toBeCloseTo(3000, 6);
+
+    // A later run stacks on top of the adopted history rather than beside it.
+    await writeAvgBasisRemaining(lot, 4000, 'run-new-d', tx);
+    expect(writeHistory(lot).map(e => e.run)).toEqual([
+      'run-old-a', 'run-old-b', 'run-old-c', 'run-new-d',
+    ]);
   });
 
   it('run-scoped cleanup only ever deletes SLOTS, never the user’s split', async () => {

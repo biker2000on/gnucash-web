@@ -210,6 +210,13 @@ const { db, fakePrisma, resetDb } = vi.hoisted(() => {
     slots: slotsApi,
     $queryRaw: async () => [],
     $executeRaw: async () => 0,
+    // Provisioning DDL for the app-owned average-cost write-history table.
+    // This fake does not back that table: nothing here reads a lot's write
+    // history, only the live `avg_cost_basis_remaining` slot the engine still
+    // mirrors it into, which the slots fake above serves. The history itself
+    // is covered by lot-assignment-average-cost.test.ts and, against real
+    // PostgreSQL, by avg-basis-history.integration.test.ts.
+    $executeRawUnsafe: async () => 0,
   };
 
   function fakeTx() {

@@ -18,7 +18,6 @@ import {
   PARENT_SPLIT_SLOT,
   AVG_COST_BASIS_SLOT,
   AVG_COST_BASIS_RUN_SLOT,
-  AVG_BASIS_REMAINING_SLOT,
   AVG_BASIS_REMAINING_RUN_SLOT,
   AVG_BASIS_REMAINING_PREV_SLOT,
   AVG_BASIS_REMAINING_PREV_RUN_SLOT,
@@ -37,9 +36,15 @@ import {
   readAvgBasisWrites,
   writeAvgBasisWrites,
   decodeAvgBasisHistory,
+  readLiveAvgBasisRemaining,
   type OpenLot,
   type PrismaTx,
 } from './lot-scrub';
+import {
+  deleteAvgBasisHistoryForLots,
+  ensureAvgBasisHistoryTable,
+  lotsWithAvgBasisHistoryForRun,
+} from './avg-basis-history';
 import { allocateTradeFees, NO_TRADE_FEES, type TradeFeeBySplit } from './trade-fees';
 import type { Prisma } from '@prisma/client';
 import {
@@ -232,6 +237,10 @@ async function clearAverageCostArtifacts(accountGuid: string, tx: PrismaTx): Pro
     await tx.slots.deleteMany({
       where: { obj_guid: { in: accountLotGuids }, name: { in: [...AVG_LOT_SLOT_NAMES] } },
     });
+    // The live slot is only the mirror; the durable write history has to go
+    // with it or the next average run would read a stack for a pool that no
+    // longer exists.
+    await deleteAvgBasisHistoryForLots(accountLotGuids, tx);
   }
 }
 
@@ -268,16 +277,21 @@ async function findAverageCostArtifactsForRun(
     })) ?? [];
     return [...new Set(rows.map(r => r.obj_guid))];
   };
-  // A displaced write's owner travels INSIDE the history row, so this one
-  // cannot be an equality match on string_val: the history rows are read and
-  // decoded, then filtered by owner. (Legacy single stashes, whose owner still
-  // lives in its own companion row, are unioned in.)
+  // Lots whose history holds a write this run owns. The durable table indexes
+  // `run_id`, so this is a lookup rather than the full scan the JSON-in-a-slot
+  // history forced (read every lot's document, decode it, filter by owner).
+  //
+  // The legacy slots are still swept behind it: a book last written by an
+  // older deploy carries its stash there until something reads that lot and
+  // adopts it, and a revert must not skip a lot merely because nothing has
+  // read it yet.
   const historyOwnedByRun = async (): Promise<string[]> => {
+    const out = new Set(await lotsWithAvgBasisHistoryForRun(runId, tx));
+    for (const guid of await ownedBy(AVG_BASIS_REMAINING_PREV_RUN_SLOT)) out.add(guid);
     const rows = (await tx.slots.findMany({
       where: { name: AVG_BASIS_REMAINING_PREV_SLOT },
       select: { obj_guid: true, string_val: true },
     })) ?? [];
-    const out = new Set(await ownedBy(AVG_BASIS_REMAINING_PREV_RUN_SLOT));
     for (const row of rows) {
       if (decodeAvgBasisHistory(row.string_val ?? null, null).some(e => e.run === runId)) {
         out.add(row.obj_guid);
@@ -348,9 +362,13 @@ async function clearAverageCostArtifactsForRun(
   );
 
   for (const lotGuid of touchedLotGuids) {
-    const stack = survivingLots.has(lotGuid)
-      ? (await readAvgBasisWrites(lotGuid, tx)).filter(entry => entry.run !== runId)
-      : [];
+    if (!survivingLots.has(lotGuid)) {
+      // The revert already deleted this lot (this run created it). Drop its
+      // recorded writes; never re-attach a restored value to a dead guid.
+      await writeAvgBasisWrites(lotGuid, [], tx);
+      continue;
+    }
+    const stack = (await readAvgBasisWrites(lotGuid, tx)).filter(entry => entry.run !== runId);
     await writeAvgBasisWrites(lotGuid, stack, tx);
   }
 }
@@ -365,18 +383,20 @@ async function clearAverageCostArtifactsForRun(
  * `computeCarriedBasis` applies to a transfer: (buy cost + carried basis) per
  * bought share × shares still held. That fallback is the honest reading of a
  * lot the average method has never seen.
+ *
+ * It is NOT an honest reading of a lot the average method HAS seen and whose
+ * pooled value has gone missing — there the per-lot cost double-counts basis
+ * an earlier run's disposal slot already says was spent, and understates every
+ * later gain. `readLiveAvgBasisRemaining` separates the two cases and raises
+ * AvgBasisHistoryRepairRequiredError for the second.
  */
 async function openingBasisForExistingLot(
   lotGuid: string,
   shares: number,
   tx: PrismaTx,
 ): Promise<number> {
-  const slot = await tx.slots.findFirst({
-    where: { obj_guid: lotGuid, name: AVG_BASIS_REMAINING_SLOT },
-    select: { string_val: true },
-  });
-  const parsed = slot?.string_val ? parseFloat(slot.string_val) : NaN;
-  if (Number.isFinite(parsed)) return parsed;
+  const pooled = await readLiveAvgBasisRemaining(lotGuid, tx);
+  if (pooled !== null) return pooled;
   return (await computeCarriedBasis(lotGuid, shares, tx)) ?? 0;
 }
 
@@ -980,6 +1000,11 @@ export async function autoAssignLots(
   method: LotAssignmentMethod,
   bookGuid?: string
 ): Promise<AutoAssignResult> {
+  // Provision the app-owned history table on its OWN connection, before the
+  // transaction below opens — DDL inside a caller's transaction would hold
+  // its advisory lock for the whole scrub. Memoized, so this is one
+  // round trip per process.
+  await ensureAvgBasisHistoryTable();
   return prisma.$transaction(async (tx) => {
     await guardBookLock(tx, bookGuid, 'lot auto-assign');
 
@@ -1015,6 +1040,11 @@ export async function clearLotAssignments(
   accountGuid: string,
   bookGuid?: string
 ): Promise<{ splitsUnassigned: number; lotsDeleted: number }> {
+  // Provision the app-owned history table on its OWN connection, before the
+  // transaction below opens — DDL inside a caller's transaction would hold
+  // its advisory lock for the whole scrub. Memoized, so this is one
+  // round trip per process.
+  await ensureAvgBasisHistoryTable();
   return prisma.$transaction(async (tx) => {
     await guardBookLock(tx, bookGuid, 'clear lot assignments');
 
@@ -1228,6 +1258,11 @@ export async function revertScrubRun(
   runId: string,
   options: RevertScrubRunOptions = {}
 ): Promise<{ reverted: number }> {
+  // Provision the app-owned history table on its OWN connection, before the
+  // transaction below opens — DDL inside a caller's transaction would hold
+  // its advisory lock for the whole scrub. Memoized, so this is one
+  // round trip per process.
+  await ensureAvgBasisHistoryTable();
   return prisma.$transaction(async (tx) => {
     await guardBookLock(tx, options.bookGuid, 'revert scrub run');
 
@@ -1404,6 +1439,9 @@ export async function revertScrubRun(
       const deleteLotGuids = taggedLots.map(l => l.guid);
       await tx.splits.updateMany({ where: { lot_guid: { in: deleteLotGuids } }, data: { lot_guid: null } });
       await tx.slots.deleteMany({ where: { obj_guid: { in: deleteLotGuids } } });
+      // Slots hang off the lot guid and go with it; the history table does not
+      // reference `lots`, so its rows would outlive the lot as orphans.
+      await deleteAvgBasisHistoryForLots(deleteLotGuids, tx);
       await tx.lots.deleteMany({ where: { guid: { in: deleteLotGuids } } });
     }
 

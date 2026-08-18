@@ -14,6 +14,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { createAvgBasisHistoryFake } from './helpers/fake-avg-basis-history';
 
 // ---------------------------------------------------------------------------
 // In-memory fake Prisma
@@ -64,6 +65,9 @@ function subSpec(v: any): Rec {
   if (v === true) return {};
   return (v?.include ?? v?.select ?? {}) as Rec;
 }
+
+/** The app-owned avg-basis history table has no Prisma model - see the helper. */
+const avgBasisHistory = createAvgBasisHistoryFake();
 
 class FakePrisma {
   t = {
@@ -308,10 +312,15 @@ class FakePrisma {
     },
   };
 
-  // Raw SQL entry points: the lot engine uses these only for row locking and
-  // the enter_date token bump — both irrelevant to this fake's assertions.
-  $queryRaw = async () => [];
-  $executeRaw = async () => 0;
+  // Raw SQL entry points. Row locking and the enter_date token bump are
+  // irrelevant to this fake's assertions and fall through to the defaults; the
+  // app-owned average-cost history table has no Prisma model, so it is served
+  // by the shared in-memory stand-in.
+  $executeRawUnsafe = async () => 0;
+  $queryRaw = async (strings: TemplateStringsArray, ...values: unknown[]) =>
+    avgBasisHistory.query(strings, values) ?? [];
+  $executeRaw = async (strings: TemplateStringsArray, ...values: unknown[]) =>
+    avgBasisHistory.execute(strings, values) ?? 0;
 
   $transaction = async (fn: any) => {
     return fn(this);
@@ -368,6 +377,7 @@ let db: FakePrisma;
 
 beforeEach(() => {
   db = new FakePrisma();
+  avgBasisHistory.reset();
   (dbHolder as { current: any }).current = db;
 });
 

@@ -412,6 +412,125 @@ async function createExtensionTables() {
         CREATE INDEX IF NOT EXISTS idx_depreciation_schedules_account ON gnucash_web_depreciation_schedules(account_guid);
     `;
 
+    /**
+     * Durable write history for pooled (average-cost) lot basis: one row per
+     * write, oldest first, with the run that wrote it.
+     *
+     * The history used to be a JSON array in a single `slots.string_val`, a
+     * VARCHAR(4096) — roughly 48-80 writes per lot, past which the oldest
+     * entries were dropped with a console warning. Reverting an old scrub run
+     * then silently fell back to the lot's own purchase cost, which is a wrong
+     * cost basis on Form 8949. This table has no such ceiling, and one row per
+     * write means a damaged row costs one entry rather than the whole stack.
+     *
+     * It is app-owned on purpose: GnuCash desktop manages `slots` and folds
+     * duplicate names on an object into a single KVP entry, so a multi-row
+     * history could not have lived there. See src/lib/avg-basis-history.ts.
+     */
+    const avgBasisHistoryTableDDL = `
+        CREATE TABLE IF NOT EXISTS gnucash_web_avg_basis_history (
+            lot_guid   VARCHAR(32) NOT NULL,
+            seq_no     INTEGER     NOT NULL,
+            run_id     VARCHAR(32),
+            basis_val  TEXT        NOT NULL,
+            written_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (lot_guid, seq_no)
+        );
+        CREATE INDEX IF NOT EXISTS idx_avg_basis_history_run
+            ON gnucash_web_avg_basis_history(run_id);
+    `;
+
+    /**
+     * Carry every JSON-slot history that already exists into the table above.
+     *
+     * Row by row inside a PL/pgSQL block rather than one set-based INSERT
+     * because `string_val::jsonb` RAISES on a malformed document: a single
+     * corrupt slot in one book would abort the migration for every lot. Here a
+     * document that will not parse costs that lot its displaced writes (its
+     * LIVE value is still carried, so the number every reader sees is intact)
+     * and the rest of the book migrates.
+     *
+     * The legacy slots are dropped at the end: two sources of truth for a
+     * filed tax number is the failure mode this whole area exists to remove.
+     */
+    const avgBasisHistoryMigrationDDL = `
+        DO $$
+        DECLARE
+            r      RECORD;
+            parsed jsonb;
+            item   jsonb;
+            idx    int;
+        BEGIN
+            PERFORM pg_advisory_xact_lock(hashtext('gnucash_web_avg_basis_history_migrate'));
+
+            FOR r IN
+                SELECT prev.obj_guid                AS lot_guid,
+                       prev.string_val              AS prev_val,
+                       prevrun.string_val           AS prev_run,
+                       live.string_val              AS live_val,
+                       liverun.string_val           AS live_run
+                  FROM slots prev
+                  LEFT JOIN slots prevrun ON prevrun.obj_guid = prev.obj_guid
+                                         AND prevrun.name = 'avg_cost_basis_remaining_prev_run'
+                  LEFT JOIN slots live    ON live.obj_guid    = prev.obj_guid
+                                         AND live.name = 'avg_cost_basis_remaining'
+                  LEFT JOIN slots liverun ON liverun.obj_guid = prev.obj_guid
+                                         AND liverun.name = 'avg_cost_basis_remaining_run'
+                 WHERE prev.name = 'avg_cost_basis_remaining_prev'
+            LOOP
+                idx := 0;
+                BEGIN
+                    parsed := r.prev_val::jsonb;
+                EXCEPTION WHEN others THEN
+                    parsed := NULL;
+                END;
+
+                IF parsed IS NOT NULL AND jsonb_typeof(parsed) = 'array' THEN
+                    FOR item IN SELECT * FROM jsonb_array_elements(parsed) LOOP
+                        IF jsonb_typeof(item) = 'object' AND item ? 'value' THEN
+                            INSERT INTO gnucash_web_avg_basis_history (lot_guid, seq_no, run_id, basis_val)
+                            VALUES (r.lot_guid, idx, item->>'run', item->>'value')
+                            ON CONFLICT (lot_guid, seq_no) DO NOTHING;
+                            idx := idx + 1;
+                        END IF;
+                    END LOOP;
+                ELSIF parsed IS NOT NULL AND jsonb_typeof(parsed) = 'number' THEN
+                    -- Pre-history single stash: the whole slot was the number,
+                    -- its owner in the companion row.
+                    INSERT INTO gnucash_web_avg_basis_history (lot_guid, seq_no, run_id, basis_val)
+                    VALUES (r.lot_guid, idx, r.prev_run, r.prev_val)
+                    ON CONFLICT (lot_guid, seq_no) DO NOTHING;
+                    idx := idx + 1;
+                END IF;
+
+                IF r.live_val IS NOT NULL THEN
+                    INSERT INTO gnucash_web_avg_basis_history (lot_guid, seq_no, run_id, basis_val)
+                    VALUES (r.lot_guid, idx, r.live_run, r.live_val)
+                    ON CONFLICT (lot_guid, seq_no) DO NOTHING;
+                END IF;
+            END LOOP;
+
+            -- Lots written exactly once carry no stash at all, only the live
+            -- value. They still need a stack, or the next run's write would
+            -- displace a value with no record of who wrote it.
+            INSERT INTO gnucash_web_avg_basis_history (lot_guid, seq_no, run_id, basis_val)
+            SELECT live.obj_guid, 0, liverun.string_val, live.string_val
+              FROM slots live
+              LEFT JOIN slots liverun ON liverun.obj_guid = live.obj_guid
+                                     AND liverun.name = 'avg_cost_basis_remaining_run'
+             WHERE live.name = 'avg_cost_basis_remaining'
+               AND live.string_val IS NOT NULL
+               AND NOT EXISTS (
+                     SELECT 1 FROM gnucash_web_avg_basis_history h
+                      WHERE h.lot_guid = live.obj_guid
+                   )
+            ON CONFLICT (lot_guid, seq_no) DO NOTHING;
+
+            DELETE FROM slots
+             WHERE name IN ('avg_cost_basis_remaining_prev', 'avg_cost_basis_remaining_prev_run');
+        END $$;
+    `;
+
     const transactionMetaTableDDL = `
         CREATE TABLE IF NOT EXISTS gnucash_web_transaction_meta (
             id SERIAL PRIMARY KEY,
@@ -2398,6 +2517,11 @@ async function createExtensionTables() {
         await query(depreciationSchedulesTableDDL);
         await query(userPreferencesTableDDL);
         await query(transactionMetaTableDDL);
+        await query(avgBasisHistoryTableDDL);
+        await runOneTimeMigration(
+            '2026-08-18-avg-basis-history-out-of-slots',
+            () => query(avgBasisHistoryMigrationDDL),
+        );
         await query(rolesTableDDL);
         await query(bookPermissionsTableDDL);
         await query(invitationsTableDDL);
