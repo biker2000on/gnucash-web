@@ -51,6 +51,18 @@ vi.mock('@/lib/prisma', () => {
                     return Promise.resolve(0);
                 };
             }
+            if (prop === '$queryRaw') {
+                return (strings: TemplateStringsArray) => {
+                    const sql = strings.join('?');
+                    state.rawStatements.push(sql);
+                    // to_regclass probe for a lazily-created table: report it
+                    // as present so the delete behind it actually runs.
+                    if (sql.includes('to_regclass')) {
+                        return Promise.resolve([{ reg: 'gnucash_web_avg_basis_history' }]);
+                    }
+                    return Promise.resolve([]);
+                };
+            }
             if (prop === '$executeRawUnsafe') {
                 return (sql: string) => {
                     state.rawStatements.push(sql);
@@ -79,6 +91,7 @@ import {
     ACCOUNT_KEYED_MODELS,
     SPLIT_OR_TXN_KEYED_TABLES,
     LAZY_BOOK_GUID_TABLES,
+    LAZY_LOT_KEYED_TABLES,
 } from '../book-cleanup.service';
 
 const BOOK = 'b'.repeat(32);
@@ -223,7 +236,11 @@ describe('deleteBookExtensionData', () => {
         await deleteBookExtensionData(BOOK, ACCOUNTS);
 
         const allRaw = state.rawStatements.join('\n');
-        for (const table of [...SPLIT_OR_TXN_KEYED_TABLES, ...LAZY_BOOK_GUID_TABLES]) {
+        for (const table of [
+            ...SPLIT_OR_TXN_KEYED_TABLES,
+            ...LAZY_BOOK_GUID_TABLES,
+            ...LAZY_LOT_KEYED_TABLES,
+        ]) {
             expect(allRaw, `expected raw DELETE against ${table}`).toContain(table);
         }
     });

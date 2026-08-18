@@ -285,3 +285,90 @@ export async function hasAvgBasisHistory(lotGuid: string, tx: PrismaTx): Promise
   `) ?? [];
   return rows.length > 0;
 }
+
+/* ------------------------------------------------------------------ */
+/* Orphan cleanup                                                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Whether the history table exists, asked WITHOUT creating it.
+ *
+ * The cleanup paths below run inside a caller's interactive transaction, where
+ * `ensureAvgBasisHistoryTable` is the wrong tool twice over: it issues DDL on a
+ * separate connection (so it is not part of the caller's atomic unit), and a
+ * cleanup that provisions the thing it is cleaning is backwards — if the table
+ * does not exist there is nothing to orphan. A `to_regclass` probe is
+ * transaction-safe on a table that may not exist, where a bare DELETE would
+ * raise 42P01 and poison the surrounding transaction. Same pattern as
+ * `deleteLazyTableRowsTransactional` in book-cleanup.service.ts.
+ */
+async function historyTableExists(tx: PrismaTx): Promise<boolean> {
+  // Same convention as acquireNamedXactLock in book-lock.ts: a client with no
+  // raw-SQL support is a test double, and a double has no table to clean.
+  if (typeof tx.$queryRaw !== 'function') return false;
+  const rows = (await tx.$queryRaw<Array<{ reg: string | null }>>`
+    /* gnucash_web_avg_basis_history: table-exists */
+    SELECT to_regclass('gnucash_web_avg_basis_history')::text AS reg
+  `) ?? [];
+  return Boolean(rows[0]?.reg);
+}
+
+/**
+ * Drop the history of lots that are about to be deleted, or have been.
+ *
+ * GnuCash lot GUIDs are STABLE across an XML export/import cycle, so
+ * re-importing an older snapshot of a book — an ordinary restore, not a
+ * corruption event — recreates lots under the same GUIDs they had before. Any
+ * history row left over from the pre-import lot then attaches itself to the
+ * restored lot, which is how a perfectly healthy book ends up carrying a write
+ * stack that describes scrub runs its transactions no longer contain.
+ *
+ * That is not a cosmetic leak. `readLiveAvgBasisRemaining` treats "history
+ * rows exist but no live slot value" as an unrecoverable pooled basis and
+ * raises {@link AvgBasisHistoryRepairRequiredError} (HTTP 422) rather than
+ * silently substituting the lot's own purchase cost. On a restored book that
+ * verdict would be wrong — nothing is damaged — but the guard is right and the
+ * orphan is the defect, so the fix belongs here and not in the guard.
+ *
+ * Returns the number of rows removed. Safe before the table has ever been
+ * created, and safe to call with an empty list.
+ */
+export async function deleteAvgBasisHistoryForDeletedLots(
+  lotGuids: readonly string[],
+  tx: PrismaTx,
+): Promise<number> {
+  if (lotGuids.length === 0) return 0;
+  if (!(await historyTableExists(tx))) return 0;
+  return tx.$executeRaw`
+    /* gnucash_web_avg_basis_history: delete-lots */
+    DELETE FROM gnucash_web_avg_basis_history
+     WHERE lot_guid = ANY(${[...lotGuids]}::text[])
+  `;
+}
+
+/**
+ * Drop the history of every lot belonging to these accounts.
+ *
+ * Book deletion removes lots by `account_guid` rather than by a collected GUID
+ * list, so this mirrors that shape. It MUST run while the `lots` rows still
+ * exist — the subquery is how the lot GUIDs are found — which is the ordering
+ * the book-delete transaction and `deleteBookExtensionRows` already document.
+ *
+ * Returns the number of rows removed. Safe before the table has ever been
+ * created, and safe to call with an empty list.
+ */
+export async function deleteAvgBasisHistoryForAccounts(
+  accountGuids: readonly string[],
+  tx: PrismaTx,
+): Promise<number> {
+  if (accountGuids.length === 0) return 0;
+  if (!(await historyTableExists(tx))) return 0;
+  return tx.$executeRaw`
+    /* gnucash_web_avg_basis_history: delete-by-account */
+    DELETE FROM gnucash_web_avg_basis_history
+     WHERE lot_guid IN (
+       SELECT l.guid FROM lots l
+        WHERE l.account_guid = ANY(${[...accountGuids]}::text[])
+     )
+  `;
+}

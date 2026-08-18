@@ -27,6 +27,18 @@ export interface FakeHistoryRow {
 export interface AvgBasisHistoryFake {
   /** The table contents. Mutate directly to simulate a damaged row. */
   rows: FakeHistoryRow[];
+  /**
+   * lot GUID -> owning account GUID, for the book-deletion cleanup, which
+   * finds its rows through a subquery over `lots`. Tests that exercise that
+   * path populate this; everything else can leave it empty.
+   */
+  lotAccounts: Map<string, string>;
+  /**
+   * Whether `to_regclass` reports the table as present. Set false to stand in
+   * for a database where the lazy table has never been created — the cleanup
+   * paths must be no-ops there, not errors.
+   */
+  tablePresent: boolean;
   reset(): void;
   /** Rows for one lot, oldest first. */
   forLot(lotGuid: string): FakeHistoryRow[];
@@ -49,8 +61,12 @@ function statementName(strings: TemplateStringsArray): string | null {
 export function createAvgBasisHistoryFake(): AvgBasisHistoryFake {
   const fake: AvgBasisHistoryFake = {
     rows: [],
+    lotAccounts: new Map(),
+    tablePresent: true,
     reset() {
       fake.rows = [];
+      fake.lotAccounts = new Map();
+      fake.tablePresent = true;
     },
     forLot(lotGuid: string) {
       return fake.rows
@@ -71,6 +87,8 @@ export function createAvgBasisHistoryFake(): AvgBasisHistoryFake {
           )].map(lot_guid => ({ lot_guid }));
         case 'exists':
           return fake.forLot(values[0] as string).slice(0, 1).map(() => ({ present: 1 }));
+        case 'table-exists':
+          return [{ reg: fake.tablePresent ? 'gnucash_web_avg_basis_history' : null }];
         default:
           throw new Error(`Unhandled avg-basis-history query in test fake: ${name}`);
       }
@@ -106,6 +124,14 @@ export function createAvgBasisHistoryFake(): AvgBasisHistoryFake {
           const doomed = new Set(values[0] as string[]);
           const before = fake.rows.length;
           fake.rows = fake.rows.filter(r => !doomed.has(r.lot_guid));
+          return before - fake.rows.length;
+        }
+        case 'delete-by-account': {
+          const accounts = new Set(values[0] as string[]);
+          const before = fake.rows.length;
+          fake.rows = fake.rows.filter(
+            r => !accounts.has(fake.lotAccounts.get(r.lot_guid) ?? ''),
+          );
           return before - fake.rows.length;
         }
         default:

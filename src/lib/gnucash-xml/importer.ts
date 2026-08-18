@@ -11,6 +11,7 @@ import { generateGuid } from '@/lib/gnucash';
 import { acquireBookLock, acquireNamedXactLock, commodityLockKey } from '@/lib/book-lock';
 import { createBudgetOwnership } from '@/lib/budget-ownership';
 import { slotsToDbRows, type DbSlotRow } from './slots';
+import { deleteAvgBasisHistoryForDeletedLots } from '../avg-basis-history';
 import {
   OWNER_TYPE_INT_BY_STRING,
   TAXINCLUDED_INT_BY_STRING,
@@ -306,6 +307,12 @@ async function clearCollisionRows(tx: any, data: GnuCashXmlData, bookGuid: strin
   if (lotGuids.size) {
     const lotGuidList = Array.from(lotGuids);
     await deleteSlotsRecursive(tx, lotGuidList);
+    // The average-cost write history is app-owned and keyed by lot GUID, with
+    // no FK to `lots`. Lot GUIDs survive an export/import round trip unchanged,
+    // so without this the incoming lot inherits the outgoing lot's pooled-basis
+    // stack — and a restored book then trips the repair-required guard on a
+    // basis that is not actually damaged.
+    await deleteAvgBasisHistoryForDeletedLots(lotGuidList, tx);
     await tx.lots.deleteMany({ where: { guid: { in: lotGuidList } } });
   }
 

@@ -17,6 +17,8 @@ import { randomUUID } from 'node:crypto';
 import prisma from '../prisma';
 import {
   appendAvgBasisHistory,
+  deleteAvgBasisHistoryForAccounts,
+  deleteAvgBasisHistoryForDeletedLots,
   deleteAvgBasisHistoryForLots,
   ensureAvgBasisHistoryTable,
   hasAvgBasisHistory,
@@ -175,4 +177,99 @@ describe('gnucash_web_avg_basis_history against real PostgreSQL', () => {
       { seq_no: 1, basis_val: '3' },
     ]);
   });
+});
+
+/**
+ * ORPHAN CLEANUP.
+ *
+ * GnuCash lot GUIDs are stable across an XML export/import cycle, so
+ * re-importing an older snapshot of a book — a routine restore — recreates
+ * lots under GUIDs that already exist. The history table is keyed by lot GUID
+ * and has no FK to `lots`, so anything left behind silently attaches itself to
+ * the incoming lot. `readLiveAvgBasisRemaining` then sees "history rows but no
+ * live slot" on a perfectly healthy book and raises the repair-required error
+ * (HTTP 422). The guard is right; the orphan is the defect.
+ *
+ * These two statements are what stop that, and both are exercised here rather
+ * than only against an in-memory fake: one resolves lots through a subquery
+ * over `lots`, the other through `ANY(...::text[])`, and neither shape is
+ * meaningfully tested without a real planner.
+ */
+describe('orphan cleanup against real PostgreSQL', () => {
+    const ACCT_A = `${RUN_TAG}acctA`.padEnd(20, '0').slice(0, 32);
+    const ACCT_B = `${RUN_TAG}acctB`.padEnd(20, '0').slice(0, 32);
+    const LOT_A1 = `${RUN_TAG}lotA1`.padEnd(20, '0').slice(0, 32);
+    const LOT_A2 = `${RUN_TAG}lotA2`.padEnd(20, '0').slice(0, 32);
+    const LOT_B1 = `${RUN_TAG}lotB1`.padEnd(20, '0').slice(0, 32);
+
+    beforeAll(async () => {
+        for (const [guid, name] of [[ACCT_A, 'A'], [ACCT_B, 'B']] as const) {
+            await prisma.$executeRawUnsafe(
+                `INSERT INTO accounts (guid, name, account_type, commodity_scu, non_std_scu)
+                 VALUES ($1, $2, 'STOCK', 100, 0) ON CONFLICT (guid) DO NOTHING`,
+                guid, `avg-basis-it-${name}`,
+            );
+        }
+        for (const [lotGuid, acct] of [
+            [LOT_A1, ACCT_A], [LOT_A2, ACCT_A], [LOT_B1, ACCT_B],
+        ] as const) {
+            await prisma.$executeRawUnsafe(
+                `INSERT INTO lots (guid, account_guid, is_closed) VALUES ($1, $2, 0)
+                 ON CONFLICT (guid) DO NOTHING`,
+                lotGuid, acct,
+            );
+        }
+    });
+
+    afterAll(async () => {
+        await prisma.$executeRawUnsafe(
+            `DELETE FROM lots WHERE guid = ANY($1::text[])`, [LOT_A1, LOT_A2, LOT_B1],
+        );
+        await prisma.$executeRawUnsafe(
+            `DELETE FROM accounts WHERE guid = ANY($1::text[])`, [ACCT_A, ACCT_B],
+        );
+    });
+
+    const seedAll = async () => {
+        for (const guid of [LOT_A1, LOT_A2, LOT_B1]) {
+            await replaceAvgBasisHistory(guid, [{ run: runGuid(1), value: '100' }], tx);
+        }
+    };
+
+    it('deletes by lot list and leaves every other lot alone', async () => {
+        await seedAll();
+        const removed = await deleteAvgBasisHistoryForDeletedLots([LOT_A1], tx);
+        expect(removed).toBe(1);
+        expect(await hasAvgBasisHistory(LOT_A1, tx)).toBe(false);
+        expect(await hasAvgBasisHistory(LOT_A2, tx)).toBe(true);
+        expect(await hasAvgBasisHistory(LOT_B1, tx)).toBe(true);
+    });
+
+    it('deletes every lot of the given accounts, and only those', async () => {
+        await seedAll();
+        const removed = await deleteAvgBasisHistoryForAccounts([ACCT_A], tx);
+        // Both of account A's lots; account B untouched.
+        expect(removed).toBe(2);
+        expect(await hasAvgBasisHistory(LOT_A1, tx)).toBe(false);
+        expect(await hasAvgBasisHistory(LOT_A2, tx)).toBe(false);
+        expect(await hasAvgBasisHistory(LOT_B1, tx)).toBe(true);
+    });
+
+    it('is a no-op on an empty list rather than deleting everything', async () => {
+        await seedAll();
+        expect(await deleteAvgBasisHistoryForDeletedLots([], tx)).toBe(0);
+        expect(await deleteAvgBasisHistoryForAccounts([], tx)).toBe(0);
+        for (const guid of [LOT_A1, LOT_A2, LOT_B1]) {
+            expect(await hasAvgBasisHistory(guid, tx)).toBe(true);
+        }
+        await deleteAvgBasisHistoryForLots([LOT_A1, LOT_A2, LOT_B1], tx);
+    });
+
+    it('finds nothing to delete for an account with no lots', async () => {
+        await seedAll();
+        const unknownAccount = `${RUN_TAG}nosuch`.padEnd(20, '0').slice(0, 32);
+        expect(await deleteAvgBasisHistoryForAccounts([unknownAccount], tx)).toBe(0);
+        expect(await hasAvgBasisHistory(LOT_A1, tx)).toBe(true);
+        await deleteAvgBasisHistoryForLots([LOT_A1, LOT_A2, LOT_B1], tx);
+    });
 });
