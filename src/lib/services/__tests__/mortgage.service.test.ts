@@ -45,13 +45,14 @@ function makeSplit(
 }
 
 function absorbedWarning(amount: number) {
-  return `Liability credit totaling $${amount.toLocaleString('en-US')} was absorbed; detected principal excludes it and APR may be overstated`;
+  return `1 liability credit across 1 transaction and 1 posting date totaling $${amount.toLocaleString('en-US')} was absorbed; detected principal excludes it and APR may be overstated`;
 }
 
 function openingFixture(
   openingAmount: number,
   credits: Array<{ amount: number; txGuid: string; date?: Date }> = [],
   annualRate = 0.06,
+  amortizationPrincipal?: number,
 ) {
   const openingDate = new Date('2020-01-15');
   const splits: Array<{
@@ -71,9 +72,9 @@ function openingFixture(
     })),
   ];
   const monthlyRate = annualRate / 12;
-  const bookedOpening = openingAmount + credits
+  const bookedOpening = amortizationPrincipal ?? (openingAmount + credits
     .filter(({ date = openingDate }) => date.getTime() === openingDate.getTime())
-    .reduce((sum, { amount }) => sum + amount, 0);
+    .reduce((sum, { amount }) => sum + amount, 0));
   const payment = bookedOpening * monthlyRate * Math.pow(1 + monthlyRate, 360) /
     (Math.pow(1 + monthlyRate, 360) - 1);
   let balance = bookedOpening;
@@ -100,7 +101,7 @@ describe('MortgageService.detectOriginalAmount', () => {
     ['$50 recording fee', 300_000, 50, 300_050, [], 'high'],
     ['$5,000 points', 300_000, 5_000, 305_000, [], 'high'],
     ['$1,200 escrow on $50,000', 50_000, 1_200, 51_200, [], 'high'],
-    ['duplicate $300,000 opening import', 300_000, 300_000, 600_000, ['Identical same-day opening credits found: $300,000 in 2 transactions were included in detected principal; if duplicated by an import, opening principal may be overstated'], 'high'],
+    ['two $300,000 split-recorded opening credits', 300_000, 300_000, 600_000, ['Identical same-day opening credits found: $300,000 in 2 transactions were included in detected principal; if duplicated by an import, opening principal may be overstated'], 'high'],
   ])('includes same-day opening credits and discloses ambiguity for %s', async (_label, opening, credit, expectedAmount, expectedWarnings, expectedConfidence) => {
     const splits = openingFixture(opening, [{ amount: credit, txGuid: 'day-one-candidate' }]);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -111,6 +112,32 @@ describe('MortgageService.detectOriginalAmount', () => {
     expect(result.interestRate).toBeCloseTo(6, 3);
     expect(result.confidence).toBe(expectedConfidence);
     expect(result.warnings).toEqual(expectedWarnings);
+  });
+
+  it('warns without excluding a genuinely duplicated $300,000 opening import', async () => {
+    const splits = openingFixture(
+      300_000,
+      [{ amount: 300_000, txGuid: 'duplicate-import' }],
+      0.06,
+      300_000,
+    );
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (mockPrisma.splits.findMany as any).mockResolvedValue(splits);
+    const result = await MortgageService.detectMortgageDetails(MORTGAGE_GUID, INTEREST_GUID);
+    expect(result.originalAmount).toBe(600_000);
+    expect(result.interestRate).toBeCloseTo(2.99244, 3);
+    expect(result.confidence).toBe('high');
+    expect(result.warnings).toEqual(['Identical same-day opening credits found: $300,000 in 2 transactions were included in detected principal; if duplicated by an import, opening principal may be overstated']);
+  });
+
+  it('renders absorbed fractional credits with two decimal places', async () => {
+    const splits = openingFixture(2_000_000, [
+      { amount: 32_375.7, txGuid: 'fractional-credit', date: new Date('2021-01-15') },
+    ]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (mockPrisma.splits.findMany as any).mockResolvedValue(splits);
+    const result = await MortgageService.detectMortgageDetails(MORTGAGE_GUID, INTEREST_GUID);
+    expect(result.warnings).toContain('1 liability credit across 1 transaction and 1 posting date totaling $32,375.70 was absorbed; detected principal excludes it and APR may be overstated');
   });
 
   it.each([
@@ -143,13 +170,13 @@ describe('MortgageService.detectOriginalAmount', () => {
   it('aggregates repeated absorbed-credit warnings', async () => {
     const opening = makeSplit('opening', MORTGAGE_GUID, -300_000 * 100, 100, new Date('2020-01-15'));
     const splits = [opening, ...Array.from({ length: 360 }, (_, i) =>
-      makeSplit('same-credit', MORTGAGE_GUID, -2_000 * 100, 100, new Date('2021-01-15'))
+      makeSplit(`credit-${i}`, MORTGAGE_GUID, -2_000 * 100, 100, new Date(2021 + Math.floor(i / 12), i % 12, 15))
     )].map((split) => ({ ...split, transaction: { post_date: split.post_date } }));
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (mockPrisma.splits.findMany as any).mockResolvedValue(splits);
     const result = await MortgageService.detectMortgageDetails(MORTGAGE_GUID, INTEREST_GUID);
-    expect(result.warnings).toContain('Liability credits totaling $720,000 across 360 occurrences were absorbed; detected principal excludes them and APR may be overstated');
-    expect(result.warnings.filter((warning) => warning.includes('Liability credit'))).toHaveLength(1);
+    expect(result.warnings).toEqual(['360 liability credits across 360 transactions and 360 posting dates totaling $720,000 were absorbed; detected principal excludes them and APR may be overstated', 'Insufficient data']);
+    expect(result.warnings.filter((warning) => warning.includes('liability credit'))).toHaveLength(1);
   });
 
   it('keeps equal-sized absorbed credits from separate transactions distinct', async () => {
@@ -160,7 +187,40 @@ describe('MortgageService.detectOriginalAmount', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (mockPrisma.splits.findMany as any).mockResolvedValue(splits);
     const result = await MortgageService.detectMortgageDetails(MORTGAGE_GUID, INTEREST_GUID);
-    expect(result.warnings.filter((warning) => warning.includes('Liability credit'))).toHaveLength(2);
+    expect(result.warnings).toContain('2 liability credits across 2 transactions and 2 posting dates totaling $4,000 were absorbed; detected principal excludes them and APR may be overstated');
+  });
+
+  it('does not warn about two immaterial equal same-day opening fees', async () => {
+    const splits = openingFixture(300_000, [
+      { amount: 500, txGuid: 'fee-a' },
+      { amount: 500, txGuid: 'fee-b' },
+    ]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (mockPrisma.splits.findMany as any).mockResolvedValue(splits);
+    const result = await MortgageService.detectMortgageDetails(MORTGAGE_GUID, INTEREST_GUID);
+    expect(result).toMatchObject({ originalAmount: 301_000, confidence: 'high', warnings: [] });
+  });
+
+  it('retains transaction identity in the absorbed-credit aggregate', async () => {
+    const splits = openingFixture(300_000, [
+      { amount: 2_000, txGuid: 'fee-a', date: new Date('2021-01-15') },
+      { amount: 2_000, txGuid: 'fee-b', date: new Date('2021-01-15') },
+    ]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (mockPrisma.splits.findMany as any).mockResolvedValue(splits);
+    const result = await MortgageService.detectMortgageDetails(MORTGAGE_GUID, INTEREST_GUID);
+    expect(result.warnings).toContain('2 liability credits across 2 transactions and 1 posting date totaling $4,000 were absorbed; detected principal excludes them and APR may be overstated');
+  });
+
+  it('retains posting-date identity in the absorbed-credit aggregate', async () => {
+    const splits = openingFixture(300_000, [
+      { amount: 2_000, txGuid: 'same-event', date: new Date('2021-01-15') },
+      { amount: 2_000, txGuid: 'same-event', date: new Date('2021-02-15') },
+    ]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (mockPrisma.splits.findMany as any).mockResolvedValue(splits);
+    const result = await MortgageService.detectMortgageDetails(MORTGAGE_GUID, INTEREST_GUID);
+    expect(result.warnings).toContain('2 liability credits across 1 transaction and 2 posting dates totaling $4,000 were absorbed; detected principal excludes them and APR may be overstated');
   });
   it('T1: returns opening balance amount when present', () => {
     const openingDate = new Date('2020-01-15');

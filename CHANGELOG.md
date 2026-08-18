@@ -24,8 +24,9 @@ Covers work landed since 0.23.2.0 (2026-07-29).
   disclosed, without lowering confidence; the $10,000 floor applies only to
   materiality. A genuine second draw below $10,000 can therefore remain
   absorbed (for example, an $8,000 draw on a $50,000 HELOC), but is disclosed
-  because its reported APR may be overstated. The displayed principal, APR,
-  and confidence can change for HELOC and small-loan users.
+  because its reported APR may be overstated. Credits individually below 0.5%
+  remain silent even when their aggregate is large. The displayed principal,
+  APR, and confidence can change for HELOC and small-loan users.
 
 - **Unposting an invoice or bill now records a reversing transaction instead of
   deleting the original posting.** The ledger keeps both entries — the original

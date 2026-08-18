@@ -88,18 +88,20 @@ function formatCreditAmount(amount: number): string {
 }
 
 function absorbedCreditWarnings(credits: CreditOccurrence[]): string[] {
-  const grouped = new Map<string, { amount: number; occurrences: number }>();
+  if (credits.length === 0) return [];
+  const grouped = new Map<string, CreditOccurrence & { occurrences: number }>();
   for (const credit of credits) {
     const key = `${credit.txGuid}:${credit.date.toISOString()}:${credit.amount}`;
     const current = grouped.get(key);
-    grouped.set(key, { amount: credit.amount, occurrences: (current?.occurrences ?? 0) + 1 });
+    grouped.set(key, { ...credit, occurrences: (current?.occurrences ?? 0) + 1 });
   }
 
-  return [...grouped.values()].map(({ amount, occurrences }) => {
-    const total = amount * occurrences;
-    const count = occurrences === 1 ? '' : ` across ${occurrences} occurrences`;
-    return `Liability credit${occurrences === 1 ? '' : 's'} totaling $${formatCreditAmount(total)}${count} ${occurrences === 1 ? 'was' : 'were'} absorbed; detected principal excludes ${occurrences === 1 ? 'it' : 'them'} and APR may be overstated`;
-  });
+  const uniqueCredits = [...grouped.values()];
+  const occurrences = uniqueCredits.reduce((sum, credit) => sum + credit.occurrences, 0);
+  const total = uniqueCredits.reduce((sum, credit) => sum + credit.amount * credit.occurrences, 0);
+  const transactions = new Set(uniqueCredits.map((credit) => credit.txGuid)).size;
+  const dates = new Set(uniqueCredits.map((credit) => credit.date.toISOString())).size;
+  return [`${occurrences} liability credit${occurrences === 1 ? '' : 's'} across ${transactions} transaction${transactions === 1 ? '' : 's'} and ${dates} posting date${dates === 1 ? '' : 's'} totaling $${formatCreditAmount(total)} ${occurrences === 1 ? 'was' : 'were'} absorbed; detected principal excludes ${occurrences === 1 ? 'it' : 'them'} and APR may be overstated`];
 }
 
 function identicalOpeningWarnings(credits: number[]): string[] {
@@ -266,7 +268,9 @@ export class MortgageService {
       .map((group) => group.amount);
     const detectionWarnings = [
       ...absorbedCreditWarnings(absorbedCredits),
-      ...identicalOpeningWarnings(equalOpeningCredits),
+      ...identicalOpeningWarnings(equalOpeningCredits.filter((credit) =>
+        credit >= openingCreditTotal * SILENT_ABSORBED_CREDIT_RATIO
+      )),
     ];
     if (openingCreditTotal > 0 && materialCredits.length > 0) {
       return {
