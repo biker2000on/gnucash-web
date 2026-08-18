@@ -12,7 +12,32 @@
  */
 
 import prisma, { generateGuid } from '@/lib/prisma';
-import { accountNameLockKey, acquireNamedXactLock } from '@/lib/book-lock';
+import { isTopLevelPrismaClient } from '@/lib/book-lock';
+import {
+  acquireAccountNameLock,
+  sortByLockOrder,
+  type AccountLockOrder,
+} from '@/lib/account-lock-order';
+
+/** Fixed first segment of every trading account's root-relative path. */
+const TRADING_ROOT_NAME = 'Trading';
+
+/**
+ * Where `Trading:<namespace>:<mnemonic>` sits in the canonical acquisition
+ * order (src/lib/account-lock-order.ts). `depth` selects the level: 1 for the
+ * Trading root, 2 for the namespace group, 3 for the commodity leaf.
+ */
+export function tradingAccountLockOrder(
+  bookRootGuid: string,
+  namespace: string,
+  mnemonic: string,
+  depth: 1 | 2 | 3,
+): AccountLockOrder {
+  return {
+    bookRootGuid,
+    path: [TRADING_ROOT_NAME, namespace, mnemonic].slice(0, depth),
+  };
+}
 
 export interface SplitWithCommodity {
   accountGuid: string;
@@ -125,10 +150,33 @@ export async function getOrCreateTradingAccount(
   commodityMnemonic: string,
   commodityNamespace: string,
   bookAccountGuids: Set<string>,
-  tx?: Parameters<typeof prisma.$transaction>[0] extends (prisma: infer P) => unknown ? P : never
+  tx?: TradingTx
 ): Promise<string> {
-  // Use provided transaction context or default prisma
-  const db = tx || prisma;
+  const client = (tx ?? prisma) as TradingTx;
+  // The per-(parent, name) serializer below is transaction-scoped, so open a
+  // transaction when we were not handed one rather than run the locks in
+  // autocommit, where they would be released before their own re-check.
+  if (isTopLevelPrismaClient(client)) {
+    return (client as unknown as typeof prisma).$transaction(inner =>
+      getOrCreateTradingAccountWithin(
+        inner as TradingTx, commodityGuid, commodityMnemonic, commodityNamespace, bookAccountGuids,
+      ),
+    );
+  }
+  return getOrCreateTradingAccountWithin(
+    client, commodityGuid, commodityMnemonic, commodityNamespace, bookAccountGuids,
+  );
+}
+
+type TradingTx = Parameters<typeof prisma.$transaction>[0] extends (prisma: infer P) => unknown ? P : never;
+
+async function getOrCreateTradingAccountWithin(
+  db: TradingTx,
+  commodityGuid: string,
+  commodityMnemonic: string,
+  commodityNamespace: string,
+  bookAccountGuids: Set<string>,
+): Promise<string> {
   const scopedGuids = [...bookAccountGuids];
   if (scopedGuids.length === 0) {
     throw new Error('Cannot create a trading account for an empty book scope');
@@ -137,9 +185,23 @@ export async function getOrCreateTradingAccount(
   // Each check-then-create below is guarded by a per-(parent, name)
   // advisory lock with a re-check after acquiring it, so two concurrent
   // multi-currency saves can no longer create duplicate Trading trees.
-  // NOTE: the transaction-scoped lock only serializes when running inside a
-  // transaction (pass `tx`); on the bare client it degrades to the old
-  // behavior.
+  // `db` is always transactional here (see getOrCreateTradingAccount); only
+  // in-memory test doubles without $queryRaw skip the lock, and they report
+  // that by returning false instead of pretending to have locked.
+
+  // Find this book's root account, never an arbitrary root from another book.
+  // The supplied scope came from the caller's session-derived book. Resolved
+  // unconditionally because it anchors the lock ORDER of all three levels
+  // below, not just the creation of the Trading root.
+  const rootAccount = await db.accounts.findFirst({
+    where: { account_type: 'ROOT', guid: { in: scopedGuids } },
+    orderBy: { guid: 'asc' },
+  });
+
+  if (!rootAccount) {
+    throw new Error('No root account found in database');
+  }
+  const bookRootGuid = rootAccount.guid;
 
   // 1. Find root Trading account or create it
   let tradingRoot = await db.accounts.findFirst({
@@ -152,18 +214,12 @@ export async function getOrCreateTradingAccount(
   });
 
   if (!tradingRoot) {
-    // Find this book's root account, never an arbitrary root from another
-    // book. The supplied scope came from the caller's session-derived book.
-    const rootAccount = await db.accounts.findFirst({
-      where: { account_type: 'ROOT', guid: { in: scopedGuids } },
-      orderBy: { guid: 'asc' },
-    });
-
-    if (!rootAccount) {
-      throw new Error('No root account found in database');
-    }
-
-    const locked = await acquireNamedXactLock(db, accountNameLockKey(rootAccount.guid, 'Trading'));
+    const locked = await acquireAccountNameLock(
+      db,
+      rootAccount.guid,
+      TRADING_ROOT_NAME,
+      tradingAccountLockOrder(bookRootGuid, commodityNamespace, commodityMnemonic, 1),
+    );
     if (locked) {
       tradingRoot = await db.accounts.findFirst({
         // Do not use the caller's cached account list here: this re-check
@@ -211,7 +267,12 @@ export async function getOrCreateTradingAccount(
   });
 
   if (!namespaceGroup) {
-    const locked = await acquireNamedXactLock(db, accountNameLockKey(tradingRoot.guid, commodityNamespace));
+    const locked = await acquireAccountNameLock(
+      db,
+      tradingRoot.guid,
+      commodityNamespace,
+      tradingAccountLockOrder(bookRootGuid, commodityNamespace, commodityMnemonic, 2),
+    );
     if (locked) {
       namespaceGroup = await db.accounts.findFirst({
         where: { name: commodityNamespace, parent_guid: tradingRoot.guid },
@@ -244,7 +305,12 @@ export async function getOrCreateTradingAccount(
   });
 
   if (!commodityAccount) {
-    const locked = await acquireNamedXactLock(db, accountNameLockKey(namespaceGroup.guid, commodityMnemonic));
+    const locked = await acquireAccountNameLock(
+      db,
+      namespaceGroup.guid,
+      commodityMnemonic,
+      tradingAccountLockOrder(bookRootGuid, commodityNamespace, commodityMnemonic, 3),
+    );
     if (locked) {
       commodityAccount = await db.accounts.findFirst({
         where: { name: commodityMnemonic, parent_guid: namespaceGroup.guid },
@@ -445,9 +511,35 @@ export async function processMultiCurrencySplits(
   // Calculate quantity AND value imbalances
   const imbalances = calculateImbalances(splitsWithCommodity);
 
-  // Get or create trading accounts for each imbalanced commodity
+  // Get or create trading accounts for each imbalanced commodity.
+  //
+  // IN CANONICAL LOCK ORDER, not in split-encounter order. `calculateImbalances`
+  // preserves the order the splits arrived in, and each commodity claims
+  // `account:(Trading:<ns>, <mnemonic>)` on its way to being created. Two
+  // ordinary saves in opposite directions — a USD->EUR transfer and an
+  // EUR->USD one, under an existing Trading:CURRENCY parent — therefore used
+  // to reach for the same two keys in opposite orders, each holding the one
+  // the other wanted: a textbook ABBA deadlock that PostgreSQL breaks by
+  // aborting one save with SQLSTATE 40P01. Nothing about it needed an import
+  // or an admin action; it was reachable from the transaction save path.
+  //
+  // Sorting the set here removes it at the source. The whole key set is known
+  // before any of it is claimed, so it can simply be taken in the one order
+  // every other holder also uses (src/lib/account-lock-order.ts), and
+  // `acquireAccountNameLock` fails loudly if this loop ever stops doing so.
+  const orderedImbalances = sortByLockOrder(
+    [...imbalances],
+    ([, { namespace, mnemonic }]) => ({
+      // The book root guid is resolved inside getOrCreateTradingAccount and is
+      // the same for every entry here, so it cannot affect this sort; the
+      // ordering that matters is (namespace, mnemonic).
+      bookRootGuid: '',
+      path: [TRADING_ROOT_NAME, namespace, mnemonic],
+    }),
+  );
+
   const tradingAccountGuids = new Map<string, string>();
-  for (const [commodityGuid, { mnemonic, namespace }] of imbalances) {
+  for (const [commodityGuid, { mnemonic, namespace }] of orderedImbalances) {
     const tradingGuid = await getOrCreateTradingAccount(
       commodityGuid,
       mnemonic,

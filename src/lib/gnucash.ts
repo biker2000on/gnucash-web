@@ -187,20 +187,106 @@ export function serializeBigInts<T>(obj: T): T {
 }
 
 import prisma from './prisma';
-import { accountNameLockKey, acquireNamedXactLock } from './book-lock';
+import { isTopLevelPrismaClient } from './book-lock';
+import { acquireAccountNameLock } from './account-lock-order';
+
+type PrismaTxClient = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
 
 /**
  * Find or create a GnuCash account by colon-delimited path.
  * Creates missing intermediate accounts as placeholders.
+ *
+ * The per-(parent, name) serializer is a TRANSACTION-scoped advisory lock, so
+ * this opens its own transaction whenever it was not handed one (no `tx`, or a
+ * top-level client such as the `prisma` singleton — the email bill-capture path
+ * passes neither). Running the lock in autocommit would release it before the
+ * re-check, which is a no-op dressed up as a guard; `acquireNamedXactLock`
+ * now rejects that outright, so the wrapper here is what keeps those callers
+ * working AND locked.
  */
 export async function findOrCreateAccount(
   path: string,
   bookRootGuid: string,
   currencyGuid: string,
-  tx?: Parameters<Parameters<typeof prisma.$transaction>[0]>[0]
+  tx?: PrismaTxClient,
+  order?: LockOrderBase,
 ): Promise<string> {
-  const db = tx || prisma;
+  const { guid } = await findOrCreateAccountDetailed(path, bookRootGuid, currencyGuid, tx, order);
+  return guid;
+}
+
+/** What {@link findOrCreateAccountDetailed} resolved, and what it inserted. */
+export interface FindOrCreateAccountResult {
+  /** The leaf account at `path`. */
+  guid: string;
+  /**
+   * The accounts this call INSERTED, root-to-leaf. Excludes both segments that
+   * already existed and segments ADOPTED under the name lock — rows a
+   * concurrent transaction committed inside the check-then-create window.
+   *
+   * Callers that post-process the new segments (setting a real account type,
+   * say) must restrict themselves to these guids. An adopted row belongs to
+   * another transaction, and locking it here would mean taking a ROW lock
+   * while this walk still holds the sibling-name locks of every segment it
+   * created — the reverse of `AccountService.update`'s order, and a deadlock.
+   * See `SiblingKeyAdoptedError` in src/lib/book-lock.ts.
+   */
+  createdGuids: string[];
+}
+
+/**
+ * {@link findOrCreateAccount}, additionally reporting which segments it
+ * inserted. Same locking, same transaction handling.
+ */
+export async function findOrCreateAccountDetailed(
+  path: string,
+  bookRootGuid: string,
+  currencyGuid: string,
+  tx?: PrismaTxClient,
+  order?: LockOrderBase,
+): Promise<FindOrCreateAccountResult> {
+  const client = (tx ?? prisma) as PrismaTxClient;
+  if (isTopLevelPrismaClient(client)) {
+    return (client as unknown as typeof prisma).$transaction(inner =>
+      findOrCreateAccountWithin(inner, path, bookRootGuid, currencyGuid, order),
+    );
+  }
+  return findOrCreateAccountWithin(client, path, bookRootGuid, currencyGuid, order);
+}
+
+/**
+ * Where a walk that starts BELOW the book root sits in the canonical
+ * acquisition order (src/lib/account-lock-order.ts).
+ *
+ * `bookRootGuid` here is only an anchor for the walk, not necessarily the book
+ * root: the QIF importer walks paths under a user-chosen parent. The order,
+ * though, has to be expressed against the real book root, or two holders
+ * approaching the same key from different anchors sort it differently and the
+ * shared order stops being shared. Callers that walk from somewhere other than
+ * the root pass the real root here, plus the path prefix that leads to their
+ * anchor.
+ */
+export interface LockOrderBase {
+  bookRootGuid: string;
+  prefix: readonly string[];
+  /**
+   * Id of a site in `UNORDERED_CLAIM_SITES` (src/lib/account-lock-order.ts)
+   * that is known to claim siblings out of order. Downgrades the ordering
+   * violation from a throw to a logged error. Never set this for new code.
+   */
+  unorderedSite?: string;
+}
+
+/** The path walk itself, always running inside a transaction in production. */
+async function findOrCreateAccountWithin(
+  db: PrismaTxClient,
+  path: string,
+  bookRootGuid: string,
+  currencyGuid: string,
+  order: LockOrderBase = { bookRootGuid, prefix: [] },
+): Promise<FindOrCreateAccountResult> {
   const segments = path.split(':');
+  const createdGuids: string[] = [];
   let parentGuid = bookRootGuid;
 
   for (let i = 0; i < segments.length; i++) {
@@ -214,11 +300,31 @@ export async function findOrCreateAccount(
 
     if (!existing) {
       // Guard the check-then-create: take a per-(parent, name) advisory
-      // lock and re-check, so concurrent callers cannot create duplicate
-      // sibling accounts (no unique index on (parent_guid, name) yet).
-      // Only effective inside a transaction (pass `tx`); test doubles
-      // without $queryRaw skip the lock and keep legacy behavior.
-      const locked = await acquireNamedXactLock(db, accountNameLockKey(parentGuid, segment));
+      // lock and re-check, so concurrent callers reach the create one at a
+      // time instead of both inserting a duplicate sibling. This lock is the
+      // ONLY serializer — there is deliberately no unique index on
+      // accounts(parent_guid, name), because scheduled-transaction template
+      // children share (parent, '') by design (see db-init.ts,
+      // ACCOUNTS_SIBLING_NAME_INDEX).
+      // `db` is always transactional here (see findOrCreateAccount); only
+      // in-memory test doubles without $queryRaw skip the lock, and they say
+      // so by returning false rather than pretending to have locked.
+      //
+      // The walk descends, so the segments it claims are already in canonical
+      // order: `bookRootGuid` plus a strictly growing prefix of `segments` is
+      // increasing at every step (src/lib/account-lock-order.ts). Passing that
+      // prefix as the order is not bookkeeping — it is what lets a caller
+      // holding OTHER account keys be checked against this walk.
+      const locked = await acquireAccountNameLock(
+        db,
+        parentGuid,
+        segment,
+        {
+          bookRootGuid: order.bookRootGuid,
+          path: [...order.prefix, ...segments.slice(0, i + 1)],
+        },
+        order.unorderedSite,
+      );
       if (locked) {
         existing = await db.accounts.findFirst({
           where: { name: segment, parent_guid: parentGuid },
@@ -248,8 +354,9 @@ export async function findOrCreateAccount(
         description: '',
       },
     });
+    createdGuids.push(newGuid);
     parentGuid = newGuid;
   }
 
-  return parentGuid;
+  return { guid: parentGuid, createdGuids };
 }

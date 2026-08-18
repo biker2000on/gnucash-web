@@ -23,6 +23,7 @@ import {
     type EntityOwnershipClient,
 } from '@/lib/business/entity-ownership';
 import { getAccountGuidsForBook } from '@/lib/book-scope';
+import { acquireAccountNameLock } from '@/lib/account-lock-order';
 import { assertNotLocked } from '@/lib/services/period-lock.service';
 import { assertNoReconciledSplits } from '@/lib/services/reconciled-split.service';
 
@@ -178,6 +179,11 @@ async function getCurrencyFraction(db: PrismaTx, currencyGuid: string): Promise<
  * type. (findOrCreateAccount in src/lib/gnucash.ts hardcodes INCOME, so
  * liability accounts must be created here.) Intermediate segments are created
  * as placeholders of the same type; existing accounts are reused as-is.
+ *
+ * Same check-then-create race, same serializer as findOrCreateAccount: a
+ * per-(parent, name) transaction-scoped advisory lock plus a re-check under
+ * it. `db` must be an interactive-transaction client — `acquireNamedXactLock`
+ * throws rather than take a lock that autocommit would immediately release.
  */
 export async function ensureTypedAccount(
     db: PrismaTx,
@@ -193,10 +199,26 @@ export async function ensureTypedAccount(
         const segment = segments[i];
         const isLast = i === segments.length - 1;
 
-        const existing = await db.accounts.findFirst({
+        let existing = await db.accounts.findFirst({
             where: { name: segment, parent_guid: parentGuid },
             select: { guid: true },
         });
+
+        if (!existing) {
+            // Descending a path claims a growing prefix, which is already the
+            // canonical order (src/lib/account-lock-order.ts).
+            const locked = await acquireAccountNameLock(db, parentGuid, segment, {
+                bookRootGuid,
+                path: segments.slice(0, i + 1),
+            });
+            if (locked) {
+                existing = await db.accounts.findFirst({
+                    where: { name: segment, parent_guid: parentGuid },
+                    select: { guid: true },
+                });
+            }
+        }
+
         if (existing) {
             parentGuid = existing.guid;
             continue;

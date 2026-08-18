@@ -293,6 +293,7 @@ function makeContext(
     existingTransactions: QifPlanContext['existingTransactions'] = []
 ): QifPlanContext {
     return {
+        bookGuid: 'book0000000000000000000000000000',
         bookRootGuid: ROOT,
         bookAccountGuids: [ROOT, ...accounts.map((a) => a.guid)],
         accounts,
