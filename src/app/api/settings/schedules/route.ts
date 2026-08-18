@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
 import { getPreference, setPreference } from '@/lib/user-preferences';
 import { signalScheduleChanged } from '@/lib/queue/queues';
+import { isRefreshEnabled, REFRESH_ENABLED_KEY } from '@/lib/worker/refresh-schedule';
 
 export async function GET() {
   try {
@@ -9,13 +10,16 @@ export async function GET() {
     if (roleResult instanceof NextResponse) return roleResult;
 
     const [enabled, intervalHours, refreshTime] = await Promise.all([
-      getPreference<boolean | string>(roleResult.user.id, 'refresh_enabled', false),
+      getPreference<unknown>(roleResult.user.id, REFRESH_ENABLED_KEY, false),
       getPreference<number | string>(roleResult.user.id, 'refresh_interval_hours', 24),
       getPreference<string>(roleResult.user.id, 'refresh_time', '21:00'),
     ]);
 
     return NextResponse.json({
-      enabled: enabled === true || enabled === 'true',
+      // Same predicate the worker's restart recovery decides schedules with,
+      // so what this page reports as enabled and what actually gets a timer
+      // armed cannot drift apart.
+      enabled: isRefreshEnabled(enabled),
       intervalHours: typeof intervalHours === 'number' ? intervalHours : parseInt(String(intervalHours)),
       refreshTime,
     });
@@ -37,7 +41,10 @@ export async function PATCH(request: NextRequest) {
     const { enabled, intervalHours, refreshTime } = body;
 
     if (enabled !== undefined) {
-      await setPreference(roleResult.user.id, 'refresh_enabled', enabled);
+      // Normalize on write so new rows are canonical booleans. The READ path
+      // still accepts every legacy representation — existing rows are exactly
+      // the population this fix is for, and they are never rewritten here.
+      await setPreference(roleResult.user.id, REFRESH_ENABLED_KEY, isRefreshEnabled(enabled));
     }
 
     if (intervalHours !== undefined) {
@@ -51,10 +58,10 @@ export async function PATCH(request: NextRequest) {
     // Determine effective state after updates
     let isEnabled: boolean;
     if (enabled !== undefined) {
-      isEnabled = enabled === true || enabled === 'true';
+      isEnabled = isRefreshEnabled(enabled);
     } else {
-      const stored = await getPreference<boolean | string>(roleResult.user.id, 'refresh_enabled', false);
-      isEnabled = stored === true || stored === 'true';
+      const stored = await getPreference<unknown>(roleResult.user.id, REFRESH_ENABLED_KEY, false);
+      isEnabled = isRefreshEnabled(stored);
     }
 
     const effectiveHours = intervalHours !== undefined
