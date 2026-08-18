@@ -15,7 +15,7 @@
  * dropped and the --rm container is forcibly removed in afterAll even when an
  * assertion fails.
  */
-import { execFile } from 'node:child_process';
+import { execFile, spawnSync } from 'node:child_process';
 import { promisify } from 'node:util';
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -28,6 +28,22 @@ const containerName = `gnucash-prisma-deadlock-${randomUUID().slice(0, 8)}`;
 const databaseName = 'oracle_proof';
 const databaseUser = 'oracle';
 const databasePassword = randomUUID();
+
+/**
+ * This proof owns its database, so Docker is its one host dependency. Probe
+ * the explicitly safe context up front: a laptop without Docker reports a
+ * visible skipped suite, while CI's Docker-equipped runner executes it.
+ */
+const dockerProbe = spawnSync('docker', ['--context', 'default', 'version', '--format', '{{.Server.Version}}'], {
+    encoding: 'utf8',
+});
+const hasDefaultDocker = dockerProbe.status === 0;
+const dockerSkipReason = dockerProbe.error?.message
+    ?? dockerProbe.stderr.trim()
+    ?? 'docker --context default did not return a server version';
+if (!hasDefaultDocker) {
+    console.warn(`[SKIPPED] Prisma deadlock oracle: docker --context default is unavailable (${dockerSkipReason}).`);
+}
 
 let databaseUrl: string;
 let fixturePool: Pool;
@@ -66,7 +82,9 @@ async function waitUntil(predicate: () => Promise<boolean>, description: string)
     throw new Error(`Timed out waiting for ${description}`);
 }
 
-describe('Prisma deadlock oracle against a disposable PostgreSQL container', () => {
+const describeWithDefaultDocker = hasDefaultDocker ? describe : describe.skip;
+
+describeWithDefaultDocker('Prisma deadlock oracle against a disposable PostgreSQL container', () => {
     beforeAll(async () => {
         await docker(
             'run', '--detach', '--rm', '--name', containerName,
