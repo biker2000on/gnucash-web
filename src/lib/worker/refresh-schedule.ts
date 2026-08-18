@@ -76,13 +76,17 @@ export function isRefreshEnabled(parsed: unknown): boolean {
  * had refresh on lost their schedule at the next worker restart, silently and
  * until they next saved settings.
  */
-export function isRefreshEnabledStoredValue(raw: string | null | undefined): boolean {
+export function isRefreshEnabledStoredValue(
+    raw: string | null | undefined,
+    onInvalidStoredValue?: () => void,
+): boolean {
     if (typeof raw !== 'string') return false;
     try {
         return isRefreshEnabled(JSON.parse(raw));
     } catch {
-        // Malformed JSON is not enablement. `getPreference` logs the corrupt
-        // row on the read path; recovery just declines to schedule from it.
+        // Recovery reads the raw column instead of getPreference, so it owns
+        // the safe corrupt-row diagnostic when its caller supplies one.
+        onInvalidStoredValue?.();
         return false;
     }
 }
@@ -104,7 +108,15 @@ export function selectRefreshEnabledUserIds(
     rows: ReadonlyArray<RefreshEnabledRow>,
 ): number[] {
     return rows
-        .filter(row => isRefreshEnabledStoredValue(row.preference_value))
+        .filter(row => isRefreshEnabledStoredValue(row.preference_value, () => {
+            // Never log preference content or JSON.parse's error: both can
+            // disclose user-controlled financial data. This is enough to find
+            // the affected row and repair it safely.
+            console.warn(
+                `[schedule] user ${row.user_id}: stored value for '${REFRESH_ENABLED_KEY}' ` +
+                `is not valid JSON (${row.preference_value.length} chars) — skipping`,
+            );
+        }))
         .map(row => row.user_id);
 }
 

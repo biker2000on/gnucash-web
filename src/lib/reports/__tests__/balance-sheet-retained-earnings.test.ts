@@ -182,6 +182,7 @@ describe('generateBalanceSheet with a GENUINE injected imbalance', () => {
       complete: true,
       unvaluedAccountCount: 0,
       gaps: [],
+      stalePrices: [],
     });
   });
 });

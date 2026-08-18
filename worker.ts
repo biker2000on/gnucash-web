@@ -18,8 +18,8 @@ import {
   normalizeRefreshTime,
   REFRESH_ENABLED_KEY,
   resolvePriceRefreshTargets,
-  selectRefreshEnabledUserIds,
 } from './src/lib/worker/refresh-schedule';
+import { listRefreshEnabledUserIdsFromStore } from './src/lib/worker/refresh-schedule-store';
 
 // Last-resort observability: scheduled callbacks and third-party clients must
 // not fail silently. Individual operations still own their normal retry/error
@@ -375,20 +375,7 @@ async function recoverSchedules() {
       const { getUserBooks } = await import('./src/lib/services/permission.service');
 
       const targets = await resolvePriceRefreshTargets({
-        // Candidate rows only. Enablement is NOT decided here: comparing
-        // preference_value to the literal 'true' in the query was a second,
-        // divergent copy of the settings route's rule, and it disagreed —
-        // it matched a boolean-true row but missed the JSON string "true",
-        // which the route accepts as enabled and setPreference stores. Those
-        // users were enabled on save and forgotten on every restart. The rows
-        // are evaluated through the one shared predicate instead.
-        async listRefreshEnabledUserIds() {
-          const rows = await prisma.gnucash_web_user_preferences.findMany({
-            where: { preference_key: REFRESH_ENABLED_KEY },
-            select: { user_id: true, preference_value: true },
-          });
-          return selectRefreshEnabledUserIds(rows);
-        },
+        listRefreshEnabledUserIds: () => listRefreshEnabledUserIdsFromStore(prisma),
         // null covers both "unset" and "stored value is not even valid JSON";
         // either way there is no usable stored time, and the resolver owns the
         // single definition of the default. A value that IS valid JSON but not

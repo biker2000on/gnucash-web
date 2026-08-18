@@ -171,6 +171,21 @@ describe('refresh_enabled — the single enablement predicate', () => {
 });
 
 describe('selectRefreshEnabledUserIds — restart recovery', () => {
+    it('logs malformed rows without exposing their contents or parser error', () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const secret = 'financial-preference-not-json';
+
+        expect(selectRefreshEnabledUserIds([
+            { user_id: 17, preference_value: secret },
+            { user_id: 18, preference_value: 'true' },
+        ])).toEqual([18]);
+        expect(warn).toHaveBeenCalledWith(
+            "[schedule] user 17: stored value for 'refresh_enabled' is not valid JSON (29 chars) — skipping",
+        );
+        expect(warn.mock.calls.flat().join(' ')).not.toContain(secret);
+        warn.mockRestore();
+    });
+
     it('RECOVERS a user whose stored preference is the JSON string "true"', () => {
         // The regression. The old query (`preference_value = 'true'`) returned
         // no row for user 7, so their price refresh silently stayed unscheduled
