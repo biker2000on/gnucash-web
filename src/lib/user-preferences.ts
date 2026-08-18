@@ -37,6 +37,17 @@ const CHART_PREF_KEYS: Record<keyof ChartDefaults, string> = {
 /**
  * Get a single preference value, parsed from JSON.
  * Returns the default if no preference is stored.
+ *
+ * A stored value that is not valid JSON also yields the default, but that is a
+ * DECISION, not an accident, so it is logged. Callers cannot tell "unset" from
+ * "corrupt" by the return value alone — the worker's price-refresh recovery,
+ * for one, turns both into the 21:00 default — and a row silently substituting
+ * a default for a value the user did set is exactly the kind of thing that is
+ * only ever noticed as "my setting keeps reverting". The log line is the only
+ * evidence the corruption happened.
+ *
+ * The raw value is not logged; preferences are user content. The row is
+ * identified by user + key + length, which is enough to inspect or repair it.
  */
 export async function getPreference<T>(
   userId: number,
@@ -53,6 +64,13 @@ export async function getPreference<T>(
   try {
     return JSON.parse(pref.preference_value) as T;
   } catch {
+    // The raw value is deliberately NOT logged (nor the parser's message,
+    // which quotes a prefix of it): preferences are user content, and
+    // user + key + length is enough to find and repair the row.
+    console.warn(
+      `[preferences] user ${userId}: stored value for '${key}' is not valid JSON ` +
+      `(${pref.preference_value.length} chars) — falling back to the default`,
+    );
     return defaultValue;
   }
 }
