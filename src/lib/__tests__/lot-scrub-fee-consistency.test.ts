@@ -1633,12 +1633,14 @@ describe('corrupt parent cycles close instead of spinning', () => {
  * 8949 build them with buildAccountPathMap (@/lib/reports/utils, reading the
  * global client). Two implementations, not one.
  *
- * So their agreement is BEHAVIORAL, not structural: nothing in the type system
- * makes a change to one show up in the other, and the last time they drifted —
- * a hop cap here, none there — the same sale was a $440 gain in the ledger and
- * a $500 gain on both reports. This test is the only thing holding them level,
- * which is why it asserts the PATHS are identical and not merely that the
- * money happened to match.
+ * This fixture pins the two independent walkers to the same 28-level path;
+ * nothing in the type system makes a change to one show up in the other. It
+ * does not claim general behavioral parity: the engine also stops at a guid
+ * named by books.root_account_guid, while the report stops only at ROOT, and
+ * the report throws on a corrupt parent cycle where the engine truncates.
+ * Here, the scoped report call is deliberate: both production consumers pass
+ * book-account guids, and its ancestor-resolution loop must recover every
+ * omitted ancestor before a fee path can be classified.
  */
 describe('engine and report derive the same account path', () => {
   it('agrees on a 28-level path, character for character', async () => {
@@ -1650,8 +1652,11 @@ describe('engine and report derive the same account path', () => {
       ['a-buy-cash', CASH, -1060, -1060],
     ]);
 
-    // The report's walker.
-    const reportPath = (await buildAccountPathMap()).get(DEEP_COMMISSIONS);
+    // Production passes a scoped book-account list. Start with only the fee
+    // account so the report's missing-ancestor loop must reconstruct all 28
+    // ancestors rather than getting them from an unscoped all-accounts query.
+    const bookAccountGuids = [DEEP_COMMISSIONS];
+    const reportPath = (await buildAccountPathMap(bookAccountGuids)).get(DEEP_COMMISSIONS);
     // The engine's real walker, through the same transaction client used by
     // autoAssignLots. This is deliberately not a test-local path model.
     const enginePath = (await buildFeeAccountPaths([

@@ -650,14 +650,19 @@ export async function buildFeeAccountPaths(
   // accounts is unusual bookkeeping, not corruption, and it must not be
   // silently mis-costed.
   //
-  // The lots report and Form 8949 build the SAME path for the same sale with
-  // their own walker, buildAccountPathMap (@/lib/reports/utils). Be precise
-  // about what that means: the two agree BEHAVIORALLY, not structurally.
-  // They are two independent implementations that happen to walk to the book
-  // root, and it was exactly such a divergence — a cap here, none there —
-  // that reported one sale as a $440 gain in the ledger and a $500 gain on
-  // both reports. Nothing in the type system keeps them in step; only
-  // 'produces the same path as the report builder' in the test suite does.
+  // The lots report and Form 8949 build paths with their own walker,
+  // buildAccountPathMap (@/lib/reports/utils). The scoped 28-level fixture
+  // pins that the two produce the same path for a normal book, but does NOT
+  // establish general behavioral parity. The engine treats a guid named by
+  // `books.root_account_guid` as a boundary even when its account_type is not
+  // ROOT; the report stops only at a ROOT-typed account. Standard GnuCash
+  // roots are ROOT, but this extra engine boundary exists because nonstandard
+  // or corrupt root metadata is considered reachable. In that case the report
+  // can retain one leading segment (including a deny word) that the engine
+  // drops. The report also has no cycle guard and throws on a corrupt parent
+  // cycle, where this walker truncates via `seen`. The fixture protects the
+  // historic cap divergence ($440 ledger gain versus $500 reports), not those
+  // known asymmetries.
   // They cannot simply be merged today: this walker must read through the
   // scrub's own transaction client, while buildAccountPathMap reads the
   // global prisma client and would not see uncommitted rows.
