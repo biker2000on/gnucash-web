@@ -71,9 +71,12 @@ function openingFixture(
     })),
   ];
   const monthlyRate = annualRate / 12;
-  const payment = openingAmount * monthlyRate * Math.pow(1 + monthlyRate, 360) /
+  const bookedOpening = openingAmount + credits
+    .filter(({ date = openingDate }) => date.getTime() === openingDate.getTime())
+    .reduce((sum, { amount }) => sum + amount, 0);
+  const payment = bookedOpening * monthlyRate * Math.pow(1 + monthlyRate, 360) /
     (Math.pow(1 + monthlyRate, 360) - 1);
-  let balance = openingAmount;
+  let balance = bookedOpening;
   for (let i = 0; i < 12; i++) {
     const interest = Math.round(balance * monthlyRate * 100);
     const principal = Math.round(payment * 100) - interest;
@@ -94,11 +97,11 @@ const BANK_GUID = 'bank-account-guid-0000000000';
 
 describe('MortgageService.detectOriginalAmount', () => {
   it.each([
-    ['$50 recording fee', 300_000, 50, 300_000, [], 'high'],
-    ['$5,000 points', 300_000, 5_000, 300_000, [absorbedWarning(5_000)], 'high'],
-    ['$1,200 escrow on $50,000', 50_000, 1_200, 50_000, [absorbedWarning(1_200)], 'high'],
-    ['duplicate $300,000 opening import', 300_000, 300_000, 300_000, ['Duplicate opening credit totaling $300,000 excluded from detected principal; verify imported opening balance', 'Original principal not determinable from ledger — estimated'], 'low'],
-  ])('applies day-one candidate discipline to %s', async (_label, opening, credit, expectedAmount, expectedWarnings, expectedConfidence) => {
+    ['$50 recording fee', 300_000, 50, 300_050, [], 'high'],
+    ['$5,000 points', 300_000, 5_000, 305_000, [], 'high'],
+    ['$1,200 escrow on $50,000', 50_000, 1_200, 51_200, [], 'high'],
+    ['duplicate $300,000 opening import', 300_000, 300_000, 600_000, ['Identical same-day opening credits found: $300,000 in 2 transactions were included in detected principal; if duplicated by an import, opening principal may be overstated'], 'high'],
+  ])('includes same-day opening credits and discloses ambiguity for %s', async (_label, opening, credit, expectedAmount, expectedWarnings, expectedConfidence) => {
     const splits = openingFixture(opening, [{ amount: credit, txGuid: 'day-one-candidate' }]);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (mockPrisma.splits.findMany as any).mockResolvedValue(splits);
@@ -140,13 +143,24 @@ describe('MortgageService.detectOriginalAmount', () => {
   it('aggregates repeated absorbed-credit warnings', async () => {
     const opening = makeSplit('opening', MORTGAGE_GUID, -300_000 * 100, 100, new Date('2020-01-15'));
     const splits = [opening, ...Array.from({ length: 360 }, (_, i) =>
-      makeSplit(`credit-${i}`, MORTGAGE_GUID, -2_000 * 100, 100, new Date(2021 + Math.floor(i / 12), i % 12, 15))
+      makeSplit('same-credit', MORTGAGE_GUID, -2_000 * 100, 100, new Date('2021-01-15'))
     )].map((split) => ({ ...split, transaction: { post_date: split.post_date } }));
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (mockPrisma.splits.findMany as any).mockResolvedValue(splits);
     const result = await MortgageService.detectMortgageDetails(MORTGAGE_GUID, INTEREST_GUID);
     expect(result.warnings).toContain('Liability credits totaling $720,000 across 360 occurrences were absorbed; detected principal excludes them and APR may be overstated');
     expect(result.warnings.filter((warning) => warning.includes('Liability credit'))).toHaveLength(1);
+  });
+
+  it('keeps equal-sized absorbed credits from separate transactions distinct', async () => {
+    const splits = openingFixture(300_000, [
+      { amount: 2_000, txGuid: 'legal-fee', date: new Date('2021-01-15') },
+      { amount: 2_000, txGuid: 'escrow-shortage', date: new Date('2021-02-15') },
+    ]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (mockPrisma.splits.findMany as any).mockResolvedValue(splits);
+    const result = await MortgageService.detectMortgageDetails(MORTGAGE_GUID, INTEREST_GUID);
+    expect(result.warnings.filter((warning) => warning.includes('Liability credit'))).toHaveLength(2);
   });
   it('T1: returns opening balance amount when present', () => {
     const openingDate = new Date('2020-01-15');
@@ -268,15 +282,15 @@ describe('MortgageService.detectOriginalAmount', () => {
   it('sums same-date opening credits as exact opening principal', async () => {
     const date = new Date('2020-01-15');
     const splits = [
-      makeSplit('opening', MORTGAGE_GUID, -100_000, 100, date),
-      makeSplit('opening', MORTGAGE_GUID, -80_000, 100, date),
+      makeSplit('opening-a', MORTGAGE_GUID, -100_000, 100, date),
+      makeSplit('opening-b', MORTGAGE_GUID, -80_000, 100, date),
       ...Array.from({ length: 12 }, (_, i) => [
         makeSplit(`payment-${i}`, MORTGAGE_GUID, 10_000, 100, new Date(2020, i + 1, 15)),
         makeSplit(`payment-${i}`, INTEREST_GUID, 5_000, 100, new Date(2020, i + 1, 15)),
       ]).flat(),
     ].map((split) => ({ ...split, transaction: { post_date: split.post_date } }));
 
-    // Both credits are part of one opening transaction, not later draws.
+    // Separate same-date opening transactions remain part of opening principal.
     expect(MortgageService.detectOriginalAmount(splits, MORTGAGE_GUID)).not.toBe(1_000);
     expect(MortgageService.detectOriginalAmount(splits, MORTGAGE_GUID)).toBe(1_800);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

@@ -65,36 +65,49 @@ interface OriginalAmountDetection {
 }
 
 // A candidate credit must satisfy both tests to be treated as another draw.
-// The $10,000 floor is a risk cap, not a fee-size claim: it bounds absorbed
-// principal below $10,000. It binds below a $500,000 opening balance; above
-// that, the 2% ratio is the controlling materiality policy.
+// The $10,000 floor is a per-credit risk cap, not a fee-size claim: it bounds
+// each absorbed candidate below $10,000, while aggregate absorption remains
+// unbounded and silent when each credit is below the 0.5% disclosure ratio.
+// It binds below a $500,000 opening balance; above that, the 2% ratio is the
+// controlling materiality policy.
 const SILENT_ABSORBED_CREDIT_RATIO = 0.005;
 const MATERIAL_ADDITIONAL_DRAW_RATIO = 0.02;
 const MATERIAL_ADDITIONAL_DRAW_FLOOR = 10_000;
 
-function absorbedCreditWarnings(credits: number[]): string[] {
-  const grouped = new Map<number, number>();
-  for (const credit of credits) grouped.set(credit, (grouped.get(credit) ?? 0) + 1);
+interface CreditOccurrence {
+  amount: number;
+  txGuid: string;
+  date: Date;
+}
 
-  return [...grouped.entries()].map(([credit, occurrences]) => {
-    const total = credit * occurrences;
-    const count = occurrences === 1 ? '' : ` across ${occurrences} occurrences`;
-    return `Liability credit${occurrences === 1 ? '' : 's'} totaling $${total.toLocaleString('en-US', {
-      maximumFractionDigits: 2,
-    })}${count} ${occurrences === 1 ? 'was' : 'were'} absorbed; detected principal excludes ${occurrences === 1 ? 'it' : 'them'} and APR may be overstated`;
+function formatCreditAmount(amount: number): string {
+  return amount.toLocaleString('en-US', {
+    minimumFractionDigits: Number.isInteger(amount) ? 0 : 2,
+    maximumFractionDigits: 2,
   });
 }
 
-function duplicateOpeningWarnings(credits: number[]): string[] {
+function absorbedCreditWarnings(credits: CreditOccurrence[]): string[] {
+  const grouped = new Map<string, { amount: number; occurrences: number }>();
+  for (const credit of credits) {
+    const key = `${credit.txGuid}:${credit.date.toISOString()}:${credit.amount}`;
+    const current = grouped.get(key);
+    grouped.set(key, { amount: credit.amount, occurrences: (current?.occurrences ?? 0) + 1 });
+  }
+
+  return [...grouped.values()].map(({ amount, occurrences }) => {
+    const total = amount * occurrences;
+    const count = occurrences === 1 ? '' : ` across ${occurrences} occurrences`;
+    return `Liability credit${occurrences === 1 ? '' : 's'} totaling $${formatCreditAmount(total)}${count} ${occurrences === 1 ? 'was' : 'were'} absorbed; detected principal excludes ${occurrences === 1 ? 'it' : 'them'} and APR may be overstated`;
+  });
+}
+
+function identicalOpeningWarnings(credits: number[]): string[] {
   const grouped = new Map<number, number>();
   for (const credit of credits) grouped.set(credit, (grouped.get(credit) ?? 0) + 1);
 
   return [...grouped.entries()].map(([credit, occurrences]) => {
-    const total = credit * occurrences;
-    const count = occurrences === 1 ? '' : ` across ${occurrences} occurrences`;
-    return `Duplicate opening credit${occurrences === 1 ? '' : 's'} totaling $${total.toLocaleString('en-US', {
-      maximumFractionDigits: 2,
-    })}${count} excluded from detected principal; verify imported opening balance`;
+    return `Identical same-day opening credits found: $${formatCreditAmount(credit)} in ${occurrences} transactions were included in detected principal; if duplicated by an import, opening principal may be overstated`;
   });
 }
 
@@ -223,10 +236,9 @@ export class MortgageService {
       (s) => s.post_date.getTime() === firstDate
     );
 
-    // Multiple credits in one opening transaction are a single accounting
-    // event and are summed exactly. Separate same-date transactions are not
-    // presumed to be opening principal: they use the same candidate policy as
-    // later credits, which prevents imported duplicates from doubling a loan.
+    // Every opening-date credit is included in principal. Separate equal-sized
+    // transactions are ambiguous (a split-recorded opening or duplicate import)
+    // and are disclosed, never excluded: ordinary books must not lose principal.
     const openingCreditByTransaction = new Map<string, number>();
     for (const split of openingSplits.filter((s) => s.value < 0)) {
       openingCreditByTransaction.set(
@@ -237,33 +249,28 @@ export class MortgageService {
     const openingCreditGroups = [...openingCreditByTransaction.entries()]
       .map(([txGuid, amount]) => ({ txGuid, amount }))
       .sort((a, b) => b.amount - a.amount);
-    const dominantOpening = openingCreditGroups[0];
-    const openingCreditTotal = dominantOpening?.amount ?? 0;
-    const dayOneCandidates = openingCreditGroups.slice(1).map((group) => group.amount);
+    const openingCreditTotal = openingCreditGroups.reduce((sum, group) => sum + group.amount, 0);
     const laterCredits = mortgageSplits
       .filter((s) => s.post_date.getTime() !== firstDate && s.value < 0)
-      .map((s) => Math.abs(s.value));
-    const duplicateOpeningCredits = dayOneCandidates.filter((credit) => credit === openingCreditTotal);
-    const nonDuplicateCandidates = [
-      ...dayOneCandidates.filter((credit) => credit !== openingCreditTotal),
-      ...laterCredits,
-    ];
-    const materialCredits = nonDuplicateCandidates.filter((credit) =>
-      credit >= MATERIAL_ADDITIONAL_DRAW_FLOOR &&
-      credit > openingCreditTotal * MATERIAL_ADDITIONAL_DRAW_RATIO
+      .map((s) => ({ amount: Math.abs(s.value), txGuid: s.tx_guid, date: s.post_date }));
+    const materialCredits = laterCredits.filter((credit) =>
+      credit.amount >= MATERIAL_ADDITIONAL_DRAW_FLOOR &&
+      credit.amount > openingCreditTotal * MATERIAL_ADDITIONAL_DRAW_RATIO
     );
-    const absorbedCredits = nonDuplicateCandidates.filter((credit) =>
+    const absorbedCredits = laterCredits.filter((credit) =>
       !materialCredits.includes(credit) &&
-      credit >= openingCreditTotal * SILENT_ABSORBED_CREDIT_RATIO
+      credit.amount >= openingCreditTotal * SILENT_ABSORBED_CREDIT_RATIO
     );
+    const equalOpeningCredits = openingCreditGroups
+      .filter((group, _index, groups) => groups.filter((other) => other.amount === group.amount).length > 1)
+      .map((group) => group.amount);
     const detectionWarnings = [
       ...absorbedCreditWarnings(absorbedCredits),
-      ...duplicateOpeningWarnings(duplicateOpeningCredits),
+      ...identicalOpeningWarnings(equalOpeningCredits),
     ];
-
-    if (openingCreditTotal > 0 && (materialCredits.length > 0 || duplicateOpeningCredits.length > 0)) {
+    if (openingCreditTotal > 0 && materialCredits.length > 0) {
       return {
-        amount: openingCreditTotal + materialCredits.reduce((sum, credit) => sum + credit, 0),
+        amount: openingCreditTotal + materialCredits.reduce((sum, credit) => sum + credit.amount, 0),
         estimated: true,
         warnings: detectionWarnings,
       };

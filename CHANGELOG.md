@@ -13,17 +13,19 @@ Covers work landed since 0.23.2.0 (2026-07-29).
   previously reported a $50,000 original amount, 7.06% rate, and high
   confidence. It now reports $130,000, 2.45%, and low confidence with an
   explanation, preventing the first draw from being treated as the whole loan.
-  The dominant opening transaction establishes principal; separate same-day
-  credits use the same checks as later credits, so duplicate imports do not
-  silently double a loan. Credits are assessed individually against opening
-  principal, so recurring small servicing charges do not accumulate into a
-  draw. A credit must exceed 2% *and* be at least $10,000 before it increases
-  principal and marks the result estimated. Any absorbed credit at least 0.5%
-  of opening principal is disclosed, without lowering confidence; the $10,000
-  floor applies only to materiality. A genuine second draw below $10,000 can
-  therefore remain absorbed (for example, an $8,000 draw on a $50,000 HELOC),
-  but is disclosed because its reported APR may be overstated. The displayed
-  principal, APR, and confidence can change for HELOC and small-loan users.
+  All same-day opening credits are included in principal, including ordinary
+  split-recorded openings and closing costs. Identical same-day opening credits
+  in separate transactions are also included, but produce a warning because
+  they may be a duplicated import and can overstate principal. Later credits
+  are assessed individually against opening principal, so recurring small
+  servicing charges do not accumulate into a draw. A credit must exceed 2%
+  *and* be at least $10,000 before it increases principal and marks the result
+  estimated. Any absorbed credit at least 0.5% of opening principal is
+  disclosed, without lowering confidence; the $10,000 floor applies only to
+  materiality. A genuine second draw below $10,000 can therefore remain
+  absorbed (for example, an $8,000 draw on a $50,000 HELOC), but is disclosed
+  because its reported APR may be overstated. The displayed principal, APR,
+  and confidence can change for HELOC and small-loan users.
 
 - **Unposting an invoice or bill now records a reversing transaction instead of
   deleting the original posting.** The ledger keeps both entries — the original
