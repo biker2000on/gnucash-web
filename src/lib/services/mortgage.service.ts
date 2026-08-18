@@ -57,6 +57,16 @@ interface OriginalAmountDetection {
   warnings?: string[];
 }
 
+// Additional liability credits are judged against the largest observed credit,
+// which is normally the opening balance. The largest benign fixture is a
+// $2,500 prepaid-escrow credit on a $300,000 mortgage (0.833%). Keeping the
+// silent floor below that shape avoids warning for ordinary servicing noise;
+// 0.5% is also large enough to exclude a $50 fee on a $200,000 mortgage
+// (0.025%). The 2% draw threshold leaves 2.4x headroom above that 0.833%
+// fixture before changing principal and confidence.
+const SILENT_ABSORBED_CREDIT_RATIO = 0.005;
+const MATERIAL_ADDITIONAL_DRAW_RATIO = 0.02;
+
 /**
  * Service class for mortgage detection and analysis
  */
@@ -185,23 +195,22 @@ export class MortgageService {
     // Material additional credits indicate more than one draw against this
     // liability. Small later credits are commonly fees, escrow adjustments, or
     // prepaid escrow and must not override a clearly dominant opening balance.
-    // Two percent leaves more than twice the headroom of the largest known
-    // benign adjustment (0.833%), while still treating T2b's 6.25% draw as
-    // uncertain. Credits of at least one percent but below this threshold are
-    // disclosed without lowering confidence.
+    // The constants above are derived from the benign servicing fixtures, not
+    // from the HELOC fixture: sub-0.5% credits are silent; 0.5%-2% credits
+    // remain absorbed but are disclosed; credits above 2% are additional draws.
     const creditSplits = mortgageSplits.filter((s) => s.value < 0);
     let absorbedCreditWarnings: string[] | undefined;
     if (creditSplits.length > 1) {
       const creditAmounts = creditSplits.map((s) => Math.abs(s.value));
       const largestCredit = Math.max(...creditAmounts);
       const otherCredits = creditAmounts.reduce((sum, amount) => sum + amount, 0) - largestCredit;
-      if (otherCredits > largestCredit * 0.02) {
+      if (otherCredits > largestCredit * MATERIAL_ADDITIONAL_DRAW_RATIO) {
         return {
           amount: largestCredit + otherCredits,
           estimated: true,
         };
       }
-      if (otherCredits >= largestCredit * 0.01) {
+      if (otherCredits >= largestCredit * SILENT_ABSORBED_CREDIT_RATIO) {
         absorbedCreditWarnings = [
           `Secondary liability credits of $${otherCredits.toLocaleString('en-US', {
             maximumFractionDigits: 2,
