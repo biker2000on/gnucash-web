@@ -144,10 +144,17 @@ describeWithDefaultDocker('Prisma deadlock oracle against a disposable PostgreSQ
         const first = firstPrisma.$transaction(async tx => {
             const rows = await tx.$queryRawUnsafe<Array<{ pid: number }>>('SELECT pg_backend_pid() AS pid');
             firstPid = rows[0]!.pid;
-            await tx.$queryRawUnsafe('SELECT pg_advisory_xact_lock(71001)');
+            // The adapter cannot decode PostgreSQL's `void` result directly.
+            // The subquery still takes the real lock, while the outer query
+            // exposes a normal boolean column to Prisma.
+            await tx.$queryRawUnsafe(
+                'SELECT true AS locked FROM (SELECT pg_advisory_xact_lock(71001)) AS acquired',
+            );
             firstHasLock();
             await letFirstRequestSecondPromise;
-            await tx.$queryRawUnsafe('SELECT pg_advisory_xact_lock(71002)');
+            await tx.$queryRawUnsafe(
+                'SELECT true AS locked FROM (SELECT pg_advisory_xact_lock(71002)) AS acquired',
+            );
         }, { timeout: 15_000, maxWait: 5_000 });
         first.catch(() => undefined);
         await firstHasLockPromise;
@@ -155,9 +162,13 @@ describeWithDefaultDocker('Prisma deadlock oracle against a disposable PostgreSQ
         const second = secondPrisma.$transaction(async tx => {
             const rows = await tx.$queryRawUnsafe<Array<{ pid: number }>>('SELECT pg_backend_pid() AS pid');
             secondPid = rows[0]!.pid;
-            await tx.$queryRawUnsafe('SELECT pg_advisory_xact_lock(71002)');
+            await tx.$queryRawUnsafe(
+                'SELECT true AS locked FROM (SELECT pg_advisory_xact_lock(71002)) AS acquired',
+            );
             secondHasLock();
-            await tx.$queryRawUnsafe('SELECT pg_advisory_xact_lock(71001)');
+            await tx.$queryRawUnsafe(
+                'SELECT true AS locked FROM (SELECT pg_advisory_xact_lock(71001)) AS acquired',
+            );
         }, { timeout: 15_000, maxWait: 5_000 });
         second.catch(() => undefined);
         await secondHasLockPromise;
