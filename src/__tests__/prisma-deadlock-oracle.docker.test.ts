@@ -43,7 +43,7 @@ async function docker(...args: string[]): Promise<string> {
 
 async function waitForDatabase(url: string): Promise<void> {
     let lastError: unknown;
-    for (let attempt = 0; attempt < 40; attempt += 1) {
+    for (let attempt = 0; attempt < 120; attempt += 1) {
         const pool = new Pool({ connectionString: url, max: 1 });
         try {
             await pool.query('SELECT 1');
