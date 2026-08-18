@@ -64,13 +64,39 @@ interface OriginalAmountDetection {
   warnings?: string[];
 }
 
-// A later credit must satisfy both tests to be treated as another draw. The
-// $10,000 floor is twice the largest documented ordinary point charge ($5,000)
-// and exceeds the known escrow/modification shapes ($1,200-$2,500); it keeps
-// those normal charges from changing a small loan's detected principal.
+// A candidate credit must satisfy both tests to be treated as another draw.
+// The $10,000 floor is a risk cap, not a fee-size claim: it bounds absorbed
+// principal below $10,000. It binds below a $500,000 opening balance; above
+// that, the 2% ratio is the controlling materiality policy.
 const SILENT_ABSORBED_CREDIT_RATIO = 0.005;
 const MATERIAL_ADDITIONAL_DRAW_RATIO = 0.02;
 const MATERIAL_ADDITIONAL_DRAW_FLOOR = 10_000;
+
+function absorbedCreditWarnings(credits: number[]): string[] {
+  const grouped = new Map<number, number>();
+  for (const credit of credits) grouped.set(credit, (grouped.get(credit) ?? 0) + 1);
+
+  return [...grouped.entries()].map(([credit, occurrences]) => {
+    const total = credit * occurrences;
+    const count = occurrences === 1 ? '' : ` across ${occurrences} occurrences`;
+    return `Liability credit${occurrences === 1 ? '' : 's'} totaling $${total.toLocaleString('en-US', {
+      maximumFractionDigits: 2,
+    })}${count} ${occurrences === 1 ? 'was' : 'were'} absorbed; detected principal excludes ${occurrences === 1 ? 'it' : 'them'} and APR may be overstated`;
+  });
+}
+
+function duplicateOpeningWarnings(credits: number[]): string[] {
+  const grouped = new Map<number, number>();
+  for (const credit of credits) grouped.set(credit, (grouped.get(credit) ?? 0) + 1);
+
+  return [...grouped.entries()].map(([credit, occurrences]) => {
+    const total = credit * occurrences;
+    const count = occurrences === 1 ? '' : ` across ${occurrences} occurrences`;
+    return `Duplicate opening credit${occurrences === 1 ? '' : 's'} totaling $${total.toLocaleString('en-US', {
+      maximumFractionDigits: 2,
+    })}${count} excluded from detected principal; verify imported opening balance`;
+  });
+}
 
 /**
  * Service class for mortgage detection and analysis
@@ -197,44 +223,51 @@ export class MortgageService {
       (s) => s.post_date.getTime() === firstDate
     );
 
-    // All credits on the opening date make up the booked opening principal.
-    // They are exact opening entries (for example principal plus capitalized
-    // closing costs), not later draws or an estimate.
-    const openingCreditTotal = openingSplits
-      .filter((s) => s.value < 0)
-      .reduce((sum, s) => sum + Math.abs(s.value), 0);
+    // Multiple credits in one opening transaction are a single accounting
+    // event and are summed exactly. Separate same-date transactions are not
+    // presumed to be opening principal: they use the same candidate policy as
+    // later credits, which prevents imported duplicates from doubling a loan.
+    const openingCreditByTransaction = new Map<string, number>();
+    for (const split of openingSplits.filter((s) => s.value < 0)) {
+      openingCreditByTransaction.set(
+        split.tx_guid,
+        (openingCreditByTransaction.get(split.tx_guid) ?? 0) + Math.abs(split.value)
+      );
+    }
+    const openingCreditGroups = [...openingCreditByTransaction.entries()]
+      .map(([txGuid, amount]) => ({ txGuid, amount }))
+      .sort((a, b) => b.amount - a.amount);
+    const dominantOpening = openingCreditGroups[0];
+    const openingCreditTotal = dominantOpening?.amount ?? 0;
+    const dayOneCandidates = openingCreditGroups.slice(1).map((group) => group.amount);
     const laterCredits = mortgageSplits
       .filter((s) => s.post_date.getTime() !== firstDate && s.value < 0)
       .map((s) => Math.abs(s.value));
-
-    // Assess every later credit independently. A long, well-maintained ledger
-    // of small servicing charges must never add up into a phantom draw.
-    const materialLaterCredits = laterCredits.filter((credit) =>
+    const duplicateOpeningCredits = dayOneCandidates.filter((credit) => credit === openingCreditTotal);
+    const nonDuplicateCandidates = [
+      ...dayOneCandidates.filter((credit) => credit !== openingCreditTotal),
+      ...laterCredits,
+    ];
+    const materialCredits = nonDuplicateCandidates.filter((credit) =>
       credit >= MATERIAL_ADDITIONAL_DRAW_FLOOR &&
       credit > openingCreditTotal * MATERIAL_ADDITIONAL_DRAW_RATIO
     );
-    if (openingCreditTotal > 0 && materialLaterCredits.length > 0) {
+    const absorbedCredits = nonDuplicateCandidates.filter((credit) =>
+      !materialCredits.includes(credit) &&
+      credit >= openingCreditTotal * SILENT_ABSORBED_CREDIT_RATIO
+    );
+    const detectionWarnings = [
+      ...absorbedCreditWarnings(absorbedCredits),
+      ...duplicateOpeningWarnings(duplicateOpeningCredits),
+    ];
+
+    if (openingCreditTotal > 0 && (materialCredits.length > 0 || duplicateOpeningCredits.length > 0)) {
       return {
-        amount: openingCreditTotal + materialLaterCredits.reduce((sum, credit) => sum + credit, 0),
+        amount: openingCreditTotal + materialCredits.reduce((sum, credit) => sum + credit, 0),
         estimated: true,
+        warnings: detectionWarnings,
       };
     }
-
-    // Disclosure is intentionally broader than materiality: a later credit
-    // that is at least 0.5% of opening principal is useful context even when
-    // it is too small to classify as a draw. The absolute floor protects only
-    // the principal/confidence decision, never this neutral warning.
-    const absorbedCreditWarnings = openingCreditTotal > 0
-      ? laterCredits
-        .filter((credit) =>
-          credit >= openingCreditTotal * SILENT_ABSORBED_CREDIT_RATIO
-        )
-        .map((credit) =>
-          `Secondary liability credit of $${credit.toLocaleString('en-US', {
-            maximumFractionDigits: 2,
-          })} absorbed into the opening balance`
-        )
-      : [];
 
     // Find the largest absolute value on the first date
     let maxAbsValue = 0;
@@ -258,14 +291,14 @@ export class MortgageService {
 
         // If opening is at least 3x the average subsequent payment, use it
         if (maxAbsValue > avgSubsequent * 3) {
-          return { amount: openingCreditTotal || maxAbsValue, estimated: false, warnings: absorbedCreditWarnings };
+          return { amount: openingCreditTotal || maxAbsValue, estimated: false, warnings: detectionWarnings };
         }
       } else {
         // Only one date of transactions, return the max
-        return { amount: openingCreditTotal || maxAbsValue, estimated: false, warnings: absorbedCreditWarnings };
+        return { amount: openingCreditTotal || maxAbsValue, estimated: false, warnings: detectionWarnings };
       }
     } else {
-      return { amount: openingCreditTotal || maxAbsValue, estimated: false, warnings: absorbedCreditWarnings };
+      return { amount: openingCreditTotal || maxAbsValue, estimated: false, warnings: detectionWarnings };
     }
 
     // At the 3x boundary, a first-date credit only identifies opening principal
@@ -276,7 +309,7 @@ export class MortgageService {
       .filter((s) => s.post_date.getTime() !== firstDate)
       .reduce((sum, s) => sum + Math.abs(s.value), 0);
     if (openingCredit > 0 && openingCredit >= subsequentPrincipal) {
-      return { amount: openingCredit, estimated: false, warnings: absorbedCreditWarnings };
+      return { amount: openingCredit, estimated: false, warnings: detectionWarnings };
     }
 
     // No opening credit is available, so retain the existing best-effort

@@ -44,12 +44,110 @@ function makeSplit(
   };
 }
 
+function absorbedWarning(amount: number) {
+  return `Liability credit totaling $${amount.toLocaleString('en-US')} was absorbed; detected principal excludes it and APR may be overstated`;
+}
+
+function openingFixture(
+  openingAmount: number,
+  credits: Array<{ amount: number; txGuid: string; date?: Date }> = [],
+  annualRate = 0.06,
+) {
+  const openingDate = new Date('2020-01-15');
+  const splits: Array<{
+    tx_guid: string;
+    account_guid: string;
+    value_num: bigint;
+    value_denom: bigint;
+    transaction: { post_date: Date };
+  }> = [
+    { tx_guid: 'opening', account_guid: MORTGAGE_GUID, value_num: BigInt(-openingAmount * 100), value_denom: BigInt(100), transaction: { post_date: openingDate } },
+    ...credits.map(({ amount, txGuid, date = openingDate }) => ({
+      tx_guid: txGuid,
+      account_guid: MORTGAGE_GUID,
+      value_num: BigInt(-amount * 100),
+      value_denom: BigInt(100),
+      transaction: { post_date: date },
+    })),
+  ];
+  const monthlyRate = annualRate / 12;
+  const payment = openingAmount * monthlyRate * Math.pow(1 + monthlyRate, 360) /
+    (Math.pow(1 + monthlyRate, 360) - 1);
+  let balance = openingAmount;
+  for (let i = 0; i < 12; i++) {
+    const interest = Math.round(balance * monthlyRate * 100);
+    const principal = Math.round(payment * 100) - interest;
+    balance -= principal / 100;
+    const date = new Date(2021, i + 1, 15);
+    splits.push(
+      { tx_guid: `pay-${i}`, account_guid: MORTGAGE_GUID, value_num: BigInt(principal), value_denom: BigInt(100), transaction: { post_date: date } },
+      { tx_guid: `pay-${i}`, account_guid: INTEREST_GUID, value_num: BigInt(interest), value_denom: BigInt(100), transaction: { post_date: date } },
+    );
+  }
+  return splits;
+}
+
 const MORTGAGE_GUID = 'mortgage-account-guid-00000000';
 const INTEREST_GUID = 'interest-account-guid-00000000';
 const ESCROW_GUID = 'escrow-account-guid-000000000';
 const BANK_GUID = 'bank-account-guid-0000000000';
 
 describe('MortgageService.detectOriginalAmount', () => {
+  it.each([
+    ['$50 recording fee', 300_000, 50, 300_000, [], 'high'],
+    ['$5,000 points', 300_000, 5_000, 300_000, [absorbedWarning(5_000)], 'high'],
+    ['$1,200 escrow on $50,000', 50_000, 1_200, 50_000, [absorbedWarning(1_200)], 'high'],
+    ['duplicate $300,000 opening import', 300_000, 300_000, 300_000, ['Duplicate opening credit totaling $300,000 excluded from detected principal; verify imported opening balance', 'Original principal not determinable from ledger — estimated'], 'low'],
+  ])('applies day-one candidate discipline to %s', async (_label, opening, credit, expectedAmount, expectedWarnings, expectedConfidence) => {
+    const splits = openingFixture(opening, [{ amount: credit, txGuid: 'day-one-candidate' }]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (mockPrisma.splits.findMany as any).mockResolvedValue(splits);
+
+    const result = await MortgageService.detectMortgageDetails(MORTGAGE_GUID, INTEREST_GUID);
+    expect(result.originalAmount).toBe(expectedAmount);
+    expect(result.interestRate).toBeCloseTo(6, 3);
+    expect(result.confidence).toBe(expectedConfidence);
+    expect(result.warnings).toEqual(expectedWarnings);
+  });
+
+  it.each([
+    ['keeps an exactly 2% credit absorbed', 600_000, 12_000, 600_000],
+    ['treats an exactly $10,000 credit as material', 200_000, 10_000, 210_000],
+    ['keeps a 1.5% credit on a $1m loan absorbed', 1_000_000, 15_000, 1_000_000],
+    ['treats a 2.5% credit on a $1m loan as material', 1_000_000, 25_000, 1_025_000],
+  ])('%s', (_label, opening, credit, expectedAmount) => {
+    const splits = [
+      makeSplit('opening', MORTGAGE_GUID, -opening * 100, 100, new Date('2020-01-15')),
+      makeSplit('candidate', MORTGAGE_GUID, -credit * 100, 100, new Date('2021-01-15')),
+    ];
+    expect(MortgageService.detectOriginalAmount(splits, MORTGAGE_GUID)).toBe(expectedAmount);
+  });
+
+  it('retains absorbed disclosures when another candidate is material', async () => {
+    const splits = openingFixture(200_000, [
+      { amount: 12_000, txGuid: 'draw', date: new Date('2021-01-15') },
+      { amount: 3_000, txGuid: 'escrow', date: new Date('2021-02-15') },
+    ]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (mockPrisma.splits.findMany as any).mockResolvedValue(splits);
+    const result = await MortgageService.detectMortgageDetails(MORTGAGE_GUID, INTEREST_GUID);
+    expect(result.originalAmount).toBe(212_000);
+    expect(result.confidence).toBe('low');
+    expect(result.warnings).toContain(absorbedWarning(3_000));
+    expect(result.warnings).toContain('Original principal not determinable from ledger — estimated');
+  });
+
+  it('aggregates repeated absorbed-credit warnings', async () => {
+    const opening = makeSplit('opening', MORTGAGE_GUID, -300_000 * 100, 100, new Date('2020-01-15'));
+    const splits = [opening, ...Array.from({ length: 360 }, (_, i) =>
+      makeSplit(`credit-${i}`, MORTGAGE_GUID, -2_000 * 100, 100, new Date(2021 + Math.floor(i / 12), i % 12, 15))
+    )].map((split) => ({ ...split, transaction: { post_date: split.post_date } }));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (mockPrisma.splits.findMany as any).mockResolvedValue(splits);
+    const result = await MortgageService.detectMortgageDetails(MORTGAGE_GUID, INTEREST_GUID);
+    expect(result.warnings).toContain('Liability credits totaling $720,000 across 360 occurrences were absorbed; detected principal excludes them and APR may be overstated');
+    expect(result.warnings.filter((warning) => warning.includes('Liability credit'))).toHaveLength(1);
+  });
   it('T1: returns opening balance amount when present', () => {
     const openingDate = new Date('2020-01-15');
     const paymentDate = new Date('2020-02-15');
@@ -170,15 +268,15 @@ describe('MortgageService.detectOriginalAmount', () => {
   it('sums same-date opening credits as exact opening principal', async () => {
     const date = new Date('2020-01-15');
     const splits = [
-      makeSplit('opening-a', MORTGAGE_GUID, -100_000, 100, date),
-      makeSplit('opening-b', MORTGAGE_GUID, -80_000, 100, date),
+      makeSplit('opening', MORTGAGE_GUID, -100_000, 100, date),
+      makeSplit('opening', MORTGAGE_GUID, -80_000, 100, date),
       ...Array.from({ length: 12 }, (_, i) => [
         makeSplit(`payment-${i}`, MORTGAGE_GUID, 10_000, 100, new Date(2020, i + 1, 15)),
         makeSplit(`payment-${i}`, INTEREST_GUID, 5_000, 100, new Date(2020, i + 1, 15)),
       ]).flat(),
     ].map((split) => ({ ...split, transaction: { post_date: split.post_date } }));
 
-    // Both same-date credits are booked opening principal, not later draws.
+    // Both credits are part of one opening transaction, not later draws.
     expect(MortgageService.detectOriginalAmount(splits, MORTGAGE_GUID)).not.toBe(1_000);
     expect(MortgageService.detectOriginalAmount(splits, MORTGAGE_GUID)).toBe(1_800);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -384,14 +482,14 @@ describe('MortgageService.detectMortgageDetails', () => {
   it.each([
     ['a $50 servicer fee', 200_000, 50, []],
     ['a $1,200 capitalized escrow shortage', 300_000, 1_200, []],
-    ['a $2,500 prepaid-escrow credit', 300_000, 2_500, ['Secondary liability credit of $2,500 absorbed into the opening balance']],
-    ['a $1,200 capitalized escrow shortage on a $50,000 loan', 50_000, 1_200, ['Secondary liability credit of $1,200 absorbed into the opening balance']],
-    ['a $500 document fee on a $25,000 loan', 25_000, 500, ['Secondary liability credit of $500 absorbed into the opening balance']],
-    ['a $400 family-loan fee on a $15,000 loan', 15_000, 400, ['Secondary liability credit of $400 absorbed into the opening balance']],
-    ['a $2,200 capitalized modification on a $100,000 loan', 100_000, 2_200, ['Secondary liability credit of $2,200 absorbed into the opening balance']],
-    ['a $2,500 escrow credit on a $125,000 loan', 125_000, 2_500, ['Secondary liability credit of $2,500 absorbed into the opening balance']],
-    ['a $5,000 two-point charge on a $250,000 loan', 250_000, 5_000, ['Secondary liability credit of $5,000 absorbed into the opening balance']],
-    ['a $1,500 escrow credit on a $75,000 loan', 75_000, 1_500, ['Secondary liability credit of $1,500 absorbed into the opening balance']],
+    ['a $2,500 prepaid-escrow credit', 300_000, 2_500, [absorbedWarning(2_500)]],
+    ['a $1,200 capitalized escrow shortage on a $50,000 loan', 50_000, 1_200, [absorbedWarning(1_200)]],
+    ['a $500 document fee on a $25,000 loan', 25_000, 500, [absorbedWarning(500)]],
+    ['a $400 family-loan fee on a $15,000 loan', 15_000, 400, [absorbedWarning(400)]],
+    ['a $2,200 capitalized modification on a $100,000 loan', 100_000, 2_200, [absorbedWarning(2_200)]],
+    ['a $2,500 escrow credit on a $125,000 loan', 125_000, 2_500, [absorbedWarning(2_500)]],
+    ['a $5,000 two-point charge on a $250,000 loan', 250_000, 5_000, [absorbedWarning(5_000)]],
+    ['a $1,500 escrow credit on a $75,000 loan', 75_000, 1_500, [absorbedWarning(1_500)]],
   ])('retains high confidence after %s', async (_label, openingAmount, laterCredit, expectedWarnings) => {
     const splits: Array<{
       tx_guid: string;
@@ -461,7 +559,7 @@ describe('MortgageService.detectMortgageDetails', () => {
     expect(result).toMatchObject({
       originalAmount: 50_000,
       confidence: 'high',
-      warnings: ['Secondary liability credit of $1,200 absorbed into the opening balance'],
+      warnings: [absorbedWarning(1_200)],
     });
     expect(result.interestRate).toBeCloseTo(6, 3);
   });
@@ -499,7 +597,7 @@ describe('MortgageService.detectMortgageDetails', () => {
     const result = await MortgageService.detectMortgageDetails(MORTGAGE_GUID, INTEREST_GUID);
     expect(result.originalAmount).toBe(50_000);
     expect(result.confidence).toBe('high');
-    expect(result.warnings).toContain('Secondary liability credit of $8,000 absorbed into the opening balance');
+    expect(result.warnings).toContain(absorbedWarning(8_000));
   });
 
   it('discloses a credit exactly at the silent/disclose ratio boundary', async () => {
@@ -534,11 +632,11 @@ describe('MortgageService.detectMortgageDetails', () => {
     const result = await MortgageService.detectMortgageDetails(MORTGAGE_GUID, INTEREST_GUID);
     expect(result.originalAmount).toBe(openingAmount);
     expect(result.confidence).toBe('high');
-    expect(result.warnings).toEqual(['Secondary liability credit of $10,000 absorbed into the opening balance']);
+    expect(result.warnings).toEqual([absorbedWarning(10_000)]);
   });
 
   it.each([
-    [4_000, 300_000, 4.5605, 'high', ['Secondary liability credit of $4,000 absorbed into the opening balance']],
+    [4_000, 300_000, 4.5605, 'high', [absorbedWarning(4_000)]],
     [14_000, 314_000, 4.5, 'low', ['Original principal not determinable from ledger — estimated']],
     [15_000, 315_000, 4.5, 'low', ['Original principal not determinable from ledger — estimated']],
   ])('reports an accruing $%d later advance without silently hiding it', async (
