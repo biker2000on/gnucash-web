@@ -76,6 +76,53 @@ describe('MortgageService.detectOriginalAmount', () => {
     // Sum: 500 + 510 + 490 = 1500
     expect(result).toBe(1500);
   });
+
+  it('T2a: fallback preserves an opening liability credit instead of double-counting later paydowns', () => {
+    const splits = [
+      // The opening amount is exactly 3x the average paydown, so the original
+      // strict `> 3x` heuristic falls through to the fallback.
+      makeSplit('tx-open', MORTGAGE_GUID, -150000, 100, new Date('2020-01-15')),
+      makeSplit('tx-pay1', MORTGAGE_GUID, 50000, 100, new Date('2020-02-15')),
+      makeSplit('tx-pay2', MORTGAGE_GUID, 50000, 100, new Date('2020-03-15')),
+      makeSplit('tx-pay3', MORTGAGE_GUID, 50000, 100, new Date('2020-04-15')),
+    ];
+
+    // Before the fix, the fallback sums $1,500 + $500 + $500 + $500 = $3,000.
+    expect(MortgageService.detectOriginalAmount(splits, MORTGAGE_GUID)).toBe(1500);
+  });
+
+  it('T2b: does not mistake a small first HELOC draw for the original principal', () => {
+    const splits = [
+      makeSplit('draw-1', MORTGAGE_GUID, -500000, 100, new Date('2020-01-15')),
+      makeSplit('draw-2', MORTGAGE_GUID, -8000000, 100, new Date('2022-06-15')),
+      ...Array.from({ length: 30 }, (_, i) => makeSplit(
+        `pay-${i}`, MORTGAGE_GUID, 50000, 100, new Date(2022, 6 + i, 15),
+      )),
+    ];
+
+    expect(MortgageService.detectOriginalAmount(splits, MORTGAGE_GUID)).toBe(100000);
+  });
+
+  it('T2c: does not mistake a small first credit for an opening balance', () => {
+    const splits = [
+      makeSplit('fee', MORTGAGE_GUID, -5000, 100, new Date('2020-01-01')),
+      makeSplit('pay-1', MORTGAGE_GUID, 50000, 100, new Date('2020-02-01')),
+      makeSplit('pay-2', MORTGAGE_GUID, 50000, 100, new Date('2020-03-01')),
+      makeSplit('pay-3', MORTGAGE_GUID, 50000, 100, new Date('2020-04-01')),
+    ];
+
+    expect(MortgageService.detectOriginalAmount(splits, MORTGAGE_GUID)).toBe(1550);
+  });
+
+  it('T2d: preserves a balance-forward import when it dominates later paydowns', () => {
+    const splits = [
+      makeSplit('import', MORTGAGE_GUID, -12000000, 100, new Date('2020-01-01')),
+      makeSplit('pay-1', MORTGAGE_GUID, 50000, 100, new Date('2020-02-01')),
+      makeSplit('pay-2', MORTGAGE_GUID, 50000, 100, new Date('2020-03-01')),
+    ];
+
+    expect(MortgageService.detectOriginalAmount(splits, MORTGAGE_GUID)).toBe(120000);
+  });
 });
 
 describe('MortgageService.detectInterestRate', () => {
@@ -255,6 +302,30 @@ describe('MortgageService.separateSplits', () => {
 });
 
 describe('MortgageService.detectMortgageDetails', () => {
+  it('marks a principal-sum fallback as estimated and low confidence', async () => {
+    const splits: Array<{
+      tx_guid: string;
+      account_guid: string;
+      value_num: bigint;
+      value_denom: bigint;
+      transaction: { post_date: Date };
+    }> = [];
+    for (let i = 0; i < 12; i++) {
+      const date = new Date(2020, i, 15);
+      splits.push(
+        { tx_guid: `pay-${i}`, account_guid: MORTGAGE_GUID, value_num: BigInt(50000), value_denom: BigInt(100), transaction: { post_date: date } },
+        { tx_guid: `pay-${i}`, account_guid: INTEREST_GUID, value_num: BigInt(10000), value_denom: BigInt(100), transaction: { post_date: date } },
+      );
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (mockPrisma.splits.findMany as any).mockResolvedValue(splits);
+
+    const result = await MortgageService.detectMortgageDetails(MORTGAGE_GUID, INTEREST_GUID);
+
+    expect(result.confidence).toBe('low');
+    expect(result.warnings).toContain('Original principal not determinable from ledger — estimated');
+  });
+
   it('T10: full pipeline returns complete mortgage details', async () => {
     const openingDate = new Date('2020-01-01');
     const splits: Array<{

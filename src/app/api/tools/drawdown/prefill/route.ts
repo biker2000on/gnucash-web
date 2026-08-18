@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
 import { getBookAccountGuids } from '@/lib/book-scope';
 import { getPreference } from '@/lib/user-preferences';
+import { calculateCalendarAge } from '@/lib/age';
 import prisma from '@/lib/prisma';
 import { expandMappingsToDescendants } from '@/lib/tax/book-income';
 import { isTaxCategory, type TaxCategory } from '@/lib/tax/types';
@@ -36,6 +37,12 @@ const TAXABLE_TYPES = new Set(['brokerage']);
 const BROKERAGE_PATH_PATTERN = /brokerage|invest/i;
 const EARNINGS_CATEGORIES: ReadonlySet<TaxCategory> = new Set(['w2_wages', 'self_employment_income']);
 const EARNINGS_NAME_PATTERN = /salary|wages|paycheck|payroll/i;
+
+/** Current age used to anchor drawdown projections, or null when unsuitable. */
+export function drawdownAgeFromBirthday(birthday: string | null | undefined, asOf = new Date()): number | null {
+    const age = calculateCalendarAge(birthday, asOf, 'utc');
+    return age !== null && age > 0 && age < 120 ? age : null;
+}
 
 interface AccountRow {
     guid: string;
@@ -292,11 +299,7 @@ export async function GET() {
         /* --- Birthday-derived current age --- */
         let currentAge: number | null = null;
         if (birthday) {
-            const ageYears = Math.floor(
-                (Date.now() - new Date(birthday + 'T00:00:00').getTime()) /
-                (365.25 * 24 * 60 * 60 * 1000),
-            );
-            if (ageYears > 0 && ageYears < 120) currentAge = ageYears;
+            currentAge = drawdownAgeFromBirthday(birthday);
         }
 
         return NextResponse.json({

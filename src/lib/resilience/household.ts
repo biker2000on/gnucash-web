@@ -27,6 +27,7 @@ import type {
   RetirementIncomeProfile,
   RetirementPerson,
 } from './types';
+import { calculateCalendarAge } from '@/lib/age';
 
 /** Household roles, in the order they are seeded and displayed. */
 export const HOUSEHOLD_ROLES: HouseholdRole[] = ['self', 'spouse', 'dependent'];
@@ -169,10 +170,11 @@ export function ageFromBirthday(birthday: string | null | undefined, asOf = new 
   if (!Number.isInteger(month) || month < 1 || month > 12 || !Number.isInteger(day) || day < 1 || day > 31) {
     return null;
   }
-  const years = asOf.getUTCFullYear() - Number(birthday!.slice(0, 4));
-  const hadBirthdayThisYear = asOf.getUTCMonth() + 1 > month
-    || (asOf.getUTCMonth() + 1 === month && asOf.getUTCDate() >= day);
-  const age = hadBirthdayThisYear ? years : years - 1;
+  const age = calculateCalendarAge(
+    { year: Number(birthday!.slice(0, 4)), month, day },
+    asOf,
+    'utc',
+  )!;
   return age >= 0 ? age : null;
 }
 
