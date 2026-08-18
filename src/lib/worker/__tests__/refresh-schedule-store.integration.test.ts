@@ -12,36 +12,49 @@ import prisma from '@/lib/prisma';
 import { listRefreshEnabledUserIdsFromStore } from '../refresh-schedule-store';
 
 const RUN_ID = randomUUID().replace(/-/g, '');
-const USERNAME = `itest-refresh-schedule-${RUN_ID}`;
-let userId: number;
+const ENABLED_USERNAME = `itest-refresh-enabled-${RUN_ID}`;
+const DISABLED_USERNAME = `itest-refresh-disabled-${RUN_ID}`;
+let enabledUserId: number;
+let disabledUserId: number;
 
 describe('refresh schedule recovery query (real PostgreSQL)', () => {
     beforeAll(async () => {
-        const user = await getTestPool().query<{ id: number }>(
+        const enabledUser = await getTestPool().query<{ id: number }>(
             `INSERT INTO gnucash_web_users (username, password_hash)
              VALUES ($1, 'integration-test')
              RETURNING id`,
-            [USERNAME],
+            [ENABLED_USERNAME],
         );
-        userId = user.rows[0].id;
+        enabledUserId = enabledUser.rows[0].id;
+
+        const disabledUser = await getTestPool().query<{ id: number }>(
+            `INSERT INTO gnucash_web_users (username, password_hash)
+             VALUES ($1, 'integration-test')
+             RETURNING id`,
+            [DISABLED_USERNAME],
+        );
+        disabledUserId = disabledUser.rows[0].id;
 
         await getTestPool().query(
             `INSERT INTO gnucash_web_user_preferences (user_id, preference_key, preference_value)
              VALUES ($1, 'refresh_enabled', '"true"'),
-                    ($1, 'unrelated_preference', 'true')`,
-            [userId],
+                    ($2, 'refresh_enabled', '"false"')`,
+            [enabledUserId, disabledUserId],
         );
     });
 
     afterAll(async () => {
         await getTestPool().query(
-            'DELETE FROM gnucash_web_users WHERE username = $1',
-            [USERNAME],
+            'DELETE FROM gnucash_web_users WHERE username IN ($1, $2)',
+            [ENABLED_USERNAME, DISABLED_USERNAME],
         );
         await prisma.$disconnect();
     });
 
     it('feeds a JSON-string enabled preference from the real Prisma query into recovery selection', async () => {
-        await expect(listRefreshEnabledUserIdsFromStore(prisma)).resolves.toEqual([userId]);
+        const userIds = await listRefreshEnabledUserIdsFromStore(prisma);
+
+        expect(userIds).toContain(enabledUserId);
+        expect(userIds).not.toContain(disabledUserId);
     });
 });

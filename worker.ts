@@ -16,7 +16,6 @@ import {
   applyScheduleChange,
   msUntilNextUtcTime,
   normalizeRefreshTime,
-  REFRESH_ENABLED_KEY,
   resolvePriceRefreshTargets,
 } from './src/lib/worker/refresh-schedule';
 import { listRefreshEnabledUserIdsFromStore } from './src/lib/worker/refresh-schedule-store';
