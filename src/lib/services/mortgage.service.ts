@@ -220,12 +220,13 @@ export class MortgageService {
       };
     }
 
-    // Disclose a sizeable-but-not-draw-like later credit only when it clears
-    // the absolute fee floor. Smaller charges stay silent even on small loans.
+    // Disclosure is intentionally broader than materiality: a later credit
+    // that is at least 0.5% of opening principal is useful context even when
+    // it is too small to classify as a draw. The absolute floor protects only
+    // the principal/confidence decision, never this neutral warning.
     const absorbedCreditWarnings = openingCreditTotal > 0
       ? laterCredits
         .filter((credit) =>
-          credit >= MATERIAL_ADDITIONAL_DRAW_FLOOR &&
           credit >= openingCreditTotal * SILENT_ABSORBED_CREDIT_RATIO
         )
         .map((credit) =>

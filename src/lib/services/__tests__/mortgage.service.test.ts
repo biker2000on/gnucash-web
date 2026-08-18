@@ -384,14 +384,14 @@ describe('MortgageService.detectMortgageDetails', () => {
   it.each([
     ['a $50 servicer fee', 200_000, 50, []],
     ['a $1,200 capitalized escrow shortage', 300_000, 1_200, []],
-    ['a $2,500 prepaid-escrow credit', 300_000, 2_500, []],
-    ['a $1,200 capitalized escrow shortage on a $50,000 loan', 50_000, 1_200, []],
-    ['a $500 document fee on a $25,000 loan', 25_000, 500, []],
-    ['a $400 family-loan fee on a $15,000 loan', 15_000, 400, []],
-    ['a $2,200 capitalized modification on a $100,000 loan', 100_000, 2_200, []],
-    ['a $2,500 escrow credit on a $125,000 loan', 125_000, 2_500, []],
-    ['a $5,000 two-point charge on a $250,000 loan', 250_000, 5_000, []],
-    ['a $1,500 escrow credit on a $75,000 loan', 75_000, 1_500, []],
+    ['a $2,500 prepaid-escrow credit', 300_000, 2_500, ['Secondary liability credit of $2,500 absorbed into the opening balance']],
+    ['a $1,200 capitalized escrow shortage on a $50,000 loan', 50_000, 1_200, ['Secondary liability credit of $1,200 absorbed into the opening balance']],
+    ['a $500 document fee on a $25,000 loan', 25_000, 500, ['Secondary liability credit of $500 absorbed into the opening balance']],
+    ['a $400 family-loan fee on a $15,000 loan', 15_000, 400, ['Secondary liability credit of $400 absorbed into the opening balance']],
+    ['a $2,200 capitalized modification on a $100,000 loan', 100_000, 2_200, ['Secondary liability credit of $2,200 absorbed into the opening balance']],
+    ['a $2,500 escrow credit on a $125,000 loan', 125_000, 2_500, ['Secondary liability credit of $2,500 absorbed into the opening balance']],
+    ['a $5,000 two-point charge on a $250,000 loan', 250_000, 5_000, ['Secondary liability credit of $5,000 absorbed into the opening balance']],
+    ['a $1,500 escrow credit on a $75,000 loan', 75_000, 1_500, ['Secondary liability credit of $1,500 absorbed into the opening balance']],
   ])('retains high confidence after %s', async (_label, openingAmount, laterCredit, expectedWarnings) => {
     const splits: Array<{
       tx_guid: string;
@@ -458,8 +458,48 @@ describe('MortgageService.detectMortgageDetails', () => {
     (mockPrisma.splits.findMany as any).mockResolvedValue(splits);
 
     const result = await MortgageService.detectMortgageDetails(MORTGAGE_GUID, INTEREST_GUID);
-    expect(result).toMatchObject({ originalAmount: 50_000, confidence: 'high', warnings: [] });
+    expect(result).toMatchObject({
+      originalAmount: 50_000,
+      confidence: 'high',
+      warnings: ['Secondary liability credit of $1,200 absorbed into the opening balance'],
+    });
     expect(result.interestRate).toBeCloseTo(6, 3);
+  });
+
+  it('discloses an absorbed $8,000 second draw on a $50,000 HELOC', async () => {
+    const openingAmount = 50_000;
+    const advance = 8_000;
+    const monthlyRate = 0.045 / 12;
+    const payment = (openingAmount + advance) * monthlyRate * Math.pow(1 + monthlyRate, 360) /
+      (Math.pow(1 + monthlyRate, 360) - 1);
+    const splits: Array<{
+      tx_guid: string;
+      account_guid: string;
+      value_num: bigint;
+      value_denom: bigint;
+      transaction: { post_date: Date };
+    }> = [
+      { tx_guid: 'opening', account_guid: MORTGAGE_GUID, value_num: BigInt(-openingAmount * 100), value_denom: BigInt(100), transaction: { post_date: new Date('2020-01-15') } },
+      { tx_guid: 'advance', account_guid: MORTGAGE_GUID, value_num: BigInt(-advance * 100), value_denom: BigInt(100), transaction: { post_date: new Date('2021-01-15') } },
+    ];
+    let balance = openingAmount + advance;
+    for (let i = 0; i < 12; i++) {
+      const interest = Math.round(balance * monthlyRate * 100);
+      const principal = Math.round(payment * 100) - interest;
+      balance -= principal / 100;
+      const date = new Date(2021, i + 1, 15);
+      splits.push(
+        { tx_guid: `pay-${i}`, account_guid: MORTGAGE_GUID, value_num: BigInt(principal), value_denom: BigInt(100), transaction: { post_date: date } },
+        { tx_guid: `pay-${i}`, account_guid: INTEREST_GUID, value_num: BigInt(interest), value_denom: BigInt(100), transaction: { post_date: date } },
+      );
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (mockPrisma.splits.findMany as any).mockResolvedValue(splits);
+
+    const result = await MortgageService.detectMortgageDetails(MORTGAGE_GUID, INTEREST_GUID);
+    expect(result.originalAmount).toBe(50_000);
+    expect(result.confidence).toBe('high');
+    expect(result.warnings).toContain('Secondary liability credit of $8,000 absorbed into the opening balance');
   });
 
   it('discloses a credit exactly at the silent/disclose ratio boundary', async () => {
@@ -498,7 +538,7 @@ describe('MortgageService.detectMortgageDetails', () => {
   });
 
   it.each([
-    [4_000, 300_000, 4.5605, 'high', []],
+    [4_000, 300_000, 4.5605, 'high', ['Secondary liability credit of $4,000 absorbed into the opening balance']],
     [14_000, 314_000, 4.5, 'low', ['Original principal not determinable from ledger — estimated']],
     [15_000, 315_000, 4.5, 'low', ['Original principal not determinable from ledger — estimated']],
   ])('reports an accruing $%d later advance without silently hiding it', async (

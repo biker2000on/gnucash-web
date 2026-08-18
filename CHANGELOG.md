@@ -17,9 +17,12 @@ Covers work landed since 0.23.2.0 (2026-07-29).
   Later credits are assessed individually against the opening principal, so
   recurring small servicing charges do not accumulate into a draw. A later
   credit must exceed 2% *and* $10,000 before it increases principal and marks
-  the result estimated; ordinary fees, escrow, points, and modifications stay
-  high confidence even on small-balance loans. The displayed principal, APR,
-  and confidence can therefore change for HELOC and small-loan users.
+  the result estimated. Any absorbed later credit at least 0.5% of opening
+  principal is disclosed, without lowering confidence; the $10,000 floor
+  applies only to materiality. Ordinary fees, escrow, points, and
+  modifications therefore stay high confidence even on small-balance loans.
+  The displayed principal, APR, and confidence can change for HELOC and
+  small-loan users.
 
 - **Unposting an invoice or bill now records a reversing transaction instead of
   deleting the original posting.** The ledger keeps both entries — the original
