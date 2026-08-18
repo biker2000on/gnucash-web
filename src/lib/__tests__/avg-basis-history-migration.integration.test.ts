@@ -39,6 +39,9 @@ const PREV = 'avg_cost_basis_remaining_prev';
 const PREV_RUN = 'avg_cost_basis_remaining_prev_run';
 const LIVE = 'avg_cost_basis_remaining';
 const LIVE_RUN = 'avg_cost_basis_remaining_run';
+const LONG_RUN = 'r'.repeat(33);
+const CHECK_VIOLATION_VALUE = 'avg-basis-check-violation';
+const BASIS_CHECK = 'avg_basis_history_test_basis_check';
 
 /**
  * One seeded lot. `expect` says what must be true of it AFTER the migration:
@@ -126,10 +129,42 @@ const CASES: Case[] = [
         expect: 'kept',
         why: 'a prev slot row with no value at all',
     },
+    {
+        name: 'long-array-run',
+        prev: `[{"run":"${LONG_RUN}","value":"101"}]`, live: '17', liveRun: 'runM1',
+        expect: 'kept',
+        why: 'a 33-character array run violates history.run_id VARCHAR(32)',
+    },
+    {
+        name: 'object-array-run',
+        prev: '[{"run":{"nested":"this-object-serializes-past-thirty-two"},"value":"102"}]',
+        live: '18', liveRun: 'runN1',
+        expect: 'kept',
+        why: 'a JSON object run serializes through ->> and violates run_id VARCHAR(32)',
+    },
+    {
+        name: 'long-prev-run',
+        prev: '103', prevRun: LONG_RUN, live: '19', liveRun: 'runO1',
+        expect: 'kept',
+        why: 'a pre-history bare number with an oversized companion run aborts its insert',
+    },
+    {
+        name: 'long-live-run',
+        prev: '[{"run":"runP1","value":"104"}]', live: '20', liveRun: LONG_RUN,
+        expect: 'kept',
+        why: 'a healthy stash must survive when its later live-value write fails',
+    },
+    {
+        name: 'check-violation',
+        prev: `[{"run":"runQ1","value":"${CHECK_VIOLATION_VALUE}"}]`, live: '21', liveRun: 'runQ2',
+        expect: 'kept',
+        why: 'a non-length destination CHECK violation rolls the whole lot back',
+    },
 ];
 
 /** A lot with only a live value and no stash — the backfill path, unrelated to the DELETE. */
 const LIVE_ONLY = lot('liveonly');
+const LIVE_ONLY_LONG_RUN = lot('liveonlylongrun');
 
 async function seed(): Promise<void> {
     for (const c of CASES) {
@@ -165,6 +200,14 @@ async function seed(): Promise<void> {
         `INSERT INTO slots (obj_guid, name, slot_type, string_val) VALUES ($1, $2, 4, $3)`,
         LIVE_ONLY, LIVE_RUN, 'runL1',
     );
+    await prisma.$executeRawUnsafe(
+        `INSERT INTO slots (obj_guid, name, slot_type, string_val) VALUES ($1, $2, 4, $3)`,
+        LIVE_ONLY_LONG_RUN, LIVE, '234.56',
+    );
+    await prisma.$executeRawUnsafe(
+        `INSERT INTO slots (obj_guid, name, slot_type, string_val) VALUES ($1, $2, 4, $3)`,
+        LIVE_ONLY_LONG_RUN, LIVE_RUN, LONG_RUN,
+    );
 }
 
 const slotVal = async (guid: string, name: string): Promise<string | null | undefined> => {
@@ -187,11 +230,17 @@ beforeAll(async () => {
     await prisma.$executeRawUnsafe(
         `DELETE FROM gnucash_web_schema_meta WHERE step_name = $1`, MIGRATION_STEP,
     );
+    // A deliberately different destination failure proves that containment is
+    // structural, rather than a collection of run_id length checks.
+    await prisma.$executeRawUnsafe(
+        `ALTER TABLE gnucash_web_avg_basis_history
+         ADD CONSTRAINT ${BASIS_CHECK} CHECK (basis_val <> '${CHECK_VIOLATION_VALUE}')`,
+    );
     await initializeDatabase();
 }, 120_000);
 
 afterAll(async () => {
-    const guids = [...CASES.map(c => lot(c.name)), LIVE_ONLY];
+    const guids = [...CASES.map(c => lot(c.name)), LIVE_ONLY, LIVE_ONLY_LONG_RUN];
     await prisma.$executeRawUnsafe(
         `DELETE FROM slots WHERE obj_guid = ANY($1::text[])`, guids,
     );
@@ -200,6 +249,9 @@ afterAll(async () => {
     );
     await prisma.$executeRawUnsafe(
         `DELETE FROM gnucash_web_migration_backups WHERE row_key = ANY($1::text[])`, guids,
+    );
+    await prisma.$executeRawUnsafe(
+        `ALTER TABLE gnucash_web_avg_basis_history DROP CONSTRAINT IF EXISTS ${BASIS_CHECK}`,
     );
     await prisma.$disconnect();
 });
@@ -242,8 +294,23 @@ describe('avg-basis history migration: never delete a source that was not carrie
         expect(rows).toEqual([{ seq_no: 0, run_id: 'runL1', basis_val: '123.45' }]);
     });
 
+    it('contains a failed live-only backfill and audits it without shadowing its slot', async () => {
+        expect(await slotVal(LIVE_ONLY_LONG_RUN, LIVE)).toBe('234.56');
+        expect(await slotVal(LIVE_ONLY_LONG_RUN, LIVE_RUN)).toBe(LONG_RUN);
+        expect(await historyOf(LIVE_ONLY_LONG_RUN)).toHaveLength(0);
+        const rows = await prisma.$queryRawUnsafe<Array<{ outcome: string; reason: string }>>(
+            `SELECT row_data->>'outcome' AS outcome, row_data->>'reason' AS reason
+               FROM gnucash_web_migration_backups
+              WHERE step_name = $1 AND row_key = $2`,
+            MIGRATION_STEP, LIVE_ONLY_LONG_RUN,
+        );
+        expect(rows).toHaveLength(1);
+        expect(rows[0]).toMatchObject({ outcome: 'left_in_place' });
+        expect(rows[0].reason).toContain('live-only backfill failed');
+    });
+
     it('records a countable, per-lot audit of what moved and what did not', async () => {
-        const guids = [...CASES.map(c => lot(c.name)), LIVE_ONLY];
+        const guids = [...CASES.map(c => lot(c.name)), LIVE_ONLY, LIVE_ONLY_LONG_RUN];
         const rows = await prisma.$queryRawUnsafe<Array<{
             row_key: string; outcome: string; reason: string | null; prev_val: string | null;
         }>>(

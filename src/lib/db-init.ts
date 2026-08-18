@@ -470,9 +470,12 @@ async function createExtensionTables() {
      *
      * ## Why row-by-row PL/pgSQL
      *
-     * `string_val::jsonb` RAISES on a malformed document, so one corrupt slot
-     * in one book would abort the migration for every lot in the database. The
-     * per-lot BEGIN ... EXCEPTION block contains that blast radius.
+     * Every conversion and destination write for one lot is inside its own
+     * BEGIN ... EXCEPTION subtransaction. Therefore *any* error from one lot
+     * — malformed JSON, a future constraint, a type conversion, or an insert
+     * failure — rolls back that lot's partial history rows, leaves its slots
+     * untouched, audits the reason, and lets startup continue with the next
+     * lot. Parsing is only one of the errors this boundary contains.
      *
      * ## The summary
      *
@@ -510,6 +513,11 @@ async function createExtensionTables() {
                                          AND liverun.name = 'avg_cost_basis_remaining_run'
                  WHERE prev.name = 'avg_cost_basis_remaining_prev'
             LOOP
+                -- A PL/pgSQL block with EXCEPTION is a subtransaction. Keep
+                -- every operation which can affect this lot inside it: an
+                -- insert failure must undo earlier history inserts as well as
+                -- prevent the source-slot DELETE below.
+                BEGIN
                 -- Already carried over by the app's own first-read adoption
                 -- (src/lib/lot-scrub.ts). Its rows are the authority now, so
                 -- this block must neither add to them nor roll them back; the
@@ -633,6 +641,25 @@ async function createExtensionTables() {
                     ON CONFLICT (step_name, source_table, row_key)
                         DO UPDATE SET row_data = EXCLUDED.row_data;
                 END IF;
+                EXCEPTION WHEN others THEN
+                    -- The subtransaction above has already undone every
+                    -- history write and source-slot deletion for this lot.
+                    -- Delete defensively too, in case a future change moves
+                    -- a write outside that boundary.
+                    DELETE FROM gnucash_web_avg_basis_history
+                     WHERE lot_guid = r.lot_guid;
+
+                    INSERT INTO gnucash_web_migration_backups
+                                (step_name, source_table, row_key, row_data)
+                    VALUES ('2026-08-18-avg-basis-history-out-of-slots', 'slots', r.lot_guid,
+                            jsonb_build_object(
+                                'outcome', 'left_in_place',
+                                'reason',  format('conversion failed: %s', SQLERRM),
+                                'prev_val', r.prev_val,
+                                'prev_run', r.prev_run))
+                    ON CONFLICT (step_name, source_table, row_key)
+                        DO UPDATE SET row_data = EXCLUDED.row_data;
+                END;
             END LOOP;
 
             -- Lots written exactly once carry no stash at all, only the live
@@ -643,23 +670,48 @@ async function createExtensionTables() {
             -- from the live value would put rows in the table for a lot whose
             -- truth is still in the slot, and readAvgBasisWrites prefers stored
             -- rows — the surviving slot would never be read again.
-            INSERT INTO gnucash_web_avg_basis_history (lot_guid, seq_no, run_id, basis_val)
-            SELECT live.obj_guid, 0, liverun.string_val, live.string_val
-              FROM slots live
-              LEFT JOIN slots liverun ON liverun.obj_guid = live.obj_guid
-                                     AND liverun.name = 'avg_cost_basis_remaining_run'
-             WHERE live.name = 'avg_cost_basis_remaining'
-               AND live.string_val IS NOT NULL
-               AND NOT EXISTS (
-                     SELECT 1 FROM gnucash_web_avg_basis_history h
-                      WHERE h.lot_guid = live.obj_guid
-                   )
-               AND NOT EXISTS (
-                     SELECT 1 FROM slots p
-                      WHERE p.obj_guid = live.obj_guid
-                        AND p.name = 'avg_cost_basis_remaining_prev'
-                   )
-            ON CONFLICT (lot_guid, seq_no) DO NOTHING;
+            FOR r IN
+                SELECT live.obj_guid AS lot_guid,
+                       live.string_val AS live_val,
+                       liverun.string_val AS live_run
+                  FROM slots live
+                  LEFT JOIN slots liverun ON liverun.obj_guid = live.obj_guid
+                                         AND liverun.name = 'avg_cost_basis_remaining_run'
+                 WHERE live.name = 'avg_cost_basis_remaining'
+                   AND live.string_val IS NOT NULL
+                   AND NOT EXISTS (
+                         SELECT 1 FROM gnucash_web_avg_basis_history h
+                          WHERE h.lot_guid = live.obj_guid
+                       )
+                   AND NOT EXISTS (
+                         SELECT 1 FROM slots p
+                          WHERE p.obj_guid = live.obj_guid
+                            AND p.name = 'avg_cost_basis_remaining_prev'
+                       )
+            LOOP
+                BEGIN
+                    INSERT INTO gnucash_web_avg_basis_history (lot_guid, seq_no, run_id, basis_val)
+                    VALUES (r.lot_guid, 0, r.live_run, r.live_val)
+                    ON CONFLICT (lot_guid, seq_no) DO NOTHING;
+                EXCEPTION WHEN others THEN
+                    -- As above, the failed insert is rolled back by the
+                    -- subtransaction. The live slots are intentionally never
+                    -- deleted by this backfill path.
+                    DELETE FROM gnucash_web_avg_basis_history
+                     WHERE lot_guid = r.lot_guid;
+
+                    INSERT INTO gnucash_web_migration_backups
+                                (step_name, source_table, row_key, row_data)
+                    VALUES ('2026-08-18-avg-basis-history-out-of-slots', 'slots', r.lot_guid,
+                            jsonb_build_object(
+                                'outcome', 'left_in_place',
+                                'reason',  format('live-only backfill failed: %s', SQLERRM),
+                                'live_val', r.live_val,
+                                'live_run', r.live_run))
+                    ON CONFLICT (step_name, source_table, row_key)
+                        DO UPDATE SET row_data = EXCLUDED.row_data;
+                END;
+            END LOOP;
         END $$;
     `;
 
