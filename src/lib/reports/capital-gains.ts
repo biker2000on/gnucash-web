@@ -231,6 +231,16 @@ function formatShares(shares: number): string {
  * fee joins the basis pool and a sell fee is subtracted from that sale's
  * proceeds. Omit `fees` (pure callers, tests) and the figures are gross, as
  * before.
+ *
+ * AVERAGE COST: a sale priced by the average-basis election carries its own
+ * basis in `avgCostBasis` — the pool average as of THAT sale's date, which the
+ * lot's pro-rata buy cost cannot reproduce (a later purchase re-averages the
+ * pool, and a lot sold across several dates has a different basis per sale).
+ * It is used verbatim and the lot's buy cost is not consulted. Buy-side
+ * commissions are already capitalized into that figure at scrub time, so only
+ * the sell-side fee is applied here; the date acquired and therefore the
+ * short-vs-long-term split still come from the lot, which the replay consumes
+ * oldest-first per Treas. Reg. §1.1012-1(e)(7)(ii).
  */
 export function lotToRealizedSales(
   lot: LotSummary,
@@ -274,7 +284,7 @@ export function lotToRealizedSales(
       dateAcquired: lot.acquisitionDate || lot.openDate || earliestBuy || sell.postDate,
       dateSold: sell.postDate,
       proceeds: grossProceeds - (fees.get(sell.guid) ?? 0),
-      costBasis: shares * costPerShare,
+      costBasis: sell.avgCostBasis ?? shares * costPerShare,
     });
   }
   return sales;

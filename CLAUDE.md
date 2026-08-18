@@ -52,6 +52,7 @@ docker run -p 3000:3000 -e DATABASE_URL="..." gnucash-web
 - `gnucash.ts` - GnuCash utilities: fraction conversion (`toDecimal`, `toDecimalNumber`, `fromDecimal`), GUID generation, `findOrCreateAccount` for account hierarchy creation
 - `lot-scrub.ts` - GnuCash-compatible lot scrub engine (sell splitting across lots, transfer lot linking, auto capital gains generation)
 - `lot-assignment.ts` - Auto-assign algorithms (FIFO/LIFO/average) with scrub engine integration, scrub-all with topological ordering, revert support
+- `avg-basis-history.ts` - Durable per-write history of a lot's pooled (average-cost) remaining basis, one row per write in the app-owned `gnucash_web_avg_basis_history` table. The top of the stack is mirrored into the `avg_cost_basis_remaining` GnuCash slot, which stays the fast path for every reader; the table is what makes a revert restorable at any depth. Raises `AvgBasisHistoryRepairRequiredError` (HTTP 422) rather than falling back to per-lot cost when a lot's pooled basis is unrecoverable.
 - `lots.ts` - Lot querying and summary computation (realized/unrealized gains, holding periods, transfer metadata)
 - `cost-basis.ts` - Cost basis tracing across account transfers with FIFO/LIFO/average allocation
 - `types.ts` - Core TypeScript interfaces: Account, Transaction, Split

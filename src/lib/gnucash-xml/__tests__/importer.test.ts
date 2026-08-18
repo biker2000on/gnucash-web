@@ -18,6 +18,11 @@ function recordMany(op: string) {
   });
 }
 
+import { createAvgBasisHistoryFake } from '@/lib/__tests__/helpers/fake-avg-basis-history';
+
+/** Stands in for gnucash_web_avg_basis_history (no Prisma model). */
+const avgBasisHistory = createAvgBasisHistoryFake();
+
 const existingBookRef: { current: { root_account_guid: string | null } | null } = { current: null };
 const collidingBudgetsRef: { current: Array<{ guid: string }> } = { current: [] };
 const budgetOwnershipRef: {
@@ -27,6 +32,11 @@ const budgetOwnershipRef: {
 const tx = {
   commodities: {
     findMany: vi.fn(async () => []),
+    // Reached only now that this double supports raw SQL: acquireNamedXactLock
+    // skips locking entirely on a client without $queryRaw (book-lock.ts), and
+    // the locked branch re-checks for the commodity before creating it. Null
+    // keeps that branch equivalent to the unlocked one these tests assert on.
+    findFirst: vi.fn(async () => null),
     create: record('commodities.create'),
   },
   accounts: {
@@ -144,6 +154,19 @@ const tx = {
       },
     ]),
   ),
+
+  // The average-cost write history is app-owned and has no Prisma model, so
+  // the overwrite purge reaches it through tagged raw SQL. Backing it with the
+  // shared in-memory stand-in is what lets these tests assert that a
+  // re-imported lot does NOT inherit the outgoing lot's pooled-basis stack.
+  $queryRaw: async (strings: TemplateStringsArray, ...values: unknown[]) =>
+    avgBasisHistory.query(strings, values) ?? [],
+  $executeRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
+    const handled = avgBasisHistory.execute(strings, values);
+    if (handled === undefined) return 0;
+    calls.push({ op: 'avgBasisHistory.delete', data: { values } });
+    return handled;
+  },
 };
 
 vi.mock('@/lib/prisma', () => ({
@@ -214,6 +237,7 @@ function minimalData(): GnuCashXmlData {
 describe('importGnuCashData — lot FK handling', () => {
   beforeEach(() => {
     calls.length = 0;
+    avgBasisHistory.reset();
     vi.clearAllMocks();
     tx.commodities.findMany.mockResolvedValue([]);
     existingBookRef.current = null;
@@ -257,11 +281,64 @@ describe('importGnuCashData — lot FK handling', () => {
 
     expect(tx.lots.createMany).not.toHaveBeenCalled();
   });
+
+  /**
+   * GnuCash lot GUIDs survive an export/import round trip unchanged, so
+   * re-importing an older snapshot — an ordinary restore — recreates lots
+   * under the GUIDs they already had. The average-cost write history is keyed
+   * by lot GUID with no FK to `lots`, so anything left behind attaches itself
+   * to the incoming lot.
+   *
+   * That is not cosmetic: readLiveAvgBasisRemaining reads "history rows but no
+   * live slot value" as an unrecoverable pooled basis and raises the
+   * repair-required error (HTTP 422). On a freshly restored book that verdict
+   * is wrong, and the guard is not what needs relaxing — the orphan is.
+   */
+  it('clears the average-cost write history of the lots an overwrite replaces', async () => {
+    const lotGuid = 'lot-aapl-0000000000000000000000';
+    avgBasisHistory.rows.push(
+      { lot_guid: lotGuid, seq_no: 0, run_id: 'run-from-the-old-book', basis_val: '1000' },
+      { lot_guid: lotGuid, seq_no: 1, run_id: 'run-from-the-old-book', basis_val: '2000' },
+      // A different book's lot must be untouched by this book's import.
+      { lot_guid: 'lot-of-another-book-000000000000', seq_no: 0, run_id: 'run-x', basis_val: '5' },
+    );
+    existingBookRef.current = { root_account_guid: 'root-acct-0000000000000000000000' };
+
+    await importGnuCashData(minimalData(), 'Test Book', { overwrite: true });
+
+    expect(avgBasisHistory.forLot(lotGuid)).toEqual([]);
+    expect(avgBasisHistory.forLot('lot-of-another-book-000000000000')).toHaveLength(1);
+
+    // ...and it happens BEFORE the lot row goes away, which is the only order
+    // in which the lot GUIDs are still available to scope the delete.
+    const cleanup = calls.findIndex((c) => c.op === 'avgBasisHistory.delete');
+    const lotDelete = calls.findIndex((c) => c.op === 'lots.deleteMany');
+    expect(cleanup).toBeGreaterThanOrEqual(0);
+    expect(cleanup).toBeLessThan(lotDelete);
+  });
+
+  it('leaves the history alone when the table has never been created', async () => {
+    const lotGuid = 'lot-aapl-0000000000000000000000';
+    avgBasisHistory.rows.push(
+      { lot_guid: lotGuid, seq_no: 0, run_id: 'run-a', basis_val: '1000' },
+    );
+    // to_regclass returns NULL on a database that has never provisioned the
+    // lazy table. The purge must be a no-op there, not a 42P01 that poisons
+    // the import transaction.
+    avgBasisHistory.tablePresent = false;
+    existingBookRef.current = { root_account_guid: 'root-acct-0000000000000000000000' };
+
+    await expect(
+      importGnuCashData(minimalData(), 'Test Book', { overwrite: true }),
+    ).resolves.toBeDefined();
+    expect(calls.some((c) => c.op === 'avgBasisHistory.delete')).toBe(false);
+  });
 });
 
 describe('importGnuCashData — KVP slots and lots', () => {
   beforeEach(() => {
     calls.length = 0;
+    avgBasisHistory.reset();
     vi.clearAllMocks();
     tx.commodities.findMany.mockResolvedValue([]);
     existingBookRef.current = null;
@@ -393,6 +470,7 @@ describe('importGnuCashData — KVP slots and lots', () => {
 describe('importGnuCashData — orphan budget slots', () => {
   beforeEach(() => {
     calls.length = 0;
+    avgBasisHistory.reset();
     vi.clearAllMocks();
     tx.commodities.findMany.mockResolvedValue([]);
     existingBookRef.current = null;
@@ -533,6 +611,7 @@ function sxData(): GnuCashXmlData {
 describe('importGnuCashData — scheduled transactions and templates', () => {
   beforeEach(() => {
     calls.length = 0;
+    avgBasisHistory.reset();
     vi.clearAllMocks();
     tx.commodities.findMany.mockResolvedValue([]);
     existingBookRef.current = null;
@@ -856,6 +935,7 @@ function businessData(): GnuCashXmlData {
 describe('importGnuCashData — business objects', () => {
   beforeEach(() => {
     calls.length = 0;
+    avgBasisHistory.reset();
     vi.clearAllMocks();
     tx.commodities.findMany.mockResolvedValue([]);
     existingBookRef.current = null;
@@ -1077,6 +1157,7 @@ describe('importGnuCashData — business objects', () => {
 describe('importGnuCashData — re-import handling', () => {
   beforeEach(() => {
     calls.length = 0;
+    avgBasisHistory.reset();
     vi.clearAllMocks();
     tx.commodities.findMany.mockResolvedValue([]);
     existingBookRef.current = null;

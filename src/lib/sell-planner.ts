@@ -632,7 +632,7 @@ export async function loadSellCandidates(
   scopeAccountGuids?: string[],
 ): Promise<SellPlannerBookData> {
   const prisma = (await import('@/lib/prisma')).default;
-  const { getAccountLots } = await import('@/lib/lots');
+  const { getAccountLots, remainingCostBasis } = await import('@/lib/lots');
   const { getRetirementAccountGuids } = await import('@/lib/reports/contribution-classifier');
 
   const investmentAccounts = await prisma.accounts.findMany({
@@ -695,14 +695,10 @@ export async function loadSellCandidates(
       if (isRetirement) continue;
       if (scope && !scope.has(acct.guid)) continue;
 
-      // Basis of the REMAINING shares (pro-rata over bought shares, as in
-      // lots.ts unrealizedGain math).
-      const boughtShares = lot.splits
-        .filter(s => s.shares > 0)
-        .reduce((sum, s) => sum + s.shares, 0);
-      const remainingBasis = boughtShares > 1e-4
-        ? lot.totalCost * (lot.totalShares / boughtShares)
-        : lot.totalCost;
+      // Basis of the REMAINING shares, via the canonical rule in lots.ts —
+      // an average-basis lot records it directly, everything else pro-rates
+      // over bought shares (the same math as lots.ts unrealizedGain).
+      const remainingBasis = remainingCostBasis(lot);
 
       candidates.push({
         lotGuid: lot.guid,

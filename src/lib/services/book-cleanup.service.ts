@@ -18,6 +18,7 @@
 import type { Prisma } from '@prisma/client';
 import prisma from '@/lib/prisma';
 import { getStorageBackend } from '@/lib/storage/storage-backend';
+import { deleteAvgBasisHistoryForAccounts } from '@/lib/avg-basis-history';
 
 /**
  * Prisma models with a *book_guid column that are deleted by this service.
@@ -116,6 +117,18 @@ export const SPLIT_OR_TXN_KEYED_TABLES = [
     'gnucash_web_contribution_tax_year', // keyed by split_guid
     'gnucash_web_transaction_types',     // keyed by split_guid
     'gnucash_web_transaction_meta',      // keyed by transaction_guid
+] as const;
+
+/**
+ * Lazily-created raw-SQL tables (not in the Prisma schema) keyed by LOT guid.
+ *
+ * Neither of the lists around this one fits them: they have no book_guid, and
+ * unlike the split-keyed tables above they may not exist yet, so their delete
+ * is probed with to_regclass first rather than issued blind. Their rows are
+ * reached through `lots`, so they must be cleaned while the lots still exist.
+ */
+export const LAZY_LOT_KEYED_TABLES = [
+    'gnucash_web_avg_basis_history', // keyed by lot_guid; see src/lib/avg-basis-history.ts
 ] as const;
 
 /**
@@ -470,6 +483,21 @@ export async function deleteBookExtensionRows(
     // own transaction).
     for (const op of ops) {
         await op;
+    }
+
+    // The average-cost write history (src/lib/avg-basis-history.ts) is
+    // app-owned, keyed by lot GUID, and has no FK to `lots`, so nothing removes
+    // it when the book's lots go. It is also LAZILY created, so it cannot join
+    // `ops` as a bare $executeRaw — a 42P01 on a database that never
+    // provisioned it would poison the caller's transaction. The helper probes
+    // with to_regclass first, the same way deleteLazyTableRowsTransactional
+    // does.
+    //
+    // Like the split-keyed deletes above, this depends on running BEFORE the
+    // core rows: the lot GUIDs are found through `lots`, which the caller is
+    // about to delete.
+    if (hasAccounts) {
+        await deleteAvgBasisHistoryForAccounts(accountGuids, db);
     }
 }
 

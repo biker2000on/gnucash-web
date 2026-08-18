@@ -5,7 +5,12 @@ import { requireRole } from '@/lib/auth';
 import { getLatestPrice } from '@/lib/commodities';
 import { getBaseCurrency } from '@/lib/currency';
 import { buildAccountPathMap } from '@/lib/reports/utils';
-import { getLotsForAccounts, type LotSummary } from '@/lib/lots';
+// remainingCostBasis is the shared canonical rule (average-basis lots record
+// their remaining basis directly; everything else pro-rates). The report
+// re-applies it over engine-supplied figures only because it must value
+// holdings at the book's base currency, and the engine's price lookup takes
+// no currency argument.
+import { getLotsForAccounts, remainingCostBasis } from '@/lib/lots';
 
 interface LotReportRow {
     accountName: string;
@@ -62,26 +67,6 @@ const MS_PER_DAY = 1000 * 60 * 60 * 24;
 /** Calendar-day (YYYY-MM-DD) form of an ISO timestamp from the lot engine. */
 function toDateOnly(iso: string | null): string | null {
     return iso ? iso.slice(0, 10) : null;
-}
-
-/**
- * Cost basis attributable to the shares still held, pro-rated over the lot's
- * purchased shares so a partially-sold lot doesn't count the sold shares'
- * basis twice. `lot.totalCost` already includes any `carried_basis` brought in
- * by an in-kind transfer, so a transferred lot prices against its real basis.
- *
- * This mirrors the allocation getLotsForAccounts uses for its own
- * `unrealizedGain`; the report re-applies it over engine-supplied figures only
- * because it must value holdings at the book's base currency, and the engine's
- * price lookup takes no currency argument.
- */
-function remainingCostBasis(lot: LotSummary): number {
-    const boughtShares = lot.splits
-        .filter(s => s.shares > 0)
-        .reduce((sum, s) => sum + s.shares, 0);
-    return boughtShares > SHARE_EPSILON
-        ? lot.totalCost * (lot.totalShares / boughtShares)
-        : lot.totalCost;
 }
 
 export async function GET(request: NextRequest) {

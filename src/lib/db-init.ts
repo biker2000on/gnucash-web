@@ -412,6 +412,358 @@ async function createExtensionTables() {
         CREATE INDEX IF NOT EXISTS idx_depreciation_schedules_account ON gnucash_web_depreciation_schedules(account_guid);
     `;
 
+    /**
+     * Durable write history for pooled (average-cost) lot basis: one row per
+     * write, oldest first, with the run that wrote it.
+     *
+     * The history used to be a JSON array in a single `slots.string_val`, a
+     * VARCHAR(4096) — roughly 48-80 writes per lot, past which the oldest
+     * entries were dropped with a console warning. Reverting an old scrub run
+     * then silently fell back to the lot's own purchase cost, which is a wrong
+     * cost basis on Form 8949. This table has no such ceiling, and one row per
+     * write means a damaged row costs one entry rather than the whole stack.
+     *
+     * It is app-owned on purpose: GnuCash desktop manages `slots` and folds
+     * duplicate names on an object into a single KVP entry, so a multi-row
+     * history could not have lived there. See src/lib/avg-basis-history.ts.
+     */
+    const avgBasisHistoryTableDDL = `
+        CREATE TABLE IF NOT EXISTS gnucash_web_avg_basis_history (
+            lot_guid   VARCHAR(32) NOT NULL,
+            seq_no     INTEGER     NOT NULL,
+            run_id     VARCHAR(32),
+            basis_val  TEXT        NOT NULL,
+            written_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (lot_guid, seq_no)
+        );
+        CREATE INDEX IF NOT EXISTS idx_avg_basis_history_run
+            ON gnucash_web_avg_basis_history(run_id);
+    `;
+
+    /**
+     * Carry every JSON-slot history that already exists into the table above.
+     *
+     * ## The rule this block is built around
+     *
+     * A MIGRATION MUST NEVER DELETE ITS SOURCE UNTIL THE DESTINATION IS PROVEN
+     * WRITTEN. The two failure directions are not symmetric: a legacy slot left
+     * behind is stale data an operator can clean up at leisure, while a legacy
+     * slot deleted without its contents transcribed is the user's cost basis
+     * gone, at startup, with no operator action and no error. This runs
+     * unattended on every existing production database, so the only acceptable
+     * bias is towards leaving too much behind.
+     *
+     * An earlier version of this block ended with an unconditional, global
+     * `DELETE FROM slots WHERE name IN (...)`. It ran even when the stash
+     * failed to parse (the EXCEPTION handler below sets `parsed := NULL`) and
+     * even when the stash parsed to a valid-but-unusable shape — `{}`, `"x"`,
+     * an array whose members carry no `value` — all of which write ZERO history
+     * rows and were silently skipped. In every one of those cases the only
+     * surviving record of the user's pooled basis was destroyed.
+     *
+     * So the DELETE is now per-lot and conditional on `ok`, which is set only
+     * when EVERY entry in that lot's stash was transcribed. A lot that fails
+     * for any reason keeps both of its legacy slots, byte for byte, and has
+     * whatever partial rows it wrote rolled back — a half-transcribed stack is
+     * worse than none, because `readAvgBasisWrites` prefers stored rows and
+     * would then never look at the slot that still holds the truth.
+     *
+     * ## Why row-by-row PL/pgSQL
+     *
+     * Every conversion and destination write for one lot is inside its own
+     * BEGIN ... EXCEPTION subtransaction. Therefore *any* error from one lot
+     * — malformed JSON, a future constraint, a type conversion, or an insert
+     * failure — rolls back that lot's partial history rows, leaves its slots
+     * untouched, audits the reason, and lets startup continue with the next
+     * lot. Parsing is only one of the errors this boundary contains.
+     *
+     * ## The summary
+     *
+     * Every lot's outcome is recorded in `gnucash_web_migration_backups` —
+     * this repo's existing migration-audit table — as one row per lot carrying
+     * the outcome, the reason it was left behind, and the original slot bytes.
+     * The counts are read back and logged by the caller, so an operator sees
+     * what moved and what did not instead of having to infer it.
+     */
+    const avgBasisHistoryMigrationDDL = `
+        DO $$
+        DECLARE
+            r       RECORD;
+            parsed  jsonb;
+            item    jsonb;
+            idx     int;
+            skipped int;
+            ok      boolean;
+            reason  text;
+        BEGIN
+            PERFORM pg_advisory_xact_lock(hashtext('gnucash_web_avg_basis_history_migrate'));
+
+            FOR r IN
+                SELECT prev.obj_guid                AS lot_guid,
+                       prev.string_val              AS prev_val,
+                       prevrun.string_val           AS prev_run,
+                       live.string_val              AS live_val,
+                       liverun.string_val           AS live_run
+                  FROM slots prev
+                  LEFT JOIN slots prevrun ON prevrun.obj_guid = prev.obj_guid
+                                         AND prevrun.name = 'avg_cost_basis_remaining_prev_run'
+                  LEFT JOIN slots live    ON live.obj_guid    = prev.obj_guid
+                                         AND live.name = 'avg_cost_basis_remaining'
+                  LEFT JOIN slots liverun ON liverun.obj_guid = prev.obj_guid
+                                         AND liverun.name = 'avg_cost_basis_remaining_run'
+                 WHERE prev.name = 'avg_cost_basis_remaining_prev'
+            LOOP
+                -- A PL/pgSQL block with EXCEPTION is a subtransaction. Keep
+                -- every operation which can affect this lot inside it: an
+                -- insert failure must undo earlier history inserts as well as
+                -- prevent the source-slot DELETE below.
+                BEGIN
+                -- Already carried over by the app's own first-read adoption
+                -- (src/lib/lot-scrub.ts). Its rows are the authority now, so
+                -- this block must neither add to them nor roll them back; the
+                -- stale slot is left for the operator rather than deleted on
+                -- an assumption about which copy is newer.
+                IF EXISTS (
+                    SELECT 1 FROM gnucash_web_avg_basis_history h
+                     WHERE h.lot_guid = r.lot_guid
+                ) THEN
+                    INSERT INTO gnucash_web_migration_backups
+                                (step_name, source_table, row_key, row_data)
+                    VALUES ('2026-08-18-avg-basis-history-out-of-slots', 'slots', r.lot_guid,
+                            jsonb_build_object(
+                                'outcome', 'left_in_place',
+                                'reason',  'lot already has history rows; not overwriting them',
+                                'prev_val', r.prev_val,
+                                'prev_run', r.prev_run))
+                    ON CONFLICT (step_name, source_table, row_key)
+                        DO UPDATE SET row_data = EXCLUDED.row_data;
+                    CONTINUE;
+                END IF;
+
+                idx := 0;
+                skipped := 0;
+                ok := false;
+                reason := NULL;
+
+                IF r.prev_val IS NULL THEN
+                    reason := 'stash slot holds no value';
+                ELSE
+                    BEGIN
+                        parsed := r.prev_val::jsonb;
+                    EXCEPTION WHEN others THEN
+                        parsed := NULL;
+                    END;
+
+                    IF parsed IS NULL THEN
+                        reason := 'stash is not valid JSON';
+                    ELSIF jsonb_typeof(parsed) = 'array' THEN
+                        FOR item IN SELECT * FROM jsonb_array_elements(parsed) LOOP
+                            -- A value that is neither string nor number cannot
+                            -- become a basis figure: ->> would yield JSON text
+                            -- or NULL, and NULL would violate basis_val's NOT
+                            -- NULL and abort the whole migration.
+                            IF jsonb_typeof(item) = 'object'
+                               AND item ? 'value'
+                               AND jsonb_typeof(item->'value') IN ('string', 'number') THEN
+                                INSERT INTO gnucash_web_avg_basis_history
+                                            (lot_guid, seq_no, run_id, basis_val)
+                                VALUES (r.lot_guid, idx, item->>'run', item->>'value');
+                                idx := idx + 1;
+                            ELSE
+                                skipped := skipped + 1;
+                            END IF;
+                        END LOOP;
+                        IF skipped = 0 THEN
+                            -- An empty array is a faithfully transcribed empty
+                            -- stack: it encodes "no displaced writes", so
+                            -- nothing is lost by removing it.
+                            ok := true;
+                        ELSE
+                            reason := format('%s of %s stash entries carry no readable value',
+                                             skipped, skipped + idx);
+                        END IF;
+                    ELSIF jsonb_typeof(parsed) = 'number' THEN
+                        -- Pre-history single stash: the whole slot was the
+                        -- number, its owner in the companion row. Inserted as
+                        -- the raw bytes, not the reparsed number, so a restore
+                        -- is byte-identical.
+                        INSERT INTO gnucash_web_avg_basis_history
+                                    (lot_guid, seq_no, run_id, basis_val)
+                        VALUES (r.lot_guid, 0, r.prev_run, r.prev_val);
+                        idx := 1;
+                        ok := true;
+                    ELSE
+                        reason := format('stash is a JSON %s, not an array of writes',
+                                         jsonb_typeof(parsed));
+                    END IF;
+                END IF;
+
+                IF ok THEN
+                    IF r.live_val IS NOT NULL THEN
+                        INSERT INTO gnucash_web_avg_basis_history
+                                    (lot_guid, seq_no, run_id, basis_val)
+                        VALUES (r.lot_guid, idx, r.live_run, r.live_val);
+                        idx := idx + 1;
+                    END IF;
+
+                    -- Destination proven written: only now is the source
+                    -- removed, and only this lot's rows.
+                    DELETE FROM slots
+                     WHERE obj_guid = r.lot_guid
+                       AND name IN ('avg_cost_basis_remaining_prev',
+                                    'avg_cost_basis_remaining_prev_run');
+
+                    INSERT INTO gnucash_web_migration_backups
+                                (step_name, source_table, row_key, row_data)
+                    VALUES ('2026-08-18-avg-basis-history-out-of-slots', 'slots', r.lot_guid,
+                            jsonb_build_object(
+                                'outcome', 'migrated',
+                                'entries', idx,
+                                'prev_val', r.prev_val,
+                                'prev_run', r.prev_run))
+                    ON CONFLICT (step_name, source_table, row_key)
+                        DO UPDATE SET row_data = EXCLUDED.row_data;
+                ELSE
+                    -- Roll this lot's partial transcription back. The slot
+                    -- below stays, and it can only stay authoritative if the
+                    -- table holds nothing for this lot.
+                    DELETE FROM gnucash_web_avg_basis_history
+                     WHERE lot_guid = r.lot_guid;
+
+                    INSERT INTO gnucash_web_migration_backups
+                                (step_name, source_table, row_key, row_data)
+                    VALUES ('2026-08-18-avg-basis-history-out-of-slots', 'slots', r.lot_guid,
+                            jsonb_build_object(
+                                'outcome', 'left_in_place',
+                                'reason',  reason,
+                                'prev_val', r.prev_val,
+                                'prev_run', r.prev_run))
+                    ON CONFLICT (step_name, source_table, row_key)
+                        DO UPDATE SET row_data = EXCLUDED.row_data;
+                END IF;
+                EXCEPTION WHEN others THEN
+                    -- The subtransaction above has already undone every
+                    -- history write and source-slot deletion for this lot.
+                    -- Delete defensively too, in case a future change moves
+                    -- a write outside that boundary.
+                    DELETE FROM gnucash_web_avg_basis_history
+                     WHERE lot_guid = r.lot_guid;
+
+                    INSERT INTO gnucash_web_migration_backups
+                                (step_name, source_table, row_key, row_data)
+                    VALUES ('2026-08-18-avg-basis-history-out-of-slots', 'slots', r.lot_guid,
+                            jsonb_build_object(
+                                'outcome', 'left_in_place',
+                                'reason',  format('conversion failed: %s', SQLERRM),
+                                'prev_val', r.prev_val,
+                                'prev_run', r.prev_run))
+                    ON CONFLICT (step_name, source_table, row_key)
+                        DO UPDATE SET row_data = EXCLUDED.row_data;
+                END;
+            END LOOP;
+
+            -- Lots written exactly once carry no stash at all, only the live
+            -- value. They still need a stack, or the next run's write would
+            -- displace a value with no record of who wrote it.
+            --
+            -- A lot whose stash was LEFT IN PLACE above is excluded: seeding it
+            -- from the live value would put rows in the table for a lot whose
+            -- truth is still in the slot, and readAvgBasisWrites prefers stored
+            -- rows — the surviving slot would never be read again.
+            FOR r IN
+                SELECT live.obj_guid AS lot_guid,
+                       live.string_val AS live_val,
+                       liverun.string_val AS live_run
+                  FROM slots live
+                  LEFT JOIN slots liverun ON liverun.obj_guid = live.obj_guid
+                                         AND liverun.name = 'avg_cost_basis_remaining_run'
+                 WHERE live.name = 'avg_cost_basis_remaining'
+                   AND live.string_val IS NOT NULL
+                   AND NOT EXISTS (
+                         SELECT 1 FROM gnucash_web_avg_basis_history h
+                          WHERE h.lot_guid = live.obj_guid
+                       )
+                   AND NOT EXISTS (
+                         SELECT 1 FROM slots p
+                          WHERE p.obj_guid = live.obj_guid
+                            AND p.name = 'avg_cost_basis_remaining_prev'
+                       )
+            LOOP
+                BEGIN
+                    INSERT INTO gnucash_web_avg_basis_history (lot_guid, seq_no, run_id, basis_val)
+                    VALUES (r.lot_guid, 0, r.live_run, r.live_val)
+                    ON CONFLICT (lot_guid, seq_no) DO NOTHING;
+                EXCEPTION WHEN others THEN
+                    -- As above, the failed insert is rolled back by the
+                    -- subtransaction. The live slots are intentionally never
+                    -- deleted by this backfill path.
+                    DELETE FROM gnucash_web_avg_basis_history
+                     WHERE lot_guid = r.lot_guid;
+
+                    INSERT INTO gnucash_web_migration_backups
+                                (step_name, source_table, row_key, row_data)
+                    VALUES ('2026-08-18-avg-basis-history-out-of-slots', 'slots', r.lot_guid,
+                            jsonb_build_object(
+                                'outcome', 'left_in_place',
+                                'reason',  format('live-only backfill failed: %s', SQLERRM),
+                                'live_val', r.live_val,
+                                'live_run', r.live_run))
+                    ON CONFLICT (step_name, source_table, row_key)
+                        DO UPDATE SET row_data = EXCLUDED.row_data;
+                END;
+            END LOOP;
+        END $$;
+    `;
+
+    /**
+     * Read back what the migration above did and log it.
+     *
+     * The counts come from the audit rows rather than from the DO block, which
+     * cannot return a result set. Anything left behind is named individually
+     * (capped, so one pathological database cannot flood startup) because the
+     * operator's next action is per-lot: look at that slot and decide.
+     */
+    const logAvgBasisHistoryMigration = async () => {
+        const summary = await query(
+            `SELECT row_data->>'outcome' AS outcome,
+                    COUNT(*)::int        AS lots
+               FROM gnucash_web_migration_backups
+              WHERE step_name = '2026-08-18-avg-basis-history-out-of-slots'
+              GROUP BY 1`,
+        );
+        const counts = new Map<string, number>(
+            summary.rows.map((row: { outcome: string; lots: number }) => [row.outcome, row.lots]),
+        );
+        const migrated = counts.get('migrated') ?? 0;
+        const leftBehind = counts.get('left_in_place') ?? 0;
+        if (migrated === 0 && leftBehind === 0) return;
+
+        console.log(
+            `✓ Average-cost basis history: ${migrated} lot(s) migrated out of slots, ` +
+            `${leftBehind} left in place`,
+        );
+        if (leftBehind === 0) return;
+
+        const detail = await query(
+            `SELECT row_key, row_data->>'reason' AS reason
+               FROM gnucash_web_migration_backups
+              WHERE step_name = '2026-08-18-avg-basis-history-out-of-slots'
+                AND row_data->>'outcome' = 'left_in_place'
+              ORDER BY row_key
+              LIMIT 20`,
+        );
+        for (const row of detail.rows as Array<{ row_key: string; reason: string }>) {
+            console.warn(
+                `  · lot ${row.row_key}: legacy avg-cost slots KEPT (${row.reason}). ` +
+                `Nothing was deleted; the lot still reads its basis from the slot.`,
+            );
+        }
+        if (leftBehind > detail.rows.length) {
+            console.warn(`  · ...and ${leftBehind - detail.rows.length} more (see ` +
+                `gnucash_web_migration_backups, step 2026-08-18-avg-basis-history-out-of-slots)`);
+        }
+    };
+
     const transactionMetaTableDDL = `
         CREATE TABLE IF NOT EXISTS gnucash_web_transaction_meta (
             id SERIAL PRIMARY KEY,
@@ -2398,6 +2750,14 @@ async function createExtensionTables() {
         await query(depreciationSchedulesTableDDL);
         await query(userPreferencesTableDDL);
         await query(transactionMetaTableDDL);
+        await query(avgBasisHistoryTableDDL);
+        await runOneTimeMigration(
+            '2026-08-18-avg-basis-history-out-of-slots',
+            async () => {
+                await query(avgBasisHistoryMigrationDDL);
+                await logAvgBasisHistoryMigration();
+            },
+        );
         await query(rolesTableDDL);
         await query(bookPermissionsTableDDL);
         await query(invitationsTableDDL);

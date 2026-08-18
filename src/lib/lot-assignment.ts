@@ -16,15 +16,36 @@ import { computeRealizedGain } from './lots';
 import { isOwnAccountCommodityTransfer } from './account-transfer';
 import {
   PARENT_SPLIT_SLOT,
+  AVG_COST_BASIS_SLOT,
+  AVG_COST_BASIS_RUN_SLOT,
+  AVG_BASIS_REMAINING_RUN_SLOT,
+  AVG_BASIS_REMAINING_PREV_SLOT,
+  AVG_BASIS_REMAINING_PREV_RUN_SLOT,
+  AVG_SPLIT_SLOT_NAMES,
+  AVG_LOT_SLOT_NAMES,
   splitSellAcrossLots,
   splitTransferAcrossSourceLots,
   generateCapitalGains,
   valueZeroValueTrade,
   assignAdjustmentToLots,
   qtyEpsilonForScu,
+  computeCarriedBasis,
+  readCarriedBasis,
+  writeAvgCostBasis,
+  writeAvgBasisRemaining,
+  readAvgBasisWrites,
+  writeAvgBasisWrites,
+  decodeAvgBasisHistory,
+  readLiveAvgBasisRemaining,
   type OpenLot,
   type PrismaTx,
 } from './lot-scrub';
+import {
+  deleteAvgBasisHistoryForLots,
+  ensureAvgBasisHistoryTable,
+  lotsWithAvgBasisHistoryForRun,
+} from './avg-basis-history';
+import { allocateTradeFees, NO_TRADE_FEES, type TradeFeeBySplit } from './trade-fees';
 import type { Prisma } from '@prisma/client';
 import {
   assertSplitsNotProtected,
@@ -129,6 +150,9 @@ async function readLotAcquisitionDate(lotGuid: string, tx: PrismaTx): Promise<Da
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
+/** Lot-assignment methods this engine implements end to end. */
+export type LotAssignmentMethod = 'fifo' | 'lifo' | 'average';
+
 /**
  * Order open lots for consumption by one sale. `openLots` holds only lots
  * that exist AT the sale date (the caller replays events chronologically), so
@@ -136,8 +160,18 @@ async function readLotAcquisitionDate(lotGuid: string, tx: PrismaTx): Promise<Da
  * buy dated after the sell. Ordering uses each lot's openDate, which for
  * transferred lots is the CARRIED acquisition date, not the transfer date.
  * The returned array holds the SAME lot objects (mutation flows through).
+ *
+ * AVERAGE cost orders lots exactly like FIFO. That is not a shortcut: under
+ * the average-basis method the basis of the shares sold is the pool average
+ * (see the replay below), while WHICH shares are treated as sold — and
+ * therefore the short-vs-long-term split — is still oldest-first, per
+ * Treas. Reg. §1.1012-1(e)(7)(ii). Lot order here decides holding period, not
+ * basis.
  */
-export function orderLotsForConsumption(openLots: OpenLot[], strategy: 'fifo' | 'lifo'): OpenLot[] {
+export function orderLotsForConsumption(
+  openLots: OpenLot[],
+  strategy: LotAssignmentMethod,
+): OpenLot[] {
   const ordered = [...openLots].sort(
     (a, b) => (a.openDate?.getTime() || 0) - (b.openDate?.getTime() || 0),
   );
@@ -167,13 +201,213 @@ export function sortScrubEvents(events: ScrubEvent[]): ScrubEvent[] {
   });
 }
 
+/**
+ * Delete every average-cost artefact this engine wrote for an account,
+ * WHICHEVER run wrote it.
+ *
+ * This is the ELECTION-WIDE sweep, and account scope is the correct scope for
+ * it. Its two callers are the two places where no average-cost number may
+ * survive under any owner:
+ *
+ *  - a FIFO/LIFO re-scrub of the account (the election is no longer in force,
+ *    so a slot left by ANY earlier average run would keep Form 8949 reporting
+ *    a pooled basis on a FIFO return);
+ *  - clearLotAssignments, which destroys the account's whole lot structure.
+ *
+ * Reverting ONE run is a different question with a different answer — see
+ * clearAverageCostArtifactsForRun. Under an average re-scrub nothing is
+ * cleared at all: earlier runs' slots price their own disposals and seed the
+ * pool for lots this run does not re-touch.
+ */
+async function clearAverageCostArtifacts(accountGuid: string, tx: PrismaTx): Promise<void> {
+  const accountSplitGuids = (await tx.splits.findMany({
+    where: { account_guid: accountGuid },
+    select: { guid: true },
+  })).map(s => s.guid);
+  if (accountSplitGuids.length > 0) {
+    await tx.slots.deleteMany({
+      where: { obj_guid: { in: accountSplitGuids }, name: { in: [...AVG_SPLIT_SLOT_NAMES] } },
+    });
+  }
+  const accountLotGuids = (await tx.lots.findMany({
+    where: { account_guid: accountGuid },
+    select: { guid: true },
+  })).map(l => l.guid);
+  if (accountLotGuids.length > 0) {
+    await tx.slots.deleteMany({
+      where: { obj_guid: { in: accountLotGuids }, name: { in: [...AVG_LOT_SLOT_NAMES] } },
+    });
+    // The live slot is only the mirror; the durable write history has to go
+    // with it or the next average run would read a stack for a pool that no
+    // longer exists.
+    await deleteAvgBasisHistoryForLots(accountLotGuids, tx);
+  }
+}
+
+/** The average-cost slots one scrub run owns, located by their run companions. */
+interface RunAverageArtifacts {
+  /** Disposal splits whose `avg_cost_basis` this run wrote. */
+  splitGuids: string[];
+  /** Lots whose LIVE `avg_cost_basis_remaining` this run wrote. */
+  lotGuids: string[];
+  /** Lots whose write history holds a value THIS run wrote and a later run displaced. */
+  stashLotGuids: string[];
+}
+
+const hasRunAverageArtifacts = (a: RunAverageArtifacts): boolean =>
+  a.splitGuids.length > 0 || a.lotGuids.length > 0 || a.stashLotGuids.length > 0;
+
+/**
+ * Locate every average-cost slot stamped with this run id.
+ *
+ * Keyed on the run companion slots, never on the account: an account
+ * accumulates slots from every run that ever scrubbed it, and deleting by
+ * account is precisely the bug this provenance exists to close.
+ */
+async function findAverageCostArtifactsForRun(
+  runId: string,
+  tx: PrismaTx,
+): Promise<RunAverageArtifacts> {
+  const ownedBy = async (name: string): Promise<string[]> => {
+    // `?? []` for the reason the rest of this engine carries it: mocked Prisma
+    // clients in tests return undefined for queries they do not stub.
+    const rows = (await tx.slots.findMany({
+      where: { name, string_val: runId },
+      select: { obj_guid: true },
+    })) ?? [];
+    return [...new Set(rows.map(r => r.obj_guid))];
+  };
+  // Lots whose history holds a write this run owns. The durable table indexes
+  // `run_id`, so this is a lookup rather than the full scan the JSON-in-a-slot
+  // history forced (read every lot's document, decode it, filter by owner).
+  //
+  // The legacy slots are still swept behind it: a book last written by an
+  // older deploy carries its stash there until something reads that lot and
+  // adopts it, and a revert must not skip a lot merely because nothing has
+  // read it yet.
+  const historyOwnedByRun = async (): Promise<string[]> => {
+    const out = new Set(await lotsWithAvgBasisHistoryForRun(runId, tx));
+    for (const guid of await ownedBy(AVG_BASIS_REMAINING_PREV_RUN_SLOT)) out.add(guid);
+    const rows = (await tx.slots.findMany({
+      where: { name: AVG_BASIS_REMAINING_PREV_SLOT },
+      select: { obj_guid: true, string_val: true },
+    })) ?? [];
+    for (const row of rows) {
+      if (decodeAvgBasisHistory(row.string_val ?? null, null).some(e => e.run === runId)) {
+        out.add(row.obj_guid);
+      }
+    }
+    return [...out];
+  };
+
+  return {
+    splitGuids: await ownedBy(AVG_COST_BASIS_RUN_SLOT),
+    lotGuids: await ownedBy(AVG_BASIS_REMAINING_RUN_SLOT),
+    stashLotGuids: await historyOwnedByRun(),
+  };
+}
+
+/**
+ * Undo ONLY this run's average-cost slots, leaving every other run's standing.
+ *
+ * Two moves:
+ *
+ *  1. Disposal slots this run wrote are deleted. Another run's disposal slot
+ *     is never touched, so reverting a later run cannot rewrite the basis on a
+ *     sale an earlier run already priced and the user already filed.
+ *  2. On every lot this run wrote to — whether its value is still live or a
+ *     later run has displaced it — the lot's write history is rebuilt WITHOUT
+ *     this run's entries, and whatever is left on top becomes the live value.
+ *
+ * Move 2 is one operation rather than "delete mine, restore the one below"
+ * because the history is a stack of writes, not a single displaced value:
+ *
+ *  - removing an entry from the middle leaves the runs above and below it
+ *    intact, so reverts in any order compose (revert C then B walks back down
+ *    to A's number; revert B then C skips B entirely and lands on A's);
+ *  - the run being reverted is identified by ownership, not position, so its
+ *    number can never be resurrected by a later revert — it is gone from the
+ *    stack the moment it is reverted;
+ *  - depth is whatever the book has. Nothing is overwritten, so nothing is
+ *    lost, however many runs re-price the same lot.
+ *
+ * Without the restore below the lot would fall back to its per-lot buy cost
+ * while an earlier run's disposal slot still says part of that cost was spent
+ * — double-counted basis, understating every later gain.
+ *
+ * Only slot rows are deleted. No split, lot, or transaction is removed on this
+ * path, which is what makes it safe to point at the user's own sell split.
+ */
+async function clearAverageCostArtifactsForRun(
+  runId: string,
+  artifacts: RunAverageArtifacts,
+  tx: PrismaTx,
+): Promise<void> {
+  if (artifacts.splitGuids.length > 0) {
+    await tx.slots.deleteMany({
+      where: { obj_guid: { in: artifacts.splitGuids }, name: { in: [...AVG_SPLIT_SLOT_NAMES] } },
+    });
+  }
+
+  const touchedLotGuids = [...new Set([...artifacts.lotGuids, ...artifacts.stashLotGuids])];
+  if (touchedLotGuids.length === 0) return;
+
+  // A lot the revert has already deleted (this run created it) gets its slots
+  // dropped, never a restored value re-attached to a dead guid.
+  const survivingLots = new Set(
+    ((await tx.lots.findMany({
+      where: { guid: { in: touchedLotGuids } },
+      select: { guid: true },
+    })) ?? []).map(l => l.guid),
+  );
+
+  for (const lotGuid of touchedLotGuids) {
+    if (!survivingLots.has(lotGuid)) {
+      // The revert already deleted this lot (this run created it). Drop its
+      // recorded writes; never re-attach a restored value to a dead guid.
+      await writeAvgBasisWrites(lotGuid, [], tx);
+      continue;
+    }
+    const stack = (await readAvgBasisWrites(lotGuid, tx)).filter(entry => entry.run !== runId);
+    await writeAvgBasisWrites(lotGuid, stack, tx);
+  }
+}
+
+/**
+ * Remaining cost basis of an open lot that existed BEFORE this run, used to
+ * seed the average-cost pool.
+ *
+ * Prefers the lot's own `avg_cost_basis_remaining` slot (written by a previous
+ * average-cost run — that IS the pooled basis of the shares it still holds).
+ * Otherwise falls back to the same fee-inclusive pro-rata rule
+ * `computeCarriedBasis` applies to a transfer: (buy cost + carried basis) per
+ * bought share × shares still held. That fallback is the honest reading of a
+ * lot the average method has never seen.
+ *
+ * It is NOT an honest reading of a lot the average method HAS seen and whose
+ * pooled value has gone missing — there the per-lot cost double-counts basis
+ * an earlier run's disposal slot already says was spent, and understates every
+ * later gain. `readLiveAvgBasisRemaining` separates the two cases and raises
+ * AvgBasisHistoryRepairRequiredError for the second.
+ */
+async function openingBasisForExistingLot(
+  lotGuid: string,
+  shares: number,
+  tx: PrismaTx,
+): Promise<number> {
+  const pooled = await readLiveAvgBasisRemaining(lotGuid, tx);
+  if (pooled !== null) return pooled;
+  return (await computeCarriedBasis(lotGuid, shares, tx)) ?? 0;
+}
+
 async function assignWithStrategy(
   accountGuid: string,
   tx: PrismaTx,
-  strategy: 'fifo' | 'lifo'
+  strategy: LotAssignmentMethod
 ): Promise<AutoAssignResult> {
   const runId = generateGuid();
   const warnings: string[] = [];
+  const isAverage = strategy === 'average';
 
   // Fetch account commodity for transfer detection + commodity-aware epsilon
   const account = await tx.accounts.findUnique({
@@ -184,6 +418,13 @@ async function assignWithStrategy(
     throw new Error(`Account not found: ${accountGuid}`);
   }
   const qtyEps = qtyEpsilonForScu(account.commodity_scu);
+
+  // Drop average-cost metadata before anything reads it when the run is NOT
+  // an average-cost run. Placed ahead of the empty-splits early return so a
+  // re-scrub of a fully-assigned account still switches methods cleanly.
+  if (!isAverage) {
+    await clearAverageCostArtifacts(accountGuid, tx);
+  }
 
   const splits = await getUnassignedSplits(accountGuid, tx);
   if (splits.length === 0) {
@@ -303,6 +544,76 @@ async function assignWithStrategy(
     }
   }
 
+  // ── Average-cost pool ───────────────────────────────────────────────────
+  //
+  // JURISDICTIONAL SCOPE (assumed, not derived from the book):
+  //  * The pool is ONE GnuCash account's holding of one commodity. That
+  //    matches the US per-account rule for the average-basis method
+  //    (Treas. Reg. §1.1012-1(e)(7)); it is NOT the all-holdings pooling some
+  //    jurisdictions require (e.g. UK s.104 pools, Canadian ACB), which would
+  //    have to span accounts. Shares moved between the user's own accounts
+  //    carry their pooled basis across via `carried_basis`, so a book-wide
+  //    pool and this per-account pool agree except when the same commodity is
+  //    held in two accounts at once.
+  //  * The engine does NOT police ELIGIBILITY. US average basis is confined to
+  //    regulated-investment-company shares and certain DRIP stock
+  //    (Treas. Reg. §1.1012-1(e)(1)); GnuCash records nothing that would let us
+  //    tell an eligible fund from an ordinary equity, so the user's election is
+  //    honoured for whatever account they choose it on. Choosing average cost
+  //    for shares that are not eligible for it is the user's call.
+  //  * Basis is FEE-INCLUSIVE: a buy-side commission is capitalized into the
+  //    pool when the shares enter it (IRS Pub. 550), so it is averaged across
+  //    the pool rather than tied to the lot that incurred it — which is what
+  //    pooling means. Consumers read the pooled number and must not re-add
+  //    buy-side fees; sell-side fees still reduce proceeds downstream.
+  //
+  // The pool is replayed event by event alongside the lots below, so every
+  // sale is priced at the average AS OF ITS OWN DATE — the same requirement
+  // that makes LIFO consume only lots existing at the sell date. Using the
+  // final pool would back-date later purchases into earlier sales.
+  let poolShares = 0;
+  let poolBasis = 0;
+  /** Fresh split values, read AFTER any zero-value trade revaluation above. */
+  const valueBySplit = new Map<string, number>();
+  let tradeFees: TradeFeeBySplit = NO_TRADE_FEES;
+
+  if (isAverage) {
+    const eventTxGuids = [...new Set(events.map(e => e.split.tx_guid))];
+    const feeRows = eventTxGuids.length > 0
+      ? await tx.splits.findMany({
+          where: { tx_guid: { in: eventTxGuids } },
+          include: {
+            account: { select: { name: true, account_type: true } },
+            transaction: { select: { post_date: true, description: true } },
+          },
+        })
+      : [];
+    for (const row of feeRows) {
+      valueBySplit.set(row.guid, toDecimalNumber(row.value_num, row.value_denom));
+    }
+    // Same allocator the Form 8949 path and computeCarriedBasis use, so a
+    // commission is charged identically wherever it is read.
+    tradeFees = allocateTradeFees(feeRows.map(s => ({
+      guid: s.guid,
+      txGuid: s.tx_guid,
+      accountGuid: s.account_guid,
+      accountType: s.account?.account_type ?? '',
+      accountPath: s.account?.name ?? '',
+      value: toDecimalNumber(s.value_num, s.value_denom),
+      quantity: toDecimalNumber(s.quantity_num, s.quantity_denom),
+      txDescription: s.transaction?.description ?? undefined,
+      txDate: s.transaction?.post_date?.toISOString(),
+    }))).fees;
+
+    for (const lot of openLots) {
+      poolShares += lot.shares;
+      poolBasis += await openingBasisForExistingLot(lot.guid, lot.shares, tx);
+    }
+  }
+
+  /** Pooled basis per share right now; 0 once the pool is empty. */
+  const averagePerShare = () => (poolShares > qtyEps ? poolBasis / poolShares : 0);
+
   // ── Chronological per-event replay ──────────────────────────────────────
   // Events are processed in post-date order so every sale sees exactly the
   // lots that existed at its date. This is what makes LIFO consume "the
@@ -324,13 +635,28 @@ async function assignWithStrategy(
         for (const lotGuid of result.lotGuids) {
           const lotSplits = await tx.splits.findMany({
             where: { lot_guid: lotGuid },
-            select: { quantity_num: true, quantity_denom: true },
+            select: {
+              quantity_num: true, quantity_denom: true,
+              value_num: true, value_denom: true,
+            },
           });
           const shares = lotSplits.reduce(
             (sum, ls) => sum + toDecimalNumber(ls.quantity_num, ls.quantity_denom), 0,
           );
           const acqDate = await readLotAcquisitionDate(lotGuid, tx);
           openLots.push({ guid: lotGuid, shares, openDate: acqDate ?? s.post_date });
+          if (isAverage) {
+            // Transferred shares join the pool at the basis that TRAVELLED
+            // with them, never at $0 and never at the transfer's recorded
+            // value (ASI-1-002 / ADV-H4). Only a transfer the linker could not
+            // trace back to a source lot falls back to the recorded value.
+            const carried = await readCarriedBasis(lotGuid, tx);
+            const recorded = lotSplits.reduce(
+              (sum, ls) => sum + Math.abs(toDecimalNumber(ls.value_num, ls.value_denom)), 0,
+            );
+            poolShares += shares;
+            poolBasis += Math.abs(carried) > 0.005 ? carried : recorded;
+          }
         }
         break;
       }
@@ -349,6 +675,15 @@ async function assignWithStrategy(
 
         const qty = toDecimalNumber(s.quantity_num, s.quantity_denom);
         openLots.push({ guid: lotGuid, shares: qty, openDate: s.post_date });
+        if (isAverage) {
+          // Read the value from the post-revaluation snapshot: a zero-value
+          // commodity-for-commodity trade was priced above, and the split row
+          // captured before that pass still shows $0.
+          const value = valueBySplit.get(s.guid)
+            ?? toDecimalNumber(s.value_num, s.value_denom);
+          poolShares += qty;
+          poolBasis += Math.abs(value) + (tradeFees.get(s.guid) ?? 0);
+        }
         break;
       }
       case 'adjustment': {
@@ -356,15 +691,43 @@ async function assignWithStrategy(
         splitsCreated += result.subSplitsCreated.length;
         adjustmentCount++;
         if (result.warning) warnings.push(result.warning);
+        if (isAverage && result.lotsUsed.length > 0) {
+          // A stock split re-denominates the same investment: share count
+          // moves, pooled basis does not — so the average per share falls (or
+          // rises on a reverse split) by exactly the split ratio.
+          poolShares += toDecimalNumber(s.quantity_num, s.quantity_denom);
+        }
         break;
       }
       case 'sell': {
+        // Price the disposal BEFORE it consumes the pool.
+        const avgPerShare = averagePerShare();
         const searchOrder = orderLotsForConsumption(openLots, strategy);
         const result = await splitSellAcrossLots(s.guid, searchOrder, runId, tx, qtyEps);
         splitsCreated += result.subSplitsCreated.length;
         sellCount++;
         if (result.warning) {
           warnings.push(result.warning);
+        }
+        if (isAverage) {
+          // Record each consuming row's pooled basis. Transfer-OUT splits are
+          // classified as sells here too and get the slot as well: their basis
+          // is what travels to the destination account (computeCarriedBasis
+          // reads exactly this slot), while generateCapitalGains still books
+          // no gain for a transfer-closed lot.
+          let consumed = 0;
+          for (const allocation of result.allocations) {
+            await writeAvgCostBasis(allocation.splitGuid, avgPerShare * allocation.shares, runId, tx);
+            consumed += allocation.shares;
+          }
+          poolShares -= consumed;
+          poolBasis -= avgPerShare * consumed;
+          if (poolShares <= qtyEps) {
+            // Pool emptied: drop the sub-epsilon share and basis residue so a
+            // later buy starts from its own cost instead of inheriting drift.
+            poolShares = 0;
+            poolBasis = 0;
+          }
         }
         break;
       }
@@ -374,6 +737,9 @@ async function assignWithStrategy(
   // Generate capital gains for lots that are now closed (shares ~= 0)
   let gainsTransactions = 0;
   let totalRealizedGain = 0;
+
+  // Final pooled basis per share, fixed once every event has been replayed.
+  const finalAveragePerShare = averagePerShare();
 
   for (const lot of openLots) {
     if (Math.abs(lot.shares) < qtyEps) {
@@ -386,6 +752,12 @@ async function assignWithStrategy(
       if (gainsResult.skippedReason) {
         warnings.push(`Lot ${lot.guid.substring(0, 8)}: ${gainsResult.skippedReason}`);
       }
+    } else if (isAverage) {
+      // Still-open lot: under pooling its remaining shares are worth the pool
+      // average, NOT what this particular lot happened to pay. Recording it
+      // keeps totalCost / unrealizedGain in @/lib/lots consistent with the
+      // realized figures instead of silently reverting to per-lot cost.
+      await writeAvgBasisRemaining(lot.guid, finalAveragePerShare * lot.shares, runId, tx);
     }
   }
 
@@ -400,38 +772,6 @@ async function assignWithStrategy(
     method: strategy,
     runId,
     warnings,
-  };
-}
-
-async function assignFIFO(
-  accountGuid: string,
-  tx: PrismaTx
-): Promise<AutoAssignResult> {
-  return assignWithStrategy(accountGuid, tx, 'fifo');
-}
-
-async function assignLIFO(
-  accountGuid: string,
-  tx: PrismaTx
-): Promise<AutoAssignResult> {
-  return assignWithStrategy(accountGuid, tx, 'lifo');
-}
-
-async function assignAverage(
-  accountGuid: string,
-  tx: PrismaTx
-): Promise<AutoAssignResult> {
-  // GnuCash lots are discrete acquisitions; the current scrub engine cannot
-  // persist a true pooled average-cost election without rewriting every lot's
-  // basis. Fail visibly instead of claiming FIFO-generated gains are average.
-  const result = await assignFIFO(accountGuid, tx);
-  return {
-    ...result,
-    method: 'fifo (average cost not implemented)',
-    warnings: [
-      'Average-cost assignment is not implemented; this run used FIFO and generated FIFO gains.',
-      ...result.warnings,
-    ],
   };
 }
 
@@ -653,11 +993,18 @@ async function assertRevertPreservesReconciled(
   assertSplitsNotProtected(operation, offending);
 }
 
+const LOT_ASSIGNMENT_METHODS: readonly LotAssignmentMethod[] = ['fifo', 'lifo', 'average'];
+
 export async function autoAssignLots(
   accountGuid: string,
-  method: 'fifo' | 'lifo' | 'average',
+  method: LotAssignmentMethod,
   bookGuid?: string
 ): Promise<AutoAssignResult> {
+  // Provision the app-owned history table on its OWN connection, before the
+  // transaction below opens — DDL inside a caller's transaction would hold
+  // its advisory lock for the whole scrub. Memoized, so this is one
+  // round trip per process.
+  await ensureAvgBasisHistoryTable();
   return prisma.$transaction(async (tx) => {
     await guardBookLock(tx, bookGuid, 'lot auto-assign');
 
@@ -680,20 +1027,10 @@ export async function autoAssignLots(
     // operations against each other, not against the reconcile routes.
     await lockAccountTransactions(tx, accountGuid);
 
-    let result: AutoAssignResult;
-    switch (method) {
-      case 'fifo':
-        result = await assignFIFO(accountGuid, tx);
-        break;
-      case 'lifo':
-        result = await assignLIFO(accountGuid, tx);
-        break;
-      case 'average':
-        result = await assignAverage(accountGuid, tx);
-        break;
-      default:
-        throw new Error(`Unknown assignment method: ${method}`);
+    if (!LOT_ASSIGNMENT_METHODS.includes(method)) {
+      throw new Error(`Unknown assignment method: ${method}`);
     }
+    const result = await assignWithStrategy(accountGuid, tx, method);
     await bumpAccountTransactionTokens(tx, accountGuid);
     return result;
   }, { timeout: 120_000, maxWait: 15_000 });
@@ -703,6 +1040,11 @@ export async function clearLotAssignments(
   accountGuid: string,
   bookGuid?: string
 ): Promise<{ splitsUnassigned: number; lotsDeleted: number }> {
+  // Provision the app-owned history table on its OWN connection, before the
+  // transaction below opens — DDL inside a caller's transaction would hold
+  // its advisory lock for the whole scrub. Memoized, so this is one
+  // round trip per process.
+  await ensureAvgBasisHistoryTable();
   return prisma.$transaction(async (tx) => {
     await guardBookLock(tx, bookGuid, 'clear lot assignments');
 
@@ -853,6 +1195,15 @@ export async function clearLotAssignments(
       });
     }
 
+    // Average-cost metadata is never carried by the `gnucash_web_generated`
+    // marker (that marker means "delete this row", and these slots sit on the
+    // user's own sell splits), so the tagged sweep above cannot reach it.
+    // Clearing an account destroys its whole lot structure, so EVERY run's
+    // slots go, not just one run's — leaving any behind would keep
+    // generateCapitalGains, the lot summaries and Form 8949 pricing disposals
+    // at a pooled basis for an account that no longer has lots.
+    await clearAverageCostArtifacts(accountGuid, tx);
+
     // 2. Unassign all remaining splits from lots
     const updateResult = await tx.splits.updateMany({
       where: { account_guid: accountGuid, lot_guid: { not: null } },
@@ -872,7 +1223,7 @@ export async function clearLotAssignments(
       await tx.slots.deleteMany({
         where: {
           obj_guid: { in: deleteGuids },
-          name: { in: ['title', 'source_lot_guid', 'acquisition_date', 'carried_basis', 'gnucash_web_generated'] },
+          name: { in: ['title', 'source_lot_guid', 'acquisition_date', 'carried_basis', ...AVG_LOT_SLOT_NAMES, 'gnucash_web_generated'] },
         },
       });
       await tx.lots.deleteMany({
@@ -907,6 +1258,11 @@ export async function revertScrubRun(
   runId: string,
   options: RevertScrubRunOptions = {}
 ): Promise<{ reverted: number }> {
+  // Provision the app-owned history table on its OWN connection, before the
+  // transaction below opens — DDL inside a caller's transaction would hold
+  // its advisory lock for the whole scrub. Memoized, so this is one
+  // round trip per process.
+  await ensureAvgBasisHistoryTable();
   return prisma.$transaction(async (tx) => {
     await guardBookLock(tx, options.bookGuid, 'revert scrub run');
 
@@ -916,7 +1272,18 @@ export async function revertScrubRun(
       select: { obj_guid: true },
     });
     const taggedGuids = taggedSlots.map(s => s.obj_guid);
-    if (taggedGuids.length === 0) return { reverted: 0 };
+
+    // Average-cost slots are found by their OWN run companions, not by the
+    // generated-entity marker — a one-lot sale is assigned straight to the
+    // user's split, so an average run can write slots without tagging a single
+    // entity. Enumerated BEFORE the early return below: exiting on
+    // `taggedGuids.length === 0` used to leave such a run's pooled basis live
+    // for computeCarriedBasis and Form 8949 to read, while the caller was told
+    // the run had been reverted.
+    const avgArtifacts = await findAverageCostArtifactsForRun(runId, tx);
+    if (taggedGuids.length === 0 && !hasRunAverageArtifacts(avgArtifacts)) {
+      return { reverted: 0 };
+    }
 
     // ── Enumerate everything the run touched BEFORE deleting anything ──
     //
@@ -947,6 +1314,25 @@ export async function revertScrubRun(
       select: { guid: true, account_guid: true },
     });
 
+    // Owners of this run's average-cost slots. These rows are NOT tagged, so
+    // they are enumerated separately — and they are the user's own splits and
+    // pre-existing lots, which means they carry accounts the tagged sweep may
+    // not mention at all. Both the book-scope check and the token bump below
+    // need them.
+    const avgSplitOwners = avgArtifacts.splitGuids.length > 0
+      ? ((await tx.splits.findMany({
+          where: { guid: { in: avgArtifacts.splitGuids } },
+          select: { guid: true, account_guid: true, tx_guid: true, lot_guid: true },
+        })) ?? [])
+      : [];
+    const avgLotOwnerGuids = [...new Set([...avgArtifacts.lotGuids, ...avgArtifacts.stashLotGuids])];
+    const avgLotOwners = avgLotOwnerGuids.length > 0
+      ? ((await tx.lots.findMany({
+          where: { guid: { in: avgLotOwnerGuids } },
+          select: { guid: true, account_guid: true },
+        })) ?? [])
+      : [];
+
     // Book-scope check: run IDs are returned in API responses, so an editor
     // of one book must not be able to destroy another book's scrub run by
     // replaying a runId. Abort before any deletion when the run touches
@@ -956,7 +1342,8 @@ export async function revertScrubRun(
       const affectedAccounts = new Set<string>();
       for (const s of txSplits) affectedAccounts.add(s.account_guid);
       for (const s of taggedSplits) affectedAccounts.add(s.account_guid);
-      for (const l of taggedLots) {
+      for (const s of avgSplitOwners) affectedAccounts.add(s.account_guid);
+      for (const l of [...taggedLots, ...avgLotOwners]) {
         if (l.account_guid) affectedAccounts.add(l.account_guid);
       }
       for (const accountGuid of affectedAccounts) {
@@ -971,7 +1358,7 @@ export async function revertScrubRun(
     // restored or removed — taken BEFORE the reconcile-state read below and
     // before the first write. Ordered by guid inside the helper.
     await lockTransactionsForUpdate(
-      [...txGuids, ...taggedSplits.map(s => s.tx_guid)],
+      [...txGuids, ...taggedSplits.map(s => s.tx_guid), ...avgSplitOwners.map(s => s.tx_guid)],
       tx,
     );
 
@@ -1052,6 +1439,9 @@ export async function revertScrubRun(
       const deleteLotGuids = taggedLots.map(l => l.guid);
       await tx.splits.updateMany({ where: { lot_guid: { in: deleteLotGuids } }, data: { lot_guid: null } });
       await tx.slots.deleteMany({ where: { obj_guid: { in: deleteLotGuids } } });
+      // Slots hang off the lot guid and go with it; the history table does not
+      // reference `lots`, so its rows would outlive the lot as orphans.
+      await deleteAvgBasisHistoryForLots(deleteLotGuids, tx);
       await tx.lots.deleteMany({ where: { guid: { in: deleteLotGuids } } });
     }
 
@@ -1061,19 +1451,85 @@ export async function revertScrubRun(
       data: { is_closed: 0 },
     });
 
+    // Undo THIS RUN's average-cost slots. Scoped by run, never by account:
+    // an investment account accumulates slots from every run that ever
+    // scrubbed it, so the account-wide sweep used here before deleted the
+    // basis an EARLIER run had recorded on an already-filed sale — a
+    // reversible action on one run rewriting another run's tax number, with
+    // no error and nothing visible in the UI.
+    await clearAverageCostArtifactsForRun(runId, avgArtifacts, tx);
+
+    // ── Detach the disposals this run priced ────────────────────────────────
+    //
+    // A sale that fits inside ONE lot is assigned straight to the user's own
+    // split, with no generated sub-split to tag, so nothing above reaches it:
+    // the revert dropped its `avg_cost_basis` and left it attached, and the
+    // still-closed lot went on reporting the sale at the lot's own buy cost
+    // instead of the pooled basis the user had already seen — a bigger gain on
+    // a Form 8949 line, produced by an operation that reported success.
+    //
+    // `avgArtifacts.splitGuids` names exactly the splits this run priced, so
+    // undoing the assignment needs no marker on a user row: only `lot_guid` is
+    // cleared, exactly as the modified-original restore above does it. Nothing
+    // is tagged `gnucash_web_generated` and no user row is deleted — the two
+    // things this design must never do. Splits the sweep already deleted are
+    // simply absent, so the update passes over them.
+    if (avgArtifacts.splitGuids.length > 0) {
+      await tx.splits.updateMany({
+        where: { guid: { in: avgArtifacts.splitGuids }, lot_guid: { not: null } },
+        data: { lot_guid: null },
+      });
+    }
+
+    // A lot those disposals had emptied is holding its shares again. Left
+    // flagged closed it would be skipped by the next scrub's open-lot query,
+    // hiding real shares from the pool that re-prices them.
+    const detachedLotGuids = [...new Set(
+      avgSplitOwners.map(s => s.lot_guid).filter((g): g is string => g !== null && g !== undefined),
+    )];
+    if (detachedLotGuids.length > 0) {
+      const stillClosed = (await tx.lots.findMany({
+        where: { guid: { in: detachedLotGuids }, is_closed: 1 },
+        select: { guid: true },
+      })) ?? [];
+      for (const lot of stillClosed) {
+        const remaining = (await tx.splits.findMany({
+          where: { lot_guid: lot.guid },
+          select: { quantity_num: true, quantity_denom: true },
+        })) ?? [];
+        const shares = remaining.reduce(
+          (sum, s) => sum + toDecimalNumber(s.quantity_num, s.quantity_denom), 0,
+        );
+        if (Math.abs(shares) > 1e-9) {
+          await tx.lots.update({ where: { guid: lot.guid }, data: { is_closed: 0 } });
+        }
+      }
+    }
+
     // Bump the concurrency token on every account the revert rewrote
-    // (restored sell splits, detached lots) so stale editors 409 instead of
-    // silently re-applying pre-revert state.
+    // (restored sell splits, detached lots, dropped average-cost slots) so
+    // stale editors 409 instead of silently re-applying pre-revert state.
     const revertedAccounts = new Set<string>();
-    for (const s of taggedSplits) revertedAccounts.add(s.account_guid);
-    for (const l of taggedLots) {
+    for (const s of [...taggedSplits, ...avgSplitOwners]) revertedAccounts.add(s.account_guid);
+    for (const l of [...taggedLots, ...avgLotOwners]) {
       if (l.account_guid) revertedAccounts.add(l.account_guid);
     }
     for (const accountGuid of Array.from(revertedAccounts).sort()) {
       await bumpAccountTransactionTokens(tx, accountGuid);
     }
 
-    return { reverted: taggedGuids.length };
+    // Count entities this revert actually undid. Averaged books reach here
+    // with untagged owners (the user's own one-lot sale, a pre-existing lot
+    // re-priced by the pool), so they are unioned in rather than added —
+    // a generated sub-split that also carried a basis slot is one entity.
+    const revertedGuids = new Set<string>([
+      ...taggedGuids,
+      ...avgArtifacts.splitGuids,
+      ...avgArtifacts.lotGuids,
+      ...avgArtifacts.stashLotGuids,
+    ]);
+
+    return { reverted: revertedGuids.size };
   }, { timeout: 120_000, maxWait: 15_000 });
 }
 
@@ -1093,7 +1549,7 @@ export interface ScrubAllResult {
 }
 
 export async function scrubAllAccounts(
-  method: 'fifo' | 'lifo' | 'average',
+  method: LotAssignmentMethod,
   bookAccountGuids: string[],
   clearFirst: boolean = false,
   onProgress?: (p: { message: string; current: number; total: number; percent: number }) => void,
@@ -1120,7 +1576,7 @@ export async function scrubAllAccounts(
 }
 
 async function runScrubAllAccounts(
-  method: 'fifo' | 'lifo' | 'average',
+  method: LotAssignmentMethod,
   bookAccountGuids: string[],
   clearFirst: boolean,
   onProgress?: (p: { message: string; current: number; total: number; percent: number }) => void
@@ -1389,6 +1845,18 @@ export async function detectWashSales(
       const parsed = slot.string_val ? Number.parseFloat(slot.string_val) : NaN;
       return [slot.obj_guid, Number.isFinite(parsed) ? parsed : 0] as const;
     }));
+    // Average-cost basis per disposal split, so a book scrubbed under that
+    // election measures its wash-sale LOSSES against the pooled basis too —
+    // FIFO basis here would disallow the wrong amount, or miss the loss.
+    const avgCostBasisBySplit = allSplits.length > 0
+      ? new Map((await prisma.slots.findMany({
+          where: { obj_guid: { in: allSplits.map(s => s.guid) }, name: AVG_COST_BASIS_SLOT },
+          select: { obj_guid: true, string_val: true },
+        })).flatMap(slot => {
+          const parsed = slot.string_val ? Number.parseFloat(slot.string_val) : NaN;
+          return Number.isFinite(parsed) ? [[slot.obj_guid, parsed] as const] : [];
+        }))
+      : new Map<string, number>();
     // Only newly scrubbed transfer lots have carried basis. Legacy lots retain
     // their recorded value until a re-scrub supplies its replacement basis.
     const transferInSplitGuids = new Set(allSplits
@@ -1411,11 +1879,15 @@ export async function detectWashSales(
         if (lot) {
           const lotSplits = lot.splits
             .filter(ls => !transferOutSplitGuids.has(ls.guid))
-            .map(ls => ({
-              guid: ls.guid,
-              shares: toDecimalNumber(ls.quantity_num, ls.quantity_denom),
-              value: toDecimalNumber(ls.value_num, ls.value_denom),
-            }));
+            .map(ls => {
+              const avgCostBasis = avgCostBasisBySplit.get(ls.guid);
+              return {
+                guid: ls.guid,
+                shares: toDecimalNumber(ls.quantity_num, ls.quantity_denom),
+                value: toDecimalNumber(ls.value_num, ls.value_denom),
+                ...(avgCostBasis !== undefined ? { avgCostBasis } : {}),
+              };
+            });
           const totalQty = lotSplits.reduce(
             (sum, ls) => sum + ls.shares, 0
           );

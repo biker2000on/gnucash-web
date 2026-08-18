@@ -24,6 +24,7 @@ import { getLatestPrice } from './commodities';
 import { isLongTerm } from './reports/capital-gains';
 import { loadTradeFees, NO_TRADE_FEES, type TradeFeeBySplit } from './trade-fees';
 import { isOwnAccountCommodityTransfer } from './account-transfer';
+import { AVG_COST_BASIS_SLOT, AVG_BASIS_REMAINING_SLOT } from './lot-scrub';
 
 export interface LotSplit {
     guid: string;
@@ -33,6 +34,16 @@ export interface LotSplit {
     shares: number;          // quantity_decimal
     value: number;           // value_decimal (in transaction currency)
     shareBalance: number;    // running balance of shares within the lot
+    /**
+     * AVERAGE-COST basis of the shares this split disposed of, as priced by
+     * the average-cost replay at the split's own date (`avg_cost_basis` slot,
+     * see @/lib/lot-scrub). Present only on disposal splits of an account
+     * scrubbed under the average-basis election, and already fee-inclusive on
+     * the buy side. When present it REPLACES the lot's pro-rata buy cost as
+     * the basis of those shares; when absent every reader keeps its existing
+     * per-lot behaviour, so FIFO/LIFO books are untouched.
+     */
+    avgCostBasis?: number;
 }
 
 export interface LotSummary {
@@ -63,6 +74,15 @@ export interface LotSummary {
      * 0 when absent.
      */
     carriedBasis: number;
+    /**
+     * Pooled cost basis of the shares this lot STILL HOLDS, from the
+     * `avg_cost_basis_remaining` lot slot. Non-null only for an open lot in an
+     * account scrubbed under the average-basis election. Under pooling a lot's
+     * own purchase price stops describing its remaining shares as soon as a
+     * later buy re-averages the pool, so this — not `totalCost` pro-rated — is
+     * what `unrealizedGain` is measured against.
+     */
+    averageBasisRemaining?: number | null;
     /** Transfer-in split GUIDs whose recorded values were replaced by carriedBasis. */
     transferInSplitGuids?: string[];
     /**
@@ -121,7 +141,8 @@ function buildLotSplits(
             post_date: Date | null;
             description: string | null;
         };
-    }>
+    }>,
+    avgCostBasisBySplit: ReadonlyMap<string, number> = new Map(),
 ): LotSplit[] {
     // Sort by post_date ascending
     const sorted = [...splits].sort((a, b) => {
@@ -134,6 +155,7 @@ function buildLotSplits(
     return sorted.map(split => {
         const shares = toDecimalNumber(split.quantity_num, split.quantity_denom);
         shareBalance += shares;
+        const avgCostBasis = avgCostBasisBySplit.get(split.guid);
         return {
             guid: split.guid,
             txGuid: split.tx_guid,
@@ -142,6 +164,7 @@ function buildLotSplits(
             shares,
             value: toDecimalNumber(split.value_num, split.value_denom),
             shareBalance,
+            ...(avgCostBasis !== undefined ? { avgCostBasis } : {}),
         };
     });
 }
@@ -173,9 +196,19 @@ function buildLotSplits(
  * A fee is never deducted, and a charge the allocator did not classify is
  * simply absent from the map and changes nothing. Omit `fees` (existing
  * callers, pure tests) and the gain is gross, exactly as before.
+ *
+ * AVERAGE COST: when a disposal split carries `avgCostBasis`, that number IS
+ * the basis of the shares it disposed of — the pooled average as of that
+ * sale's own date — and neither the lot's buy values nor `carriedBasis` may be
+ * used, because both are already inside the pool that produced it. Buy-side
+ * commissions are likewise already capitalized into the pooled figure, so only
+ * SELL-side fees are applied here (they reduce the amount realized, per
+ * Pub. 550). The branch engages only when EVERY disposal in the lot is priced
+ * that way; a half-priced lot stays on the legacy path rather than mixing two
+ * bases into one number.
  */
 export function computeRealizedGain(
-    splits: Array<{ guid?: string; shares: number; value: number }>,
+    splits: Array<{ guid?: string; shares: number; value: number; avgCostBasis?: number }>,
     isClosed: boolean,
     carriedBasis = 0,
     transferInSplitGuids: ReadonlySet<string> = new Set(),
@@ -183,6 +216,14 @@ export function computeRealizedGain(
 ): number {
     const EPS = 0.0001;
     const feeOf = (split: { guid?: string }) => (split.guid ? fees.get(split.guid) ?? 0 : 0);
+
+    const disposals = splits.filter(s => s.shares < -EPS);
+    if (disposals.length > 0 && disposals.every(s => s.avgCostBasis !== undefined)) {
+        return disposals.reduce(
+            (gain, s) => gain + (-s.value - feeOf(s)) - (s.avgCostBasis ?? 0),
+            0,
+        );
+    }
     // A confirmed same-commodity own-account transfer-in is bookkeeping, not
     // an acquisition: its true basis is the separately stored carried_basis.
     const basisValue = (split: { guid?: string; shares: number; value: number }) =>
@@ -212,6 +253,34 @@ export function computeRealizedGain(
     const proceeds = -sells.reduce((sum, s) => sum + s.value + feeOf(s), 0);
 
     return proceeds - soldShares * costPerShare;
+}
+
+/**
+ * Cost basis attributable to the shares a lot STILL HOLDS.
+ *
+ * The canonical implementation, shared by everything that values open
+ * holdings (the unrealized-gain math below, the Investment Lots report and the
+ * sell planner) so the same lot cannot be priced two ways.
+ *
+ * Under the average-basis election the lot records that basis directly — the
+ * pool re-prices every open share on each purchase, so pro-rating a lot's own
+ * total cost would re-derive the per-lot figure the election discarded, and
+ * would be wrong by however much the pool average moved between disposals.
+ * Otherwise the basis pool is pro-rated over the shares bought, so a
+ * partially-sold lot does not count the sold shares' basis twice.
+ */
+export function remainingCostBasis(
+    lot: Pick<LotSummary, 'averageBasisRemaining' | 'splits' | 'totalShares' | 'totalCost'>,
+): number {
+    if (lot.averageBasisRemaining !== null && lot.averageBasisRemaining !== undefined) {
+        return lot.averageBasisRemaining;
+    }
+    const boughtShares = lot.splits
+        .filter(s => s.shares > 0)
+        .reduce((sum, s) => sum + s.shares, 0);
+    return boughtShares > 0.0001
+        ? lot.totalCost * (lot.totalShares / boughtShares)
+        : lot.totalCost;
 }
 
 /**
@@ -268,7 +337,12 @@ export async function getLotsForAccounts(
     const metadataSlots = await prisma.slots.findMany({
         where: {
             obj_guid: { in: lotGuids },
-            name: { in: ['title', 'source_lot_guid', 'acquisition_date', 'carried_basis'] },
+            name: {
+                in: [
+                    'title', 'source_lot_guid', 'acquisition_date', 'carried_basis',
+                    AVG_BASIS_REMAINING_SLOT,
+                ],
+            },
         },
         select: {
             obj_guid: true,
@@ -279,6 +353,22 @@ export async function getLotsForAccounts(
     const slotValue = new Map(
         metadataSlots.map(slot => [`${slot.obj_guid}:${slot.name}`, slot.string_val]),
     );
+
+    // Per-disposal average-cost basis, written by the average-cost replay in
+    // @/lib/lot-assignment. One batched query for every lot split in scope;
+    // absent for FIFO/LIFO books, which then behave exactly as before.
+    const allLotSplitGuids = lots.flatMap(lot => lot.splits.map(split => split.guid));
+    const avgBasisSlots = allLotSplitGuids.length > 0
+        ? await prisma.slots.findMany({
+            where: { obj_guid: { in: allLotSplitGuids }, name: AVG_COST_BASIS_SLOT },
+            select: { obj_guid: true, string_val: true },
+        })
+        : [];
+    const avgCostBasisBySplit = new Map<string, number>();
+    for (const slot of avgBasisSlots) {
+        const parsed = slot.string_val ? parseFloat(slot.string_val) : NaN;
+        if (Number.isFinite(parsed)) avgCostBasisBySplit.set(slot.obj_guid, parsed);
+    }
 
     const accountRows = await prisma.accounts.findMany({
         where: { guid: { in: uniqueAccountGuids } },
@@ -326,11 +416,21 @@ export async function getLotsForAccounts(
         const index = lotNumberByAccount.get(accountGuid) ?? 0;
         lotNumberByAccount.set(accountGuid, index + 1);
         const title = slotValue.get(`${lot.guid}:title`) || `Lot ${index + 1}`;
-        const lotSplits = buildLotSplits(lot.splits);
+        const lotSplits = buildLotSplits(lot.splits, avgCostBasisBySplit);
         const sourceLotGuid = slotValue.get(`${lot.guid}:source_lot_guid`) || null;
         const carriedRaw = slotValue.get(`${lot.guid}:carried_basis`);
         const carriedParsed = carriedRaw ? parseFloat(carriedRaw) : NaN;
         const carriedBasis = Number.isFinite(carriedParsed) ? carriedParsed : 0;
+        const remainingRaw = slotValue.get(`${lot.guid}:${AVG_BASIS_REMAINING_SLOT}`);
+        const remainingParsed = remainingRaw ? parseFloat(remainingRaw) : NaN;
+        const averageBasisRemaining = Number.isFinite(remainingParsed) ? remainingParsed : null;
+        // An average-cost lot is one the pooled replay priced: it either still
+        // holds shares at the pool average or has already disposed of some at
+        // it. Either marker is enough — a fully-sold lot has no remaining
+        // basis, and a lot that has never sold has no disposal basis.
+        const isAverageCostLot =
+            averageBasisRemaining !== null
+            || lotSplits.some(split => split.avgCostBasis !== undefined);
         const commodityGuid = commodityByAccount.get(accountGuid) ?? null;
         const latestPrice = commodityGuid
             ? (latestPriceByCommodity.get(commodityGuid) ?? null)
@@ -368,11 +468,19 @@ export async function getLotsForAccounts(
         // shares cost, so it belongs in basis (and therefore in the
         // unrealized-gain and remaining-basis math derived from it below).
         const tradeFees = lotSplits.reduce((sum, s) => sum + (fees.get(s.guid) ?? 0), 0);
-        const totalCost = lotSplits
-            .filter(s => s.shares > 0)
-            .reduce((sum, s) => sum
-                + (transferInSplitGuids.has(s.guid) ? 0 : Math.abs(s.value))
-                + (fees.get(s.guid) ?? 0), 0) + carriedBasis;
+        // Under the average-basis election the lot's basis is what the POOL
+        // assigned it, not what this lot's own buys cost: the basis still held
+        // plus the basis already disposed of (sold or transferred out). Both
+        // components are fee-inclusive, so buy-side commissions must not be
+        // added again here.
+        const totalCost = isAverageCostLot
+            ? (averageBasisRemaining ?? 0)
+                + lotSplits.reduce((sum, s) => sum + (s.avgCostBasis ?? 0), 0)
+            : lotSplits
+                .filter(s => s.shares > 0)
+                .reduce((sum, s) => sum
+                    + (transferInSplitGuids.has(s.guid) ? 0 : Math.abs(s.value))
+                    + (fees.get(s.guid) ?? 0), 0) + carriedBasis;
 
         // Exclude transfer-outs, split by split, before computing gain. A
         // transfer can coexist with an actual sale in the same lot; suppressing
@@ -393,15 +501,9 @@ export async function getLotsForAccounts(
         let unrealizedGain: number | null = null;
         if (!isClosed && latestPrice !== null && Math.abs(totalShares) > 0.0001) {
             const marketValue = latestPrice * totalShares;
-            // Pro-rate the buy cost over the remaining (unsold) shares so
-            // partially-sold lots don't count the sold shares' basis twice.
-            const boughtShares = lotSplits
-                .filter(s => s.shares > 0)
-                .reduce((sum, s) => sum + s.shares, 0);
-            const remainingBasis = boughtShares > 0.0001
-                ? totalCost * (totalShares / boughtShares)
-                : totalCost;
-            unrealizedGain = marketValue - remainingBasis;
+            unrealizedGain = marketValue - remainingCostBasis({
+                averageBasisRemaining, splits: lotSplits, totalShares, totalCost,
+            });
         }
 
         // Holding period based on acquisition date (from transfer) or open date.
@@ -433,6 +535,7 @@ export async function getLotsForAccounts(
             sourceLotGuid,
             acquisitionDate,
             carriedBasis,
+            averageBasisRemaining,
             transferInSplitGuids: [...transferInSplitGuids],
             tradeFees,
             splits: lotSplits,
