@@ -3,10 +3,9 @@
  *
  * The oracle is a pure function, so it is tested HERE, in the unit tier, where
  * it runs on every `vitest run` rather than only when someone has a database.
- * That placement is the point: every deadlock proof on this branch is judged
- * by `isDeadlock`, so if it silently becomes permissive again, all of those
- * proofs weaken at once and none of them fails to say so. This file is the
- * thing that fails instead.
+ * That placement is the point: the lock-order proofs that call `isDeadlock`
+ * depend on it staying strict. If it silently becomes permissive again, this
+ * file is the thing that fails instead.
  *
  * The error shapes below are TRANSCRIBED from real output captured against
  * PostgreSQL 16 on this branch, not invented — see the fixtures' comments.

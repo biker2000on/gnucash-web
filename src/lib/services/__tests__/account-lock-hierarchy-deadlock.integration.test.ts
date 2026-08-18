@@ -66,6 +66,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { Pool, type PoolClient } from 'pg';
+import { describeSettled, isDeadlock } from '@/__tests__/integration/deadlock';
 
 /** See the identical resolver in account-rename-reparent-race.integration.test.ts. */
 function resolveTestDatabaseUrl(): string | null {
@@ -121,15 +122,6 @@ const DB_TIMEOUT_MS = 60_000;
 const PARK_TIMEOUT_MS = 3_000;
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-
-/** SQLSTATE 40P01, however Prisma chose to wrap it. */
-function isDeadlock(err: unknown): boolean {
-    if (!err) return false;
-    const code = (err as { code?: unknown }).code;
-    if (typeof code === 'string' && code.includes('40P01')) return true;
-    const text = `${(err as Error)?.message ?? ''} ${JSON.stringify((err as { meta?: unknown }).meta ?? '')}`;
-    return /40P01|deadlock detected/i.test(text);
-}
 
 /** The error a settled promise carries, or null when it fulfilled. */
 function reasonOf<T>(settled: PromiseSettledResult<T>): unknown {
@@ -349,7 +341,7 @@ describeWithDatabase(
                 const renameErr = reasonOf(renameSettled);
                 expect(
                     { graft: isDeadlock(graftErr), rename: isDeadlock(renameErr) },
-                    `deadlock (40P01) reported.\n  graft: ${String((graftErr as Error)?.message ?? graftErr)}\n  rename: ${String((renameErr as Error)?.message ?? renameErr)}`,
+                    `deadlock (40P01) reported.\n  graft: ${describeSettled(graftSettled)}\n  rename: ${describeSettled(renameSettled)}`,
                 ).toEqual({ graft: false, rename: false });
 
                 // Both sides reached a correct terminal state.

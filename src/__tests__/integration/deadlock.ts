@@ -1,8 +1,8 @@
 /**
  * Recognising a REAL PostgreSQL deadlock, and NOTHING else.
  *
- * Every deadlock proof on this branch is judged by this one predicate, so its
- * precision is not a detail of the tests — it is the strength of all of them.
+ * Deadlock proofs import this predicate, so its precision is not a detail of
+ * the tests — it is the strength of the proof that calls it.
  * A permissive oracle does not fail loudly; it silently downgrades every proof
  * that runs through it into "something went wrong around here".
  *

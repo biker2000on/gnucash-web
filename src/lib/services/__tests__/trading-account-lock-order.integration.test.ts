@@ -54,30 +54,12 @@
  * truncate and does not roll back. See vitest.integration.config.ts.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { existsSync, readFileSync } from 'node:fs';
-import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { Pool, type PoolClient } from 'pg';
 import { describeSettled, isDeadlock } from '@/__tests__/integration/deadlock';
+import { hasTestDatabaseUrl, requireTestDatabaseUrl } from '@/__tests__/integration/env';
 
-/** See the identical resolver in account-lock-hierarchy-deadlock.integration.test.ts. */
-function resolveTestDatabaseUrl(): string | null {
-    const fromEnv = process.env.TEST_DATABASE_URL?.trim();
-    if (fromEnv) return fromEnv;
-    const candidates = [
-        path.resolve(process.cwd(), '.env.test.local'),
-        path.resolve(process.cwd(), '../../.env.test.local'),
-    ];
-    for (const file of candidates) {
-        if (!existsSync(file)) continue;
-        const match = readFileSync(file, 'utf8').match(/^\s*TEST_DATABASE_URL\s*=\s*(.+)\s*$/m);
-        const url = match?.[1]?.trim().replace(/^["']|["']$/g, '');
-        if (url) return url;
-    }
-    return null;
-}
-
-const TEST_DATABASE_URL = resolveTestDatabaseUrl();
+const TEST_DATABASE_URL = hasTestDatabaseUrl() ? requireTestDatabaseUrl() : null;
 if (TEST_DATABASE_URL) process.env.DATABASE_URL = TEST_DATABASE_URL;
 
 const describeWithDatabase = describe.skipIf(!TEST_DATABASE_URL);
