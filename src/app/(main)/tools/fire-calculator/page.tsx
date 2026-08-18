@@ -37,6 +37,13 @@ import { FiAgeHistogram, SensitivityRow } from './FiInsights';
 import { RelatedLinks } from '@/components/RelatedLinks';
 import { PersonalToolNotice } from '@/components/PersonalToolNotice';
 import { Abbr } from '@/components/ui/Abbr';
+import { calculateCalendarAge } from '@/lib/age';
+
+/** Current age used to anchor FIRE projections, or null when unsuitable. */
+export function fireCalculatorAgeFromBirthday(birthday: string | null | undefined, asOf = new Date()): number | null {
+  const age = calculateCalendarAge(birthday, asOf, 'utc');
+  return age !== null && age > 0 && age < 120 ? age : null;
+}
 
 /* ------------------------------------------------------------------ */
 /* Debounce hook                                                       */
@@ -129,11 +136,8 @@ export default function FireCalculatorPage() {
           const prefs = data.preferences || {};
           if (prefs.birthday) {
             setBirthday(prefs.birthday);
-            const ageYears = Math.floor(
-              (Date.now() - new Date(prefs.birthday + 'T00:00:00').getTime()) /
-              (365.25 * 24 * 60 * 60 * 1000)
-            );
-            if (ageYears > 0 && ageYears < 120) {
+            const ageYears = fireCalculatorAgeFromBirthday(prefs.birthday);
+            if (ageYears !== null) {
               setCurrentAge(ageYears);
             }
           }
@@ -157,11 +161,8 @@ export default function FireCalculatorPage() {
       });
       if (res.ok) {
         setBirthday(dateStr);
-        const ageYears = Math.floor(
-          (Date.now() - new Date(dateStr + 'T00:00:00').getTime()) /
-          (365.25 * 24 * 60 * 60 * 1000)
-        );
-        if (ageYears > 0 && ageYears < 120) {
+        const ageYears = fireCalculatorAgeFromBirthday(dateStr);
+        if (ageYears !== null) {
           setCurrentAge(ageYears);
         }
         setBirthdayEditing(false);
