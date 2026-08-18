@@ -11,6 +11,15 @@ import {
     BASIS_CONSEQUENCE,
 } from '@/components/investments/CostBasisCoverageMark';
 import { sameCoverageStatement } from '@/lib/holdings-coverage';
+import {
+    CONTINUOUS_STALENESS_DAYS,
+    PRICE_STALENESS_DAYS,
+    isPriceStale,
+    priceAgeDays,
+    stalePriceMark,
+    stalePriceMessage,
+    stalenessDaysFor,
+} from '@/lib/price-staleness';
 
 function fmtCurrency(n: number): string {
     return new Intl.NumberFormat('en-US', {
@@ -65,6 +74,86 @@ export function PortfolioTable({ data, onAccountClick }: PortfolioTableProps) {
     const totalsMark = (
         <CostBasisCoverageMark coverage={columnCoverage} consequence={BASIS_CONSEQUENCE} />
     );
+    // Market value and gain are computed from the quote in the Price Date
+    // column, and the report already carried that date here — nothing read it,
+    // so a position last quoted in June rendered exactly like one quoted
+    // yesterday. Age is measured against the report's own as-of date, not the
+    // wall clock: a statement drawn as of March 2020 is not stale for being
+    // about March 2020.
+    //
+    // Marked per row rather than in a caption alone, because staleness differs
+    // row to row: a single sentence cannot say WHICH market values are old.
+    // How old a quote may be depends on what it quotes: a listed security's
+    // newest possible price is routinely a few days back because the exchange
+    // was shut, while a continuously-traded one has no such excuse.
+    //
+    // Which the holding is comes from its namespace first — a name that
+    // identifies a venue with a weekend settles it — and from its price history
+    // (complete weekends of fetched quotes) only when the namespace names no
+    // venue this app recognises, since the column is free text and the crypto in
+    // an imported book may be filed under anything.
+    //
+    // And because two rows in one table can be judged by different bounds, each
+    // marked row prints BOTH its age and the bound applied to it. Without that,
+    // a three-day-old BTC row marked stale beside a three-day-old equity row
+    // that is not looks arbitrary, and the reader has nothing on screen to tell
+    // them it is the market that differs, not the data.
+    const asOfDate = data.filters.endDate || data.generatedAt;
+    const boundFor = (h: PortfolioHolding) => stalenessDaysFor({
+        namespace: h.commodityNamespace,
+        mnemonic: h.symbol,
+        continuousWeekends: h.priceContinuousWeekends,
+    });
+    const isStale = (h: PortfolioHolding) => isPriceStale(h.priceDate, asOfDate, boundFor(h));
+    const staleCount = holdings.filter(isStale).length;
+    /**
+     * The mark, the age, and the bound — plus the whole sentence for a screen
+     * reader, which has room for it. The compact form is hidden from assistive
+     * technology so the two are not read one after the other.
+     *
+     * The sentence already NAMES the quote date, so on a stale row the visible
+     * date beside it is hidden from assistive technology too (`dateForReader`
+     * below). Otherwise a reader hears the date, then hears the same date again
+     * inside the disclosure — the row's one fact announced twice, which reads as
+     * two findings about two quotes.
+     */
+    const staleMark = (h: PortfolioHolding) => {
+        const bound = boundFor(h);
+        const age = priceAgeDays(h.priceDate, asOfDate);
+        return (
+            <span className="ml-1 text-xs text-warning whitespace-nowrap">
+                <span aria-hidden="true">{stalePriceMark(age, bound)}</span>
+                <span className="sr-only">
+                    {stalePriceMessage(h.symbol, h.priceDate, age, bound)}
+                </span>
+            </span>
+        );
+    };
+    /**
+     * The visible quote date, hidden from assistive technology exactly when the
+     * sr-only disclosure beside it will speak the same date. A non-stale row has
+     * no disclosure, so its date is announced normally.
+     */
+    const dateForReader = (h: PortfolioHolding) => (
+        <span aria-hidden={isStale(h) || undefined}>{h.priceDate || '-'}</span>
+    );
+
+    // Refreshing only helps a statement about the present. A report drawn as of
+    // a past date is showing the newest quote that existed then, and no fetch
+    // changes that — so the pointer appears only where it is true.
+    const asOfIsCurrent = priceAgeDays(asOfDate, data.generatedAt) === 0;
+    const staleCaption = staleCount > 0 && (
+        <p className="mb-3 text-left text-xs text-warning">
+            {staleCount} of {holdings.length} holdings {staleCount === 1 ? 'is' : 'are'} priced from
+            a quote older than its market normally goes without one; their market value and gain may
+            not reflect current prices. Each marked row states how old its quote is and the limit it
+            was judged against — {CONTINUOUS_STALENESS_DAYS} days for a holding whose market never
+            closes, {PRICE_STALENESS_DAYS} for one listed on an exchange that does.
+            {asOfIsCurrent
+                ? ' Refresh All Prices, from the menu on the Investments page, fetches newer quotes.'
+                : ' These are the newest quotes that existed on the report date.'}
+        </p>
+    );
     const caption = holdings.length > 0 && (
         everyRowMatchesCaption ? (
             <CoverageCaption
@@ -113,7 +202,15 @@ export function PortfolioTable({ data, onAccountClick }: PortfolioTableProps) {
                                     { label: 'Symbol', value: <span className="font-mono">{h.symbol}</span> },
                                     { label: 'Shares', value: <span className="font-mono">{fmtShares(h.shares)}</span> },
                                     { label: 'Price', value: <span className="font-mono">{fmtCurrency(h.latestPrice)}</span> },
-                                    { label: 'Price Date', value: h.priceDate || '-' },
+                                    {
+                                        label: 'Price Date',
+                                        value: (
+                                            <span className={isStale(h) ? 'text-warning' : undefined}>
+                                                {dateForReader(h)}
+                                                {isStale(h) && staleMark(h)}
+                                            </span>
+                                        ),
+                                    },
                                     { label: 'Market Value', value: <span className="font-mono">{fmtCurrency(h.marketValue)}</span> },
                                     {
                                         label: 'Cost Basis',
@@ -200,6 +297,7 @@ export function PortfolioTable({ data, onAccountClick }: PortfolioTableProps) {
     return (
         <div className="p-6">
             {caption}
+            {staleCaption}
             <table className="w-full border-collapse">
                 <thead>
                     <tr className="border-b border-border">
@@ -246,7 +344,10 @@ export function PortfolioTable({ data, onAccountClick }: PortfolioTableProps) {
                             <td className="py-2 px-3 text-sm text-foreground-secondary font-mono">{h.symbol}</td>
                             <td className="py-2 px-3 text-sm text-right font-mono text-foreground">{fmtShares(h.shares)}</td>
                             <td className="py-2 px-3 text-sm text-right font-mono text-foreground">{fmtCurrency(h.latestPrice)}</td>
-                            <td className="py-2 px-3 text-sm text-center text-foreground-secondary">{h.priceDate || '-'}</td>
+                            <td className={`py-2 px-3 text-sm text-center ${isStale(h) ? 'text-warning' : 'text-foreground-secondary'}`}>
+                                {dateForReader(h)}
+                                {isStale(h) && staleMark(h)}
+                            </td>
                             <td className="py-2 px-3 text-sm text-right font-mono text-foreground">{fmtCurrency(h.marketValue)}</td>
                             <td className="py-2 px-3 text-sm text-right font-mono text-foreground">
                                 {fmtCurrency(h.costBasis)}

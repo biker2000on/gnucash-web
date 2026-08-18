@@ -244,6 +244,7 @@ describe('FinancialSummaryService.computeNetWorthSummary', () => {
       complete: true,
       unvaluedAccountCount: 0,
       gaps: [],
+      stalePrices: [],
     });
   });
 
@@ -293,6 +294,7 @@ describe('FinancialSummaryService.computeNetWorthSummary', () => {
       complete: false,
       unvaluedAccountCount: 1,
       gaps: [gap],
+      stalePrices: [],
     });
   });
 
@@ -349,6 +351,7 @@ describe('FinancialSummaryService.computeNetWorthSummary', () => {
       comparable: false,
       unvaluedAccountCount: 1,
       gaps: [gap],
+      stalePrices: [],
     });
   });
 
@@ -451,6 +454,8 @@ describe('FinancialSummaryService.computeIncomeExpenses', () => {
       rate: 1.1,
       date: endDate,
       source: 'test',
+      ageDays: 0,
+      stale: false,
     });
 
     mockPrisma.splits.findMany.mockResolvedValue([
