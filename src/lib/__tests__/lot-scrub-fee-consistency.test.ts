@@ -63,7 +63,7 @@ vi.mock('../gnucash', async (importOriginal) => {
   };
 });
 
-import { apportionCarriedBasis } from '../lot-scrub';
+import { apportionCarriedBasis, classifyAccountTax } from '../lot-scrub';
 import { autoAssignLots, revertScrubRun } from '../lot-assignment';
 import { getAccountLots } from '../lots';
 import { lotToRealizedSales } from '../reports/capital-gains';
@@ -132,10 +132,21 @@ function seedBook() {
   );
 }
 
-/** Add a balanced transaction. Splits: [splitGuid, accountGuid, qty, value]. */
-function addTx(guid: string, date: string, splits: Array<[string, string, number, number]>) {
+/**
+ * Add a balanced transaction. Splits: [splitGuid, accountGuid, qty, value].
+ *
+ * `currencyGuid` defaults to USD. Passing a NON-currency commodity reproduces
+ * the imported-data shape the engine guards against (a trade denominated in
+ * the security itself), which is what forces the ancestor currency walk.
+ */
+function addTx(
+  guid: string,
+  date: string,
+  splits: Array<[string, string, number, number]>,
+  currencyGuid: string = USD,
+) {
   db.t.transactions.push({
-    guid, currency_guid: USD, num: '',
+    guid, currency_guid: currencyGuid, num: '',
     post_date: new Date(date), enter_date: new Date(date), description: guid,
   });
   for (const [sg, acctGuid, qty, val] of splits) {
@@ -1229,5 +1240,422 @@ describe('a deeply filed capital-gains account is found, not duplicated', () => 
       .filter(s => s.account_guid === DEEP_LONG_TERM)
       .reduce((sum, s) => sum + Number(s.value_num) / Number(s.value_denom), 0);
     expect(booked).toBeCloseTo(-500, 6);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// (h) Upward walks stop at the BOOK BOUNDARY
+// ---------------------------------------------------------------------------
+
+/**
+ * Removing the hop caps was necessary, but a cap was also — accidentally —
+ * the only thing limiting how far a CORRUPT parent pointer could carry a walk.
+ *
+ * GnuCash accounts have no book foreign key: an account's book is whichever
+ * book's `root_account_guid` its parent chain reaches. So the one way a walk
+ * can leave Book A is a Book A ROOT whose `parent_guid` is non-null, pointing
+ * into Book B. Uncapped and unbounded, both of the engine's decisions then
+ * read the WRONG BOOK:
+ *
+ *   (a) classifyAccountTax finds Book B's "Roth IRA" above a Book A brokerage
+ *       account and answers TAX_EXEMPT for a fully taxable sale — under-
+ *       reported tax, presented as correct;
+ *   (b) the gains-account walk adopts Book B's ROOT and posts Book A's
+ *       realized gain into BOOK B's capital-gains account.
+ *
+ * Both are asserted below. The walks now stop at the boundary.
+ */
+
+const ROOT_B = 'book-b-root-acct-guid-000000000';
+const ROTH_B = 'book-b-roth-acct-guid-000000000';
+/** A Book B account with a completely neutral name — no tax words at all. */
+const NEUTRAL_B = 'book-b-neutral-acct-guid-000000';
+const INCOME_B = 'book-b-income-acct-guid-0000000';
+const CAPGAINS_B = 'book-b-capgains-acct-guid-00000';
+const LT_B = 'book-b-longterm-acct-guid-00000';
+
+/**
+ * A second, complete book: its own ROOT, a "Roth IRA" holding account, and a
+ * full "Income:Capital Gains:Long Term" chain. Nothing in Book A may read any
+ * of it.
+ */
+function seedBookB() {
+  db.t.books.push({ guid: 'book-2', root_account_guid: ROOT_B });
+  db.t.accounts.push(
+    acct(ROOT_B, 'Root Account', 'ROOT', null, USD),
+    acct(ROTH_B, 'Roth IRA', 'ASSET', ROOT_B, USD),
+    acct(NEUTRAL_B, 'Holdings', 'ASSET', ROOT_B, USD),
+    acct(INCOME_B, 'Income', 'INCOME', ROOT_B, USD),
+    acct(CAPGAINS_B, 'Capital Gains', 'INCOME', INCOME_B, USD),
+    acct(LT_B, 'Long Term', 'INCOME', CAPGAINS_B, USD),
+  );
+}
+
+/**
+ * Corrupt Book A's ROOT so its parent points into Book B's tree — the only
+ * shape that can carry an upward walk out of a book.
+ */
+function crossBookTheRoot(intoGuid: string) {
+  db.t.accounts.find(a => a.guid === ROOT)!.parent_guid = intoGuid;
+}
+
+/** Total value booked to one account, by GUID (two books share leaf names). */
+function bookedInto(accountGuid: string): number {
+  return db.t.splits
+    .filter(s => s.account_guid === accountGuid)
+    .reduce((sum, s) => sum + Number(s.value_num) / Number(s.value_denom), 0);
+}
+
+/**
+ * The book an account belongs to, by the repository's own ownership rule
+ * (assertPostableAccount, @/lib/inventory-engine): climb `parent_guid` and
+ * take the FIRST ancestor that some book names as its root. Deliberately
+ * stops there — following the corrupt pointer above Book A's root would make
+ * every Book A account look like it belonged to Book B as well, which is the
+ * confusion the boundary exists to prevent.
+ */
+function owningBookRoot(guid: string): string | null {
+  const roots = new Set(db.t.books.map(b => b.root_account_guid as string));
+  const seen = new Set<string>();
+  let cur = db.t.accounts.find(a => a.guid === guid);
+  while (cur && !seen.has(cur.guid as string)) {
+    seen.add(cur.guid as string);
+    if (roots.has(cur.guid as string)) return cur.guid as string;
+    if (!cur.parent_guid) return null;
+    cur = db.t.accounts.find(a => a.guid === cur!.parent_guid);
+  }
+  return null;
+}
+
+describe('a corrupt parent chain cannot carry a walk into another book', () => {
+  /**
+   * Book A sells 100 shares bought for $1,000 at $1,500. Book A has NO
+   * capital-gains account of its own; Book B has a complete one. Book A's ROOT
+   * is corrupted to point at Book B's "Roth IRA".
+   */
+  function seedCrossBookSale(intoGuid: string) {
+    seedBook();
+    seedBookB();
+    crossBookTheRoot(intoGuid);
+    addTx('tx-buy', '2022-01-10', [
+      ['a-buy', STOCK_A, 100, 1000],
+      ['a-buy-cash', CASH, -1000, -1000],
+    ]);
+    addTx('tx-sell', '2024-11-02', [
+      ['a-sell', STOCK_A, -100, -1500],
+      ['a-sell-cash', CASH, 1500, 1500],
+    ]);
+  }
+
+  it('classifies a Book A brokerage account on Book A names only', async () => {
+    seedCrossBookSale(ROTH_B);
+
+    // Before the boundary the walk climbed Book A's root into Book B, read
+    // "Roth IRA" there and returned TAX_EXEMPT — a sheltered classification on
+    // a fully taxable sale.
+    expect(await classifyAccountTax(STOCK_A)).toBe('TAX_NORMAL');
+  });
+
+  it('still records the taxable $500 gain a foreign Roth used to erase', async () => {
+    seedCrossBookSale(ROTH_B);
+
+    const res = await autoAssignLots(STOCK_A, 'fifo');
+
+    // This is what the misclassification actually cost: TAX_EXEMPT makes
+    // generateCapitalGains skip the lot outright ("Tax-exempt account — gains
+    // not recorded"), so a real $500 taxable gain left the ledger entirely,
+    // reported to nobody, on the strength of a Roth account in another book.
+    expect(res.gainsTransactions).toBe(1);
+    expect(res.totalRealizedGain).toBeCloseTo(500, 6);
+    expect(res.warnings.some((w: string) => /Tax-exempt/.test(w))).toBe(false);
+  });
+
+  it('posts Book A’s realized gain inside Book A, never into Book B', async () => {
+    // The foreign ancestor is NEUTRAL here ("Holdings"), so the classification
+    // stays TAX_NORMAL and the gain IS booked — isolating the second failure:
+    // which book's capital-gains account receives it. Book A owns none, Book B
+    // owns a complete one.
+    seedCrossBookSale(NEUTRAL_B);
+
+    const res = await autoAssignLots(STOCK_A, 'fifo');
+    expect(res.totalRealizedGain).toBeCloseTo(500, 6);
+
+    // Before the boundary the root walk climbed past Book A's ROOT, adopted
+    // Book B's root, and credited BOOK B's Long Term account.
+    expect(bookedInto(LT_B)).toBeCloseTo(0, 6);
+
+    // The gain lands on an INCOME account owned by Book A — here a freshly
+    // created "Income:Capital Gains:Long Term", since Book A had none.
+    const credited = db.t.accounts.filter(
+      a => a.account_type === 'INCOME' && bookedInto(a.guid as string) !== 0,
+    );
+    expect(credited).toHaveLength(1);
+    expect(bookedInto(credited[0].guid as string)).toBeCloseTo(-500, 6);
+    expect(owningBookRoot(credited[0].guid as string)).toBe(ROOT);
+  });
+
+  it('keeps the fee account path inside Book A as well', async () => {
+    // A commission account correctly filed in Book A must not pick up Book B's
+    // names, which is what the path builder would read past the boundary.
+    seedBook();
+    seedBookB();
+    crossBookTheRoot(ROTH_B);
+
+    const accountPaths = await buildAccountPathMap();
+    expect(accountPaths.get(COMMISSIONS)).toBe('Expenses:Commissions');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// (i) The root-traversal cap is load-bearing
+// ---------------------------------------------------------------------------
+
+/**
+ * `generateCapitalGains` walks up from the lot's account to find the book to
+ * post into. That walk carried a 20-hop cap, and overrunning it did NOT fail
+ * loudly: it fell through to `books.findFirst()` — literally "whichever book
+ * the database lists first". With more than one book on the connection that is
+ * a coin flip, and losing it posts Book A's gain into Book B's ledger.
+ */
+const DEEP_A_LEVELS = 22;
+const deepAGuid = (i: number) => `deep-a-${String(i).padStart(2, '0')}-guid-00000000`;
+/** The security account, 23 hops below Book A's root. */
+const DEEP_STOCK_A = 'deep-stock-a-acct-guid-00000000';
+const INCOME_A = 'book-a-income-acct-guid-0000000';
+const CAPGAINS_A = 'book-a-capgains-acct-guid-00000';
+const LT_A = 'book-a-longterm-acct-guid-00000';
+
+describe('a deeply filed security account resolves its OWN book', () => {
+  /**
+   * Book B is listed FIRST, so `books.findFirst()` returns Book B — the value
+   * the capped walk fell back to. Both books own a complete, equally shallow
+   * "Income:Capital Gains:Long Term", so the only thing that can decide the
+   * target is which root the walk resolved.
+   */
+  function seedDeeplyFiledSale() {
+    seedBook();
+    seedBookB();
+    // Book B first in the table: this is what findFirst() answered with.
+    db.t.books.reverse();
+
+    db.t.accounts.push(
+      acct(INCOME_A, 'Income', 'INCOME', ROOT, USD),
+      acct(CAPGAINS_A, 'Capital Gains', 'INCOME', INCOME_A, USD),
+      acct(LT_A, 'Long Term', 'INCOME', CAPGAINS_A, USD),
+    );
+
+    let parent: string = ASSETS;
+    for (let i = 1; i <= DEEP_A_LEVELS; i++) {
+      db.t.accounts.push(acct(deepAGuid(i), `Tier ${i}`, 'ASSET', parent, USD));
+      parent = deepAGuid(i);
+    }
+    db.t.accounts.push(acct(DEEP_STOCK_A, 'AAPL', 'STOCK', parent, AAPL));
+
+    addTx('tx-buy', '2022-01-10', [
+      ['a-buy', DEEP_STOCK_A, 100, 1000],
+      ['a-buy-cash', CASH, -1000, -1000],
+    ]);
+    addTx('tx-sell', '2024-11-02', [
+      ['a-sell', DEEP_STOCK_A, -100, -1500],
+      ['a-sell-cash', CASH, 1500, 1500],
+    ]);
+  }
+
+  it('books the gain into Book A’s gains account, not the first book’s', async () => {
+    seedDeeplyFiledSale();
+
+    const res = await autoAssignLots(DEEP_STOCK_A, 'fifo');
+    expect(res.totalRealizedGain).toBeCloseTo(500, 6);
+
+    // Under the 20-hop cap the walk never reached Book A's root, fell back to
+    // books.findFirst() = Book B, and credited BOOK B's Long Term account.
+    expect(bookedInto(LT_B)).toBeCloseTo(0, 6);
+    expect(bookedInto(LT_A)).toBeCloseTo(-500, 6);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// (j) The currency-ancestor cap is load-bearing
+// ---------------------------------------------------------------------------
+
+/**
+ * When a trade's own transaction is denominated in something that is not a
+ * CURRENCY — the shape imported stock/crypto data produces — the engine picks
+ * the gains transaction's currency by walking the security account's
+ * ancestors. That walk carried a 20-level cap, and overrunning it did NOT
+ * throw: it fell through to "the CURRENCY commodity appearing on the most
+ * accounts book-wide", which in a mostly-EUR book denominates a USD trade's
+ * realized gain in EUR. Silently, in the ledger.
+ */
+const DEEP_C_LEVELS = 22;
+const deepCGuid = (i: number) => `deep-c-${String(i).padStart(2, '0')}-guid-00000000`;
+const DEEP_STOCK_C = 'deep-stock-c-acct-guid-00000000';
+const EUR = 'eur-commodity-000000000000000000';
+
+describe('the gains transaction takes its currency from the account tree', () => {
+  /**
+   * AAPL sits 23 levels below "Assets", every intervening tier carrying NO
+   * commodity at all, so the nearest currency-bearing ancestor is Assets
+   * (USD). Thirty otherwise-unrelated EUR accounts make EUR the book's
+   * most-common currency, so the fallback is visibly wrong when it fires.
+   */
+  function seedDeepUnpricedChain() {
+    seedBook();
+    db.t.commodities.push(
+      { guid: EUR, namespace: 'CURRENCY', mnemonic: 'EUR', fraction: 100, quote_flag: 0 },
+    );
+    for (let i = 0; i < 30; i++) {
+      db.t.accounts.push(acct(`eur-holder-${String(i).padStart(2, '0')}-guid-00`, `EUR ${i}`, 'BANK', ASSETS, EUR));
+    }
+
+    let parent: string = ASSETS;
+    for (let i = 1; i <= DEEP_C_LEVELS; i++) {
+      // commodity_guid null: these tiers say nothing about currency.
+      db.t.accounts.push(acct(deepCGuid(i), `Tier ${i}`, 'ASSET', parent, null as unknown as string));
+      parent = deepCGuid(i);
+    }
+    db.t.accounts.push(acct(DEEP_STOCK_C, 'AAPL', 'STOCK', parent, AAPL));
+
+    // Denominated in AAPL, not a currency — this is what forces the walk.
+    addTx('tx-buy', '2022-01-10', [
+      ['a-buy', DEEP_STOCK_C, 100, 1000],
+      ['a-buy-cash', CASH, -1000, -1000],
+    ], AAPL);
+    addTx('tx-sell', '2024-11-02', [
+      ['a-sell', DEEP_STOCK_C, -100, -1500],
+      ['a-sell-cash', CASH, 1500, 1500],
+    ], AAPL);
+  }
+
+  /** The transaction the engine generated for the realized gain. */
+  function generatedGainsTx(): Rec {
+    const tx = db.t.transactions.find(t => String(t.description ?? '').startsWith('Realized'));
+    if (!tx) throw new Error('no gains transaction was generated');
+    return tx;
+  }
+
+  it('denominates the gain in USD, not the book’s most-common currency', async () => {
+    seedDeepUnpricedChain();
+
+    const res = await autoAssignLots(DEEP_STOCK_C, 'fifo');
+    expect(res.totalRealizedGain).toBeCloseTo(500, 6);
+
+    // Under the 20-level cap the walk stopped short of Assets, no ancestor
+    // named a currency, and the fallback denominated this USD trade in EUR.
+    expect(generatedGainsTx().currency_guid).toBe(USD);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// (k) Every unbounded walk CLOSES on a corrupt parent cycle
+// ---------------------------------------------------------------------------
+
+/**
+ * Four upward walks lost their hop caps. A hop cap is a bad correctness
+ * boundary but it was a real liveness one, so each walk has to prove it
+ * terminates on a cyclic parent chain: a scrub that spins forever mid-write is
+ * worse than one that returns a truncated path.
+ *
+ * These tests are the proof. Each drives the real engine over a deliberately
+ * cyclic chart; a walk that failed to close would hang and the test would time
+ * out rather than fail. (The fee-path walk and classifyAccountTax carry their
+ * own cycle tests above.)
+ */
+const CYC_A = 'cycle-a-acct-guid-00000000000000';
+const CYC_B = 'cycle-b-acct-guid-00000000000000';
+const CYC_STOCK = 'cycle-stock-acct-guid-000000000';
+
+describe('corrupt parent cycles close instead of spinning', () => {
+  it('closes the root walk and the currency walk, then refuses loudly', async () => {
+    // CYC_A <-> CYC_B, with no currency anywhere on the cycle and a trade
+    // denominated in AAPL: the currency walk and the root walk BOTH enter it.
+    seedBook();
+    db.t.accounts.push(
+      acct(CYC_A, 'Ring A', 'ASSET', CYC_B, null as unknown as string),
+      acct(CYC_B, 'Ring B', 'ASSET', CYC_A, null as unknown as string),
+      acct(CYC_STOCK, 'AAPL', 'STOCK', CYC_A, AAPL),
+    );
+    addTx('tx-buy', '2022-01-10', [
+      ['a-buy', CYC_STOCK, 100, 1000],
+      ['a-buy-cash', CASH, -1000, -1000],
+    ], AAPL);
+    addTx('tx-sell', '2024-11-02', [
+      ['a-sell', CYC_STOCK, -100, -1500],
+      ['a-sell-cash', CASH, 1500, 1500],
+    ], AAPL);
+
+    // Both walks close; the book is then genuinely unknown, so the scrub stops
+    // and says so rather than guessing a book to post $500 into.
+    await expect(autoAssignLots(CYC_STOCK, 'fifo')).rejects.toThrow(
+      /Cannot determine book root/,
+    );
+  });
+
+  it('closes fullnameOf on a cyclic INCOME chain and still books correctly', async () => {
+    // A corrupt INCOME account whose ancestry loops. fullnameOf must close and
+    // report no root, so the candidate filter drops it and the sound account
+    // is chosen.
+    seedBook();
+    db.t.accounts.push(
+      acct(INCOME_A, 'Income', 'INCOME', ROOT, USD),
+      acct(CAPGAINS_A, 'Capital Gains', 'INCOME', INCOME_A, USD),
+      acct(LT_A, 'Long Term', 'INCOME', CAPGAINS_A, USD),
+      // "Income:Capital Gains:Long Term" spelled again, on a looping chain.
+      acct(CYC_A, 'Capital Gains', 'INCOME', CYC_B, USD),
+      acct(CYC_B, 'Income', 'INCOME', CYC_A, USD),
+      acct('cycle-lt-acct-guid-0000000000000', 'Long Term', 'INCOME', CYC_A, USD),
+    );
+    addTx('tx-buy', '2022-01-10', [
+      ['a-buy', STOCK_A, 100, 1000],
+      ['a-buy-cash', CASH, -1000, -1000],
+    ]);
+    addTx('tx-sell', '2024-11-02', [
+      ['a-sell', STOCK_A, -100, -1500],
+      ['a-sell-cash', CASH, 1500, 1500],
+    ]);
+
+    const res = await autoAssignLots(STOCK_A, 'fifo');
+    expect(res.totalRealizedGain).toBeCloseTo(500, 6);
+    expect(bookedInto(LT_A)).toBeCloseTo(-500, 6);
+    expect(bookedInto('cycle-lt-acct-guid-0000000000000')).toBeCloseTo(0, 6);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// (l) The engine's path builder agrees with the report's — BEHAVIORALLY
+// ---------------------------------------------------------------------------
+
+/**
+ * The scrub engine builds account paths with its own walker (buildFeeAccountPaths,
+ * reading through the scrub's transaction client) and the lots report / Form
+ * 8949 build them with buildAccountPathMap (@/lib/reports/utils, reading the
+ * global client). Two implementations, not one.
+ *
+ * So their agreement is BEHAVIORAL, not structural: nothing in the type system
+ * makes a change to one show up in the other, and the last time they drifted —
+ * a hop cap here, none there — the same sale was a $440 gain in the ledger and
+ * a $500 gain on both reports. This test is the only thing holding them level,
+ * which is why it asserts the PATHS are identical and not merely that the
+ * money happened to match.
+ */
+describe('engine and report derive the same account path', () => {
+  it('agrees on a 28-level path, character for character', async () => {
+    seedBook();
+    seedDeepFeeChart();
+    addTx('tx-buy', '2022-01-10', [
+      ['a-buy', STOCK_A, 100, 1000],
+      ['a-buy-int', DEEP_COMMISSIONS, 60, 60],
+      ['a-buy-cash', CASH, -1060, -1060],
+    ]);
+
+    // The report's walker.
+    const reportPath = (await buildAccountPathMap()).get(DEEP_COMMISSIONS);
+    // The engine's walker, over the same book.
+    const enginePath = feePathUnderCap(DEEP_COMMISSIONS, Infinity);
+
+    expect(enginePath).toBe(DEEP_FULL_PATH);
+    expect(reportPath).toBe(enginePath);
+    // And the same verdict falls out of both.
+    expect(classifyFeeAccount(reportPath!)).toBe(classifyFeeAccount(enginePath));
   });
 });

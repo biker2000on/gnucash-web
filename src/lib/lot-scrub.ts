@@ -74,6 +74,74 @@ async function tagGeneratedSubSplit(
 export type PrismaTx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
 
 // ---------------------------------------------------------------------------
+// Book boundaries
+// ---------------------------------------------------------------------------
+
+/**
+ * THE BOOK BOUNDARY. Every upward parent walk in this module stops here.
+ *
+ * GnuCash accounts carry no book foreign key: an account's book is defined by
+ * walking `parent_guid` until an account that some book names as its
+ * `root_account_guid` is reached — the same rule assertPostableAccount
+ * (@/lib/inventory-engine) enforces for postings. That makes a book root the
+ * ONLY structural end of an upward walk, and a root whose `parent_guid` is
+ * corrupt (non-null) the ONLY way a walk can leave the book it started in.
+ *
+ * While the walks were hop-capped, the cap incidentally limited how far such
+ * a walk could stray. Uncapping them without this boundary would let one
+ * corrupt pointer climb out of Book A and keep reading Book B, which is not
+ * a truncated string but a WRONG BOOK's answer:
+ *
+ *   - classifyAccountTax would find Book B's "Roth IRA" above a Book A
+ *     brokerage account and return TAX_EXEMPT for a fully taxable sale —
+ *     under-reported tax, presented as correct.
+ *   - the gains-account walk would adopt Book B's ROOT and then post Book A's
+ *     realized gain into BOOK B's capital-gains account — the cross-book
+ *     posting hole this repository has already had once.
+ *
+ * So the walks stop AT the boundary and never climb past it. The boundary
+ * account itself is still read (its own name/commodity are part of its book);
+ * only its parent is refused.
+ */
+interface BookBoundaryNode {
+  guid: string;
+  parent_guid?: string | null;
+  account_type?: string | null;
+}
+
+/**
+ * The guids that end an upward walk: every book's `root_account_guid`.
+ *
+ * Queried defensively. Mocked test clients and pre-migration databases may not
+ * expose `books.findMany`; an empty set degrades to the structural checks in
+ * `isBookBoundary` (a ROOT-typed account, or one with no parent), which is
+ * strictly the OLD stopping rule — never a wider walk than before.
+ */
+async function loadBookRootGuids(db: PrismaTx | typeof prisma): Promise<Set<string>> {
+  try {
+    const books = await (db as unknown as {
+      books: { findMany: (args: unknown) => Promise<Array<{ root_account_guid: string | null }>> };
+    }).books.findMany({ select: { root_account_guid: true } });
+    return new Set(
+      (books ?? [])
+        .map(b => b.root_account_guid)
+        .filter((guid): guid is string => typeof guid === 'string' && guid.length > 0),
+    );
+  } catch {
+    return new Set();
+  }
+}
+
+/**
+ * True when `node` ends an upward walk: it is a book's root account, it is
+ * typed ROOT, or it simply has no parent. Climbing past any of these leaves
+ * the book.
+ */
+function isBookBoundary(node: BookBoundaryNode, bookRoots: ReadonlySet<string>): boolean {
+  return !node.parent_guid || node.account_type === 'ROOT' || bookRoots.has(node.guid);
+}
+
+// ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
@@ -206,24 +274,38 @@ export async function classifyAccountTax(
   const names: string[] = [];
   const walkGuids: string[] = [];
 
-  // Walk to the root. No level cap: BOTH signals this function reads live in
-  // the ANCESTORS — the name patterns below, and the explicit is_retirement
-  // preference looked up over `walkGuids`. A cap stops the climb before the
-  // "Roth IRA" / "401k" ancestor and the account silently reads TAX_NORMAL, so
-  // a sheltered sale is booked as taxable and routed to the taxable gains
-  // account. Termination is `seen`, so a corrupt parent cycle closes.
+  // Walk to the BOOK BOUNDARY (see isBookBoundary), and no further.
+  //
+  // No level cap: BOTH signals this function reads live in the ANCESTORS —
+  // the name patterns below, and the explicit is_retirement preference looked
+  // up over `walkGuids`. A cap stops the climb before the "Roth IRA" / "401k"
+  // ancestor and the account silently reads TAX_NORMAL, so a sheltered sale is
+  // booked as taxable and routed to the taxable gains account.
+  //
+  // But uncapped is only safe because the walk stops at the boundary. The
+  // opposite error is the worse one: reading a "Roth IRA" that belongs to
+  // ANOTHER BOOK returns TAX_EXEMPT for a fully taxable sale, which
+  // under-reports tax. Stopping at the boundary answers TAX_NORMAL there,
+  // which is both the conservative answer and the true one for this book.
+  //
+  // Termination is `seen`, so a corrupt parent cycle closes instead of
+  // spinning: every guid is read at most once.
+  const bookRoots = await loadBookRootGuids(db);
   const seen = new Set<string>();
   let currentGuid: string | null = accountGuid;
   while (currentGuid && !seen.has(currentGuid)) {
     seen.add(currentGuid);
-    const acct: { name: string; parent_guid: string | null } | null =
+    const acct: { name: string; parent_guid: string | null; account_type?: string | null } | null =
       await db.accounts.findUnique({
         where: { guid: currentGuid },
-        select: { name: true, parent_guid: true },
+        select: { name: true, parent_guid: true, account_type: true },
       });
     if (!acct) break;
     walkGuids.push(currentGuid);
     names.push(acct.name.toLowerCase());
+    // The boundary account is read (it belongs to this book); its parent is
+    // not (it does not).
+    if (isBookBoundary({ guid: currentGuid, ...acct }, bookRoots)) break;
     currentGuid = acct.parent_guid;
   }
 
@@ -552,12 +634,12 @@ async function buildFeeAccountPaths(
 ): Promise<Map<string, string>> {
   const byGuid = new Map<string, FeeAccountNode>();
   for (const node of seeds) if (node.guid) byGuid.set(node.guid, node);
+  const bookRoots = await loadBookRootGuids(tx);
 
   // Pull in the ancestors the seed rows do not already carry, one level of
-  // the chart per round.
+  // the chart per round, UP TO THE BOOK BOUNDARY (see isBookBoundary).
   //
-  // WALKED TO EXHAUSTION, with `byGuid` itself as the visited set. There is
-  // deliberately no depth cap. A cap here does not merely shorten a display
+  // NO DEPTH CAP, because a cap here does not merely shorten a display
   // string: fee classification reads this path, and the words that REFUSE a
   // charge ("Interest", "Taxes", "Accrued") normally sit HIGH in the chart,
   // near "Expenses" — exactly the part a cap drops first. Truncating the top
@@ -566,11 +648,19 @@ async function buildFeeAccountPaths(
   // COST BASIS instead, with no error and no warning: a wrong gain presented
   // as correct, on a figure that ends up on a tax return. A 30-level chart of
   // accounts is unusual bookkeeping, not corruption, and it must not be
-  // silently mis-costed. (This is the same termination rule
-  // reconcileCarriedBasisForSourceLots uses for transfer chains, and it
-  // matches buildAccountPathMap (@/lib/reports/utils), whose paths the lots
-  // report and Form 8949 read for the SAME sale — a cap only here would put
-  // the engine and the reports back on different numbers.)
+  // silently mis-costed.
+  //
+  // The lots report and Form 8949 build the SAME path for the same sale with
+  // their own walker, buildAccountPathMap (@/lib/reports/utils). Be precise
+  // about what that means: the two agree BEHAVIORALLY, not structurally.
+  // They are two independent implementations that happen to walk to the book
+  // root, and it was exactly such a divergence — a cap here, none there —
+  // that reported one sale as a $440 gain in the ledger and a $500 gain on
+  // both reports. Nothing in the type system keeps them in step; only
+  // 'produces the same path as the report builder' in the test suite does.
+  // They cannot simply be merged today: this walker must read through the
+  // scrub's own transaction client, while buildAccountPathMap reads the
+  // global prisma client and would not see uncommitted rows.
   //
   // Termination is structural rather than numeric. A guid is queried only
   // while it is absent from `byGuid`, and every row returned is inserted, so
@@ -582,6 +672,9 @@ async function buildFeeAccountPaths(
   for (;;) {
     const missing = [...new Set(
       [...byGuid.values()]
+        // A boundary account's parent is never fetched: past it lies another
+        // book, whose names must not enter this book's fee decision.
+        .filter(node => !isBookBoundary(node, bookRoots))
         .map(node => node.parent_guid)
         .filter((guid): guid is string => !!guid && !byGuid.has(guid)),
     )];
@@ -606,8 +699,8 @@ async function buildFeeAccountPaths(
     if (cached !== undefined) return cached;
     const node = byGuid.get(guid);
     if (!node || seen.has(guid)) return '';
-    // Root accounts never appear in a path.
-    if (node.account_type === 'ROOT') {
+    // Book roots never appear in a path, and nothing above one is read.
+    if (node.account_type === 'ROOT' || bookRoots.has(guid)) {
       paths.set(guid, '');
       return '';
     }
@@ -2379,6 +2472,9 @@ export async function generateCapitalGains(
     },
   });
   const accountsByGuid = new Map(allAccounts.map(a => [a.guid, a]));
+  // Every upward walk below stops here. A realized gain must be posted inside
+  // the lot's OWN book; see isBookBoundary.
+  const bookRoots = await loadBookRootGuids(tx);
 
   // --- Resolve the transaction currency -------------------------------------
   // The source transaction's currency is only trustworthy when it is a real
@@ -2407,11 +2503,18 @@ export async function generateCapitalGains(
     currencyGuid = sourceCurrencyGuid;
     currencyFraction = sourceCommodity.fraction || 100;
   } else {
-    // Walk up the investment account's ancestors and use the first account
-    // whose commodity is a currency.
-    // No level cap. Overrunning one does not truncate a string here, it leaves
-    // currencyGuid null and throws below — a deep-but-valid book would simply
-    // refuse to scrub. `seenAncestors` is the termination condition.
+    // Walk up the investment account's ancestors, to the BOOK BOUNDARY and no
+    // further, and use the first account whose commodity is a currency.
+    //
+    // No level cap. Correcting an earlier comment here, which claimed an
+    // overrun "fails loudly": it does not, and it never did. Overrunning the
+    // old 20-level cap left currencyGuid null and fell through to the
+    // most-common-currency fallback below, which SILENTLY denominates the
+    // generated gains transaction in whichever currency happens to appear on
+    // the most accounts book-wide — EUR for a USD trade in a mostly-EUR book.
+    // That is a wrong number written into the ledger with no error, which is
+    // why the cap had to go. `seenAncestors` is the termination condition, so
+    // a corrupt parent cycle closes instead of spinning.
     const seenAncestors = new Set<string>();
     let ancestorGuid = lot.account.parent_guid;
     while (ancestorGuid && !currencyGuid && !seenAncestors.has(ancestorGuid)) {
@@ -2423,12 +2526,18 @@ export async function generateCapitalGains(
         currencyGuid = ancestor.commodity_guid;
         currencyFraction = commodity.fraction || 100;
       }
+      // The boundary account's own commodity counts (checked above); anything
+      // above it belongs to another book and must not denominate this one.
+      if (isBookBoundary(ancestor, bookRoots)) break;
       ancestorGuid = ancestor.parent_guid;
     }
 
     if (!currencyGuid) {
-      // Last resort: the most-common CURRENCY commodity across accounts
-      // (deterministic: account count desc, then guid).
+      // Last resort, and a SILENT one: the most-common CURRENCY commodity
+      // across accounts (deterministic: account count desc, then guid). It is
+      // reachable only when neither the transaction nor any ancestor up to the
+      // book root names a currency, which a sound book cannot produce — a
+      // GnuCash root account always carries one.
       const currencies: Array<{ guid: string; fraction: number }> =
         await tx.commodities.findMany({
           where: { namespace: 'CURRENCY' },
@@ -2457,30 +2566,42 @@ export async function generateCapitalGains(
   }
 
   // --- Resolve the gains account ---------------------------------------------
-  // Walk up from the lot's account to its book root. No hop cap: a cap here
-  // silently disowns a deeply filed security account from its own book, and
-  // the fallback below then answers with SOME book's root. Termination is the
-  // `seen` set — a corrupt parent cycle closes instead of looping.
+  // Walk up from the lot's account to the BOOK BOUNDARY — the root of the book
+  // this lot actually lives in, and the only book its gain may be posted into.
+  //
+  // No hop cap: a cap silently disowned a deeply filed security account from
+  // its own book, and the old fallback then answered with whichever book came
+  // FIRST out of the table. Correcting the earlier comment here, that fallback
+  // never failed loudly either; it quietly adopted a stranger's root, and with
+  // more than one book on the connection it was a coin flip. Book A's realized
+  // gain then landed in BOOK B's capital-gains account.
+  //
+  // Termination is the `seen` set — a corrupt parent cycle closes instead of
+  // looping — and the boundary check keeps a corrupt root pointer from
+  // climbing on into the next book.
   let rootGuid: string | null = null;
   {
     const seen = new Set<string>();
     let cursor = accountsByGuid.get(lot.account.guid) ?? null;
     while (cursor && !seen.has(cursor.guid)) {
       seen.add(cursor.guid);
-      if (!cursor.parent_guid) {
+      if (isBookBoundary(cursor, bookRoots)) {
         rootGuid = cursor.guid;
         break;
       }
-      cursor = accountsByGuid.get(cursor.parent_guid) ?? null;
+      cursor = accountsByGuid.get(cursor.parent_guid!) ?? null;
     }
   }
   if (!rootGuid) {
-    // Broken parent chain — fall back to the first book's root.
-    const book = await tx.books.findFirst({ select: { root_account_guid: true } });
-    rootGuid = book?.root_account_guid ?? null;
-  }
-  if (!rootGuid) {
-    throw new Error('Cannot determine book root for gains transaction');
+    // The chain cycles, or dangles on a missing account: this lot's book is
+    // genuinely unknown. Refuse LOUDLY. Guessing (the old behaviour: take the
+    // first book's root) posts a realized gain into a book chosen at random,
+    // which is silently wrong money in someone else's ledger — strictly worse
+    // than a scrub that stops and says so.
+    throw new Error(
+      `Cannot determine book root for gains transaction: the parent chain above account `
+      + `${lot.account.guid} does not reach a book root (broken or cyclic parent_guid).`,
+    );
   }
 
   // Build a fullname (root excluded, ":"-joined) plus the root it belongs to.
@@ -2490,8 +2611,12 @@ export async function generateCapitalGains(
   // matching below reads. A truncated fullname loses the book root (so the
   // account is filtered out of its own book and a DUPLICATE gains account is
   // created beside it) and loses the "Tax-Deferred" ancestor (so a sheltered
-  // sale can be booked to the taxable gains account). Termination is the
-  // `seen` set, so a corrupt parent cycle closes rather than looping.
+  // sale can be booked to the taxable gains account). It stops at the BOOK
+  // BOUNDARY, so the `root` it reports is the account's real owning book and
+  // the caller's `c.root !== rootGuid` filter is a true book test rather than
+  // a wherever-the-chain-ended test. Termination is the `seen` set, so a
+  // corrupt parent cycle closes rather than looping (reporting root null,
+  // which the filter then rejects).
   const fullnameOf = (guid: string): { fullname: string; root: string | null } => {
     const parts: string[] = [];
     const seen = new Set<string>();
@@ -2499,12 +2624,12 @@ export async function generateCapitalGains(
     let root: string | null = null;
     while (cur && !seen.has(cur.guid)) {
       seen.add(cur.guid);
-      if (!cur.parent_guid) {
+      if (isBookBoundary(cur, bookRoots)) {
         root = cur.guid;
         break;
       }
       parts.unshift(cur.name);
-      cur = accountsByGuid.get(cur.parent_guid) ?? null;
+      cur = accountsByGuid.get(cur.parent_guid!) ?? null;
     }
     return { fullname: parts.join(':'), root };
   };

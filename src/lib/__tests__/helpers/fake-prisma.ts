@@ -324,6 +324,11 @@ export class FakePrisma {
       const b = this.t.books[0];
       return b ? { ...b } : null;
     },
+    /**
+     * Book roots are what the scrub engine's upward account walks stop at, so
+     * a fixture with two books needs to be able to enumerate them.
+     */
+    findMany: async () => this.t.books.map(b => ({ ...b })),
   };
 
   commodities = {
