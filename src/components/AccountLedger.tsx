@@ -71,6 +71,17 @@ export interface AccountTransaction extends Transaction {
     account_splits?: ReconciliationRowSplit[];
     share_balance?: string;
     cost_basis?: string;
+    /**
+     * Shares under `cost_basis` that have NO traceable basis, as decimal text.
+     *
+     * Tri-state, matching the investment ledger route: absent (this is not an
+     * investment account), `null` (coverage could not be determined at all),
+     * `'0'` (the basis covers the whole position), or a positive count (the
+     * basis covers only part of it). `null` and `'0'` are DIFFERENT answers —
+     * Number(null) === 0 turns "we don't know" into "fully covered", which is
+     * the false claim the tri-state exists to prevent.
+     */
+    cost_basis_uncovered_shares?: string | null;
     reviewed?: boolean;
     source?: string;
     match_type?: string | null;

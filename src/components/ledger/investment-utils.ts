@@ -1,5 +1,6 @@
 import { AccountTransaction } from '../AccountLedger';
 import { Split } from '@/lib/types';
+import type { CostBasisCoverage } from '@/lib/holdings-coverage';
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
@@ -28,6 +29,15 @@ export interface InvestmentRowData {
     gainAmount: number | null;   // signed realized gain (+gain / -loss) for realized_gain rows
     shareBalance: number;        // from server-side computation
     costBasis: number;           // from server-side computation
+    /**
+     * What `costBasis` on THIS row actually describes.
+     *
+     * The route already computes it per row; the ledger used to drop it and
+     * print the number bare, so a basis covering 150 of 200 shares read
+     * exactly like one covering all 200. Carried here so the row can render
+     * the same coverage mark the holdings surfaces do.
+     */
+    costBasisCoverage: CostBasisCoverage;
     transactionType: 'buy' | 'sell' | 'dividend' | 'stock_split' | 'return_of_capital' | 'reinvested_dividend' | 'realized_gain' | 'other';
 }
 
@@ -218,6 +228,43 @@ function classifyInvestmentTransaction(
 }
 
 /**
+ * Read a row's tri-state `cost_basis_uncovered_shares` into a coverage.
+ *
+ * The three API answers are three DIFFERENT statements and must not collapse:
+ *   absent / null  -> unknown: the route could not determine coverage (an
+ *                     oversell, or carry-over tracing switched off).
+ *   '0'            -> complete: the basis describes every share on the row.
+ *   > 0            -> partial: it describes `shareBalance - uncovered` of them.
+ *
+ * `Number(null) === 0` is exactly the coercion that would turn the first case
+ * into the second, so the null check comes before any arithmetic.
+ */
+export function costBasisCoverageForRow(
+    shareBalance: number,
+    uncoveredShares: string | null | undefined,
+): CostBasisCoverage {
+    if (uncoveredShares == null) {
+        return {
+            status: 'unknown',
+            reason: 'Cost-basis coverage for this row could not be determined.',
+        };
+    }
+    const uncovered = parseFloat(uncoveredShares);
+    if (!Number.isFinite(uncovered)) {
+        return {
+            status: 'unknown',
+            reason: 'Cost-basis coverage for this row could not be determined.',
+        };
+    }
+    // Clamp rather than trust: a covered count cannot be negative, and a row
+    // whose uncovered count exceeds its balance has nothing covered.
+    const covered = Math.max(0, shareBalance - uncovered);
+    return uncovered > 0
+        ? { status: 'partial', coveredShares: covered, uncoveredShares: uncovered, warnings: [] }
+        : { status: 'complete', coveredShares: covered };
+}
+
+/**
  * Transform an AccountTransaction into an InvestmentRowData for display
  * in the investment ledger view.
  *
@@ -225,7 +272,11 @@ function classifyInvestmentTransaction(
  * @param accountGuid - The GUID of the investment account being viewed
  */
 export function transformToInvestmentRow(
-    tx: AccountTransaction & { share_balance?: string; cost_basis?: string },
+    tx: AccountTransaction & {
+        share_balance?: string;
+        cost_basis?: string;
+        cost_basis_uncovered_shares?: string | null;
+    },
     accountGuid: string,
 ): InvestmentRowData {
     const splits = tx.splits ?? [];
@@ -273,6 +324,10 @@ export function transformToInvestmentRow(
     // Server-provided running totals
     const shareBalance = parseFloat(tx.share_balance ?? '0');
     const costBasis = parseFloat(tx.cost_basis ?? '0');
+    const costBasisCoverage = costBasisCoverageForRow(
+        shareBalance,
+        tx.cost_basis_uncovered_shares,
+    );
 
     // Currency mnemonic for monetary formatting — use the transfer split's commodity
     // (e.g., "USD") rather than the account's commodity (e.g., "AAPL")
@@ -292,6 +347,7 @@ export function transformToInvestmentRow(
         gainAmount,
         shareBalance,
         costBasis,
+        costBasisCoverage,
         transactionType,
     };
 }

@@ -8,7 +8,31 @@ import { AmountCell } from './cells/AmountCell';
 import { formatCurrency } from '@/lib/format';
 import { formatDisplayAccountPath } from '@/lib/account-path';
 import { toUTCDateString } from '@/lib/datePresets';
-import { transformToInvestmentRow, isMultiSplitTransaction } from './investment-utils';
+import { transformToInvestmentRow, isMultiSplitTransaction, type InvestmentRowData } from './investment-utils';
+import {
+    CostBasisCoverageMark,
+    BASIS_CONSEQUENCE,
+} from '@/components/investments/CostBasisCoverageMark';
+
+/**
+ * The running cost basis and what it actually describes, rendered together.
+ *
+ * Same rule as the holdings table's `CostBasis`: the coverage travels with the
+ * number, so a basis covering 150 of 200 shares cannot print identically to
+ * one covering all 200. Under `unknown` coverage there is no basis to show at
+ * all — the mark and its tooltip are the whole answer, and printing a figure
+ * beside them would be the overstatement the mark is warning about.
+ */
+function CostBasisValue({ row }: { row: InvestmentRowData }) {
+    return (
+        <>
+            {row.costBasisCoverage.status === 'unknown'
+                ? <span className="text-foreground-muted">&mdash;</span>
+                : formatCurrency(row.costBasis, row.currencyMnemonic)}
+            <CostBasisCoverageMark coverage={row.costBasisCoverage} consequence={BASIS_CONSEQUENCE} />
+        </>
+    );
+}
 
 export interface InvestmentEditRowHandle {
     save: () => Promise<boolean>;
@@ -309,7 +333,7 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
                         ),
                         costBasis: (
                             <td className="px-4 py-2 text-sm font-mono text-right font-bold text-foreground">
-                                {formatCurrency(invRow.costBasis, invRow.currencyMnemonic)}
+                                <CostBasisValue row={invRow} />
                             </td>
                         ),
                         actions: (
@@ -396,7 +420,7 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
                         ),
                         costBasis: (
                             <td className="px-4 py-2 text-sm font-mono text-right font-bold text-foreground">
-                                {formatCurrency(invRow.costBasis, invRow.currencyMnemonic)}
+                                <CostBasisValue row={invRow} />
                             </td>
                         ),
                         actions: actionsCellWithTab,
@@ -601,7 +625,7 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
                     ),
                     costBasis: (
                         <td className="px-4 py-1 text-xs font-mono text-right align-middle opacity-40 font-bold">
-                            {formatCurrency(invRow.costBasis, invRow.currencyMnemonic)}
+                            <CostBasisValue row={invRow} />
                         </td>
                     ),
                     actions: actionsCellWithTab,
