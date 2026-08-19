@@ -90,6 +90,7 @@ import {
 import { acquireAccountNameLock, sortByLockOrder } from '@/lib/account-lock-order';
 import { assertAccountNotLocked } from '@/lib/services/period-lock.service';
 import { isEntityOwnedByBook } from '@/lib/business/entity-ownership';
+import { ancestorCte } from '@/lib/sql/ancestor-cte';
 import {
   ensureInventoryTables,
   mapItemRow,
@@ -746,18 +747,7 @@ export async function assertPostableAccount(
     placeholder: number | null;
     book_guid: string | null;
   }>>`
-    WITH RECURSIVE account_ancestors AS (
-      SELECT guid, parent_guid, 1 AS depth
-      FROM accounts
-      WHERE guid = ${guid}
-
-      UNION ALL
-
-      SELECT parent.guid, parent.parent_guid, account_ancestors.depth + 1
-      FROM accounts parent
-      JOIN account_ancestors ON parent.guid = account_ancestors.parent_guid
-      WHERE account_ancestors.depth < 200
-    )
+    ${ancestorCte(guid)}
     SELECT account.guid,
            account.placeholder,
            (

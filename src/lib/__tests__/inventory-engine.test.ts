@@ -135,11 +135,17 @@ describe('receiveStock ledger posting book guard', () => {
       created_at: new Date('2026-01-02T00:00:00Z'),
     }]);
     const transaction = {
-      $queryRaw: vi.fn().mockImplementation(async (_query: TemplateStringsArray, guid: string) => [{
-        guid,
-        placeholder: 0,
-        book_guid: guid === 'offset-account' ? offsetBookGuid : 'active-book',
-      }]),
+      // The account guid is the last interpolated value: the query is
+      // composed as `${ancestorCte(guid)} SELECT ... WHERE guid = ${guid}`,
+      // so the first value is the shared CTE fragment, not a string.
+      $queryRaw: vi.fn().mockImplementation(async (_query: TemplateStringsArray, ...values: unknown[]) => {
+        const guid = values.filter((v): v is string => typeof v === 'string').pop()!;
+        return [{
+          guid,
+          placeholder: 0,
+          book_guid: guid === 'offset-account' ? offsetBookGuid : 'active-book',
+        }];
+      }),
       $queryRawUnsafe: vi.fn().mockImplementation(async (query: string) => {
         if (query.includes('FROM gnucash_web_inventory_items')) return [itemRow];
         if (query.includes('FROM gnucash_web_inventory_locations')) {
@@ -275,8 +281,12 @@ describe('invoice fulfillment COGS posting', () => {
     let currentAvgCost = AVG_COST;
 
     const transaction = {
-      $queryRaw: vi.fn().mockImplementation(async (_query: TemplateStringsArray, guid: string) => [
-        { guid, placeholder: 0, book_guid: 'active-book' },
+      $queryRaw: vi.fn().mockImplementation(async (_query: TemplateStringsArray, ...values: unknown[]) => [
+        {
+          guid: values.filter((v): v is string => typeof v === 'string').pop()!,
+          placeholder: 0,
+          book_guid: 'active-book',
+        },
       ]),
       $queryRawUnsafe: vi.fn().mockImplementation(async (query: string, ...args: unknown[]) => {
         if (query.includes('INSERT INTO gnucash_web_inventory_movements')) {

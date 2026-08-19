@@ -353,18 +353,13 @@ export async function resolveBookLockGuidForAccount(
     accountGuid: string,
 ): Promise<string> {
     const { default: prisma } = await import('./prisma');
+    // Lazy, like prisma above: this module is imported by callers that must not
+    // pull @prisma/client in statically.
+    const { ancestorCte } = await import('./sql/ancestor-cte');
     // Depth-bounded upward walk (terminates even on an already-cyclic tree).
     const roots = await prisma.$queryRaw<Array<{ guid: string }>>`
-        WITH RECURSIVE up AS (
-            SELECT guid, parent_guid, 1 AS depth
-            FROM accounts WHERE guid = ${accountGuid}
-            UNION ALL
-            SELECT a.guid, a.parent_guid, up.depth + 1
-            FROM accounts a
-            JOIN up ON a.guid = up.parent_guid
-            WHERE up.depth < 200
-        )
-        SELECT guid FROM up ORDER BY depth DESC LIMIT 1
+        ${ancestorCte(accountGuid)}
+        SELECT guid FROM account_ancestors ORDER BY depth DESC LIMIT 1
     `;
     const rootGuid = roots[0]?.guid ?? accountGuid;
     const book = await prisma.books.findFirst({
