@@ -2766,6 +2766,13 @@ file:line citations, impact scenarios, and regression tests for every item are
 in [asi-review.md](asi-review.md) under the referenced ID. These are defect
 fixes and hardening, so the feature-backlog admission checklist does not apply.
 
+**Reconciled 2026-08-19** against main `45fb1e5` after the polly/* audit-fix
+branches were all merged: every unchecked box below was re-verified in code
+(not by commit message). 31 were already fixed and are now ticked with their
+evidence; items marked **Partial** say exactly what remains; the rest carry
+"Verified open 2026-08-19". Two TXF/farmer items are open *by decision*
+(reverted after double-counting in TurboTax) and say so.
+
 ## Do immediately
 
 - [x] **Rotate the committed app password** and move Playwright specs to
@@ -2869,18 +2876,20 @@ Tests:
 
 ## P4 — Low findings (backlog when touching the area)
 
-- [ ] Mortgage original-amount fallback double-counts (ASI-1-007); UTC age
-  calc for Dec 31 birthdays (ASI-1-008); price-staleness warnings (ASI-1-009);
-  balance-sheet `grandTotal` retained-earnings line (ASI-1-010).
-- [ ] Env-gated Postgres integration test for db-init + one report query
-  (ASI-2-004); fake timers in "today"-relative tests (ASI-2-005).
-- [ ] Webhook DNS re-resolution (ASI-3-007); security headers (ASI-3-008);
-  remove weak compose credential fallbacks (ASI-3-009).
+- [x] Mortgage original-amount fallback double-counts (ASI-1-007) — done 2026-08-19: `detectOriginalAmountWithConfidence` groups opening credits per tx and separates material/absorbed later credits (polly/mortgage-confidence).
+- [x] UTC age calc for Dec 31 birthdays (ASI-1-008) — done 2026-08-19: `calculateCalendarAge(…, 'utc')` in `irs-limit-tables.ts`; TZ pinned in vitest config (polly/age-consolidation).
+- [x] Price-staleness warnings (ASI-1-009) — done 2026-08-19: `src/lib/price-staleness.ts`; `currency.ts` lookups return `stale`/age (polly/price-staleness).
+- [x] Balance-sheet `grandTotal` retained-earnings line (ASI-1-010) — done 2026-08-19: synthetic retained-earnings equity row in `balance-sheet.ts:144-166`.
+- [x] Env-gated Postgres integration test for db-init (ASI-2-004) — done 2026-08-19: `src/__tests__/integration/harness.integration.test.ts` asserts db-init objects against the CI postgres:17 service. Remaining nicety: no `lib/reports` query runs in the integration tier yet.
+- [ ] Fake timers in "today"-relative tests (ASI-2-005). Still no `setSystemTime`/`useFakeTimers` (e.g. `lots-holding-period.test.ts`, `membership.service.test.ts`); only the TZ pin mitigates.
+- [ ] Webhook DNS re-resolution (ASI-3-007). `src/lib/webhooks.ts` still does not resolve before `fetch`.
+- [x] Security headers (ASI-3-008) — done 2026-08-19: `next.config.js` `headers()` (X-Frame-Options, HSTS, …).
+- [ ] Remove weak compose credential fallbacks (ASI-3-009). **Partial 2026-08-19:** `POSTGRES_PASSWORD:?` is required and postgres binds 127.0.0.1. Remaining: `minioadmin` fallbacks in `docker-compose.prod.yml` (app/worker/minio/createbuckets env).
 - [x] Backup precondition enforced in `fix-lot-scrub-sign-corruption.ts`
   (ASI-4-005) — Resolved 2026-08-05: script already run and retired from
   tracking (commit f4facea).
-- [ ] Gzip bomb cap in XML import (ASI-4-006); log rotation + `data/` in
-  `.dockerignore` (ASI-4-007).
+- [x] Gzip bomb cap in XML import (ASI-4-006) — done 2026-08-19: `gunzipSync(data, { maxOutputLength })` 256 MB default, env override (`gnucash-xml/parser.ts`).
+- [x] Log rotation + `data/` in `.dockerignore` (ASI-4-007) — done 2026-08-19: `logging: max-size 10m` on all prod services; `.dockerignore` has `data/`.
 ## Follow-up wave — 2026-08-06 validation of the fixes above
 
 Validating the 2026-08-05 fix commit found one fix that failed (ASI-3-004,
@@ -2918,18 +2927,19 @@ it does not strictly meet "zero data-mutating statements on a second boot".
 None touches GnuCash financial data, and changing db-init carries more
 deployment risk than the nit is worth.
 
-- [ ] Email-ingest failure notifications (remainder of ASI-5-007);
-  webhook idempotency claim expiry (ASI-5-008); SimpleFin get-or-create
-  advisory locks + book-scoped Imbalance lookup (ASI-5-009); OCR temp-file
-  entropy (ASI-5-010); validate `refresh_time` + per-book schedules
-  (ASI-5-011).
-- [ ] SimpleFin meta query hoist (ASI-6-004); push amount/reconcile filters
-  into SQL and verify the journal variant applies them at all (ASI-6-005);
-  wire up or remove `@tanstack/react-virtual` (ASI-6-006); dashboard SQL
-  GROUP BY + invalidation debounce + idx TTLs (ASI-6-007).
-- [ ] Worker `stop_grace_period` + timer drain (ASI-7-005); Prisma ↔ db-init
-  drift check in CI (ASI-7-006); bootstrap race lock (ASI-7-007); ESLint
-  ignore `.claude/` + triage unused-var warnings (ASI-8-002).
+- [x] Email-ingest failure notifications (ASI-5-007) — done 2026-08-19: `createNotification` on terminal failure in `email-ingest.ts`.
+- [x] Webhook idempotency claim expiry (ASI-5-008) — done 2026-08-19: `WEBHOOK_CLAIM_STALE_MINUTES=5` reclaim in `webhook-idempotency.ts` (polly/webhook-claim-expiry).
+- [x] SimpleFin get-or-create advisory locks + book-scoped Imbalance lookup (ASI-5-009) — done 2026-08-19: `getOrCreateImbalanceAccount(…, bookGuid, bookAccountGuids)` + `acquireSoleAccountNameLock` for Imbalance/symbol/Cash children (polly/simplefin-create-race, lock-order invariant).
+- [x] OCR temp-file entropy (ASI-5-010) — done 2026-08-19: `mkdtemp` in `ocr-receipt.ts`.
+- [x] Validate `refresh_time` + per-book schedules (ASI-5-011) — done 2026-08-19: HH:MM validation with fallback and `setSchedule(bookGuid, …)` in `worker/refresh-schedule.ts`.
+- [ ] SimpleFin meta query hoist (ASI-6-004). Unfiltered `transaction_meta.findMany` still inside the per-mapped-account loop (`simplefin-sync.service.ts` ~:710).
+- [x] Push amount/reconcile filters into SQL; journal variant applies them (ASI-6-005) — done 2026-08-19: SQL predicates in `accounts/[guid]/transactions/route.ts` and `transactions/route.ts` (polly/asi6005-filter-pagination).
+- [ ] Wire up or remove `@tanstack/react-virtual` (ASI-6-006). Still declared in `package.json`, zero imports.
+- [ ] Dashboard SQL GROUP BY + invalidation debounce + idx TTLs (ASI-6-007). `dashboard/income-expense` and `sankey` still `findMany` + JS reduce; no debounce in `data-events-subscriber.ts`; `cache.ts` `zadd` without EXPIRE.
+- [ ] Worker `stop_grace_period` + timer drain (ASI-7-005). No `stop_grace_period` in any compose file; `worker.ts` `shutdown()` clears book schedules only, not `simplefinTimers`, and does not await in-flight jobs.
+- [ ] Prisma ↔ db-init drift check in CI (ASI-7-006). No script/CI step; `sql/001-performance-indexes.sql` still present.
+- [ ] Bootstrap race lock (ASI-7-007). `scripts/db-init-entrypoint.ts` `bootstrapIfEmpty` still runs outside the advisory lock.
+- [ ] ESLint ignore + triage unused-var warnings (ASI-8-002). **Partial 2026-08-19:** `eslint.config.mjs` now ignores `.worktrees/`, `.claude/`, `.polly/` (full lint 20 min → 43 s). Remaining: 7 warnings — unused `isMultiCurrency` (`api/transactions/route.ts`), `toCents` (`lib/reconcile.ts`), `EMP_A`, `_input`/`_init`, s-corp-analyzer `useMemo` deps.
 
 ---
 
@@ -3024,22 +3034,8 @@ suite locks several of them in — the mirror-image assertion is named per item.
 
 Re-verified against code at `5c5a555` on 2026-08-14.
 
-- [ ] **Transaction create/update accept out-of-book accounts.** STILL OPEN,
-  and this is the most serious defect in the repo.
-  `src/app/api/transactions/route.ts:489-504` and
-  `src/app/api/transactions/[guid]/route.ts:216-231` check account GUID
-  *existence only* — `where: { guid: { in: uniqueAccountGuids } }`, no book
-  constraint — while taking `account_guid` straight from the request body under
-  the `edit` role. `grep -c getAccountGuidsForBook` returns 0 in both files.
-  Same class as the four fixed below, on the app's most-used write endpoint.
-  The in-repo fix exists: `getAccountGuidsForBook(bookGuid)`
-  (`src/lib/book-scope.ts:232`), used in exactly this shape at
-  `src/app/api/webhooks/inbound/transaction/route.ts:64`. **Effort:** M.
-- [ ] **SimpleFin sync: check-then-create race.** The unscoped Imbalance lookup
-  is FIXED; the race is not. Child-account creation still checks then creates
-  at `src/lib/services/simplefin-sync.service.ts:1458-1503` with no advisory
-  lock or unique constraint, so a concurrent sync can duplicate accounts.
-  (ASI-5-009.) **Effort:** M.
+- [x] **Transaction create/update accept out-of-book accounts.** Done 2026-08-19: `api/transactions/route.ts` and `[guid]/route.ts` gate every split account with `getAccountGuidsForBook(roleResult.bookGuid)` → 404 (merge 823c0bb3, polly/c5b-ledger-cross-book).
+- [x] **SimpleFin sync: check-then-create race.** Done 2026-08-19: `acquireSoleAccountNameLock` around Imbalance/symbol/Cash child creation with a runtime lock-order invariant and a strict 40P01 oracle (polly/simplefin-create-race, `simplefin-create-race.integration.test.ts`).
 - [x] **Bulk reconcile lacked book-membership validation.** FIXED 2026-08-14 —
   `src/app/api/splits/bulk/reconcile/route.ts:78-140`. Atomic rejection,
   anti-oracle 404, fail-closed on an empty scope set.
@@ -3057,63 +3053,23 @@ first, then the closures, so this section stops describing shipped work as open.
 
 ### Still open
 
-- [ ] **H15 — Escape destroys a half-typed multi-split transaction.**
-  `src/components/TransactionFormModal.tsx:152-165` closes unconditionally via
-  `src/components/ui/Modal.tsx:54-66`, with no dirty check. **Effort:** S.
-  Cheapest real data-loss fix available.
-- [ ] **H9 remainder — aging never ties to the A/R / A/P control account.** The
-  stored-due-date half is fixed; `src/lib/business/business-reports.ts:665-673`
-  still totals only invoice-lot splits, so non-lot control-account activity is
-  excluded and aging cannot be reconciled to the balance sheet. **Effort:** M.
-- [ ] **No exact server-side same-currency balance check.**
-  `src/lib/validation.ts:131-142` still aggregates in float against a `0.001`
-  tolerance. The multi-currency path *does* verify exactly with BigInt
-  (`trading-accounts.ts:322`); the same-currency path does not. There is no
-  DB-level balance constraint (`schema.prisma:69`). **Effort:** M.
-- [ ] **Divergent balance tolerances across the codebase.** A one-cent
-  imbalance is accepted by settlements import (`0.011`,
-  `src/lib/import/settlements.ts:267`) and rejected by the create path
-  (`0.001`). Also `0.01` at `services/mortgage.service.ts:233`,
-  `reports/capital-gains.ts:442`, `api/investments/portfolio/route.ts:285`;
-  `0.005` at seven sites in `lot-scrub.ts`; a `0.0001` share epsilon across 17
-  non-test files. Same book, same money, different verdicts. **Effort:** L.
-- [ ] **Aggregate money in PostgreSQL `numeric`, not `float8`.** 110 cast sites
-  across 48 files (99/42 in lowercase `::float8` form; the rest
-  `CAST(... AS DOUBLE PRECISION)`). `src/lib/reports/utils.ts:50-51` is
-  converted and is the **target pattern** — divide in `numeric`, cast once at
-  the boundary. Next highest leverage: `src/lib/business/business-reports.ts`
-  (11 sites, drives A/R aging), then `jobs.service.ts` (11),
-  `reports/equity-statement.ts` (6), `insights.ts` (6). **Effort:** L overall,
-  S per file.
-- [ ] **Per-account ledger running balance aggregates in float8 before summing.**
-  `src/app/api/accounts/[guid]/transactions/route.ts:664-678`. **Effort:** S.
+- [x] **H15 — Escape destroys a half-typed multi-split transaction.** Done 2026-08-19: `TransactionFormModal.tsx` dirty check via `isDirty()` + Discard prompt; `Modal.tsx` honours `closeOnEscape` (polly/h15-escape-guard).
+- [x] **H9 remainder — aging never ties to the A/R / A/P control account.** Done 2026-08-19: `AgingReconciliation`/`buildAgingControlAccountRows` in `business-reports.ts` with `controlBalance` and `unreconciledDifference` per control account (polly/h9-aging-control-account).
+- [x] **No exact server-side same-currency balance check.** Done 2026-08-19: `validation.ts` `assertBalanced` is exact BigInt LCD, no tolerance (polly/exact-server-balance). Still no DB-level balance constraint — tracked as a nicety, not a defect.
+- [ ] **Divergent balance tolerances across the codebase.** **Partial 2026-08-19:** settlements `0.011` removed and the create path is exact. Remaining: `0.01` at `mortgage.service.ts`, `capital-gains.ts`, `portfolio/route.ts`; `0.005` ×7 in `lot-scrub.ts` + `statement-reconcile.ts`; `0.0001` share epsilon across 21 non-test files (`DEFAULT_QTY_EPSILON` partially centralises). No single tolerance module. **Effort:** L.
+- [x] **Aggregate money in PostgreSQL `numeric`, not `float8`.** Done 2026-08-19: every aggregate site divides in `numeric` and casts once at the boundary — `business-reports.ts`, `jobs.service.ts`, `equity-statement.ts`, `insights.ts`, report utils (polly/float8-*); tripwire test `float8-aggregate-sql.test.ts`. Remaining `::float8` occurrences are boundary/column casts only.
+- [x] **Per-account ledger running balance aggregates in float8 before summing.** Done 2026-08-19: windowed `SUM(quantity_num::numeric / …)` with a single outer `::float8` in `accounts/[guid]/transactions/route.ts`.
 
 ### Tax — still open
 
-- [ ] **Year-parameterize `NEC_THRESHOLD`.**
-  `src/lib/business/vendor-1099-compliance.ts:15,115`. **Effort:** S.
-- [ ] **Wire `CORP_CLASSIFICATIONS`, or delete it.** Declared at
-  `src/lib/business/vendor-1099.service.ts:47` and never read; status uses the
-  manual `exemptFrom1099` flag at `:180-184`. **Effort:** S.
-- [ ] **TXF omits realized capital gains entirely.** The tax package emits Form
-  8949 separately (`src/app/api/reports/tax-package/route.ts:53-65`); there is
-  no capital-gain path in `src/lib/tax/txf.ts`. **Effort:** M.
-- [ ] **TXF `N304` for Traditional IRA may collide with Sch C line 24b.**
-  Unprovable without an external TXF reference; left as a question, not a
-  finding.
-- [ ] **Credit-card payments not excluded from 1099-NEC (§6050W).** Vendor
-  totals use all paid amounts with no payment-rail exclusion
-  (`vendor-1099.service.ts:169-184`). **Effort:** M.
-- [ ] **Farmer flag not plumbed into the estimated-tax tracker.** The correct
-  computation exists at `src/lib/withholding.ts:394`; the tracker never passes
-  the option. **Effort:** S.
-- [ ] **Jan 1–15 estimated-payment display is internally inconsistent.**
-  Quarter attribution is prior-year Q4 in
-  `src/lib/tax/estimated-quarters.ts:79-105`; the YTD display path does not
-  share that bucketing. **Effort:** S.
-- [ ] **Delete a misleading comment.**
-  `src/lib/tax/annualized-installments.ts:34-36` describes a simplification
-  that no longer matches the code. **Effort:** XS.
+- [x] **Year-parameterize `NEC_THRESHOLD`.** Done 2026-08-19: `getDefaultNecThreshold(taxYear)` / `getNecThreshold`, throws for an unverified year (polly/tax-cluster).
+- [x] **Wire `CORP_CLASSIFICATIONS`, or delete it.** Done 2026-08-19: read by `isVendor1099Exempt()` (override wins, else corp classification) in `vendor-1099.service.ts`.
+- [ ] **TXF omits realized capital gains entirely.** Verified open 2026-08-19, *deliberately*: a Schedule D/TXF path was added then reverted (ff3d01f5 — double-counted N684/N683, imported 16,800 vs 8,400 into TurboTax). 8949 still emitted separately. Reopen only with a verified TXF reference. **Effort:** M.
+- [ ] **TXF `N304` for Traditional IRA may collide with Sch C line 24b.** Still an unverified question (`txf.ts`, `txf-codes.ts` documents N304 as Sch 1 line 20). Verified open 2026-08-19.
+- [x] **Credit-card payments not excluded from 1099-NEC (§6050W).** Done 2026-08-19: payments funded from `is_card_payment_source` accounts are apportioned per payable and excluded from the NEC total; unknown funding stays reportable (`vendor-1099.service.ts`, polly/tax-cluster).
+- [ ] **Farmer flag not plumbed into the estimated-tax tracker.** Verified open 2026-08-19, *deliberately*: `api/tax/estimated/route.ts` hardcodes `isQualifyingFarmer: false` — ff3d01f5 removed the unreachable election from the household-only tracker. `withholding.ts` support remains. Revisit if the tracker ever gains a farm-book mode. **Effort:** S.
+- [ ] **Jan 1–15 estimated-payment display is internally inconsistent.** Verified open 2026-08-19: YTD uses `summarizeTaxPayments(bookData, 1)` (calendar-year) while quarter buckets use `quarterForPaymentDate` (prior-year Q4). **Effort:** S.
+- [ ] **Delete a misleading comment.** Verified open 2026-08-19: `annualized-installments.ts:33-41` still says retirement contributions accrue evenly; the route feeds per-period actuals. **Effort:** XS.
 
 ### Closed by the 2026-08-13/14 work
 
@@ -3154,77 +3110,23 @@ so each cites code we shipped. Verified against `5c5a555`. Two originally filed
 here (`washsale-detector-transfer-exclusion`, `listparam-isabsent-centralization`)
 were confirmed **already closed** and are omitted.
 
-- [ ] **Valued transfers delete the deferred gain.** A valued (non-zero)
-  same-commodity move between two of the user's own non-TRADING accounts
-  suppresses the gain at the source (`lot-scrub.ts:1520-1532`) but writes
-  `carried_basis` **only** when `Math.abs(transferValue) < 0.005`
-  (`lot-scrub.ts:691`, same guard at `:885`). So the destination lot takes the
-  transfer value as basis and `transferValue − originalBasis` is recognized at
-  neither end. Understated gains on a later sale — a filed-return defect, same
-  class as H2. **Effort:** M. **Highest-priority item in this list.**
-- [ ] **`lots.ts` reports gross while `capital-gains.ts` nets commissions.** The
-  Investment Lots report will disagree with Form 8949 by the commission on
-  every lot that had one. `lots.ts` has no `trade-fees` import. Must call
-  `classifyFeeAccount` and apply the same **unconditional** capitalization —
-  there is no longer any deductibility gate. **Effort:** M.
-- [ ] **`trans-date-due` backfill.** Invoices posted before the slot existed
-  have inferred due dates and are therefore **never dunned**
-  (`src/lib/queue/jobs/dunning.ts:116-118`). No backfill script exists.
-  **Effort:** M.
-- [ ] **Portfolio surfaces present partial cost basis as complete.**
-  `HoldingsData.costBasis` is documented as covering only traced shares, but
-  the dividends route (`:69,75`) and five render sites in
-  `HoldingsTable.tsx` label it plainly "Cost Basis", and `calculateGainLoss`
-  divides by it — overstating gain and yield. **Effort:** M.
-- [ ] **Short/oversold rows show a stale cost basis.** `route.ts:431` renders
-  `costBasis` unconditionally, so an oversold row shows a positive basis next
-  to a negative share balance; only the coverage field is nulled. No
-  short-position model exists anywhere. **Effort:** L.
-- [ ] **Ledger UI ignores the coverage field.** The API emits
-  `cost_basis_uncovered_shares` (`string | null`, tri-state) and
-  `AccountLedger.tsx:73` declares only `cost_basis`. **Effort:** S.
-- [ ] **Email-ingest manual retry.** Descoped deliberately. Needs an immutable
-  owner column (`email-ingest.ts:904-906` — ownership currently derives from
-  the *mutable* sender allowlist) before a retry path is safe. The IMAP
-  partial-match hazard is prospective, not current: the poller issues no
-  HEADER search today. **Effort:** L.
-- [ ] **No real-Postgres concurrency harness.** `TEST_DATABASE_URL` appears in
-  five test files, in every case inside a comment disclaiming its absence.
-  Lock-ordering and `FOR UPDATE` guarantees are asserted only by mocks, which
-  cannot observe interleaving — a regression that drops a parent lock passes CI
-  green. **Effort:** L.
-- [ ] **`reconciled-split.service.ts` guard lookups are not book-scoped.** No
-  `book_guid` predicate in the module (`:87-129`, `:295-317`), so its error
-  messages can name an account outside the caller's book. **Effort:** M.
-- [ ] **Inventory item accounts are nullable on save, required at post.**
-  `services/inventory.service.ts:76-78,566-568` writes nulls through;
-  `inventory-engine.ts:857` then demands non-null, so an item saves fine and
-  fails later at COGS posting. **Effort:** M.
-- [ ] **Legacy average-cost fulfilments cannot post a COGS reversal.**
-  `getShipmentWeightedUnitCost` returns null when any shipment row lacks
-  `unit_cost` (`inventory-engine.ts:1524-1539`). Needs a backfill.
-  **Effort:** M.
-- [ ] **Assets list and asset detail disagree.** The list sums `value`
-  (`api/assets/fixed/route.ts:106`); the detail page reads `running_balance`,
-  which sums `quantity` (`api/accounts/[guid]/transactions/route.ts:664`).
-  **Effort:** S.
-- [ ] **Four inline copies of the transfer predicate.** `lot-scrub.ts:1507`,
-  `lot-assignment.ts:1362`, `lots.ts:236`, plus structurally identical clauses
-  at `cost-basis.ts:323,504,780`. They agree today; nothing keeps them
-  agreeing. **Effort:** S.
-- [ ] **Three copies of the depth-200 ancestor CTE.** `book-scope.ts:279`,
-  `book-lock.ts:131`, `inventory-engine.ts:754` — the third added by our own C5
-  work. **Effort:** S.
-- [ ] **Reconcile adjustment tests never assert a shared `tx_guid`.**
-  `reconcile.test.ts:384-392`; a refactor wiring the offsetting split to a
-  different transaction leaves two unbalanced transactions and the suite still
-  passes. Also only covers `scu = 100`. **Effort:** S.
-- [ ] **Coverage epsilon is absolute, not magnitude-scaled.** Commodity-aware
-  via `qtyEpsilonForScu`, but a very long replay can accumulate float residue
-  past it. Fails **safe** (`null`, never a false zero). **Effort:** S.
-- [ ] **14 routes emit a generic `error: "Validation failed"` alongside
-  specific `errors[]`**, and the shared reader prefers `error` — so the user
-  sees the less useful message. **Effort:** S.
+- [x] **Valued transfers delete the deferred gain.** Done 2026-08-19: `computeCarriedBasis` + `writeCarriedBasisSlot` on every own-account transfer with no value guard; `lots.ts` excludes the transfer-in's recorded value when `carriedBasis > 0`; `reconcileCarriedBasisForSourceLots` conserves slices across partial/out-of-order transfers; shared `isOwnAccountCommodityTransfer` (polly/valued-transfer-gain + polly/lot-scrub-fee-consistency).
+- [ ] **`lots.ts` reports gross while `capital-gains.ts` nets commissions.** **Partial 2026-08-19:** `getAccountLots({ includeTradeFees: true })` runs the same `loadTradeFees` allocator as the 8949 and nets fees into basis/proceeds; the Investment Lots report passes it and the ledger now books gains net of fees. Remaining: it is opt-in — `api/accounts/[guid]/lots/route.ts` and `api/reports/tax-harvesting/route.ts` still get gross figures. Make it the default or pass it there. **Effort:** S.
+- [ ] **`trans-date-due` backfill.** Verified open 2026-08-19: `dunning.ts` still skips inferred due dates; no backfill script. **Effort:** M.
+- [x] **Portfolio surfaces present partial cost basis as complete.** Done 2026-08-19: `HoldingsTable.tsx` renders basis/gain only through `CostBasis`/`GainAmount`/`GainPercent` wrappers that require a `CostBasisCoverage` mark; dividends route withholds yield under partial coverage (polly/holdings-coverage-surfaces).
+- [ ] **Short/oversold rows show a stale cost basis.** **Partial 2026-08-19:** pool removals clamp at held shares so an oversell drains basis to ~0 and coverage is nulled (no stale positive basis). Remaining: no short-position model; oversold rows show basis 0 / coverage unknown rather than a short basis. **Effort:** L.
+- [ ] **Ledger UI ignores the coverage field.** Verified open 2026-08-19: `AccountLedger.tsx` row type still declares only `cost_basis`; coverage marks landed on holdings/portfolio/dividends, not ledger rows. **Effort:** S.
+- [ ] **Email-ingest manual retry.** Verified open 2026-08-19 (descoped by design; `email-ingest.ts` header still documents the missing immutable owner column). **Effort:** L.
+- [x] **No real-Postgres concurrency harness.** Done 2026-08-19: `vitest.integration.config.ts` + `src/__tests__/integration/` against the CI postgres:17 service; real lock tests — `trading-account-lock-order`, `account-lock-hierarchy-deadlock`, `account-rename-reparent-race`, `simplefin-create-race`, `simplefin-transaction-id-dedupe`, `lot-outflow-ordering` (polly/ci-integration-harness). Comment rot: `reconciled-split.service.test.ts:17` and `bulk-edit.test.ts:17` still carry the stale "no harness" disclaimer.
+- [ ] **`reconciled-split.service.ts` guard lookups are not book-scoped.** Verified open 2026-08-19: zero `book` references in the module. **Effort:** M.
+- [ ] **Inventory item accounts are nullable on save, required at post.** Verified open 2026-08-19: `inventory.service.ts` still writes nulls; `assertItemsPostable` rejects at fulfilment (now names all offenders, but still post-time). **Effort:** M.
+- [ ] **Legacy average-cost fulfilments cannot post a COGS reversal.** Verified open 2026-08-19: `getShipmentWeightedUnitCost` returns null on any missing `unit_cost`; no backfill. **Effort:** M.
+- [x] **Assets list and asset detail disagree.** Done 2026-08-19: `api/assets/fixed/route.ts` uses `getAssetBalances()` (sums quantity), the same helper as the detail view (polly/h14-asset-quantity).
+- [x] **Four inline copies of the transfer predicate.** Done 2026-08-19: single exported `isOwnAccountCommodityTransfer` in `src/lib/account-transfer.ts`, consumed by `lot-scrub.ts`, `lot-assignment.ts`, `lots.ts`, `cost-basis.ts`.
+- [ ] **Three copies of the depth-200 ancestor CTE.** Verified open 2026-08-19: `book-scope.ts`, `book-lock.ts`, `inventory-engine.ts`. **Effort:** S.
+- [ ] **Reconcile adjustment tests never assert a shared `tx_guid`.** Verified open 2026-08-19: `reconcile.test.ts` adjustment test still asserts shape + `assertBalanced` only; only `scu = 100`. **Effort:** S.
+- [ ] **Coverage epsilon is absolute, not magnitude-scaled.** Verified open 2026-08-19 (`commodities.ts` `qtyEpsilonForScu`, fails safe). **Effort:** S.
+- [ ] **14 routes emit a generic `error: "Validation failed"` alongside specific `errors[]`.** **Partial 2026-08-19:** shared reader `src/lib/api-error.ts` added and the transactions create/update routes now set `error` to the joined summary (polly/h13-create-errors). Remaining: 13 routes still emit the generic string — auth/login, auth/register, auth/totp/{confirm,disable,recovery,verify}, commodities, exchange-rates, prices, prices/[guid], prices/audit, prices/fetch, user/profile. **Effort:** S.
 
 ## P2 — Form UI slop and accessibility
 
@@ -3236,32 +3138,15 @@ a row component; real drift is limited to `InlineEditRow` being a genuine second
 editor), and `CreateBookWizard`/`NewBookWizard` are *not* duplicate wizards
 (both delegate to the same `NewBookForm`). Genuine remaining slop:
 
-- [ ] `CreateBookWizard.tsx:41-72,220-255` hand-rolls a *second* book-creation
-  form hitting a **different endpoint** (`/api/books/from-template` vs
-  `/api/books/default`) with duplicated validation.
-- [ ] **Seven** hand-rolled "read the server error body" implementations
-  (incl. `AccountLedger.tsx:958`, `InvestmentTransactionForm.tsx:578`), four
-  with different precedence, one discarding the body entirely. Consolidate into
-  one helper — this is also the mechanism behind H13.
-- [ ] `InvestmentTransactionForm.tsx:57,75,908-914` — **write-only field**:
-  "Split Ratio (informational)" is typed by the user, never submitted, never
-  redisplayed. Plus dead prop `accountCommodityGuid`, three write-only state
-  vars and a dead `nameField` param at `:34,51,53,55`.
-- [ ] `AccountPickerDialog.tsx:137` — `focus:border-accent`, but **`--accent`
-  does not exist**; combined with `focus:outline-none` this input has **no focus
-  indicator at all**.
-- [ ] `AccountForm.tsx`, `BudgetForm.tsx`, `LoginForm.tsx` — `rounded-xl`/`2xl`
-  off `DESIGN.md:91`'s radius scale; three different input recipes across
-  sibling forms.
-- [ ] Six sites (incl. `InvestmentTransactionForm.tsx:643`) use native `title=`,
-  **banned by `DESIGN.md:116`**. At `:643` the only explanation of "Return of
-  Capital" lives in a tooltip invisible to touch and keyboard.
-- [ ] `AccountLedger.tsx:2276,2288` — `☑`/`☐` text glyphs as checkbox chrome;
-  screen readers announce "ballot box", not state.
-- [ ] `NotificationBell.tsx:151` vs `AccountForm.tsx:344` — `bg-error` and
-  `bg-negative` are the same colour (`#dc2626`) under two token names.
-- [ ] Server errors surface via toast rather than inline on the offending field,
-  and are not announced (`role="alert"` / `aria-live`) to screen readers.
+- [ ] `CreateBookWizard.tsx` hand-rolls a *second* book-creation form hitting a **different endpoint** (`/api/books/from-template` vs `NewBookForm.tsx` → `/api/books/default`) with duplicated validation. Verified open 2026-08-19.
+- [ ] **Seven** hand-rolled "read the server error body" implementations. **Partial 2026-08-19:** `src/lib/api-error.ts` (`extractErrorMessage`/`readErrorBody`/`throwErrorBody`) exists and is wired into `AccountLedger.tsx`, `WeekGrid.tsx`, `ContinuousCloseDashboard.tsx`. Remaining: `InvestmentTransactionForm.tsx` (~:577) and `AccountLedger.tsx:1421` still hand-roll; ~99 other `.error || '…'` readers across `src/components`.
+- [ ] `InvestmentTransactionForm.tsx` — **write-only field** "Split Ratio (informational)", dead prop `accountCommodityGuid`, write-only state vars, dead `nameField` param. Verified open 2026-08-19 (only a11y commits touched the file).
+- [x] `AccountPickerDialog.tsx` — no focus indicator. Done 2026-08-19: now `focus:border-primary focus:ring-2 focus:ring-primary` (polly/ui-focus-and-assets).
+- [ ] `AccountForm.tsx`, `BudgetForm.tsx`, `LoginForm.tsx` — `rounded-xl`/`2xl` off `DESIGN.md`'s radius scale; three different input recipes across sibling forms. Verified open 2026-08-19.
+- [ ] Native `title=` tooltips, **banned by `DESIGN.md`** — `InvestmentTransactionForm.tsx:645` ("Return of Capital" explanation only in a native tooltip), `:712`, and ~72 component files. Verified open 2026-08-19.
+- [ ] `AccountLedger.tsx` — `☑`/`☐` text glyphs as checkbox chrome (no `aria-pressed`/`role="checkbox"`). Verified open 2026-08-19.
+- [ ] `--error` and `--negative` are the same colour (`#dc2626` / dark `#f87171`) under two token names (`globals.css`). Verified open 2026-08-19.
+- [ ] Server errors via toast, not inline, not announced. **Partial 2026-08-19:** `src/components/a11y/LiveRegion.tsx` (always-mounted `aria-live`) is wired into 25 components; `ToastContainer` has `aria-live="polite"`; `SplitRow`/`ReconciliationPanel` use `role="alert"` (polly/ui-a11y-remainder). Remaining: `TransactionForm.tsx` (~:1037) renders server/validation errors in a plain list with no live region; `AccountLedger` save failures still go to toast rather than inline on the field.
 
 ## P3 — CI and developer onboarding
 
@@ -3276,18 +3161,8 @@ editor), and `CreateBookWizard`/`NewBookWizard` are *not* duplicate wizards
 
 **Still open in this area:**
 
-- [ ] **CI has no `pull_request` trigger.** `.github/workflows/deploy.yml`
-  fires on `push: branches: [main]` only, so nothing gates a change *before*
-  it reaches `main`. Highest-value CI gap remaining.
-- [ ] **`npm run build` is not in the `quality` job.** A Next.js build failure
-  (including generated route types that `tsc --noEmit` does not see) surfaces
-  only later, in the Docker build, after quality has already reported green.
-- [ ] **The Playwright E2E suite runs nowhere.** `playwright.config.ts` and
-  `tests/e2e/` exist; there is no CI step and no `test:e2e` script.
-- [ ] **No real-Postgres test harness.** `TEST_DATABASE_URL` appears in five
-  test files, in every case inside a comment disclaiming its absence. No
-  testcontainers, no postgres service in compose or CI. Lock-ordering and
-  `SELECT ... FOR UPDATE` guarantees are therefore asserted only by mocks,
-  which cannot observe interleaving.
-- [ ] **`test:coverage` exists but CI never invokes it**, so there is no
-  coverage threshold.
+- [ ] **CI has no `pull_request` trigger.** `.github/workflows/deploy.yml` fires on `push: branches: [main]` only. Verified open 2026-08-19. Note: main is currently gated by the local-CI workflow (`[skip ci]` pushes after a full WSL reproduction of the quality job) to conserve Actions minutes.
+- [ ] **`npm run build` is not in the `quality` job.** Verified open 2026-08-19: quality = typecheck, docs:check, test:run, integration schema+tests, deadlock oracle, lint; build only in the Docker step.
+- [ ] **The Playwright E2E suite runs nowhere.** Verified open 2026-08-19: no `test:e2e` script, no CI step.
+- [x] **No real-Postgres test harness.** Done 2026-08-19: quality job runs a `postgres:17-alpine` service with `TEST_DATABASE_URL`, `test:integration:schema`, `test:integration`, and the Prisma deadlock oracle (polly/ci-integration-harness). Duplicate of the data-integrity item above.
+- [ ] **`test:coverage` exists but CI never invokes it**, so there is no coverage threshold. Verified open 2026-08-19.
