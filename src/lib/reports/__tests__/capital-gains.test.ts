@@ -519,6 +519,30 @@ describe('1099-B reconciliation', () => {
     const result = reconcile1099B(sales, broker, 0.01);
     expect(result.summary.matchedCount).toBe(1);
   });
+
+  // A one-cent basis disagreement is the smallest REAL one a cent-rounded
+  // 1099-B can express, and it is exactly what this reconciliation exists to
+  // put in front of the filer. The old `|delta| > 0.01` bound reported it as
+  // agreement; the half-cent money epsilon flags it.
+  it('flags a one-cent basis difference rather than swallowing it', () => {
+    const broker: BrokerRow[] = [
+      { ticker: 'AAPL', dateSold: '2024-03-15', proceeds: 1500, basis: 999.99 },
+    ];
+    const result = reconcile1099B([sale()], broker);
+    expect(result.summary.matchedCount).toBe(1);
+    expect(result.matched[0].basisDelta).toBeCloseTo(0.01, 10);
+    expect(result.matched[0].basisMismatch).toBe(true);
+    expect(result.summary.mismatchCount).toBe(1);
+  });
+
+  it('still treats a sub-cent rounding difference as agreement', () => {
+    const broker: BrokerRow[] = [
+      { ticker: 'AAPL', dateSold: '2024-03-15', proceeds: 1500, basis: 1000.001 },
+    ];
+    const result = reconcile1099B([sale()], broker);
+    expect(result.matched[0].basisMismatch).toBe(false);
+    expect(result.summary.mismatchCount).toBe(0);
+  });
 });
 
 describe('parseBrokerCSV', () => {

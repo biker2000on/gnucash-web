@@ -14,6 +14,7 @@ import { BookBusyError, bookLockKey, tryAcquireBookLock } from './book-lock';
 import { tryWithDatabaseAdvisoryLock } from './db';
 import { computeRealizedGain } from './lots';
 import { isOwnAccountCommodityTransfer } from './account-transfer';
+import { DEFAULT_QTY_EPSILON, MONEY_DISPLAY_EPSILON } from './tolerances';
 import {
   PARENT_SPLIT_SLOT,
   AVG_COST_BASIS_SLOT,
@@ -481,7 +482,7 @@ async function assignWithStrategy(
     }
 
     const value = toDecimalNumber(s.value_num, s.value_denom);
-    if (Math.abs(value) < 0.005) {
+    if (Math.abs(value) < MONEY_DISPLAY_EPSILON) {
       const hasSameCommodityCounter = txSplits.some(
         ts =>
           ts.account_guid !== accountGuid &&
@@ -665,7 +666,7 @@ async function assignWithStrategy(
               (sum, ls) => sum + Math.abs(toDecimalNumber(ls.value_num, ls.value_denom)), 0,
             );
             poolShares += shares;
-            poolBasis += Math.abs(carried) > 0.005 ? carried : recorded;
+            poolBasis += Math.abs(carried) > MONEY_DISPLAY_EPSILON ? carried : recorded;
           }
         }
         break;
@@ -1924,7 +1925,7 @@ export async function detectWashSales(
           const totalQty = lotSplits.reduce(
             (sum, ls) => sum + ls.shares, 0
           );
-          const isClosed = Math.abs(totalQty) < 0.0001;
+          const isClosed = Math.abs(totalQty) < DEFAULT_QTY_EPSILON;
           const realizedGain = computeRealizedGain(
             lotSplits,
             isClosed,
@@ -1932,7 +1933,7 @@ export async function detectWashSales(
             transferInSplitGuids,
           );
           const totalSoldShares = lotSplits
-            .filter(ls => ls.shares < -0.0001)
+            .filter(ls => ls.shares < -DEFAULT_QTY_EPSILON)
             .reduce((sum, ls) => sum + Math.abs(ls.shares), 0);
           // Attribute a multi-sale lot's total realized loss pro rata to this
           // sell instead of repeating the whole loss for every sell split.
@@ -1989,7 +1990,7 @@ export async function detectWashSales(
       let unmatchedSoldShares = soldShares;
 
       for (const buy of buys) {
-        if (unmatchedSoldShares <= 0.0001) break;
+        if (unmatchedSoldShares <= DEFAULT_QTY_EPSILON) break;
         const buyDate = buy.transaction?.post_date;
         if (!buyDate) continue;
         // The sold shares' OWN lot-opening buy is not replacement stock — a
@@ -2007,7 +2008,7 @@ export async function detectWashSales(
           // remainder stays deductible.
           const availableReplacementShares = remainingReplacementShares.get(buy.guid) ?? 0;
           const replacementShares = Math.min(availableReplacementShares, unmatchedSoldShares);
-          if (replacementShares <= 0.0001) continue;
+          if (replacementShares <= DEFAULT_QTY_EPSILON) continue;
           const disallowedRatio = soldShares > 0
             ? replacementShares / soldShares
             : 0;

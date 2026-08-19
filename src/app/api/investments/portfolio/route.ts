@@ -13,6 +13,7 @@ import { getCachedMetadata, getPortfolioSectorExposure } from '@/lib/commodity-m
 import type { SectorExposure } from '@/lib/commodity-metadata';
 import { requireRole } from '@/lib/auth';
 import { createCostBasisCache, type CostBasisMethod } from '@/lib/cost-basis';
+import { DEFAULT_QTY_EPSILON, MONEY_DISPLAY_EPSILON } from '@/lib/tolerances';
 
 interface CashByAccount {
   parentGuid: string;
@@ -230,7 +231,9 @@ export async function GET(request: Request) {
     const allHoldings = await Promise.all(holdingsPromises);
 
     // Filter out fully closed positions (zero shares AND zero market value)
-    const holdings = allHoldings.filter(h => Math.abs(h.shares) >= 0.0001 || Math.abs(h.marketValue) >= 0.01);
+    const holdings = allHoldings.filter(
+      h => Math.abs(h.shares) >= DEFAULT_QTY_EPSILON || Math.abs(h.marketValue) >= MONEY_DISPLAY_EPSILON,
+    );
 
     // Calculate portfolio summary. The totals sum per-holding numbers that are
     // each honest about their own coverage, so the total carries the pooled
@@ -315,7 +318,9 @@ export async function GET(request: Request) {
         cashSource = 'sibling';
       } else {
         const parentBalance = await getAccountBalance(parentGuid);
-        if (Math.abs(parentBalance) >= 0.01) {
+        // Half a cent, not a whole one: a parent account holding exactly
+        // $0.01 of cash has cash, and reporting it as none is a wrong answer.
+        if (Math.abs(parentBalance) >= MONEY_DISPLAY_EPSILON) {
           cashBalance = parentBalance;
           cashAccountGuid = parentGuid;
           cashAccountName = accountLookup.get(parentGuid)?.name || 'Cash';

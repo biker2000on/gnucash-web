@@ -9,6 +9,7 @@ import { headers } from 'next/headers';
 import { getSession } from './auth';
 import prisma from './prisma';
 import { authenticateBearer, parseBearerToken } from './api-tokens';
+import { ancestorCte } from './sql/ancestor-cte';
 
 /**
  * Module-global short-TTL cache for book scoping.
@@ -269,16 +270,8 @@ export async function isAccountInActiveBook(accountGuid: string): Promise<boolea
 
     // Depth-bounded upward walk (terminates even on an already-cyclic tree).
     const rows = await prisma.$queryRaw<Array<{ in_book: boolean }>>`
-        WITH RECURSIVE up AS (
-            SELECT guid, parent_guid, 1 AS depth
-            FROM accounts WHERE guid = ${accountGuid}
-            UNION ALL
-            SELECT a.guid, a.parent_guid, up.depth + 1
-            FROM accounts a
-            JOIN up ON a.guid = up.parent_guid
-            WHERE up.depth < 200
-        )
-        SELECT EXISTS(SELECT 1 FROM up WHERE guid = ${rootGuid}) AS in_book
+        ${ancestorCte(accountGuid)}
+        SELECT EXISTS(SELECT 1 FROM account_ancestors WHERE guid = ${rootGuid}) AS in_book
     `;
     return rows[0]?.in_book === true;
 }

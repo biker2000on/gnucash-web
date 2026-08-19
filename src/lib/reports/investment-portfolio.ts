@@ -18,6 +18,7 @@ import { getBaseCurrency } from '@/lib/currency';
 import { CONTINUOUS_EVIDENCE_SOURCE, WEEKEND_EVIDENCE_DAYS } from '@/lib/price-staleness';
 import { ReportType, ReportFilters, InvestmentPortfolioData, PortfolioHolding } from './types';
 import { sumSplitsByAccount, toDecimal } from './utils';
+import { DEFAULT_QTY_EPSILON } from '@/lib/tolerances';
 
 /**
  * Generate Investment Portfolio report data.
@@ -133,7 +134,7 @@ export async function generateInvestmentPortfolio(
         const shares = sums?.quantity ?? 0;
 
         // Skip zero-share accounts unless requested
-        const isZeroShares = Math.abs(shares) < 0.0001;
+        const isZeroShares = Math.abs(shares) < DEFAULT_QTY_EPSILON;
         if (isZeroShares && !showZeroShares) {
             return null;
         }

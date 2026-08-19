@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { transformToInvestmentRow } from '../investment-utils';
+import { transformToInvestmentRow, costBasisCoverageForRow } from '../investment-utils';
 import type { Split } from '@/lib/types';
 import type { AccountTransaction } from '../../AccountLedger';
 
@@ -301,5 +301,83 @@ describe('classification prefers account_type over fullname prefixes', () => {
         ]);
 
         expect(transformToInvestmentRow(tx, STOCK_GUID).transactionType).toBe('buy');
+    });
+});
+
+/**
+ * The ledger's Cost Basis column carries the SAME tri-state coverage the
+ * holdings surfaces do. It used to read only `cost_basis`, so a basis covering
+ * 150 of 200 shares printed identically to one covering all 200, and an
+ * unknown coverage (an oversell) printed as a plain, confident number.
+ */
+describe('transformToInvestmentRow — cost-basis coverage', () => {
+    const stockSplit = () => makeSplit({
+        account_guid: STOCK_GUID,
+        account_fullname: 'Assets:Brokerage:AAPL',
+        quantity_decimal: '100',
+        value_decimal: '1000',
+        account_type: 'STOCK',
+    });
+    const cashSplit = () => makeSplit({
+        account_fullname: 'Assets:Cash',
+        value_decimal: '-1000',
+        account_type: 'BANK',
+    });
+
+    function rowWith(uncovered: string | null | undefined, shareBalance = '200') {
+        const tx = makeTx([stockSplit(), cashSplit()]);
+        tx.share_balance = shareBalance;
+        tx.cost_basis = '3500';
+        if (uncovered !== undefined) {
+            (tx as { cost_basis_uncovered_shares?: string | null }).cost_basis_uncovered_shares = uncovered;
+        }
+        return transformToInvestmentRow(tx, STOCK_GUID);
+    }
+
+    it("reads '0' uncovered shares as complete coverage of the whole balance", () => {
+        expect(rowWith('0').costBasisCoverage).toEqual({ status: 'complete', coveredShares: 200 });
+    });
+
+    it('reads a positive uncovered count as partial, with the covered remainder', () => {
+        expect(rowWith('50').costBasisCoverage).toEqual({
+            status: 'partial', coveredShares: 150, uncoveredShares: 50, warnings: [],
+        });
+    });
+
+    /**
+     * The coercion this tri-state exists to prevent: `Number(null) === 0`
+     * would turn "coverage could not be determined" into "fully covered".
+     */
+    it('reads null as unknown, NOT as zero uncovered shares', () => {
+        const coverage = rowWith(null).costBasisCoverage;
+        expect(coverage.status).toBe('unknown');
+        expect(coverage).not.toHaveProperty('uncoveredShares');
+    });
+
+    it('treats an absent field (non-investment payload) as unknown', () => {
+        expect(rowWith(undefined).costBasisCoverage.status).toBe('unknown');
+    });
+
+    it('treats unparseable text as unknown rather than as a share count', () => {
+        expect(rowWith('not-a-number').costBasisCoverage.status).toBe('unknown');
+    });
+
+    it('never reports a negative covered count when uncovered exceeds the balance', () => {
+        const coverage = rowWith('250').costBasisCoverage;
+        expect(coverage.status).toBe('partial');
+        if (coverage.status !== 'partial') throw new Error('expected partial coverage');
+        expect(coverage.coveredShares).toBe(0);
+        expect(coverage.uncoveredShares).toBe(250);
+    });
+
+    it('leaves the basis figure itself untouched', () => {
+        expect(rowWith('50').costBasis).toBe(3500);
+    });
+});
+
+describe('costBasisCoverageForRow', () => {
+    it('is exported for surfaces that hold a row shape of their own', () => {
+        expect(costBasisCoverageForRow(200, '0')).toEqual({ status: 'complete', coveredShares: 200 });
+        expect(costBasisCoverageForRow(200, null).status).toBe('unknown');
     });
 });

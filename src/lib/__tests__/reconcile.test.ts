@@ -392,10 +392,96 @@ describe('finalizeReconciliation', () => {
         expect(imbalanceSplit.value_num).toBe(-2500n);
         expect(imbalanceSplit.quantity_num).toBe(-2500n);
         expect(() => assertBalanced(adjustment)).not.toThrow();
+
+        // Both legs must hang off ONE transaction, and it must be the
+        // transaction that was just created. Two splits that balance
+        // arithmetically but sit on different (or absent) parents are not an
+        // adjustment at all: each becomes a one-sided imbalance in its own
+        // transaction, and assertBalanced above cannot see it because it sums
+        // the rows it is handed without asking what they belong to.
+        const createdTxGuid = mockPrisma.transactions.create.mock.calls[0][0].data.guid;
+        expect(typeof createdTxGuid).toBe('string');
+        expect(accountSplit.tx_guid).toBe(createdTxGuid);
+        expect(imbalanceSplit.tx_guid).toBe(createdTxGuid);
+        expect(new Set(adjustment.map((s: { tx_guid: string }) => s.tx_guid)).size).toBe(1);
+        // Distinct split guids on the same parent, not one row written twice.
+        expect(accountSplit.guid).not.toBe(imbalanceSplit.guid);
+
         const sessionSql = mockPrisma.$executeRaw.mock.calls.map(sqlText).join('\n');
         expect(sessionSql).toContain("statementEndingBalance");
         expect(sessionSql).toContain('ending_difference');
         expect(mockPrisma.$executeRaw.mock.calls.some((call: unknown[]) => call.includes(175))).toBe(true);
+    });
+
+    /**
+     * The adjustment must be denominated in the ACCOUNT's smallest unit, not
+     * in cents. A 3dp currency and a JPY-like whole-unit currency are the two
+     * ends a hard-coded /100 gets wrong in opposite directions: one truncates
+     * a real fraction away, the other invents one. Both legs still have to
+     * land on the single created transaction.
+     */
+    it.each([
+        {
+            label: 'a 3dp currency (scu 1000)',
+            scu: 1000,
+            selectedUnits: 50_000,
+            reconciledUnits: 100_000,
+            endingBalance: '175.000',
+            expectedUnits: 25_000n,
+        },
+        {
+            label: 'a JPY-like whole-unit currency (scu 1)',
+            scu: 1,
+            selectedUnits: 50,
+            reconciledUnits: 100,
+            endingBalance: '175',
+            expectedUnits: 25n,
+        },
+    ])('creates a shared-parent adjustment denominated in $label', async ({
+        scu, selectedUnits, reconciledUnits, endingBalance, expectedUnits,
+    }) => {
+        mockFinalize([{
+            ...selectedSplit(SPLIT_1, selectedUnits),
+            quantity_denom: BigInt(scu),
+        }], reconciledUnits);
+        mockPrisma.splits.updateMany.mockResolvedValue({ count: 1 });
+        mockPrisma.splits.createMany.mockResolvedValue({ count: 2 });
+        mockPrisma.accounts.findUnique.mockResolvedValue({ commodity_guid: 'commodity-1', commodity: { mnemonic: 'JPY' } });
+        mockPrisma.accounts.findFirst.mockResolvedValue({ guid: 'imbalance-account' });
+        mockPrisma.books.findUnique.mockResolvedValue({ root_account_guid: 'root-account' });
+        mockPrisma.transactions.create.mockResolvedValue({});
+        mockPrisma.$executeRaw.mockResolvedValue(0);
+
+        await expect(
+            finalizeReconciliation(
+                ACCOUNT,
+                STATEMENT_DATE,
+                endingBalance,
+                [SPLIT_1],
+                undefined,
+                { bookGuid: 'book0000000000000000000000000001', userId: 42 },
+                true,
+                scu,
+            ),
+        ).resolves.toMatchObject({ reconciledSplits: 1 });
+
+        const adjustment = mockPrisma.splits.createMany.mock.calls[0][0].data;
+        expect(adjustment).toHaveLength(2);
+        const [accountSplit, imbalanceSplit] = adjustment;
+
+        expect(accountSplit.value_denom).toBe(BigInt(scu));
+        expect(accountSplit.quantity_denom).toBe(BigInt(scu));
+        expect(imbalanceSplit.value_denom).toBe(BigInt(scu));
+        expect(accountSplit.value_num).toBe(expectedUnits);
+        expect(accountSplit.quantity_num).toBe(expectedUnits);
+        expect(imbalanceSplit.value_num).toBe(-expectedUnits);
+        expect(imbalanceSplit.quantity_num).toBe(-expectedUnits);
+
+        const createdTxGuid = mockPrisma.transactions.create.mock.calls[0][0].data.guid;
+        expect(accountSplit.tx_guid).toBe(createdTxGuid);
+        expect(imbalanceSplit.tx_guid).toBe(createdTxGuid);
+        expect(new Set(adjustment.map((s: { tx_guid: string }) => s.tx_guid)).size).toBe(1);
+        expect(() => assertBalanced(adjustment)).not.toThrow();
     });
 
     it('refuses a stock adjustment before any ledger write', async () => {
