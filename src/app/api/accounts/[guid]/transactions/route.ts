@@ -16,7 +16,7 @@ import {
     removeSharesFromPool,
     type CostBasisMethod,
 } from '@/lib/cost-basis';
-import { qtyEpsilonForScu } from '@/lib/lot-scrub';
+import { qtyEpsilonWithMagnitude } from '@/lib/tolerances';
 import { parseSearchQuery } from '@/lib/tags';
 import { getTagsForTransactions } from '@/lib/services/tag.service';
 import { readTransactionNotes } from '@/lib/transaction-notes';
@@ -373,8 +373,9 @@ export async function GET(
                 // (qtyEpsilonForScu, which falls back to 0.0001 on a missing or
                 // zero scu on its own). Deliberately reused rather than
                 // re-derived: a fourth copy of this rule is how tolerances
-                // drift apart.
-                const coverageEps = qtyEpsilonForScu(account?.commodity_scu);
+                // drift apart. Scaled per row below, because the two sums it
+                // compares grow with the replay (see qtyEpsilonWithMagnitude).
+                const commodityScu = account?.commodity_scu;
 
                 // Preload lot splits for every transfer-in that carries a lot,
                 // in ONE query, so traceCostBasis skips its per-lot lookup
@@ -424,7 +425,21 @@ export async function GET(
                     // account can legitimately oversell by 1e-8, which a flat
                     // bound reads as agreement and reports as "0 uncovered" for
                     // a negative position.
+                    //
+                    // It is also MAGNITUDE-SCALED. `runShares` and the pool's
+                    // share count are two independent float sums over the same
+                    // (potentially very long) split sequence: on a
+                    // multi-million-share account their IEEE-754 residues
+                    // diverge past any absolute epsilon, and a fixed bound
+                    // would report a perfectly consistent ledger as
+                    // "coverage unknown" from the residue alone. Small
+                    // positions keep the absolute floor, so the fail-safe
+                    // direction (a real oversell => unknown) is unchanged.
                     const poolShares = pool.coveredShares + pool.uncoveredShares;
+                    const coverageEps = qtyEpsilonWithMagnitude(
+                        commodityScu,
+                        Math.max(Math.abs(runShares), Math.abs(poolShares)),
+                    );
                     const coverageIsKnowable = Math.abs(runShares - poolShares) < coverageEps;
                     totals.set(split.tx_guid, {
                         shareBalance: runShares,

@@ -9,6 +9,7 @@ import {
     type CostBasisCoverage,
 } from '@/lib/commodities';
 import { createCostBasisCache, type CostBasisMethod } from '@/lib/cost-basis';
+import { DEFAULT_QTY_EPSILON, MONEY_DISPLAY_EPSILON } from '@/lib/tolerances';
 import {
     loadDividendPayments,
     summarizeDividends,
@@ -73,7 +74,8 @@ export async function GET(request: NextRequest) {
                 const commodityGuid = account.commodity_guid;
                 if (!commodityGuid) return;
                 const holdings = await getAccountHoldings(account.guid, undefined, costBasisOptions);
-                if (Math.abs(holdings.shares) < 0.0001 && Math.abs(holdings.marketValue) < 0.01) return;
+                if (Math.abs(holdings.shares) < DEFAULT_QTY_EPSILON
+                    && Math.abs(holdings.marketValue) < MONEY_DISPLAY_EPSILON) return;
                 const ticker = account.commodity?.mnemonic || '???';
                 coverageParts.set(commodityGuid, [
                     ...(coverageParts.get(commodityGuid) ?? []),

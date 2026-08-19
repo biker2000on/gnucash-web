@@ -25,6 +25,11 @@
 
 import prisma from './prisma';
 import { generateGuid, toDecimalNumber, fromDecimal, findOrCreateAccount } from './gnucash';
+import {
+  DEFAULT_QTY_EPSILON,
+  MONEY_DISPLAY_EPSILON,
+  qtyEpsilonForScu,
+} from './tolerances';
 import { isLongTerm } from './holding-period';
 import { isOwnAccountCommodityTransfer } from './account-transfer';
 import { allocateTradeFees, NO_TRADE_FEES, type TradeFeeBySplit } from './trade-fees';
@@ -708,20 +713,13 @@ export function classifyHoldingPeriod(openDate: Date, closeDate: Date): HoldingP
 // qtyEpsilonForScu
 // ---------------------------------------------------------------------------
 
-/** Legacy share epsilon, correct for stocks/funds at scu 100–10000. */
-export const DEFAULT_QTY_EPSILON = 0.0001;
-
 /**
- * Commodity-aware share epsilon derived from the commodity's fraction
- * (`commodity_scu`). At crypto's 1e8 precision, 0.0001 BTC is real money, so
- * the epsilon shrinks to half the smallest representable unit. It never grows
- * beyond the legacy 0.0001 so coarse-scu stocks keep their behavior.
+ * Re-exported from `./tolerances`, the single home for every numeric tolerance
+ * in the project. They stay exported HERE because the lot engine has been their
+ * import site since before `tolerances.ts` existed; new callers may import from
+ * either.
  */
-export function qtyEpsilonForScu(scu: number | bigint | null | undefined): number {
-  const n = Number(scu);
-  if (!Number.isFinite(n) || n <= 0) return DEFAULT_QTY_EPSILON;
-  return Math.min(DEFAULT_QTY_EPSILON, 0.5 / n);
-}
+export { DEFAULT_QTY_EPSILON, qtyEpsilonForScu };
 
 // ---------------------------------------------------------------------------
 // classifyAccountTax
@@ -1089,7 +1087,11 @@ export async function splitSellAcrossLots(
     (sum, s) => sum + toDecimalNumber(s.value_num, s.value_denom),
     0,
   );
-  if (Math.abs(totalValue) > 0.01) {
+  // Half a cent, not a whole one: the splits this engine writes are exact
+  // rational amounts, so anything a cent-rounded sum cannot absorb is a REAL
+  // imbalance. The old whole-cent bound let a one-cent unbalanced transaction
+  // through the invariant that exists to catch exactly that.
+  if (Math.abs(totalValue) > MONEY_DISPLAY_EPSILON) {
     throw new Error(
       `Transaction balance invariant violated after split: ${totalValue.toFixed(4)} (tx: ${sellSplit.tx_guid})`,
     );
@@ -2351,7 +2353,7 @@ export async function splitTransferAcrossSourceLots(
     const totalValue = allTxSplits.reduce(
       (sum, s) => sum + toDecimalNumber(s.value_num, s.value_denom), 0,
     );
-    if (Math.abs(totalValue) > 0.01) {
+    if (Math.abs(totalValue) > MONEY_DISPLAY_EPSILON) {
       throw new Error(
         `Transaction balance invariant violated after transfer split: ${totalValue.toFixed(4)} (tx: ${split.tx_guid})`,
       );
@@ -2452,7 +2454,7 @@ export async function valueZeroValueTrade(
 
   const ownValue = toDecimalNumber(split.value_num, split.value_denom);
   const ownQty = toDecimalNumber(split.quantity_num, split.quantity_denom);
-  if (Math.abs(ownValue) > 0.005) {
+  if (Math.abs(ownValue) > MONEY_DISPLAY_EPSILON) {
     return { valued: true }; // already valued (or a second visit from the counter account's scrub)
   }
   if (!(Math.abs(ownQty) > 0)) {
@@ -2471,7 +2473,7 @@ export async function valueZeroValueTrade(
     if (s.account.account_type === 'TRADING') return false;
     const qty = toDecimalNumber(s.quantity_num, s.quantity_denom);
     const val = toDecimalNumber(s.value_num, s.value_denom);
-    return Math.abs(qty) > 0 && Math.abs(val) < 0.005;
+    return Math.abs(qty) > 0 && Math.abs(val) < MONEY_DISPLAY_EPSILON;
   });
   if (counterLegs.length === 0) {
     return { valued: false, warning: 'No opposite-commodity counter leg found for zero-value trade' };
@@ -2775,7 +2777,7 @@ export async function generateCapitalGains(
   const existingGainsSplit = lot.splits.find(s => {
     const qty = toDecimalNumber(s.quantity_num, s.quantity_denom);
     const val = toDecimalNumber(s.value_num, s.value_denom);
-    return Math.abs(qty) < qtyEps && Math.abs(val) > 0.0001;
+    return Math.abs(qty) < qtyEps && Math.abs(val) > MONEY_DISPLAY_EPSILON;
   });
   if (existingGainsSplit) {
     return {
@@ -2884,7 +2886,7 @@ export async function generateCapitalGains(
   if (isAverageCostLot) {
     const avgBasisTotal = sellSplits.reduce((sum, s) => sum + (avgBasisBySplit.get(s.guid) ?? 0), 0);
     gainLoss = saleProceeds - avgBasisTotal;
-  } else if (transferOutSplits.length === 0 && Math.abs(carriedBasis) < 0.005) {
+  } else if (transferOutSplits.length === 0 && Math.abs(carriedBasis) < MONEY_DISPLAY_EPSILON) {
     gainLoss = -lot.splits.reduce(
       (sum, s) => sum + toDecimalNumber(s.value_num, s.value_denom),
       0,
@@ -2897,7 +2899,7 @@ export async function generateCapitalGains(
     // Legacy source-linked lots have no replacement basis and retain their
     // recorded value until they are explicitly re-scrubbed.
     const transferInSplitGuids = new Set<string>();
-    if (Math.abs(carriedBasis) >= 0.005) {
+    if (Math.abs(carriedBasis) >= MONEY_DISPLAY_EPSILON) {
       for (const buy of buySplits) {
         const siblings = await tx.splits.findMany({
           where: { tx_guid: buy.tx_guid },
@@ -2925,7 +2927,7 @@ export async function generateCapitalGains(
 
   // Break-even: a $0-value gains transaction is pure noise — the lot already
   // sums to zero. Close it and skip the booking.
-  if (Math.abs(gainLoss) < 0.005) {
+  if (Math.abs(gainLoss) < MONEY_DISPLAY_EPSILON) {
     await tx.lots.update({
       where: { guid: lotGuid },
       data: { is_closed: 1 },
@@ -2943,7 +2945,7 @@ export async function generateCapitalGains(
   // is an unvalued trade (no price in the price DB — see valueZeroValueTrade),
   // not a real sale at zero; refusing to book prevents a phantom loss equal to
   // the entire basis.
-  if (soldShares > qtyEps && Math.abs(grossSaleProceeds) < 0.005) {
+  if (soldShares > qtyEps && Math.abs(grossSaleProceeds) < MONEY_DISPLAY_EPSILON) {
     await tx.lots.update({
       where: { guid: lotGuid },
       data: { is_closed: 1 },

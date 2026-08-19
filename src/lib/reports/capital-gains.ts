@@ -37,6 +37,7 @@ import type { WashSaleResult } from '@/lib/lot-assignment';
 import { escapeCSVField } from '@/lib/reports/csv-export';
 import { isLongTerm, computeTerm, type Term } from '@/lib/holding-period';
 import { NO_TRADE_FEES, type TradeFeeBySplit } from '@/lib/trade-fees';
+import { BROKER_PROCEEDS_MATCH_TOLERANCE, MONEY_DISPLAY_EPSILON } from '@/lib/tolerances';
 
 // The IRS holding-period rule lives in @/lib/holding-period (single source of
 // truth, shared with the lot-scrub engine and the tax estimator); re-exported
@@ -274,7 +275,7 @@ export function lotToRealizedSales(
     // never be what promotes a transfer into a reportable sale (or what makes
     // a real sale vanish by netting to ~0).
     const grossProceeds = -sell.value;
-    if (Math.abs(grossProceeds) < 0.005) continue; // transfer-out / unvalued trade
+    if (Math.abs(grossProceeds) < MONEY_DISPLAY_EPSILON) continue; // transfer-out / unvalued trade
     const shares = Math.abs(sell.shares);
     sales.push({
       splitGuid: sell.guid,
@@ -431,7 +432,7 @@ export interface ReconMatch {
   computedBasis: number;
   brokerBasis: number;
   basisDelta: number;       // computed - broker
-  basisMismatch: boolean;   // |delta| > 0.01
+  basisMismatch: boolean;   // |delta| >= half a cent (MONEY_DISPLAY_EPSILON)
 }
 
 export interface ReconResult {
@@ -448,13 +449,19 @@ export interface ReconResult {
 
 /**
  * Reconcile computed sales against broker 1099-B rows. A row matches a sale
- * when ticker + sale day agree and proceeds are within `tolerance`. Basis is
- * flagged (not used for matching) when it differs by more than $0.01. PURE.
+ * when ticker + sale day agree and proceeds are within `tolerance` (a whole
+ * cent by default: brokers round intermediate commissions differently, so this
+ * is a matching window, not an equality test).
+ *
+ * Basis is flagged (not used for matching) when it differs by half a cent or
+ * more. It used to need MORE than a whole cent, which let a genuine one-cent
+ * basis disagreement — the exact discrepancy this reconciliation exists to
+ * surface before it reaches a Form 8949 — pass as agreement. PURE.
  */
 export function reconcile1099B(
   sales: RealizedSaleInput[],
   brokerRows: BrokerRow[],
-  tolerance = 0.01,
+  tolerance = BROKER_PROCEEDS_MATCH_TOLERANCE,
 ): ReconResult {
   const usedSale = new Array(sales.length).fill(false);
   const matched: ReconMatch[] = [];
@@ -485,7 +492,7 @@ export function reconcile1099B(
       computedBasis: sale.costBasis,
       brokerBasis: broker.basis,
       basisDelta,
-      basisMismatch: Math.abs(basisDelta) > 0.01,
+      basisMismatch: Math.abs(basisDelta) >= MONEY_DISPLAY_EPSILON,
     });
   }
 

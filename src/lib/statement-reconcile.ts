@@ -39,8 +39,16 @@
  * need negation for liabilities. We never do; we always read raw split values.
  */
 
-/** Amounts are considered equal within half a cent (float tolerance). */
-export const AMOUNT_EPSILON = 0.005;
+import { MONEY_DISPLAY_EPSILON } from './tolerances';
+
+/**
+ * Amounts are considered equal within half a cent (float tolerance).
+ *
+ * Aliases the project-wide {@link MONEY_DISPLAY_EPSILON} rather than restating
+ * the number, and keeps its own name because that is what the matcher's
+ * callers and tests import.
+ */
+export const AMOUNT_EPSILON = MONEY_DISPLAY_EPSILON;
 
 /** Default +/- day window for line↔split date matching. */
 export const DEFAULT_MATCH_WINDOW_DAYS = 4;
@@ -166,8 +174,11 @@ export function matchStatementLines(
   return { matched, missingOnStatement, inLedgerNotOnStatement };
 }
 
-/** Tolerance for declaring a reconcile "tied out". */
-export const TIE_OUT_EPSILON = 0.005;
+/**
+ * Tolerance for declaring a reconcile "tied out" — the project-wide
+ * half-cent money epsilon under the name this module's callers use.
+ */
+export const TIE_OUT_EPSILON = MONEY_DISPLAY_EPSILON;
 
 export interface TieOutInput {
   /** Statement opening balance, or null/undefined if the statement omits it. */

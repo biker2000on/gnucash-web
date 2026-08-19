@@ -9,6 +9,7 @@
 
 import prisma from '@/lib/prisma';
 import { toDecimal } from '@/lib/gnucash';
+import { RATE_SOLVER_MONEY_TOLERANCE } from '@/lib/tolerances';
 
 /**
  * A single payment broken into principal and interest components
@@ -365,7 +366,9 @@ export class MortgageService {
     // f(r) = M - P * r * (1+r)^n / ((1+r)^n - 1) = 0
     let r = 0.04 / 12; // Initial guess: 4% annual
     const maxIterations = 100;
-    const tolerance = 0.01;
+    // A solver stopping criterion on the payment residual, NOT a money-equality
+    // test — see src/lib/tolerances.ts for why the two have separate names.
+    const tolerance = RATE_SOLVER_MONEY_TOLERANCE;
     const P = originalAmount;
     const M = monthlyPayment;
     const n = totalPayments;

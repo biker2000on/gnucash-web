@@ -2,6 +2,7 @@
 
 import { formatCurrency } from '@/lib/format';
 import { JumpToAccountButton } from './JumpToAccountButton';
+import { DEFAULT_QTY_EPSILON } from '@/lib/tolerances';
 
 interface SplitDisplay {
   guid: string;
@@ -95,7 +96,7 @@ export default function SplitRows({ splits, currencyMnemonic, columns, trailingC
               </td>
               {/* Shares */}
               <td className="px-3 py-1.5 text-right text-xs text-foreground-secondary font-mono">
-                {absQty > 0.0001 && qty !== val ? (
+                {absQty > DEFAULT_QTY_EPSILON && qty !== val ? (
                   <span className={qty < 0 ? 'text-negative' : ''}>
                     {qty < 0 ? `(${absQty.toFixed(sp)})` : absQty.toFixed(sp)}
                   </span>
@@ -103,7 +104,7 @@ export default function SplitRows({ splits, currencyMnemonic, columns, trailingC
               </td>
               {/* Price */}
               <td className="px-3 py-1.5 text-right text-xs text-foreground-secondary font-mono">
-                {absQty > 0.0001 && absVal > 0 && qty !== val ? (
+                {absQty > DEFAULT_QTY_EPSILON && absVal > 0 && qty !== val ? (
                   `${Math.abs(val / qty).toFixed(2)}`
                 ) : ''}
               </td>

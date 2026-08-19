@@ -5,6 +5,7 @@ import { getBookAccountGuids } from '@/lib/book-scope';
 import { getAccountLots } from '@/lib/lots';
 import { detectWashSales, WashSaleResult } from '@/lib/lot-assignment';
 import { getRetirementAccountGuids } from '@/lib/reports/contribution-classifier';
+import { DEFAULT_QTY_EPSILON } from '@/lib/tolerances';
 
 interface HarvestCandidate {
   accountGuid: string;
@@ -76,7 +77,7 @@ export async function GET(request: NextRequest) {
 
       for (const lot of lots) {
         if (lot.isClosed || lot.unrealizedGain === null || lot.unrealizedGain >= 0) continue;
-        if (Math.abs(lot.totalShares) < 0.0001) continue;
+        if (Math.abs(lot.totalShares) < DEFAULT_QTY_EPSILON) continue;
 
         const marketValue = lot.currentPrice !== null
           ? lot.currentPrice * lot.totalShares

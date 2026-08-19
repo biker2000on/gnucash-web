@@ -18,7 +18,7 @@ import {
     type CostBasisMethod,
     type CostBasisCache,
 } from './cost-basis';
-import { qtyEpsilonForScu } from './lot-scrub';
+import { qtyEpsilonForScu, qtyEpsilonWithMagnitude } from './tolerances';
 import {
     calculateGainLoss,
     calculateGainLossPercent,
@@ -300,9 +300,18 @@ export async function getAccountHoldings(
         // The same commodity-aware share tolerance the lot engine and the
         // ledger route use, deliberately reused rather than re-derived: at
         // crypto's 1e8 precision a flat 0.0001 reads a real one-unit oversell
-        // as agreement.
-        const coverageEps = qtyEpsilonForScu(account.commodity_scu);
+        // as agreement. It is also MAGNITUDE-SCALED, because `shares` and the
+        // pool's share count are two independent float sums over the same long
+        // split replay: on a multi-million-share position their IEEE-754
+        // residues diverge by more than any absolute epsilon, and an absolute
+        // bound would report a perfectly consistent account as "coverage
+        // unknown". The absolute floor still governs small positions.
+        const absEps = qtyEpsilonForScu(account.commodity_scu);
         const poolShares = pool.coveredShares + pool.uncoveredShares;
+        const coverageEps = qtyEpsilonWithMagnitude(
+            account.commodity_scu,
+            Math.max(Math.abs(shares), Math.abs(poolShares)),
+        );
         if (Math.abs(shares - poolShares) >= coverageEps) {
             // An oversell empties the pool while `shares` goes negative; it
             // cannot describe a short position. The share count and basis stay
@@ -312,7 +321,7 @@ export async function getAccountHoldings(
                 status: 'unknown',
                 reason: 'The share balance and the cost-basis pool disagree (an oversell leaves a short position the pool cannot describe).',
             };
-        } else if (pool.uncoveredShares >= coverageEps) {
+        } else if (pool.uncoveredShares >= absEps) {
             rawCoverage = {
                 status: 'partial',
                 coveredShares: pool.coveredShares,
@@ -331,9 +340,9 @@ export async function getAccountHoldings(
     const latestPrice = await getLatestPrice(commodityGuid, undefined, asOfDate);
     const pricePerShare = latestPrice?.value || 0;
 
-    // Zero-share holdings should have zero cost basis and market value
-    // Use tolerance for floating point comparison (shares < 0.0001 is effectively zero)
-    const isZeroShares = Math.abs(shares) < 0.0001;
+    // Zero-share holdings should have zero cost basis and market value.
+    // Commodity-aware: a flat 0.0001 would zero out a real 1e-5 BTC position.
+    const isZeroShares = Math.abs(shares) < qtyEpsilonForScu(account.commodity_scu);
     const costBasis = isZeroShares ? 0 : rawCostBasis;
     // A closed position holds nothing to cover, so zeroing the basis leaves
     // nothing overstated to caveat.

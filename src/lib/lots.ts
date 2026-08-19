@@ -25,6 +25,7 @@ import { isLongTerm } from './reports/capital-gains';
 import { loadTradeFees, NO_TRADE_FEES, type TradeFeeBySplit } from './trade-fees';
 import { isOwnAccountCommodityTransfer } from './account-transfer';
 import { AVG_COST_BASIS_SLOT, AVG_BASIS_REMAINING_SLOT } from './lot-scrub';
+import { DEFAULT_QTY_EPSILON } from './tolerances';
 
 export interface LotSplit {
     guid: string;
@@ -214,7 +215,7 @@ export function computeRealizedGain(
     transferInSplitGuids: ReadonlySet<string> = new Set(),
     fees: TradeFeeBySplit = NO_TRADE_FEES,
 ): number {
-    const EPS = 0.0001;
+    const EPS = DEFAULT_QTY_EPSILON;
     const feeOf = (split: { guid?: string }) => (split.guid ? fees.get(split.guid) ?? 0 : 0);
 
     const disposals = splits.filter(s => s.shares < -EPS);
@@ -278,7 +279,7 @@ export function remainingCostBasis(
     const boughtShares = lot.splits
         .filter(s => s.shares > 0)
         .reduce((sum, s) => sum + s.shares, 0);
-    return boughtShares > 0.0001
+    return boughtShares > DEFAULT_QTY_EPSILON
         ? lot.totalCost * (lot.totalShares / boughtShares)
         : lot.totalCost;
 }
@@ -453,7 +454,7 @@ export async function getLotsForAccounts(
         // Total shares = sum of all split quantities
         const computedShares = lotSplits.reduce((sum, s) => sum + s.shares, 0);
         // Treat lots with ~0 remaining shares as effectively closed
-        const isClosed = lot.is_closed === 1 || (lotSplits.length > 0 && Math.abs(computedShares) < 0.0001);
+        const isClosed = lot.is_closed === 1 || (lotSplits.length > 0 && Math.abs(computedShares) < DEFAULT_QTY_EPSILON);
 
         // Dates from sorted splits
         const openDate = lotSplits.length > 0 ? lotSplits[0].postDate : null;
@@ -488,7 +489,7 @@ export async function getLotsForAccounts(
         // shares are deliberately treated as open for the pro-rata basis math.
         const taxableLotSplits = lotSplits.filter(split => !transferOutSplitGuids.has(split.guid));
         const taxableShares = taxableLotSplits.reduce((sum, split) => sum + split.shares, 0);
-        const taxableLotIsClosed = Math.abs(taxableShares) < 0.0001;
+        const taxableLotIsClosed = Math.abs(taxableShares) < DEFAULT_QTY_EPSILON;
         const realizedGain = computeRealizedGain(
             taxableLotSplits,
             taxableLotIsClosed,
@@ -499,7 +500,7 @@ export async function getLotsForAccounts(
 
         // Unrealized gain: (currentPrice * remaining shares) - cost basis of remaining shares
         let unrealizedGain: number | null = null;
-        if (!isClosed && latestPrice !== null && Math.abs(totalShares) > 0.0001) {
+        if (!isClosed && latestPrice !== null && Math.abs(totalShares) > DEFAULT_QTY_EPSILON) {
             const marketValue = latestPrice * totalShares;
             unrealizedGain = marketValue - remainingCostBasis({
                 averageBasisRemaining, splits: lotSplits, totalShares, totalCost,

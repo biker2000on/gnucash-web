@@ -20,6 +20,11 @@
  * Buy-only mode (newCash > 0) allocates cash to all underweights.
  */
 
+// `tolerances` is the one static import this module allows: it is pure, has
+// zero imports of its own, and is browser-safe, so it does not compromise the
+// engine's client-importability the way a prisma-backed module would.
+import { DEFAULT_QTY_EPSILON } from './tolerances';
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -483,7 +488,7 @@ export async function loadSellCandidatesBySymbol(
             const lots = await getAccountLots(account.guid);
             for (const lot of lots) {
                 if (lot.isClosed) continue;
-                if (Math.abs(lot.totalShares) < 0.0001) continue;
+                if (Math.abs(lot.totalShares) < DEFAULT_QTY_EPSILON) continue;
                 if (lot.currentPrice === null) continue;
                 const marketValue = lot.currentPrice * lot.totalShares;
                 if (marketValue <= MIN_TRADE) continue;

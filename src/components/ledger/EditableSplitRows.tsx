@@ -5,6 +5,7 @@ import { AccountTransaction } from '@/components/AccountLedger';
 import { AccountCell } from '@/components/ledger/cells/AccountCell';
 import { AmountCell } from '@/components/ledger/cells/AmountCell';
 import type { Split } from '@/lib/types';
+import { DEFAULT_QTY_EPSILON } from '@/lib/tolerances';
 
 /** The stored state of a split, carried through edits untouched. */
 interface StoredFractions {
@@ -100,7 +101,7 @@ function initSplitsFromTransaction(transaction: AccountTransaction, includeTradi
         .map(s => {
             const val = parseFloat(String(s.value_decimal ?? 0));
             const qty = parseFloat(String(s.quantity_decimal ?? 0));
-            const hasQty = Math.abs(qty) > 0.0001 && qty !== val;
+            const hasQty = Math.abs(qty) > DEFAULT_QTY_EPSILON && qty !== val;
             const debit = val > 0 ? Math.abs(val).toFixed(2) : '';
             const credit = val < 0 ? Math.abs(val).toFixed(2) : '';
             const shares = hasQty ? Math.abs(qty).toFixed(sp) : '';
@@ -113,7 +114,7 @@ function initSplitsFromTransaction(transaction: AccountTransaction, includeTradi
                 credit,
                 reconcile_state: s.reconcile_state || 'n',
                 shares,
-                price: hasQty && Math.abs(qty) > 0.0001 ? Math.abs(val / qty).toFixed(2) : '',
+                price: hasQty && Math.abs(qty) > DEFAULT_QTY_EPSILON ? Math.abs(val / qty).toFixed(2) : '',
                 commodity_mnemonic: s.commodity_mnemonic || transaction.commodity_mnemonic || '',
                 original: {
                     debit,
