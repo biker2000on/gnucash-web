@@ -1,7 +1,8 @@
 'use client';
 
 import { Tooltip } from '@/components/ui/Tooltip';
-import type { CostBasisCoverage } from '@/lib/holdings-coverage';
+import type { CostBasisCoverage, PositionSide } from '@/lib/holdings-coverage';
+import { positionSideBasisLabel } from '@/lib/holdings-coverage';
 
 function formatShares(shares: number): string {
     return shares.toLocaleString(undefined, { maximumFractionDigits: 4 });
@@ -135,6 +136,89 @@ export function CostBasisCoverageMark({
             </span>
         </Tooltip>
     );
+}
+
+/**
+ * The sentence a reader needs next to a basis that is PROCEEDS rather than cost.
+ *
+ * Exported so tests and non-tooltip surfaces can assert the wording without
+ * rendering a portal, matching `coverageCaveat`.
+ */
+export function shortPositionCaveat(side: PositionSide | undefined): string | null {
+    switch (side) {
+        case 'short':
+            return (
+                'This position is short: the shares were sold before they were owned. ' +
+                'The figure shown is the proceeds received for them, not a purchase cost, ' +
+                'and the gain is those proceeds minus what it would cost to buy the shares ' +
+                'back at today’s price — so the position gains when the price falls. ' +
+                'Gain or loss on a short sale is short-term regardless of how long the ' +
+                'position is held (IRS Pub. 550, “Short Sales”).'
+            );
+        case 'mixed':
+            return (
+                'This total combines long and short legs. Its basis adds money spent on the ' +
+                'long shares to money received for the short ones, so it is not a purchase ' +
+                'cost; open the row to read each account on its own.'
+            );
+        default:
+            return null;
+    }
+}
+
+/**
+ * Inline marker for a basis that is a short position's proceeds.
+ *
+ * Deliberately a different glyph and tone from `CostBasisCoverageMark`: the two
+ * say different things and can appear on the same number. Coverage is about how
+ * much of a position the basis describes; this is about what the basis IS. A
+ * shared `*` would collapse them into one unreadable footnote.
+ *
+ * Renders nothing for a long or flat position, which is nearly every row.
+ */
+export function ShortPositionMark({
+    positionSide,
+    className = '',
+}: {
+    positionSide: PositionSide | undefined;
+    className?: string;
+}) {
+    const caveat = shortPositionCaveat(positionSide);
+    if (!caveat) return null;
+
+    return (
+        <Tooltip
+            content={caveat}
+            ariaLabel={
+                positionSide === 'short'
+                    ? 'This basis is short-sale proceeds, not a purchase cost'
+                    : 'This total combines long and short legs'
+            }
+            className={`align-baseline ${className}`}
+        >
+            <span aria-hidden="true" className="ml-1 text-sm font-medium text-warning">
+                &#8595;
+            </span>
+        </Tooltip>
+    );
+}
+
+/**
+ * The always-visible label under a short basis.
+ *
+ * Same rule as `CoveredSliceNote`: a reader who never opens a tooltip must not
+ * take proceeds for a cost. Renders nothing for a long or flat position.
+ */
+export function ShortBasisNote({
+    positionSide,
+    className = '',
+}: {
+    positionSide: PositionSide | undefined;
+    className?: string;
+}) {
+    const label = positionSideBasisLabel(positionSide);
+    if (!label) return null;
+    return <div className={`text-xs font-normal text-foreground-muted ${className}`}>{label}</div>;
 }
 
 /**
