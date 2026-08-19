@@ -49,8 +49,9 @@ describe.skipIf(!HAS_TEST_DATABASE)('legacy inventory shipment-cost backfill', (
 
         await withTestClient(async (client) => {
             await client.query(
-                `INSERT INTO commodities (guid, namespace, mnemonic, fraction)
-                 VALUES ($1, 'CURRENCY', $2, 100) ON CONFLICT (guid) DO NOTHING`,
+                `INSERT INTO commodities (guid, namespace, mnemonic, fullname, fraction, quote_flag)
+                 VALUES ($1, 'CURRENCY', $2, 'Integration test currency', 100, 0)
+                 ON CONFLICT (guid) DO NOTHING`,
                 [CURRENCY_GUID, `T${RUN_ID.slice(0, 6)}`],
             );
             await client.query(
