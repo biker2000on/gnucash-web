@@ -474,7 +474,7 @@ export function Tip({
 
     return (
         <>
-                {cloned}
+            {cloned}
             {open && renderPanel(tooltipId, maxWidth, content)}
         </>
     );
