@@ -1689,10 +1689,10 @@ as "Household Documents" under Planning → Home) along three axes.
 - `page.tsx` is **1,187 lines** after the multi-file upload and tax archive
   work. Extract the browse surface into components under
   `src/components/documents/` as part of this; do not grow the page further.
-- `@tanstack/react-virtual` is a dependency with **zero imports** repo-wide —
-  the open ASI-6-006 item ("wire up or remove"). A thumbnail grid over a
-  multi-year archive is the natural place to either use it or delete it.
-  Decide there rather than leaving it dangling.
+- `@tanstack/react-virtual` was a dependency with **zero imports** repo-wide;
+  ASI-6-006 was resolved by removing it (2026-08-19). If a thumbnail grid over
+  a multi-year archive needs virtualization, add the dependency back
+  deliberately as part of that work.
 - Thumbnails are the one genuinely expensive piece here. If it needs to ship
   in stages, the table conversion (2) stands on its own and delivers value
   without any of the rendering pipeline.
@@ -2932,10 +2932,10 @@ deployment risk than the nit is worth.
 - [x] SimpleFin get-or-create advisory locks + book-scoped Imbalance lookup (ASI-5-009) — done 2026-08-19: `getOrCreateImbalanceAccount(…, bookGuid, bookAccountGuids)` + `acquireSoleAccountNameLock` for Imbalance/symbol/Cash children (polly/simplefin-create-race, lock-order invariant).
 - [x] OCR temp-file entropy (ASI-5-010) — done 2026-08-19: `mkdtemp` in `ocr-receipt.ts`.
 - [x] Validate `refresh_time` + per-book schedules (ASI-5-011) — done 2026-08-19: HH:MM validation with fallback and `setSchedule(bookGuid, …)` in `worker/refresh-schedule.ts`.
-- [ ] SimpleFin meta query hoist (ASI-6-004). Unfiltered `transaction_meta.findMany` still inside the per-mapped-account loop (`simplefin-sync.service.ts` ~:710).
+- [x] SimpleFin meta query hoist (ASI-6-004). Unfiltered `transaction_meta.findMany` still inside the per-mapped-account loop (`simplefin-sync.service.ts` ~:710). — Done 2026-08-19: hoisted to one chunked `loadExistingSimpleFinIds()` filtered to the run's feed ids, shared Set across accounts (`simplefin-sync.service.ts`; `simplefin-dedup-index.test.ts`).
 - [x] Push amount/reconcile filters into SQL; journal variant applies them (ASI-6-005) — done 2026-08-19: SQL predicates in `accounts/[guid]/transactions/route.ts` and `transactions/route.ts` (polly/asi6005-filter-pagination).
-- [ ] Wire up or remove `@tanstack/react-virtual` (ASI-6-006). Still declared in `package.json`, zero imports.
-- [ ] Dashboard SQL GROUP BY + invalidation debounce + idx TTLs (ASI-6-007). `dashboard/income-expense` and `sankey` still `findMany` + JS reduce; no debounce in `data-events-subscriber.ts`; `cache.ts` `zadd` without EXPIRE.
+- [x] Wire up or remove `@tanstack/react-virtual` (ASI-6-006). Still declared in `package.json`, zero imports. — Done 2026-08-19: removed (`npm uninstall --package-lock-only`); virtualizing the variable-height ledger tables is not the contained change it looks like, so it can be re-added deliberately if ever specced.
+- [x] Dashboard SQL GROUP BY + invalidation debounce + idx TTLs (ASI-6-007). `dashboard/income-expense` and `sankey` still `findMany` + JS reduce; no debounce in `data-events-subscriber.ts`; `cache.ts` `zadd` without EXPIRE. — Done 2026-08-19: `sumSplitsByAccount(AndMonth)` numeric GROUP BY in both routes + pure `buildMonthlySeries`, 300 ms leading-edge per-book coalescing in `data-events-subscriber.ts`, and `EXPIRE … GT` on the zset indexes in `cache.ts`.
 - [ ] Worker `stop_grace_period` + timer drain (ASI-7-005). No `stop_grace_period` in any compose file; `worker.ts` `shutdown()` clears book schedules only, not `simplefinTimers`, and does not await in-flight jobs.
 - [ ] Prisma ↔ db-init drift check in CI (ASI-7-006). No script/CI step; `sql/001-performance-indexes.sql` still present.
 - [ ] Bootstrap race lock (ASI-7-007). `scripts/db-init-entrypoint.ts` `bootstrapIfEmpty` still runs outside the advisory lock.
