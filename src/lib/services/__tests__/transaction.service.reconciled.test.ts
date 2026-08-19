@@ -190,13 +190,16 @@ describe('empty book scope', () => {
         // but is not yours" would be an existence oracle.
         getBookAccountGuidsMock.mockResolvedValue([ACCOUNT_A, ACCOUNT_B]);
         prismaMock.transactions.findUnique.mockResolvedValue(null);
-        const missing = await TransactionService.delete(TX_GUID).catch(e => e as Error);
+        const missing = await TransactionService.delete(TX_GUID)
+            .then(() => null, (e: Error) => e);
 
         getBookAccountGuidsMock.mockResolvedValue([]);
         prismaMock.transactions.findUnique.mockResolvedValue(existing('n'));
-        const unscoped = await TransactionService.delete(TX_GUID).catch(e => e as Error);
+        const unscoped = await TransactionService.delete(TX_GUID)
+            .then(() => null, (e: Error) => e);
 
-        expect(unscoped.message).toBe(missing.message);
-        expect(unscoped.name).toBe(missing.name);
+        expect(unscoped?.message).toBe(missing?.message);
+        expect(unscoped?.name).toBe(missing?.name);
+        expect(unscoped).toBeInstanceOf(TransactionNotFoundError);
     });
 });

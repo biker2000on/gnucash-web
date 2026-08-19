@@ -41,15 +41,6 @@
 
 import { MONEY_DISPLAY_EPSILON } from './tolerances';
 
-/**
- * Amounts are considered equal within half a cent (float tolerance).
- *
- * Aliases the project-wide {@link MONEY_DISPLAY_EPSILON} rather than restating
- * the number, and keeps its own name because that is what the matcher's
- * callers and tests import.
- */
-export const AMOUNT_EPSILON = MONEY_DISPLAY_EPSILON;
-
 /** Default +/- day window for line↔split date matching. */
 export const DEFAULT_MATCH_WINDOW_DAYS = 4;
 
@@ -105,7 +96,7 @@ function dayDistance(a: Date, b: Date): number {
  *
  * For each statement line (processed earliest-date-first for determinism) we
  * find every not-yet-used ledger split whose amount equals the line amount
- * (within AMOUNT_EPSILON) and whose date is within +/- windowDays. The closest
+ * (within MONEY_DISPLAY_EPSILON) and whose date is within +/- windowDays. The closest
  * date wins; ties break by earliest split date then split guid. Each split is
  * consumed by at most one line.
  *
@@ -136,7 +127,7 @@ export function matchStatementLines(
 
     for (const split of ledgerSplits) {
       if (usedSplits.has(split.splitGuid)) continue;
-      if (Math.abs(split.amountSigned - line.amountSigned) >= AMOUNT_EPSILON) continue;
+      if (Math.abs(split.amountSigned - line.amountSigned) >= MONEY_DISPLAY_EPSILON) continue;
 
       const dist = dayDistance(line.date, split.date);
       if (dist > windowDays) continue;
@@ -174,12 +165,6 @@ export function matchStatementLines(
   return { matched, missingOnStatement, inLedgerNotOnStatement };
 }
 
-/**
- * Tolerance for declaring a reconcile "tied out" — the project-wide
- * half-cent money epsilon under the name this module's callers use.
- */
-export const TIE_OUT_EPSILON = MONEY_DISPLAY_EPSILON;
-
 export interface TieOutInput {
   /** Statement opening balance, or null/undefined if the statement omits it. */
   openingBalance: number | null | undefined;
@@ -205,7 +190,7 @@ export interface TieOutResult {
   /** expectedChange - actualChange. null when expectedChange is unknown. */
   difference: number | null;
   /**
-   * true  → reconciles cleanly (|difference| < TIE_OUT_EPSILON).
+   * true  → reconciles cleanly (|difference| < MONEY_DISPLAY_EPSILON).
    * false → off by more than the tolerance.
    * null  → cannot be determined (opening/closing balance missing).
    */
@@ -243,7 +228,7 @@ export function computeReconcileTieOut(input: TieOutInput): TieOutResult {
 
   const expectedChange = (input.closingBalance as number) - (input.openingBalance as number);
   const difference = expectedChange - actualChange;
-  const tiesOut = Math.abs(difference) < TIE_OUT_EPSILON;
+  const tiesOut = Math.abs(difference) < MONEY_DISPLAY_EPSILON;
 
   return { expectedChange, actualChange, difference, tiesOut };
 }

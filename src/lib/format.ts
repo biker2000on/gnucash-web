@@ -1,11 +1,14 @@
+import { MONEY_DISPLAY_EPSILON } from './tolerances';
+
 export function formatCurrency(amount: number | string, currencyMnemonic: string = 'USD') {
     let val = typeof amount === 'string' ? parseFloat(amount) : amount;
     if (!Number.isFinite(val)) val = 0;
 
     // Normalize negative zero and sub-cent values that round to "0.00" so the
-    // formatter never renders "-$0.00". Uses the same 0.005 threshold the
-    // formatter rounds at.
-    if (Math.abs(val) < 0.005) val = 0;
+    // formatter never renders "-$0.00". MONEY_DISPLAY_EPSILON *is* the
+    // threshold the formatter rounds at, which is exactly why it is the one to
+    // use rather than a literal that happens to match it today.
+    if (Math.abs(val) < MONEY_DISPLAY_EPSILON) val = 0;
 
     // GnuCash mnemonics usually match ISO 4217, but sometimes have custom ones.
     // Intl.NumberFormat is robust for standard ones.

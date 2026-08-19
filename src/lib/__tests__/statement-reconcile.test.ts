@@ -5,11 +5,11 @@ import {
   splitValueToStatementAmount,
   statementAmountToSplitValue,
   negateSplitValue,
-  AMOUNT_EPSILON,
   DEFAULT_MATCH_WINDOW_DAYS,
   type StatementLineInput,
   type LedgerSplitInput,
 } from '@/lib/statement-reconcile';
+import { MONEY_DISPLAY_EPSILON } from '@/lib/tolerances';
 
 const d = (iso: string) => new Date(iso + 'T00:00:00Z');
 
@@ -122,7 +122,7 @@ describe('matchStatementLines', () => {
   it('tolerates sub-epsilon float noise on amounts', () => {
     const lines: StatementLineInput[] = [{ lineId: 1, date: d('2026-01-10'), amountSigned: 100 }];
     const splits: LedgerSplitInput[] = [
-      { splitGuid: 's', date: d('2026-01-10'), amountSigned: 100 + AMOUNT_EPSILON / 2 },
+      { splitGuid: 's', date: d('2026-01-10'), amountSigned: 100 + MONEY_DISPLAY_EPSILON / 2 },
     ];
     expect(matchStatementLines(lines, splits).matched).toHaveLength(1);
   });

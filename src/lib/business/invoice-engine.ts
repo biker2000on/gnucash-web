@@ -106,7 +106,7 @@ export const OWNER_TYPE_EMPLOYEE = 5;
 const SLOT_INT64 = 1;
 const SLOT_STRING = 4;
 const SLOT_GUID = 5;
-const SLOT_TIMESPEC = 6;
+export const SLOT_TIMESPEC = 6;
 const SLOT_FRAME = 9;
 const SLOT_GDATE = 10;
 

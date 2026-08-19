@@ -15,7 +15,6 @@ import { getContributionLimit } from '@/lib/reports/irs-limits';
 import {
   computeQuarterStatuses,
   quarterForPaymentDate,
-  sumPaymentsForTaxYear,
   type EstimatedPayment,
 } from '@/lib/tax/estimated-quarters';
 import {
@@ -215,9 +214,9 @@ export async function GET(request: NextRequest) {
 
     /* --- Withholding (annualized for the target, YTD for display) ------ */
     // NOTE: only the WITHHOLDING figures are read off these summaries. The
-    // estimated-payment total is bucketed by installment window instead
-    // (sumPaymentsForTaxYear below) so the headline agrees with the quarter
-    // table on Jan 1–15 vouchers.
+    // estimated-payment total is bucketed by installment window instead — it
+    // is read straight off the last quarter's cumulative below — so the
+    // headline agrees with the quarter table on Jan 1–15 vouchers.
     const annualized = summarizeTaxPayments(bookData, factor);
     const ytd = summarizeTaxPayments(bookData, 1);
 
@@ -300,7 +299,6 @@ export async function GET(request: NextRequest) {
 
     /* --- Quarterly progress --------------------------------------------- */
     const payments = await loadEstimatedPayments(bookAccountGuids, year);
-    const estimatedPaymentsTotal = sumPaymentsForTaxYear(payments, year);
     const quarters = computeQuarterStatuses({
       year,
       annualTarget: safeHarbor.requiredAnnualPayment,
@@ -310,6 +308,11 @@ export async function GET(request: NextRequest) {
         ? { requiredCumulativeByQuarter: annualizedMethod.requiredCumulativeByQuarter }
         : {}),
     });
+    // The headline total IS the last quarter's cumulative, by definition. It
+    // used to be summed independently, which meant two passes over the same
+    // buckets that could in principle disagree — and if they ever did, the
+    // page would show a total its own quarter table contradicts.
+    const estimatedPaymentsTotal = quarters[quarters.length - 1]?.estimatedPaidCumulative ?? 0;
 
     const responseData = {
       applicable: true,
