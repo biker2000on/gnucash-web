@@ -27,6 +27,11 @@ export interface DrainResult {
     pending: number;
 }
 
+/** The default {@link TimerRegistry.run} error reporter. */
+function logTimerJobError(err: unknown): void {
+    console.error('[worker] unhandled timer job error', err);
+}
+
 export class TimerRegistry {
     private readonly timeouts = new Set<TimerHandle>();
     private readonly intervals = new Set<TimerHandle>();
@@ -115,16 +120,23 @@ export class TimerRegistry {
      * Fire-and-forget helper for timer callbacks: run `fn()` and track it.
      * Errors are reported through `onError` rather than escaping to the
      * process-level unhandledRejection handler.
+     *
+     * `onError` DEFAULTS to logging rather than being optional-and-silent. An
+     * omitted handler used to mean the failure vanished: `track` already
+     * swallows the rejection to avoid an unhandled-rejection crash, so a timer
+     * job that threw left no trace anywhere. A background job failing quietly
+     * every night is the worst possible failure mode for this process — the
+     * default makes forgetting the handler loud instead of invisible.
      */
-    run(fn: () => Promise<unknown>, onError?: (err: unknown) => void): void {
+    run(fn: () => Promise<unknown>, onError: (err: unknown) => void = logTimerJobError): void {
         let promise: Promise<unknown>;
         try {
             promise = Promise.resolve(fn());
         } catch (err) {
-            onError?.(err);
+            onError(err);
             return;
         }
-        void this.track(promise).catch(err => onError?.(err));
+        void this.track(promise).catch(err => onError(err));
     }
 
     /**
