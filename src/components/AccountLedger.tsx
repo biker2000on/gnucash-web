@@ -42,6 +42,8 @@ import AccountPickerDialog from './AccountPickerDialog';
 import EditableSplitRows, { EditableSplitRowsHandle, hasNonCurrencySplit, isNonCurrencySplit } from '@/components/ledger/EditableSplitRows';
 import { Modal } from '@/components/ui/Modal';
 import { CheckboxChip } from '@/components/ui/CheckboxChip';
+import { RowSaveErrorRow } from '@/components/ledger/RowSaveErrorRow';
+import { ErrorLiveRegion } from '@/components/a11y/LiveRegion';
 import LotViewer from './ledger/LotViewer';
 import TransactionTypeIcon from './ledger/TransactionTypeIcon';
 import LotBadge from './ledger/LotBadge';
@@ -352,6 +354,35 @@ export default function AccountLedger({
     const [focusedRowIndex, setFocusedRowIndex] = useState<number>(-1);
     const [focusedColumnIndex, setFocusedColumnIndex] = useState<number>(0);
     const [editingGuid, setEditingGuid] = useState<string | null>(null);
+    /**
+     * Per-row inline-save failures, keyed by transaction guid.
+     *
+     * A toast alone is the wrong surface for this: it is transient, it appears
+     * in a corner far from the row that failed, and in a ledger of 200 rows it
+     * does not say *which* edit was rejected. The toast stays (it is what
+     * catches the eye), but the reason is also parked on the row itself until
+     * the next save attempt clears it, and announced through a live region.
+     */
+    const [rowSaveErrors, setRowSaveErrors] = useState<Record<string, string>>({});
+    /** Most recent inline-save failure, for the live region. */
+    const [lastRowSaveError, setLastRowSaveError] = useState<string | null>(null);
+
+    const clearRowSaveError = useCallback((guid: string) => {
+        // Emptying the region first is what lets the SAME message announce
+        // again if the retry fails identically.
+        setLastRowSaveError(null);
+        setRowSaveErrors(prev => {
+            if (!(guid in prev)) return prev;
+            const next = { ...prev };
+            delete next[guid];
+            return next;
+        });
+    }, []);
+
+    const recordRowSaveError = useCallback((guid: string, message: string) => {
+        setRowSaveErrors(prev => ({ ...prev, [guid]: message }));
+        setLastRowSaveError(message);
+    }, []);
     const tableRef = useRef<HTMLTableElement>(null);
 
     // Reviewed filter state
@@ -743,6 +774,7 @@ export default function AccountLedger({
         /** Double-line edit: transaction-level notes. Undefined = untouched. */
         notes?: string;
     }) => {
+        clearRowSaveError(guid);
         try {
             const tx = transactions.find(t => t.guid === guid);
             if (!tx) return;
@@ -903,9 +935,11 @@ export default function AccountLedger({
             }
         } catch (err) {
             console.error('Inline save failed:', err);
-            error(err instanceof Error && err.message !== 'Failed to save' ? err.message : 'Failed to save transaction');
+            const message = err instanceof Error && err.message !== 'Failed to save' ? err.message : 'Failed to save transaction';
+            error(message);
+            recordRowSaveError(guid, message);
         }
-    }, [transactions, accountGuid, accountCommodityGuid, fetchTransactions, success, error, isEditMode, handleEdit]);
+    }, [transactions, accountGuid, accountCommodityGuid, fetchTransactions, success, error, isEditMode, handleEdit, clearRowSaveError, recordRowSaveError]);
 
     // Journal/autosplit save orchestration (combines EditableRow + EditableSplitRows)
     const handleJournalSave = useCallback(async (txGuid: string): Promise<boolean> => {
@@ -978,6 +1012,7 @@ export default function AccountLedger({
 
     // Investment inline edit save handler
     const handleInvestmentInlineSave = useCallback(async (guid: string, data: InvestmentSaveData) => {
+        clearRowSaveError(guid);
         try {
             const tx = transactions.find(t => t.guid === guid);
             if (!tx) return;
@@ -1081,7 +1116,9 @@ export default function AccountLedger({
             await fetchTransactions();
         } catch (err) {
             console.error('Investment inline save failed:', err);
-            error(err instanceof Error && err.message !== 'Failed to update' ? err.message : 'Failed to update transaction');
+            const message = err instanceof Error && err.message !== 'Failed to update' ? err.message : 'Failed to update transaction';
+            error(message);
+            recordRowSaveError(guid, message);
             throw err; // Re-throw so InvestmentEditRow knows save failed
         }
     }, [
@@ -1094,6 +1131,8 @@ export default function AccountLedger({
         fetchTransactions,
         success,
         error,
+        clearRowSaveError,
+        recordRowSaveError,
     ]);
 
     // Toggle reviewed status
@@ -2252,6 +2291,9 @@ export default function AccountLedger({
     return (
         <>
         <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg overflow-clip shadow-2xl">
+            {/* Inline-save failures are announced once, here; the per-row
+                RowSaveErrorRow shows the same text where it happened. */}
+            <ErrorLiveRegion message={lastRowSaveError} />
             {/* Top Bar: mobile = search + Filters + overflow menu; desktop = inline toolbar */}
             <div className="p-4 border-b border-border flex flex-col md:flex-row gap-3">
                 {isMobile ? (
@@ -2706,6 +2748,8 @@ export default function AccountLedger({
                     <tbody className="divide-y divide-border/50">
                         {isEditMode ? (
                             displayTransactions.map((tx, index) => (
+                                <React.Fragment key={`edit-${tx.guid}`}>
+                                {
                                 isInvestmentAccount ? (
                                     <React.Fragment key={tx.guid}>
                                         <InvestmentEditRow
@@ -2972,6 +3016,12 @@ export default function AccountLedger({
                                         }}
                                     />
                                 )
+                                }
+                                <RowSaveErrorRow
+                                    message={rowSaveErrors[tx.guid]}
+                                    colSpan={table.getVisibleFlatColumns().length}
+                                />
+                                </React.Fragment>
                             ))
                         ) : (
                             table.getRowModel().rows.map((row) => {
@@ -2992,16 +3042,21 @@ export default function AccountLedger({
 
                                 if (editingGuid === tx.guid) {
                                     return (
-                                        <InlineEditRow
-                                            key={tx.guid}
-                                            transaction={tx}
-                                            accountGuid={accountGuid}
-                                            accountType={accountType}
-                                            columnCount={row.getVisibleCells().length}
-                                            onSave={handleInlineSave}
-                                            onCancel={() => setEditingGuid(null)}
-                                            doubleLine={doubleLineEdit}
-                                        />
+                                        <React.Fragment key={tx.guid}>
+                                            <InlineEditRow
+                                                transaction={tx}
+                                                accountGuid={accountGuid}
+                                                accountType={accountType}
+                                                columnCount={row.getVisibleCells().length}
+                                                onSave={handleInlineSave}
+                                                onCancel={() => setEditingGuid(null)}
+                                                doubleLine={doubleLineEdit}
+                                            />
+                                            <RowSaveErrorRow
+                                                message={rowSaveErrors[tx.guid]}
+                                                colSpan={row.getVisibleCells().length}
+                                            />
+                                        </React.Fragment>
                                     );
                                 }
 

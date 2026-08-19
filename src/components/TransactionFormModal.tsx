@@ -6,6 +6,7 @@ import { ConfirmationDialog } from './ui/ConfirmationDialog';
 import { TransactionForm, type TransactionFormHandle } from './TransactionForm';
 import { Transaction, CreateTransactionRequest } from '@/lib/types';
 import { useToast } from '@/contexts/ToastContext';
+import { ApiRequestError } from '@/lib/api-error';
 
 interface TransactionFormModalProps {
     isOpen: boolean;
@@ -114,7 +115,11 @@ export function TransactionFormModal({
 
             if (!response.ok) {
                 const errorData = await response.json().catch(() => ({}));
-                throw new Error(errorData.error || `Failed to ${isEditMode ? 'update' : 'create'} transaction`);
+                throw ApiRequestError.fromBody(
+                    errorData,
+                    `Failed to ${isEditMode ? 'update' : 'create'} transaction`,
+                    response.status,
+                );
             }
 
             success(isEditMode ? 'Transaction updated successfully' : 'Transaction created successfully');
@@ -124,7 +129,9 @@ export function TransactionFormModal({
             const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred';
             setError(errorMessage);
             showError(errorMessage);
-            throw new Error(errorMessage);
+            // Rethrow the original so the form keeps the per-field entries and
+            // can park each message under the control it is about.
+            throw err instanceof ApiRequestError ? err : new Error(errorMessage);
         }
     };
 
@@ -142,7 +149,7 @@ export function TransactionFormModal({
 
             if (!response.ok) {
                 const errorData = await response.json().catch(() => ({}));
-                throw new Error(errorData.error || 'Failed to create transaction');
+                throw ApiRequestError.fromBody(errorData, 'Failed to create transaction', response.status);
             }
 
             // Refresh the list without closing the modal
@@ -153,7 +160,7 @@ export function TransactionFormModal({
             const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred';
             setError(errorMessage);
             showError(errorMessage);
-            throw new Error(errorMessage);
+            throw err instanceof ApiRequestError ? err : new Error(errorMessage);
         }
     };
 

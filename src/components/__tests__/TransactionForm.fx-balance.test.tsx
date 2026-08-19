@@ -9,7 +9,7 @@
  * defect this branch fixes.
  */
 
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TransactionForm } from '../TransactionForm';
 
@@ -117,7 +117,7 @@ describe('foreign-currency balance validation', () => {
         await fillForeignCurrencyEntry('1', '0.33', '0.3333');
 
         // The raw products differ by 0.0033; the submitted cents do not.
-        expect(screen.queryByText(/unbalanced/i)).toBeNull();
+        expect(screen.queryByTestId('form-errors')).toBeNull();
 
         fireEvent.click(screen.getByRole('button', { name: 'Create Transaction' }));
 
@@ -137,7 +137,7 @@ describe('foreign-currency balance validation', () => {
 
         fireEvent.click(screen.getByRole('button', { name: 'Create Transaction' }));
 
-        expect(await screen.findByText(/Transaction is unbalanced by -0\.17/)).toBeTruthy();
+        expect(within(await screen.findByTestId('form-errors')).getByText(/Transaction is unbalanced by -0\.17/)).toBeTruthy();
         expect(onSave).not.toHaveBeenCalled();
     });
 
@@ -156,7 +156,7 @@ describe('foreign-currency balance validation', () => {
 
         fireEvent.click(screen.getByRole('button', { name: 'Create Transaction' }));
 
-        expect(await screen.findByText(/Transaction is unbalanced by 0\.01/)).toBeTruthy();
+        expect(within(await screen.findByTestId('form-errors')).getByText(/Transaction is unbalanced by 0\.01/)).toBeTruthy();
         expect(onSave).not.toHaveBeenCalled();
     });
 });
@@ -191,8 +191,9 @@ describe('rows with an amount but no account', () => {
 
         fireEvent.click(screen.getByRole('button', { name: 'Create Transaction' }));
 
-        expect(await screen.findByText(/Select an account for line 3 or clear its amount/)).toBeTruthy();
-        expect(screen.getByRole('alert')).toHaveTextContent('Select an account or clear this amount.');
+        expect(within(await screen.findByTestId('form-errors')).getByText(/Select an account for line 3 or clear its amount/)).toBeTruthy();
+        // The row itself also carries the reason; the sr-only live region is the other alert.
+        expect(screen.getAllByRole('alert').some(node => node.textContent?.includes('Select an account or clear this amount.'))).toBe(true);
         expect(onSave).not.toHaveBeenCalled();
     });
 
@@ -207,8 +208,9 @@ describe('rows with an amount but no account', () => {
 
         fireEvent.click(screen.getByRole('button', { name: 'Create Transaction' }));
 
-        expect(await screen.findByText(/Select an account for line 3 or clear its amount/)).toBeTruthy();
-        expect(screen.queryByText(/unbalanced/i)).toBeNull();
+        const errorList = await screen.findByTestId('form-errors');
+        expect(within(errorList).getByText(/Select an account for line 3 or clear its amount/)).toBeTruthy();
+        expect(within(errorList).queryByText(/unbalanced/i)).toBeNull();
         expect(onSave).not.toHaveBeenCalled();
     });
 
@@ -223,7 +225,8 @@ describe('rows with an amount but no account', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Create Transaction' }));
 
         await waitFor(() => expect(onSave).toHaveBeenCalled());
-        expect(screen.queryByRole('alert')).toBeNull();
+        expect(screen.queryByTestId('form-errors')).toBeNull();
+        expect(screen.getAllByRole('alert').every(node => node.textContent === '')).toBe(true);
         // The blank row is not sent.
         expect(onSave.mock.calls[0][0].splits).toHaveLength(2);
     });

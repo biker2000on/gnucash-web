@@ -8,7 +8,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { extractErrorMessage, readErrorBody, throwErrorBody } from '@/lib/api-error';
+import { ApiRequestError, extractErrorMessage, extractFieldErrors, readErrorBody, throwErrorBody } from '@/lib/api-error';
 
 const FALLBACK = 'Failed to save';
 
@@ -121,5 +121,60 @@ describe('throwErrorBody', () => {
 
     it('throws the fallback when the body is unreadable', async () => {
         await expect(throwErrorBody(new Response('not json', { status: 500 }), FALLBACK)).rejects.toThrow(FALLBACK);
+    });
+});
+
+describe('extractFieldErrors', () => {
+    it('keys `{ field, message }` entries by field', () => {
+        expect(
+            extractFieldErrors({
+                errors: [
+                    { field: 'post_date', message: 'Post date is required' },
+                    { field: 'splits[0].account_guid', message: 'Split 1: Account is required' },
+                ],
+            }),
+        ).toEqual({
+            post_date: 'Post date is required',
+            'splits[0].account_guid': 'Split 1: Account is required',
+        });
+    });
+
+    it('builds a field name from a Zod issue path', () => {
+        expect(extractFieldErrors({ errors: [{ path: ['splits', 0, 'account_guid'], message: 'Required' }] })).toEqual({
+            'splits[0].account_guid': 'Required',
+        });
+    });
+
+    it('keeps the first entry when a field appears twice', () => {
+        expect(
+            extractFieldErrors({ errors: [{ field: 'amount', message: 'first' }, { field: 'amount', message: 'second' }] }),
+        ).toEqual({ amount: 'first' });
+    });
+
+    it('ignores entries with no field and bodies with no list', () => {
+        expect(extractFieldErrors({ errors: [{ message: 'orphan' }] })).toEqual({});
+        expect(extractFieldErrors({ error: 'nope' })).toEqual({});
+        expect(extractFieldErrors(null)).toEqual({});
+        expect(extractFieldErrors('not an object')).toEqual({});
+    });
+});
+
+describe('ApiRequestError', () => {
+    it('carries both the summary and the per-field entries across a throw', () => {
+        const body = {
+            error: 'Post date is required',
+            errors: [{ field: 'post_date', message: 'Post date is required' }],
+        };
+        const err = ApiRequestError.fromBody(body, FALLBACK, 400);
+        expect(err).toBeInstanceOf(Error);
+        expect(err.message).toBe('Post date is required');
+        expect(err.fieldErrors).toEqual({ post_date: 'Post date is required' });
+        expect(err.status).toBe(400);
+    });
+
+    it('falls back like extractErrorMessage and carries an empty field map', () => {
+        const err = ApiRequestError.fromBody({}, FALLBACK);
+        expect(err.message).toBe(FALLBACK);
+        expect(err.fieldErrors).toEqual({});
     });
 });

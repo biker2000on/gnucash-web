@@ -37,6 +37,24 @@ export const INPUT_INVALID = 'border-error ring-1 ring-error/30';
 /** Inline, per-field validation message under a control. */
 export const FIELD_ERROR = 'mt-1 text-xs text-error';
 
+/**
+ * Inline validation message, rendered directly under the control it is about.
+ *
+ * A form that reports failures only in a banner at the top makes the user
+ * re-read every field to find the rejected one. Give the node an `id` and
+ * point the control's `aria-describedby` at it so the message is also part of
+ * the control's accessible description — the banner (an `ErrorLiveRegion`) is
+ * what announces the failure, this is what says *where*.
+ */
+export function FieldError({ id, message }: { id?: string; message?: string | null }) {
+  if (!message) return null;
+  return (
+    <p id={id} className={FIELD_ERROR}>
+      {message}
+    </p>
+  );
+}
+
 /** Build a control's class list from the shared recipe. */
 export function inputClass(opts?: { base?: string; invalid?: boolean; extra?: string }): string {
   const base = opts?.base ?? INPUT;
