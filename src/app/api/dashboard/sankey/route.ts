@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
-import { toDecimal } from '@/lib/gnucash';
+import { sumSplitsByAccount } from '@/lib/reports/utils';
 import { getActiveBookRootGuid, getActiveBookGuid, getBookAccountGuids } from '@/lib/book-scope';
 import { getEffectiveStartDate } from '@/lib/date-utils';
 import { getBaseCurrency, findExchangeRate } from '@/lib/currency';
@@ -168,37 +168,22 @@ export async function GET(request: NextRequest) {
             }
         }
 
-        const splits = await prisma.splits.findMany({
-            where: {
-                account_guid: {
-                    in: [...allIncomeGuids, ...allExpenseGuids],
-                },
-                transaction: {
-                    post_date: {
-                        gte: startDate,
-                        lte: endDate,
-                    },
-                },
-            },
-            select: {
-                account_guid: true,
-                quantity_num: true,
-                quantity_denom: true,
-            },
-        });
+        // Per-account split totals, summed in PostgreSQL `numeric` with a
+        // single float8 cast at the boundary. This used to fetch every split
+        // in the window and reduce them in JS, which scaled with the
+        // transaction count rather than with the account count.
+        const rawTotalsByAccount = await sumSplitsByAccount(
+            [...allIncomeGuids, ...allExpenseGuids],
+            { gte: startDate, lte: endDate }
+        );
 
         // Build a map of account_guid -> total value (with currency conversion)
         const splitTotalsByAccount = new Map<string, number>();
-        for (const split of splits) {
-            const rawValue = parseFloat(toDecimal(split.quantity_num, split.quantity_denom));
-            const accountCurrGuid = accountCurrencyMap.get(split.account_guid);
+        for (const [accountGuid, sums] of rawTotalsByAccount) {
+            const accountCurrGuid = accountCurrencyMap.get(accountGuid);
             const rate = (accountCurrGuid && accountCurrGuid !== baseCurrency.guid)
                 ? (exchangeRates.get(accountCurrGuid) || 1) : 1;
-            const value = rawValue * rate;
-            splitTotalsByAccount.set(
-                split.account_guid,
-                (splitTotalsByAccount.get(split.account_guid) || 0) + value
-            );
+            splitTotalsByAccount.set(accountGuid, sums.quantity * rate);
         }
 
         // Build recursive hierarchy bottom-up: each node's value = own splits + sum of children's values
