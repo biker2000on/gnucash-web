@@ -55,7 +55,13 @@ vi.mock('node:dns', async importOriginal => {
     return { ...actual, default: { ...actual, lookup }, lookup };
 });
 
-import { deliverToWebhook, validateWebhookUrl, isPrivateAddress } from '../webhooks';
+import {
+    deliverToWebhook,
+    validateWebhookUrl,
+    isPrivateAddress,
+    ensureWebhooksTable,
+    createPinnedLookup,
+} from '../webhooks';
 
 const HMAC_KEY = 'whsec_test123';
 const NOTIFICATION = {
@@ -194,6 +200,79 @@ describe('DNS rebinding at send time', () => {
         expect(requests[0].headers['x-gnucashweb-event']).toBe('budget_alert');
     });
 
+    /**
+     * The regression this guards: `allowInternal` used to be re-derived from
+     * the literal hostname at send time, which silently broke every LAN webhook
+     * whose target is *named* rather than dotted-quad — `http://truenas:8080`,
+     * `ntfy.lan`, `*.home.arpa`, Tailscale MagicDNS. Those names look public to
+     * any hostname test, so the pin refused them. The flag now lives on the row.
+     */
+    describe('persisted allow_internal flag', () => {
+        it('lets a bare LAN name resolve into 192.168/16 when internal is allowed', async () => {
+            rebindMap.set('truenas', ['192.168.4.132']);
+
+            const resolve = (allowInternal: boolean) =>
+                new Promise<{ err: Error | null; address?: string }>(done => {
+                    createPinnedLookup(allowInternal)(
+                        'truenas',
+                        {} as never,
+                        ((err: Error | null, address?: string) =>
+                            done({ err, address })) as never,
+                    );
+                });
+
+            const allowed = await resolve(true);
+            expect(allowed.err).toBeNull();
+            expect(allowed.address).toBe('192.168.4.132');
+
+            // Same name, flag off: refused. `truenas` is indistinguishable from a
+            // public name by hostname alone, which is exactly why the flag has to
+            // be persisted rather than re-derived.
+            const refused = await resolve(false);
+            expect(refused.err?.message).toMatch(/private address 192\.168\.4\.132/);
+        });
+
+        it('actually reaches the endpoint behind a public-looking LAN name when the row allows internal', async () => {
+            const { port, requests } = await startServer();
+            const host = 'ntfy.lan';
+            rebindMap.set(host, ['127.0.0.1']);
+
+            const status = await deliverToWebhook(
+                { id: 11, url: `http://${host}:${port}/hook`, secret: HMAC_KEY, allowInternal: true },
+                NOTIFICATION,
+            );
+
+            expect(status).toBe('200');
+            expect(requests).toHaveLength(1);
+        });
+
+        it('still refuses the same name when the row does not allow internal', async () => {
+            const { port, requests } = await startServer();
+            const host = 'ntfy.lan';
+            rebindMap.set(host, ['127.0.0.1']);
+
+            const status = await deliverToWebhook(
+                { id: 12, url: `http://${host}:${port}/hook`, secret: HMAC_KEY, allowInternal: false },
+                NOTIFICATION,
+            );
+
+            expect(status).toMatch(/private address 127\.0\.0\.1/);
+            expect(requests).toHaveLength(0);
+        });
+
+        it('defaults to refusing when the caller supplies no flag at all', async () => {
+            const host = 'unflagged.example.test';
+            rebindMap.set(host, ['10.0.0.9']);
+
+            const status = await deliverToWebhook(
+                { id: 13, url: `http://${host}/hook`, secret: HMAC_KEY },
+                NOTIFICATION,
+            );
+
+            expect(status).toMatch(/private address 10\.0\.0\.9/);
+        });
+    });
+
     it('does not follow redirects', async () => {
         const server = http.createServer((req, res) => {
             res.writeHead(302, { Location: 'http://169.254.169.254/latest/meta-data' });
@@ -209,5 +288,20 @@ describe('DNS rebinding at send time', () => {
         );
 
         expect(status).toBe('error: redirect not allowed');
+    });
+});
+
+describe('allow_internal migration', () => {
+    it('adds the column idempotently and backfills pre-existing rows to TRUE', async () => {
+        db.$executeRawUnsafe.mockReset();
+        db.$executeRawUnsafe.mockResolvedValue(0);
+        await ensureWebhooksTable();
+
+        const sql = String(db.$executeRawUnsafe.mock.calls[0][0]);
+        expect(sql).toMatch(/ADD COLUMN allow_internal BOOLEAN NOT NULL DEFAULT FALSE/);
+        // Guarded by a catalogue lookup so re-running is a no-op...
+        expect(sql).toMatch(/column_name = 'allow_internal'/);
+        // ...and rows that predate the column keep delivering.
+        expect(sql).toMatch(/UPDATE gnucash_web_webhooks SET allow_internal = TRUE/);
     });
 });

@@ -13,6 +13,7 @@ interface Webhook {
     secret: string;
     events: 'all' | string[];
     enabled: boolean;
+    allowInternal: boolean;
     createdAt: string;
     lastStatus: string | null;
     lastDeliveredAt: string | null;
@@ -203,6 +204,7 @@ export function WebhooksSection() {
                                         <div className="text-xs text-foreground-muted">
                                             {hook.events === 'all' ? 'All events' : `${hook.events.length} event type${hook.events.length === 1 ? '' : 's'}`}
                                             {!hook.enabled && ' · disabled'}
+                                            {hook.allowInternal && ' · internal hosts allowed'}
                                             {hook.lastDeliveredAt && ` · last delivery ${new Date(hook.lastDeliveredAt).toLocaleString()}`}
                                         </div>
                                     </div>
@@ -223,7 +225,7 @@ export function WebhooksSection() {
                                                 secret: '',
                                                 events: hook.events,
                                                 enabled: hook.enabled,
-                                                allowInternal: false,
+                                                allowInternal: hook.allowInternal,
                                             })}
                                             disabled={busy}
                                             className="text-xs text-foreground-secondary hover:underline disabled:opacity-50"

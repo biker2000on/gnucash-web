@@ -25,6 +25,14 @@ export interface WebhookRecord {
     secret: string;
     events: 'all' | string[];
     enabled: boolean;
+    /**
+     * Was this webhook deliberately pointed at a private/internal host? Stored
+     * on the row (not re-derived from the URL) because plenty of LAN targets
+     * have public-looking names — `http://truenas:8080`, `ntfy.lan`,
+     * `*.home.arpa`, Tailscale MagicDNS — that no literal-hostname test can
+     * recognise. Send-time DNS pinning reads this flag.
+     */
+    allowInternal: boolean;
     createdAt: Date;
     lastStatus: string | null;
     lastDeliveredAt: Date | null;
@@ -177,8 +185,25 @@ export function ensureWebhooksTable(): Promise<void> {
                     enabled BOOLEAN NOT NULL DEFAULT TRUE,
                     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     last_status VARCHAR(255),
-                    last_delivered_at TIMESTAMP
+                    last_delivered_at TIMESTAMP,
+                    allow_internal BOOLEAN NOT NULL DEFAULT FALSE
                   );
+
+                  -- Added after the table shipped. Rows that predate the column
+                  -- were created before send-time DNS pinning existed and were
+                  -- already delivering to whatever they pointed at (typically a
+                  -- LAN service), so they are backfilled to TRUE: turning the
+                  -- pin on must not silently break an existing delivery. New
+                  -- rows default FALSE and must opt in explicitly.
+                  IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'gnucash_web_webhooks'
+                      AND column_name = 'allow_internal'
+                  ) THEN
+                    ALTER TABLE gnucash_web_webhooks
+                      ADD COLUMN allow_internal BOOLEAN NOT NULL DEFAULT FALSE;
+                    UPDATE gnucash_web_webhooks SET allow_internal = TRUE;
+                  END IF;
 
                   CREATE INDEX IF NOT EXISTS idx_webhooks_user
                     ON gnucash_web_webhooks(user_id, created_at DESC);
@@ -205,6 +230,7 @@ interface WebhookRow {
     created_at: Date;
     last_status: string | null;
     last_delivered_at: Date | null;
+    allow_internal: boolean | null;
 }
 
 function rowToRecord(row: WebhookRow): WebhookRecord {
@@ -216,6 +242,7 @@ function rowToRecord(row: WebhookRow): WebhookRecord {
         secret: row.secret,
         events: parseEvents(row.events),
         enabled: row.enabled,
+        allowInternal: row.allow_internal === true,
         createdAt: row.created_at,
         lastStatus: row.last_status,
         lastDeliveredAt: row.last_delivered_at,
@@ -227,13 +254,13 @@ export async function listWebhooks(userId: number, bookGuid?: string | null): Pr
     const rows = bookGuid
         ? await prisma.$queryRaw<WebhookRow[]>`
             SELECT id, user_id, book_guid, url, secret, events, enabled,
-                   created_at, last_status, last_delivered_at
+                   created_at, last_status, last_delivered_at, allow_internal
             FROM gnucash_web_webhooks
             WHERE user_id = ${userId} AND (book_guid IS NULL OR book_guid = ${bookGuid})
             ORDER BY created_at DESC`
         : await prisma.$queryRaw<WebhookRow[]>`
             SELECT id, user_id, book_guid, url, secret, events, enabled,
-                   created_at, last_status, last_delivered_at
+                   created_at, last_status, last_delivered_at, allow_internal
             FROM gnucash_web_webhooks
             WHERE user_id = ${userId}
             ORDER BY created_at DESC`;
@@ -244,7 +271,7 @@ export async function getWebhook(userId: number, id: number): Promise<WebhookRec
     await ensureWebhooksTable();
     const rows = await prisma.$queryRaw<WebhookRow[]>`
         SELECT id, user_id, book_guid, url, secret, events, enabled,
-               created_at, last_status, last_delivered_at
+               created_at, last_status, last_delivered_at, allow_internal
         FROM gnucash_web_webhooks
         WHERE id = ${id} AND user_id = ${userId}
         LIMIT 1`;
@@ -257,6 +284,7 @@ export interface CreateWebhookInput {
     secret?: string;
     events?: 'all' | string[];
     enabled?: boolean;
+    allowInternal?: boolean;
 }
 
 export async function createWebhook(userId: number, input: CreateWebhookInput): Promise<WebhookRecord> {
@@ -264,12 +292,13 @@ export async function createWebhook(userId: number, input: CreateWebhookInput): 
     const secret = input.secret?.trim() || generateWebhookSecret();
     const events = serializeEvents(input.events ?? 'all');
     const enabled = input.enabled !== false;
+    const allowInternal = input.allowInternal === true;
 
     const rows = await prisma.$queryRaw<WebhookRow[]>`
-        INSERT INTO gnucash_web_webhooks (user_id, book_guid, url, secret, events, enabled)
-        VALUES (${userId}, ${input.bookGuid || null}, ${input.url}, ${secret}, ${events}, ${enabled})
+        INSERT INTO gnucash_web_webhooks (user_id, book_guid, url, secret, events, enabled, allow_internal)
+        VALUES (${userId}, ${input.bookGuid || null}, ${input.url}, ${secret}, ${events}, ${enabled}, ${allowInternal})
         RETURNING id, user_id, book_guid, url, secret, events, enabled,
-                  created_at, last_status, last_delivered_at`;
+                  created_at, last_status, last_delivered_at, allow_internal`;
     return rowToRecord(rows[0]);
 }
 
@@ -278,6 +307,7 @@ export interface UpdateWebhookInput {
     secret?: string;
     events?: 'all' | string[];
     enabled?: boolean;
+    allowInternal?: boolean;
 }
 
 export async function updateWebhook(
@@ -292,13 +322,15 @@ export async function updateWebhook(
     const secret = input.secret?.trim() || existing.secret;
     const events = serializeEvents(input.events ?? existing.events);
     const enabled = input.enabled ?? existing.enabled;
+    const allowInternal = input.allowInternal ?? existing.allowInternal;
 
     const rows = await prisma.$queryRaw<WebhookRow[]>`
         UPDATE gnucash_web_webhooks
-        SET url = ${url}, secret = ${secret}, events = ${events}, enabled = ${enabled}
+        SET url = ${url}, secret = ${secret}, events = ${events}, enabled = ${enabled},
+            allow_internal = ${allowInternal}
         WHERE id = ${id} AND user_id = ${userId}
         RETURNING id, user_id, book_guid, url, secret, events, enabled,
-                  created_at, last_status, last_delivered_at`;
+                  created_at, last_status, last_delivered_at, allow_internal`;
     return rows[0] ? rowToRecord(rows[0]) : null;
 }
 
@@ -346,14 +378,16 @@ export function isPrivateAddress(address: string): boolean {
 }
 
 /**
- * Was this webhook deliberately pointed at an internal host?
+ * Does the URL's literal hostname already say "internal"?
  *
- * `allowInternal` is a create-time switch and is not persisted on the row, so
- * it is re-derived from the stored URL: a webhook whose literal hostname is
- * private could only have been saved with the box ticked. Anything else is a
- * public-looking name and must resolve to a public address.
+ * This is only a *supplement* to the persisted `allow_internal` flag, never a
+ * substitute for it: a webhook saved as `http://192.168.4.5/hook` could only
+ * have been accepted with the box ticked, so honouring it costs nothing. The
+ * flag is what carries the LAN targets this test cannot see — `truenas`,
+ * `ntfy.lan`, `*.home.arpa`, Tailscale MagicDNS names — all of which look
+ * perfectly public here and would otherwise be refused at send time.
  */
-function targetIsExplicitlyInternal(parsed: URL): boolean {
+export function targetIsExplicitlyInternal(parsed: URL): boolean {
     return PRIVATE_HOST_PATTERNS.some(p => p.test(parsed.hostname));
 }
 
@@ -421,7 +455,12 @@ export function createPinnedLookup(allowInternal: boolean): LookupFunction {
     }) as unknown as LookupFunction;
 }
 
-function postOnce(url: string, body: string, headers: Record<string, string>): Promise<string> {
+function postOnce(
+    url: string,
+    body: string,
+    headers: Record<string, string>,
+    allowInternal: boolean,
+): Promise<string> {
     return new Promise<string>((resolve, reject) => {
         let parsed: URL;
         try {
@@ -449,7 +488,7 @@ function postOnce(url: string, body: string, headers: Record<string, string>): P
             {
                 method: 'POST',
                 headers: { ...headers, 'Content-Length': String(Buffer.byteLength(body)) },
-                lookup: createPinnedLookup(targetIsExplicitlyInternal(parsed)),
+                lookup: createPinnedLookup(allowInternal || targetIsExplicitlyInternal(parsed)),
             },
             res => {
                 const status = res.statusCode ?? 0;
@@ -480,9 +519,10 @@ function postOnce(url: string, body: string, headers: Record<string, string>): P
  * last status. Never throws.
  */
 export async function deliverToWebhook(
-    webhook: Pick<WebhookRecord, 'id' | 'url' | 'secret'>,
+    webhook: Pick<WebhookRecord, 'id' | 'url' | 'secret'> & { allowInternal?: boolean },
     notification: WebhookNotification
 ): Promise<string> {
+    const allowInternal = webhook.allowInternal === true;
     const body = buildWebhookBody(notification);
     const headers: Record<string, string> = {
         'Content-Type': 'application/json',
@@ -493,17 +533,17 @@ export async function deliverToWebhook(
 
     let status: string;
     try {
-        status = await postOnce(webhook.url, body, headers);
+        status = await postOnce(webhook.url, body, headers, allowInternal);
         if (Number(status) >= 400) {
             // One retry on HTTP error responses too.
-            status = await postOnce(webhook.url, body, headers).catch(
+            status = await postOnce(webhook.url, body, headers, allowInternal).catch(
                 (e: unknown) => `error: ${e instanceof Error ? e.message : 'request failed'}`
             );
         }
     } catch {
         // Network error / timeout — one retry.
         try {
-            status = await postOnce(webhook.url, body, headers);
+            status = await postOnce(webhook.url, body, headers, allowInternal);
         } catch (e) {
             status = `error: ${e instanceof Error ? (e.name === 'AbortError' || e.name === 'TimeoutError' ? 'timeout' : e.message) : 'request failed'}`;
         }
@@ -533,7 +573,7 @@ export async function deliverWebhooks(notification: WebhookNotification): Promis
         await ensureWebhooksTable();
         const rows = await prisma.$queryRaw<WebhookRow[]>`
             SELECT id, user_id, book_guid, url, secret, events, enabled,
-                   created_at, last_status, last_delivered_at
+                   created_at, last_status, last_delivered_at, allow_internal
             FROM gnucash_web_webhooks
             WHERE user_id = ${notification.userId} AND enabled = TRUE`;
 

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
 import {
   deleteWebhook,
+  getWebhook,
   updateWebhook,
   validateWebhookUrl,
   type WebhookRecord,
@@ -15,6 +16,7 @@ function serializeWebhook(hook: WebhookRecord) {
     secret: hook.secret,
     events: hook.events,
     enabled: hook.enabled,
+    allowInternal: hook.allowInternal,
     createdAt: hook.createdAt.toISOString(),
     lastStatus: hook.lastStatus,
     lastDeliveredAt: hook.lastDeliveredAt?.toISOString() ?? null,
@@ -47,11 +49,22 @@ export async function PUT(
       return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
     }
 
+    // The effective "allow internal" for this request: what the caller sent, or
+    // — when it says nothing — what is already persisted on the row. Without the
+    // fallback, a PUT that only changes the URL of an existing LAN webhook would
+    // be rejected by the create-time host check.
+    const existing = await getWebhook(roleResult.user.id, id);
+    if (!existing) {
+      return NextResponse.json({ error: 'Webhook not found' }, { status: 404 });
+    }
+    const allowInternal =
+      typeof body.allowInternal === 'boolean' ? body.allowInternal : existing.allowInternal;
+
     if (body.url !== undefined) {
       if (typeof body.url !== 'string') {
         return NextResponse.json({ error: 'url must be a string' }, { status: 400 });
       }
-      const validation = validateWebhookUrl(body.url, { allowInternal: body.allowInternal === true });
+      const validation = validateWebhookUrl(body.url, { allowInternal });
       if (!validation.ok) {
         return NextResponse.json({ error: validation.error }, { status: 400 });
       }
@@ -71,6 +84,7 @@ export async function PUT(
       secret: typeof body.secret === 'string' ? body.secret : undefined,
       events,
       enabled: typeof body.enabled === 'boolean' ? body.enabled : undefined,
+      allowInternal,
     });
     if (!webhook) {
       return NextResponse.json({ error: 'Webhook not found' }, { status: 404 });
