@@ -36,6 +36,8 @@ import {
   calculateGainLoss,
   calculateGainLossPercent,
   combineCoverage,
+  combinePositionSide,
+  positionSideBasisLabel,
   sameCoverageStatement,
   totalHoldings,
   UNTRACED_BASIS_COVERAGE,
@@ -371,5 +373,68 @@ describe('sameCoverageStatement', () => {
             { status: 'complete', coveredShares: 7 },
         )).toBe(true);
         expect(sameCoverageStatement({ status: 'complete', coveredShares: 200 }, partial(150, 50))).toBe(false);
+    });
+});
+
+describe('calculateGainLoss — short positions', () => {
+    /**
+     * A short position's basis is the PROCEEDS already received, so its gain is
+     * `proceeds - price x |shares|`: it makes money as the price falls. Running
+     * the long subtraction over the same inputs returns the exact negation,
+     * which is a plausible-looking number and therefore the dangerous kind of
+     * wrong.
+     */
+    const SHORT_COVERAGE = { status: 'complete' as const, coveredShares: 50 };
+
+    it('gains when the price falls below the short price', () => {
+        expect(calculateGainLoss({
+            shares: -50, pricePerShare: 60, costBasis: 4_000,
+            coverage: SHORT_COVERAGE, positionSide: 'short',
+        })).toBeCloseTo(1_000, 9);
+    });
+
+    it('loses when the price rises above it', () => {
+        expect(calculateGainLoss({
+            shares: -50, pricePerShare: 100, costBasis: 4_000,
+            coverage: SHORT_COVERAGE, positionSide: 'short',
+        })).toBeCloseTo(-1_000, 9);
+    });
+
+    it('is nothing like what the long formula reports for the same row', () => {
+        // The long subtraction runs a NEGATIVE share count through
+        // `shares x price`, so it double-counts the sign: -50 x 60 - 4,000 =
+        // -$7,000 where the position is in fact $1,000 up.
+        const inputs = { shares: -50, pricePerShare: 60, costBasis: 4_000, coverage: SHORT_COVERAGE };
+        expect(calculateGainLoss(inputs)).toBeCloseTo(-7_000, 9);
+        expect(calculateGainLoss({ ...inputs, positionSide: 'short' })).toBeCloseTo(1_000, 9);
+    });
+
+    it('defaults to the long formula, so existing callers are untouched', () => {
+        expect(calculateGainLoss({
+            shares: 200, pricePerShare: 50, costBasis: 3_500,
+            coverage: { status: 'complete', coveredShares: 200 },
+        })).toBeCloseTo(6_500, 9);
+    });
+});
+
+describe('combinePositionSide', () => {
+    it('reports long and short legs together as mixed, never as one side', () => {
+        expect(combinePositionSide(['long', 'short'])).toBe('mixed');
+        expect(combinePositionSide(['long', 'flat', 'mixed'])).toBe('mixed');
+    });
+
+    it('keeps a pure side, and an empty or flat group is flat', () => {
+        expect(combinePositionSide(['long', 'long', 'flat'])).toBe('long');
+        expect(combinePositionSide(['short', 'flat'])).toBe('short');
+        expect(combinePositionSide(['flat', 'flat'])).toBe('flat');
+        expect(combinePositionSide([])).toBe('flat');
+    });
+
+    it('labels only the sides that are not a purchase cost', () => {
+        expect(positionSideBasisLabel('long')).toBeNull();
+        expect(positionSideBasisLabel('flat')).toBeNull();
+        expect(positionSideBasisLabel(undefined)).toBeNull();
+        expect(positionSideBasisLabel('short')).toBe('short basis (proceeds)');
+        expect(positionSideBasisLabel('mixed')).toBe('includes short legs (proceeds)');
     });
 });
