@@ -12,6 +12,7 @@ const {
     assertAccountNotLockedMock,
     recordImpliedPricesMock,
     generateGuidMock,
+    getBookAccountGuidsMock,
 } = vi.hoisted(() => ({
     prismaMock: {
         transactions: { findUnique: vi.fn(), update: vi.fn(), create: vi.fn(), delete: vi.fn() },
@@ -23,6 +24,7 @@ const {
     assertAccountNotLockedMock: vi.fn(),
     recordImpliedPricesMock: vi.fn(),
     generateGuidMock: vi.fn(() => 'g'.repeat(32)),
+    getBookAccountGuidsMock: vi.fn(),
 }));
 
 vi.mock('@/lib/prisma', () => ({ default: prismaMock }));
@@ -35,6 +37,12 @@ vi.mock('@/lib/services/implied-price.service', () => ({
 }));
 vi.mock('@/lib/services/period-lock.service', () => ({
     assertAccountNotLocked: assertAccountNotLockedMock,
+}));
+// The guard's book scope. The service resolves the active book and hands it
+// to assertNoReconciledSplits so the lock and the read cannot reach another
+// book's rows.
+vi.mock('@/lib/book-scope', () => ({
+    getBookAccountGuids: getBookAccountGuidsMock,
 }));
 
 import { TransactionService } from '../transaction.service';
@@ -78,6 +86,7 @@ function existing(reconcileState: string) {
 beforeEach(() => {
     vi.clearAllMocks();
     assertAccountNotLockedMock.mockResolvedValue(undefined);
+    getBookAccountGuidsMock.mockResolvedValue([ACCOUNT_A, ACCOUNT_B]);
     recordImpliedPricesMock.mockResolvedValue(undefined);
     prismaMock.$transaction.mockImplementation(
         async (cb: (tx: unknown) => unknown) => cb(prismaMock),

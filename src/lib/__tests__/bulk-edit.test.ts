@@ -13,11 +13,12 @@
  *   - rollback behaviour, or that the canonical guid ordering prevents a real
  *     deadlock.
  *
- * Proving those needs two real database transactions and a barrier. This repo
- * has no real-database test harness (no TEST_DATABASE_URL, no postgres service
- * in docker-compose.yml, no testcontainers, and every prisma-touching test
- * mocks the client), and building one is out of scope here — it is filed as a
- * separate follow-up.
+ * Proving those needs two real database transactions and a barrier. That tier
+ * now exists — `vitest.integration.config.ts`, run with
+ * `npm run test:integration` against TEST_DATABASE_URL — and the real locking
+ * behaviour is covered there by
+ * `src/__tests__/integration/locking.integration.test.ts`. These mocked
+ * ordering tests remain the fast guard against the statement order regressing.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 

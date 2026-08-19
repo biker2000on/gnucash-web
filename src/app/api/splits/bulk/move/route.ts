@@ -252,11 +252,11 @@ export async function POST(request: Request) {
                 // names the offending split's ACCOUNT, so diagnosing the
                 // reconcile state first would, for a split that left this book
                 // after the reads above, hand the caller the name of an
-                // account in someone else's book. `assertNoReconciledSplits`
-                // cannot be used here for exactly that reason: it re-reads by
-                // guid with no account scope. (Giving it an account-scope
-                // parameter is filed separately as
-                // `reconciled-split-service-account-scope`.)
+                // account in someone else's book. (`assertNoReconciledSplits`
+                // now takes a `bookAccountGuids` scope of its own, so it would
+                // no longer leak — but it cannot distinguish "left this book"
+                // from "not reconciled", which is the distinction this
+                // diagnostic exists to make.)
                 //
                 // No new lock is needed: the parent transaction rows were
                 // locked FOR UPDATE at the top of this transaction, a split's

@@ -195,6 +195,44 @@ export interface ReconciledCheckOptions {
      * release the lock the instant the locking statement returned.
      */
     client: DbClient;
+    /**
+     * The account guids of the CALLER'S BOOK (`getAccountGuidsForBook` /
+     * `getBookAccountGuids`). REQUIRED, and not a performance hint.
+     *
+     * Split and transaction guids arrive from the client, so without a book
+     * predicate the guard reads — and locks — rows the caller has no business
+     * touching. Two concrete leaks:
+     *
+     *   - the 423 message names the offending split's ACCOUNT, so an
+     *     out-of-book guid would hand the caller the name of an account in
+     *     someone else's book (a cross-tenant information disclosure through
+     *     an error string);
+     *   - the `FOR UPDATE` would take row locks on another book's
+     *     transactions, letting one tenant stall another's writes.
+     *
+     * Every guid is filtered through this set before it is locked or read, so
+     * an out-of-book guid is simply invisible to the guard: it is neither
+     * locked nor named. The caller's own book-scoped WHERE clause is what
+     * refuses the write itself.
+     */
+    bookAccountGuids: readonly string[];
+}
+
+/**
+ * Normalize the caller's book scope, refusing an empty one.
+ *
+ * A book always has at least its root account, so an empty list means the
+ * caller resolved a book that does not exist — continuing would silently
+ * degrade the guard to "nothing is in scope, so nothing is protected".
+ */
+function requireBookScope(bookAccountGuids: readonly string[]): string[] {
+    if (bookAccountGuids.length === 0) {
+        throw new Error(
+            'Reconciled-split guard requires a non-empty book account scope;'
+            + ' resolve it with getAccountGuidsForBook()/getBookAccountGuids().',
+        );
+    }
+    return [...bookAccountGuids];
 }
 
 /**
@@ -205,13 +243,36 @@ export interface ReconciledCheckOptions {
  * what makes holding it sufficient to freeze `reconcile_state`.
  *
  * Call inside a database transaction, passing that transaction's client.
+ *
+ * `bookAccountGuids` restricts the lock to transactions that actually post to
+ * the caller's book, so a guid from another book takes no row lock. It is
+ * optional here only because several callers (bulk move, bulk reconcile,
+ * lot assignment) have already proven book membership of the very rows they
+ * are about to lock; `assertNoReconciledSplits`, whose guids come straight
+ * from the request, always passes it.
  */
 export async function lockTransactionsForUpdate(
     txGuids: readonly string[],
     client: DbClient,
+    bookAccountGuids?: readonly string[],
 ): Promise<void> {
     const ordered = [...new Set(txGuids)].sort();
     if (ordered.length === 0) return;
+    if (bookAccountGuids) {
+        const book = [...bookAccountGuids];
+        await client.$queryRaw`
+            SELECT t.guid FROM transactions t
+            WHERE t.guid = ANY(${ordered}::text[])
+              AND EXISTS (
+                  SELECT 1 FROM splits s
+                  WHERE s.tx_guid = t.guid
+                    AND s.account_guid = ANY(${book}::text[])
+              )
+            ORDER BY t.guid
+            FOR UPDATE
+        `;
+        return;
+    }
     await client.$queryRaw`
         SELECT guid FROM transactions
         WHERE guid = ANY(${ordered}::text[])
@@ -228,13 +289,32 @@ export async function lockTransactionsForUpdate(
  * immutable — but "the lock is taken before anything is read" is a property
  * worth being able to state without a caveat, so the subquery resolves inside
  * the locking statement itself. Rows are still ordered by guid.
+ *
+ * `bookAccountGuids`, when supplied, is pushed into the resolving subquery so
+ * a split guid belonging to another book resolves to no parent at all and
+ * takes no lock.
  */
 export async function lockTransactionsForSplits(
     splitGuids: readonly string[],
     client: DbClient,
+    bookAccountGuids?: readonly string[],
 ): Promise<void> {
     const ordered = [...new Set(splitGuids)].sort();
     if (ordered.length === 0) return;
+    if (bookAccountGuids) {
+        const book = [...bookAccountGuids];
+        await client.$queryRaw`
+            SELECT t.guid FROM transactions t
+            WHERE t.guid IN (
+                SELECT s.tx_guid FROM splits s
+                WHERE s.guid = ANY(${ordered}::text[])
+                  AND s.account_guid = ANY(${book}::text[])
+            )
+            ORDER BY t.guid
+            FOR UPDATE
+        `;
+        return;
+    }
     await client.$queryRaw`
         SELECT t.guid FROM transactions t
         WHERE t.guid IN (
@@ -261,6 +341,10 @@ export async function lockTransactionsForSplits(
  * leaving a function documented as race-free that is not. Making the
  * parameter optional invited exactly the regression this guard exists to
  * prevent, so the unsafe mode does not exist.
+ *
+ * `bookAccountGuids` is REQUIRED for the same reason: the guids come from the
+ * request, so every lock and every read is constrained to the caller's book.
+ * An out-of-book guid is neither locked nor named in the error.
  */
 export async function assertNoReconciledSplits(
     operation: string,
@@ -269,14 +353,15 @@ export async function assertNoReconciledSplits(
 ): Promise<void> {
     const txGuids = target.txGuids ?? [];
     const splitGuids = target.splitGuids ?? [];
+    const book = requireBookScope(options.bookAccountGuids);
     if (txGuids.length === 0 && splitGuids.length === 0) return;
 
     const db = options.client;
 
     // Lock first, in both address spaces. Each is a single statement that
-    // resolves and locks together.
-    await lockTransactionsForUpdate(txGuids, db);
-    await lockTransactionsForSplits(splitGuids, db);
+    // resolves, book-scopes, and locks together.
+    await lockTransactionsForUpdate(txGuids, db, book);
+    await lockTransactionsForSplits(splitGuids, db, book);
 
     // Read AFTER the lock: anything committed before it is visible, and
     // nothing new can commit while we hold it.
@@ -287,6 +372,9 @@ export async function assertNoReconciledSplits(
     const rows = await db.splits.findMany({
         where: {
             OR: or,
+            // Book scope. Without it the message below could name an account
+            // from another book.
+            account_guid: { in: book },
             reconcile_state: { in: [...PROTECTED_RECONCILE_STATES] },
         },
         select: {
@@ -325,10 +413,12 @@ export function reconciledSplitResponse(error: ReconciledSplitError): NextRespon
 /**
  * Route-level guard: returns the ready-to-send 423 RECONCILED_SPLIT response,
  * or null when the mutation may proceed. Same contract as
- * `assertNoReconciledSplits` — the write transaction's client is required.
+ * `assertNoReconciledSplits` — the write transaction's client and the
+ * caller's book scope are both required.
  *
  *     const blocked = await withReconciledSplitCheck(
- *         'edit this transaction', { txGuids: [guid] }, { client: tx });
+ *         'edit this transaction', { txGuids: [guid] },
+ *         { client: tx, bookAccountGuids: await getBookAccountGuids() });
  *     if (blocked) return blocked;
  */
 export async function withReconciledSplitCheck(
