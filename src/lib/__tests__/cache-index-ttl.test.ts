@@ -18,14 +18,61 @@ import { cacheSet } from '../cache';
 
 const BOOK = 'b'.repeat(32);
 
+type ExpireCall = [key: string, ttl: number, flag?: string];
+
+/**
+ * A fake with REAL Redis >= 7 EXPIRE-flag semantics, because the bug being
+ * guarded here only exists in those semantics: on a key with no TTL, GT is a
+ * no-op (Redis treats non-volatile as infinite, and nothing beats infinity).
+ * A mock that just returns 1 for every EXPIRE cannot see the defect at all.
+ */
 function fakeRedis(overrides: Record<string, unknown> = {}) {
-  return {
+  const ttls = new Map<string, number>();
+  const expireCalls: ExpireCall[] = [];
+
+  const applyExpire = (key: string, ttl: number, flag?: string): number => {
+    expireCalls.push([key, ttl, flag]);
+    const current = ttls.get(key);
+    if (flag === 'NX') {
+      if (current !== undefined) return 0;
+      ttls.set(key, ttl);
+      return 1;
+    }
+    if (flag === 'GT') {
+      // No TTL == infinite: a finite ttl is never greater. THIS is the no-op.
+      if (current === undefined || ttl <= current) return 0;
+      ttls.set(key, ttl);
+      return 1;
+    }
+    ttls.set(key, ttl);
+    return 1;
+  };
+
+  const base = {
     setex: vi.fn(async () => 'OK'),
     zadd: vi.fn(async () => 1),
-    expire: vi.fn(async () => 1),
-    ttl: vi.fn(async () => -1),
-    ...overrides,
+    expire: vi.fn(async (key: string, ttl: number, flag?: string) => applyExpire(key, ttl, flag)),
+    ttl: vi.fn(async (key: string) => ttls.get(key) ?? -1),
+    pipeline: vi.fn(() => {
+      const queued: ExpireCall[] = [];
+      const chain = {
+        expire(key: string, ttl: number, flag?: string) {
+          queued.push([key, ttl, flag]);
+          return chain;
+        },
+        exec: vi.fn(async () =>
+          queued.map(([key, ttl, flag]) => [null, applyExpire(key, ttl, flag)]),
+        ),
+      };
+      return chain;
+    }),
   };
+  return { ...base, ...overrides, ttls, expireCalls };
+}
+
+/** Every EXPIRE the fake saw, pipelined or not, as [key, ttl, flag]. */
+function expiresFor(redis: ReturnType<typeof fakeRedis>, key: string): ExpireCall[] {
+  return redis.expireCalls.filter(c => c[0] === key);
 }
 
 beforeEach(() => {
@@ -52,7 +99,40 @@ describe('cacheSet index expiry', () => {
       new Date('2026-03-31').getTime(),
       key,
     );
-    expect(redis.expire).toHaveBeenCalledWith(`idx:cache:${BOOK}:income-expense`, 86400, 'GT');
+    // The decisive assertion: the index actually ENDS UP with a TTL. NX is what
+    // gets it there on a fresh index; GT alone would have returned 0 and left
+    // the key immortal.
+    const indexKey = `idx:cache:${BOOK}:income-expense`;
+    expect(redis.ttls.get(indexKey)).toBe(86400);
+    expect(expiresFor(redis, indexKey)).toEqual([
+      [indexKey, 86400, 'NX'],
+      [indexKey, 86400, 'GT'],
+    ]);
+  });
+
+  it('pushes an existing shorter TTL out, in the same round trip', async () => {
+    const redis = fakeRedis();
+    getRedisMock.mockReturnValue(redis);
+    const indexKey = `idx:cache:${BOOK}:kpis`;
+    redis.ttls.set(indexKey, 300);
+
+    await cacheSet(`cache:${BOOK}:kpis:2026-03-31`, { net: 1 }, 86400);
+
+    // NX declines (a TTL exists), GT wins.
+    expect(redis.ttls.get(indexKey)).toBe(86400);
+    expect(redis.pipeline).toHaveBeenCalledTimes(1);
+  });
+
+  it('never pulls a longer TTL in', async () => {
+    const redis = fakeRedis();
+    getRedisMock.mockReturnValue(redis);
+    const indexKey = `idx:cache:${BOOK}:kpis`;
+    redis.ttls.set(indexKey, 86400);
+
+    await cacheSet(`cache:${BOOK}:kpis:2026-03-31`, { net: 1 }, 300);
+
+    // Neither flag applies: the longest-lived member still outlives its index.
+    expect(redis.ttls.get(indexKey)).toBe(86400);
   });
 
   it('uses the caller-supplied TTL, not a fixed one', async () => {
@@ -61,7 +141,7 @@ describe('cacheSet index expiry', () => {
 
     await cacheSet(`cache:${BOOK}:kpis:2026-03-31`, { net: 1 }, 300);
 
-    expect(redis.expire).toHaveBeenCalledWith(`idx:cache:${BOOK}:kpis`, 300, 'GT');
+    expect(redis.ttls.get(`idx:cache:${BOOK}:kpis`)).toBe(300);
   });
 
   it('indexes a single-date key on that date', async () => {
@@ -76,34 +156,36 @@ describe('cacheSet index expiry', () => {
       new Date('2026-03-31').getTime(),
       key,
     );
-    expect(redis.expire).toHaveBeenCalledWith(`idx:cache:${BOOK}:net-worth`, 3600, 'GT');
+    expect(redis.ttls.get(`idx:cache:${BOOK}:net-worth`)).toBe(3600);
   });
 
-  it('never shortens an index TTL on a Redis without the GT flag', async () => {
+  it('never shortens an index TTL on a Redis without the flags', async () => {
     const redis = fakeRedis({
-      expire: vi.fn(async (_key: string, _ttl: number, flag?: string) => {
-        if (flag) throw new Error('ERR wrong number of arguments');
-        return 1;
-      }),
+      pipeline: vi.fn(() => ({
+        expire() { return this; },
+        exec: vi.fn(async () => [[new Error('ERR unsupported option NX'), null]]),
+      })),
       // An entry with a longer TTL is already indexed here.
       ttl: vi.fn(async () => 86400),
+      expire: vi.fn(async () => 1),
     });
     getRedisMock.mockReturnValue(redis);
 
     await cacheSet(`cache:${BOOK}:kpis:2026-03-31`, { net: 1 }, 300);
 
-    // GT attempt, then the emulation decides 300 < 86400 and leaves it alone.
-    expect(redis.expire).toHaveBeenCalledTimes(1);
+    // The emulation decides 300 < 86400 and leaves it alone.
     expect(redis.ttl).toHaveBeenCalledWith(`idx:cache:${BOOK}:kpis`);
+    expect(redis.expire).not.toHaveBeenCalled();
   });
 
-  it('sets the TTL on a GT-less Redis when the index has none yet', async () => {
+  it('sets the TTL on a flag-less Redis when the index has none yet', async () => {
     const redis = fakeRedis({
-      expire: vi.fn(async (_key: string, _ttl: number, flag?: string) => {
-        if (flag) throw new Error('ERR wrong number of arguments');
-        return 1;
-      }),
+      pipeline: vi.fn(() => ({
+        expire() { return this; },
+        exec: vi.fn(async () => { throw new Error('ERR unsupported option NX'); }),
+      })),
       ttl: vi.fn(async () => -1),
+      expire: vi.fn(async () => 1),
     });
     getRedisMock.mockReturnValue(redis);
 
@@ -121,6 +203,7 @@ describe('cacheSet index expiry', () => {
     expect(redis.setex).toHaveBeenCalledTimes(1);
     expect(redis.zadd).not.toHaveBeenCalled();
     expect(redis.expire).not.toHaveBeenCalled();
+    expect(redis.pipeline).not.toHaveBeenCalled();
   });
 
   it('is a no-op without Redis', async () => {
@@ -131,7 +214,7 @@ describe('cacheSet index expiry', () => {
   it('swallows a failing EXPIRE rather than failing the write path', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const redis = fakeRedis({
-      expire: vi.fn(async () => { throw new Error('redis down'); }),
+      pipeline: vi.fn(() => { throw new Error('redis down'); }),
       ttl: vi.fn(async () => { throw new Error('redis down'); }),
     });
     getRedisMock.mockReturnValue(redis);
