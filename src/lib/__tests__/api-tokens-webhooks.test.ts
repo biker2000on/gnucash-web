@@ -1,4 +1,6 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from 'vitest';
+import http from 'node:http';
+import type { AddressInfo } from 'node:net';
 
 const { db, getUserRoleForBookMock } = vi.hoisted(() => ({
     db: {
@@ -421,101 +423,161 @@ describe('buildWebhookBody', () => {
     });
 });
 
+// Delivery goes through node:http (see the pinned-lookup comment in
+// src/lib/webhooks.ts), so these exercise a real loopback server rather than a
+// stubbed global fetch. A literal 127.0.0.1 target is treated as an
+// intentionally-internal webhook, which is what the create-time
+// "allow internal" switch produces.
+
+interface RecordedRequest {
+    url: string;
+    headers: http.IncomingHttpHeaders;
+    body: string;
+}
+
+const testServers: http.Server[] = [];
+
+type Responder = (attempt: number, res: http.ServerResponse) => void;
+
+async function startWebhookServer(respond: Responder): Promise<{
+    port: number;
+    requests: RecordedRequest[];
+}> {
+    const requests: RecordedRequest[] = [];
+    const server = http.createServer((req, res) => {
+        let body = '';
+        req.on('data', chunk => {
+            body += chunk;
+        });
+        req.on('end', () => {
+            requests.push({ url: req.url ?? '', headers: req.headers, body });
+            respond(requests.length, res);
+        });
+    });
+    testServers.push(server);
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    return { port: (server.address() as AddressInfo).port, requests };
+}
+
+/** A port nothing is listening on, for the connection-refused paths. */
+async function closedPort(): Promise<number> {
+    const server = http.createServer();
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as AddressInfo).port;
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    return port;
+}
+
+afterAll(async () => {
+    await Promise.all(
+        testServers.map(server => new Promise<void>(resolve => server.close(() => resolve()))),
+    );
+});
+
 describe('deliverToWebhook', () => {
     it('POSTs a correctly signed body with event header and records the status', async () => {
-        const fetchMock = vi.fn().mockResolvedValue({ status: 200 });
-        vi.stubGlobal('fetch', fetchMock);
+        const { port, requests } = await startWebhookServer((_n, res) => {
+            res.writeHead(200);
+            res.end();
+        });
 
         const status = await deliverToWebhook(
-            { id: 5, url: 'https://example.com/hook', secret: HMAC_KEY },
+            { id: 5, url: `http://127.0.0.1:${port}/hook`, secret: HMAC_KEY },
             NOTIFICATION
         );
 
         expect(status).toBe('200');
-        expect(fetchMock).toHaveBeenCalledTimes(1);
-        const [url, init] = fetchMock.mock.calls[0];
-        expect(url).toBe('https://example.com/hook');
-        expect(init.method).toBe('POST');
-        expect(init.headers['X-GnucashWeb-Event']).toBe('budget_alert');
-        expect(init.headers['X-GnucashWeb-Signature']).toBe(signPayload(HMAC_KEY, init.body));
-        expect(init.headers['Content-Type']).toBe('application/json');
+        expect(requests).toHaveLength(1);
+        expect(requests[0].url).toBe('/hook');
+        expect(requests[0].headers['x-gnucashweb-event']).toBe('budget_alert');
+        expect(requests[0].headers['x-gnucashweb-signature']).toBe(
+            signPayload(HMAC_KEY, requests[0].body)
+        );
+        expect(requests[0].headers['content-type']).toBe('application/json');
+        expect(JSON.parse(requests[0].body).id).toBe(42);
         // last_status bookkeeping
         expect(db.$executeRaw).toHaveBeenCalled();
     });
 
     it('retries once on network failure and succeeds', async () => {
-        const fetchMock = vi
-            .fn()
-            .mockRejectedValueOnce(new Error('ECONNREFUSED'))
-            .mockResolvedValueOnce({ status: 204 });
-        vi.stubGlobal('fetch', fetchMock);
+        const { port, requests } = await startWebhookServer((attempt, res) => {
+            if (attempt === 1) {
+                // Kill the connection mid-response: a transport-level failure.
+                res.socket?.destroy();
+                return;
+            }
+            res.writeHead(204);
+            res.end();
+        });
 
         const status = await deliverToWebhook(
-            { id: 5, url: 'https://example.com/hook', secret: HMAC_KEY },
+            { id: 5, url: `http://127.0.0.1:${port}/hook`, secret: HMAC_KEY },
             NOTIFICATION
         );
         expect(status).toBe('204');
-        expect(fetchMock).toHaveBeenCalledTimes(2);
+        expect(requests).toHaveLength(2);
     });
 
     it('retries once on HTTP 5xx', async () => {
-        const fetchMock = vi
-            .fn()
-            .mockResolvedValueOnce({ status: 500 })
-            .mockResolvedValueOnce({ status: 200 });
-        vi.stubGlobal('fetch', fetchMock);
+        const { port, requests } = await startWebhookServer((attempt, res) => {
+            res.writeHead(attempt === 1 ? 500 : 200);
+            res.end();
+        });
 
         const status = await deliverToWebhook(
-            { id: 5, url: 'https://example.com/hook', secret: HMAC_KEY },
+            { id: 5, url: `http://127.0.0.1:${port}/hook`, secret: HMAC_KEY },
             NOTIFICATION
         );
         expect(status).toBe('200');
-        expect(fetchMock).toHaveBeenCalledTimes(2);
+        expect(requests).toHaveLength(2);
     });
 
     it('records an error status when both attempts fail, without throwing', async () => {
-        const fetchMock = vi.fn().mockRejectedValue(new Error('boom'));
-        vi.stubGlobal('fetch', fetchMock);
+        const port = await closedPort();
 
         const status = await deliverToWebhook(
-            { id: 5, url: 'https://example.com/hook', secret: HMAC_KEY },
+            { id: 5, url: `http://127.0.0.1:${port}/hook`, secret: HMAC_KEY },
             NOTIFICATION
         );
         expect(status).toMatch(/^error: /);
-        expect(fetchMock).toHaveBeenCalledTimes(2);
     });
 });
 
 describe('deliverWebhooks', () => {
     it('delivers only to webhooks whose event filter and book match', async () => {
+        const { port, requests } = await startWebhookServer((_n, res) => {
+            res.writeHead(200);
+            res.end();
+        });
+        const hook = (id: number, overrides: Record<string, unknown> = {}) =>
+            webhookRow({ id, url: `http://127.0.0.1:${port}/hook/${id}`, ...overrides });
+
         db.$queryRaw.mockResolvedValueOnce([
-            webhookRow({ id: 1, events: 'all' }),
-            webhookRow({ id: 2, events: '["budget_alert"]' }),
-            webhookRow({ id: 3, events: '["monthly_digest"]', url: 'https://skip.example.com' }),
-            webhookRow({ id: 4, book_guid: 'otherbook0000000000000000000000x', url: 'https://otherbook.example.com' }),
-            webhookRow({ id: 5, book_guid: null }), // all-books webhook
+            hook(1, { events: 'all' }),
+            hook(2, { events: '["budget_alert"]' }),
+            hook(3, { events: '["monthly_digest"]' }),
+            hook(4, { book_guid: 'otherbook0000000000000000000000x' }),
+            hook(5, { book_guid: null }), // all-books webhook
         ]);
-        const fetchMock = vi.fn().mockResolvedValue({ status: 200 });
-        vi.stubGlobal('fetch', fetchMock);
 
         await deliverWebhooks(NOTIFICATION);
 
-        const urls = fetchMock.mock.calls.map(c => c[0]);
-        expect(fetchMock).toHaveBeenCalledTimes(3); // ids 1, 2, 5
-        expect(urls).not.toContain('https://skip.example.com');
-        expect(urls).not.toContain('https://otherbook.example.com');
+        const paths = requests.map(r => r.url).sort();
+        expect(paths).toEqual(['/hook/1', '/hook/2', '/hook/5']);
     });
 
     it('matches every book-scoped webhook when the notification has no book', async () => {
+        const { port, requests } = await startWebhookServer((_n, res) => {
+            res.writeHead(200);
+            res.end();
+        });
         db.$queryRaw.mockResolvedValueOnce([
-            webhookRow({ id: 1 }),
-            webhookRow({ id: 2, book_guid: null }),
+            webhookRow({ id: 1, url: `http://127.0.0.1:${port}/hook/1` }),
+            webhookRow({ id: 2, book_guid: null, url: `http://127.0.0.1:${port}/hook/2` }),
         ]);
-        const fetchMock = vi.fn().mockResolvedValue({ status: 200 });
-        vi.stubGlobal('fetch', fetchMock);
 
         await deliverWebhooks({ ...NOTIFICATION, bookGuid: null });
-        expect(fetchMock).toHaveBeenCalledTimes(2);
+        expect(requests).toHaveLength(2);
     });
 
     it('never throws, even when the query fails', async () => {

@@ -2882,7 +2882,7 @@ Tests:
 - [x] Balance-sheet `grandTotal` retained-earnings line (ASI-1-010) — done 2026-08-19: synthetic retained-earnings equity row in `balance-sheet.ts:144-166`.
 - [x] Env-gated Postgres integration test for db-init (ASI-2-004) — done 2026-08-19: `src/__tests__/integration/harness.integration.test.ts` asserts db-init objects against the CI postgres:17 service. Remaining nicety: no `lib/reports` query runs in the integration tier yet.
 - [ ] Fake timers in "today"-relative tests (ASI-2-005). Still no `setSystemTime`/`useFakeTimers` (e.g. `lots-holding-period.test.ts`, `membership.service.test.ts`); only the TZ pin mitigates.
-- [ ] Webhook DNS re-resolution (ASI-3-007). `src/lib/webhooks.ts` still does not resolve before `fetch`.
+- [x] Webhook DNS re-resolution (ASI-3-007). `src/lib/webhooks.ts` still does not resolve before `fetch`. — Done 2026-08-19: delivery moved off fetch to node:http/https with a pinned dns.lookup that validates every resolved address against the module's private/loopback/link-local deny list, so the socket connects to the address we checked; covered by src/lib/__tests__/webhook-ssrf.test.ts.
 - [x] Security headers (ASI-3-008) — done 2026-08-19: `next.config.js` `headers()` (X-Frame-Options, HSTS, …).
 - [ ] Remove weak compose credential fallbacks (ASI-3-009). **Partial 2026-08-19:** `POSTGRES_PASSWORD:?` is required and postgres binds 127.0.0.1. Remaining: `minioadmin` fallbacks in `docker-compose.prod.yml` (app/worker/minio/createbuckets env).
 - [x] Backup precondition enforced in `fix-lot-scrub-sign-corruption.ts`
