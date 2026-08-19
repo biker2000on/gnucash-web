@@ -7,7 +7,7 @@ import { Abbr } from '@/components/ui/Abbr';
 import { useToast } from '@/contexts/ToastContext';
 import { useCurrentUser, READONLY_TOOLTIP } from '@/hooks/useCurrentUser';
 import type { ItemDTO, ValuationMethod } from '@/components/business/inventory-ui';
-import { extractErrorMessage } from '@/lib/api-error';
+import { ApiRequestError, extractErrorMessage } from '@/lib/api-error';
 import { Tip } from '@/components/ui/Tooltip';
 
 const inputClass = 'w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder-foreground-muted focus:outline-none focus:border-primary/50 transition-all';
@@ -83,7 +83,7 @@ export function ItemFormModal({ editing, onClose, onSaved }: ItemFormModalProps)
     const [form, setForm] = useState<ItemForm>(EMPTY_FORM);
     const [saving, setSaving] = useState(false);
     const [bootstrapping, setBootstrapping] = useState(false);
-    /** Per-field messages echoed by the API's 400 { error, fields } body. */
+    /** Per-field messages from the API's 400 `errors: [{ field, message }]` body. */
     const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
     const isNew = editing === 'new';
@@ -183,8 +183,12 @@ export function ItemFormModal({ editing, onClose, onSaved }: ItemFormModalProps)
             });
             const data = await res.json().catch(() => null);
             if (!res.ok) {
-                if (data?.fields && typeof data.fields === 'object') setFieldErrors(data.fields);
-                throw new Error(extractErrorMessage(data, 'Failed to save item'));
+                // One reader for every error-body shape the API emits — the
+                // banner message and the per-field entries come out of the same
+                // parse instead of this call site hand-picking `data.fields`.
+                const failure = ApiRequestError.fromBody(data, 'Failed to save item', res.status);
+                setFieldErrors(failure.fieldErrors);
+                throw failure;
             }
             success(isNew ? `Item ${payload.sku} created` : 'Item updated');
             onSaved(data.item);

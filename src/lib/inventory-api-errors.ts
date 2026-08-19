@@ -29,12 +29,22 @@ export function mapInventoryError(error: unknown): NextResponse {
     return periodLockedResponse(error);
   }
   if (error instanceof InventoryValidationError) {
-    // `fields` is present only for the multi-field validations (item posting
-    // accounts); omitted otherwise so the existing { error } shape is intact.
-    return NextResponse.json(
-      error.fields ? { error: error.message, fields: error.fields } : { error: error.message },
-      { status: 400 },
-    );
+    // Per-field detail is present only for the multi-field validations (item
+    // posting accounts); omitted otherwise so the plain { error } shape stays.
+    //
+    // It goes out as `errors: [{ field, message }]` — the canonical shape that
+    // `extractFieldErrors`/`ApiRequestError.fromBody` in lib/api-error.ts read,
+    // and the same one validateTransaction and the domain commands emit. The
+    // `fields` map that this route invented is kept alongside it for one
+    // release so nothing still reading it breaks; drop it after that.
+    if (error.fields) {
+      const errors = Object.entries(error.fields).map(([field, message]) => ({ field, message }));
+      return NextResponse.json(
+        { error: error.message, errors, fields: error.fields },
+        { status: 400 },
+      );
+    }
+    return NextResponse.json({ error: error.message }, { status: 400 });
   }
   if (error instanceof InventoryNotFoundError) {
     return NextResponse.json({ error: error.message }, { status: 404 });

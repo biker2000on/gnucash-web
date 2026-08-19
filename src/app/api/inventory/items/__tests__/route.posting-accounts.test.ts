@@ -2,13 +2,16 @@
  * Route-level contract for item posting-account validation.
  *
  * The service raises one InventoryValidationError carrying per-field messages;
- * the route must surface it as a 400 whose body is `{ error, fields }` so the
- * item form can mark each offending input. Errors WITHOUT field detail keep
- * the plain `{ error }` shape every other inventory route already returns.
+ * the route must surface it as a 400 whose body carries the canonical
+ * `errors: [{ field, message }]` list (what lib/api-error.ts reads) so the item
+ * form can mark each offending input, plus the legacy `fields` map for one
+ * release. Errors WITHOUT field detail keep the plain `{ error }` shape every
+ * other inventory route already returns.
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NextRequest } from 'next/server';
+import { extractFieldErrors } from '@/lib/api-error';
 
 const BOOK = 'b'.repeat(32);
 
@@ -66,6 +69,16 @@ describe('POST /api/inventory/items', () => {
     const body = await response.json();
 
     expect(response.status).toBe(400);
+    // Canonical shape: `errors: [{ field, message }]`, the one lib/api-error.ts
+    // reads. `fields` is kept alongside it for one release.
+    expect(body.errors).toEqual([
+      { field: 'incomeAccountGuid', message: 'Income account is required when ledger posting is enabled' },
+      { field: 'cogsAccountGuid', message: 'COGS account is required when ledger posting is enabled' },
+    ]);
+    expect(extractFieldErrors(body)).toEqual({
+      incomeAccountGuid: 'Income account is required when ledger posting is enabled',
+      cogsAccountGuid: 'COGS account is required when ledger posting is enabled',
+    });
     expect(Object.keys(body.fields)).toEqual(['incomeAccountGuid', 'cogsAccountGuid']);
     expect(body.error).toMatch(/ledger posting/i);
   });
@@ -119,6 +132,7 @@ describe('PUT /api/inventory/items/[id]', () => {
     const body = await response.json();
 
     expect(response.status).toBe(400);
+    expect(extractFieldErrors(body).assetAccountGuid).toMatch(/required/i);
     expect(body.fields.assetAccountGuid).toMatch(/required/i);
   });
 });
