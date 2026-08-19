@@ -29,7 +29,12 @@ export default defineConfig({
     ],
     coverage: {
       provider: 'v8',
-      reporter: ['text', 'json', 'html'],
+      // lcov + json-summary are what CI archives; text/html are for humans.
+      reporter: ['text', 'text-summary', 'json', 'json-summary', 'lcov', 'html'],
+      // Without this the report is dropped whenever a single test fails, so a
+      // red CI run uploads an empty coverage artifact - exactly the run where
+      // you most want to see what was exercised.
+      reportOnFailure: true,
       exclude: [
         'node_modules/',
         'src/__tests__/',
@@ -37,6 +42,18 @@ export default defineConfig({
         '**/*.config.*',
         '**/types.ts',
       ],
+      // A regression floor, not a target. Measured 2026-08-19 at
+      // 61.66 / 51.73 / 58.41 / 63.29 (statements / branches / functions /
+      // lines) over 5792 unit tests; each floor sits a few points under that
+      // so ordinary churn does not turn CI red, while deleting or bypassing a
+      // meaningful body of tests does. Raise these when the real numbers move
+      // up - never lower them to make a build pass.
+      thresholds: {
+        statements: 58,
+        branches: 48,
+        functions: 55,
+        lines: 60,
+      },
     },
   },
 });
