@@ -20,11 +20,13 @@ const mockSplitsFindMany = vi.fn();
 const mockSplitsCreate = vi.fn();
 const mockSplitsUpdate = vi.fn();
 const mockLotsFindUnique = vi.fn();
+const mockLotsFindMany = vi.fn();
 const mockLotsCreate = vi.fn();
 const mockLotsUpdate = vi.fn();
 const mockSlotsFindFirst = vi.fn();
 const mockSlotsFindMany = vi.fn();
 const mockSlotsCreate = vi.fn();
+const mockSlotsDeleteMany = vi.fn();
 const mockAccountsFindUnique = vi.fn();
 const mockAccountsFindFirst = vi.fn();
 const mockAccountsFindMany = vi.fn();
@@ -47,6 +49,7 @@ vi.mock('../prisma', () => ({
     },
     lots: {
       findUnique: (...args: unknown[]) => mockLotsFindUnique(...args),
+      findMany: (...args: unknown[]) => mockLotsFindMany(...args),
       create: (...args: unknown[]) => mockLotsCreate(...args),
       update: (...args: unknown[]) => mockLotsUpdate(...args),
     },
@@ -54,6 +57,7 @@ vi.mock('../prisma', () => ({
       findFirst: (...args: unknown[]) => mockSlotsFindFirst(...args),
       findMany: (...args: unknown[]) => mockSlotsFindMany(...args),
       create: (...args: unknown[]) => mockSlotsCreate(...args),
+      deleteMany: (...args: unknown[]) => mockSlotsDeleteMany(...args),
     },
     accounts: {
       findUnique: (...args: unknown[]) => mockAccountsFindUnique(...args),
@@ -88,6 +92,7 @@ function createMockTx() {
     },
     lots: {
       findUnique: mockLotsFindUnique,
+      findMany: mockLotsFindMany,
       create: mockLotsCreate,
       update: mockLotsUpdate,
     },
@@ -95,6 +100,7 @@ function createMockTx() {
       findFirst: mockSlotsFindFirst,
       findMany: mockSlotsFindMany,
       create: mockSlotsCreate,
+      deleteMany: mockSlotsDeleteMany,
     },
     accounts: {
       findUnique: mockAccountsFindUnique,
@@ -142,6 +148,12 @@ beforeEach(() => {
   // Re-arm after the reset: the reconciled-split guard takes a parent-row
   // FOR UPDATE lock through $queryRaw on every scrub path.
   mockQueryRaw.mockResolvedValue([]);
+  // The transfer paths now REPLACE a destination lot's carried_basis rather
+  // than blindly adding a second row, and re-derive every sibling slice from
+  // the source lot's whole outflow set (reconcileCarriedBasisForSourceLots).
+  // Both need these to exist; per-test overrides still win.
+  mockSlotsDeleteMany.mockResolvedValue({ count: 0 });
+  mockLotsFindMany.mockResolvedValue([]);
 });
 
 // ---------------------------------------------------------------------------
@@ -1524,6 +1536,47 @@ describe('classifyAccountTax', () => {
 
     const result = await classifyAccountTax('fund-guid', tx);
     expect(result).toBe('TAX_EXEMPT');
+  });
+
+  /**
+   * The ancestor walk had a 20-level cap. Both signals classifyAccountTax
+   * reads live in the ANCESTORS, so the cap did not shorten a label — it
+   * stopped the climb before the "Roth IRA" node and silently answered
+   * TAX_NORMAL, booking a sheltered sale as taxable. Walked to exhaustion now,
+   * with a visited set as the only termination condition.
+   */
+  it('reads a Roth ancestor sitting past the old 20-level cap', async () => {
+    // VTSAX -> Level 01 .. Level 24 -> Roth IRA -> Root: 27 accounts deep.
+    const chain: Record<string, { name: string; parent_guid: string | null }> = {
+      'deep-leaf': { name: 'VTSAX', parent_guid: 'lvl-01' },
+      'roth-guid': { name: 'Roth IRA', parent_guid: 'root-guid' },
+      'root-guid': { name: 'Root', parent_guid: null },
+    };
+    const lvl = (i: number) => `lvl-${String(i).padStart(2, '0')}`;
+    for (let i = 1; i <= 24; i++) {
+      chain[lvl(i)] = { name: `Level ${i}`, parent_guid: i < 24 ? lvl(i + 1) : 'roth-guid' };
+    }
+    mockAccountsFindUnique.mockImplementation(
+      ({ where }: { where: { guid: string } }) => Promise.resolve(chain[where.guid] ?? null),
+    );
+
+    // Under the 20-level cap this returned TAX_NORMAL: the walk never saw "Roth".
+    expect(await classifyAccountTax('deep-leaf', tx)).toBe('TAX_EXEMPT');
+    expect(mockAccountsFindUnique.mock.calls.length).toBe(27);
+  });
+
+  it('terminates on a corrupt parent cycle instead of looping forever', async () => {
+    const chain: Record<string, { name: string; parent_guid: string | null }> = {
+      'cyc-a': { name: 'Brokerage A', parent_guid: 'cyc-b' },
+      'cyc-b': { name: 'Brokerage B', parent_guid: 'cyc-a' },
+    };
+    mockAccountsFindUnique.mockImplementation(
+      ({ where }: { where: { guid: string } }) => Promise.resolve(chain[where.guid] ?? null),
+    );
+
+    expect(await classifyAccountTax('cyc-a', tx)).toBe('TAX_NORMAL');
+    // Each node read exactly once — the visited set closed the cycle.
+    expect(mockAccountsFindUnique.mock.calls.length).toBe(2);
   });
 
   it('returns TAX_DEFERRED for 403b accounts', async () => {

@@ -27,7 +27,7 @@ import prisma from './prisma';
 import { generateGuid, toDecimalNumber, fromDecimal, findOrCreateAccount } from './gnucash';
 import { isLongTerm } from './holding-period';
 import { isOwnAccountCommodityTransfer } from './account-transfer';
-import { allocateTradeFees } from './trade-fees';
+import { allocateTradeFees, NO_TRADE_FEES, type TradeFeeBySplit } from './trade-fees';
 import {
   AvgBasisHistoryRepairRequiredError,
   appendAvgBasisHistory,
@@ -549,6 +549,74 @@ async function tagGeneratedSubSplit(
 export type PrismaTx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
 
 // ---------------------------------------------------------------------------
+// Book boundaries
+// ---------------------------------------------------------------------------
+
+/**
+ * THE BOOK BOUNDARY. Every upward parent walk in this module stops here.
+ *
+ * GnuCash accounts carry no book foreign key: an account's book is defined by
+ * walking `parent_guid` until an account that some book names as its
+ * `root_account_guid` is reached — the same rule assertPostableAccount
+ * (@/lib/inventory-engine) enforces for postings. That makes a book root the
+ * ONLY structural end of an upward walk, and a root whose `parent_guid` is
+ * corrupt (non-null) the ONLY way a walk can leave the book it started in.
+ *
+ * While the walks were hop-capped, the cap incidentally limited how far such
+ * a walk could stray. Uncapping them without this boundary would let one
+ * corrupt pointer climb out of Book A and keep reading Book B, which is not
+ * a truncated string but a WRONG BOOK's answer:
+ *
+ *   - classifyAccountTax would find Book B's "Roth IRA" above a Book A
+ *     brokerage account and return TAX_EXEMPT for a fully taxable sale —
+ *     under-reported tax, presented as correct.
+ *   - the gains-account walk would adopt Book B's ROOT and then post Book A's
+ *     realized gain into BOOK B's capital-gains account — the cross-book
+ *     posting hole this repository has already had once.
+ *
+ * So the walks stop AT the boundary and never climb past it. The boundary
+ * account itself is still read (its own name/commodity are part of its book);
+ * only its parent is refused.
+ */
+interface BookBoundaryNode {
+  guid: string;
+  parent_guid?: string | null;
+  account_type?: string | null;
+}
+
+/**
+ * The guids that end an upward walk: every book's `root_account_guid`.
+ *
+ * Queried defensively. Mocked test clients and pre-migration databases may not
+ * expose `books.findMany`; an empty set degrades to the structural checks in
+ * `isBookBoundary` (a ROOT-typed account, or one with no parent), which is
+ * strictly the OLD stopping rule — never a wider walk than before.
+ */
+async function loadBookRootGuids(db: PrismaTx | typeof prisma): Promise<Set<string>> {
+  try {
+    const books = await (db as unknown as {
+      books: { findMany: (args: unknown) => Promise<Array<{ root_account_guid: string | null }>> };
+    }).books.findMany({ select: { root_account_guid: true } });
+    return new Set(
+      (books ?? [])
+        .map(b => b.root_account_guid)
+        .filter((guid): guid is string => typeof guid === 'string' && guid.length > 0),
+    );
+  } catch {
+    return new Set();
+  }
+}
+
+/**
+ * True when `node` ends an upward walk: it is a book's root account, it is
+ * typed ROOT, or it simply has no parent. Climbing past any of these leaves
+ * the book.
+ */
+function isBookBoundary(node: BookBoundaryNode, bookRoots: ReadonlySet<string>): boolean {
+  return !node.parent_guid || node.account_type === 'ROOT' || bookRoots.has(node.guid);
+}
+
+// ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
@@ -691,17 +759,38 @@ export async function classifyAccountTax(
   const names: string[] = [];
   const walkGuids: string[] = [];
 
+  // Walk to the BOOK BOUNDARY (see isBookBoundary), and no further.
+  //
+  // No level cap: BOTH signals this function reads live in the ANCESTORS —
+  // the name patterns below, and the explicit is_retirement preference looked
+  // up over `walkGuids`. A cap stops the climb before the "Roth IRA" / "401k"
+  // ancestor and the account silently reads TAX_NORMAL, so a sheltered sale is
+  // booked as taxable and routed to the taxable gains account.
+  //
+  // But uncapped is only safe because the walk stops at the boundary. The
+  // opposite error is the worse one: reading a "Roth IRA" that belongs to
+  // ANOTHER BOOK returns TAX_EXEMPT for a fully taxable sale, which
+  // under-reports tax. Stopping at the boundary answers TAX_NORMAL there,
+  // which is both the conservative answer and the true one for this book.
+  //
+  // Termination is `seen`, so a corrupt parent cycle closes instead of
+  // spinning: every guid is read at most once.
+  const bookRoots = await loadBookRootGuids(db);
+  const seen = new Set<string>();
   let currentGuid: string | null = accountGuid;
-  // Walk up to 20 levels to avoid infinite loops
-  for (let i = 0; i < 20 && currentGuid; i++) {
-    const acct: { name: string; parent_guid: string | null } | null =
+  while (currentGuid && !seen.has(currentGuid)) {
+    seen.add(currentGuid);
+    const acct: { name: string; parent_guid: string | null; account_type?: string | null } | null =
       await db.accounts.findUnique({
         where: { guid: currentGuid },
-        select: { name: true, parent_guid: true },
+        select: { name: true, parent_guid: true, account_type: true },
       });
     if (!acct) break;
     walkGuids.push(currentGuid);
     names.push(acct.name.toLowerCase());
+    // The boundary account is read (it belongs to this book); its parent is
+    // not (it does not).
+    if (isBookBoundary({ guid: currentGuid, ...acct }, bookRoots)) break;
     currentGuid = acct.parent_guid;
   }
 
@@ -1010,6 +1099,179 @@ export async function splitSellAcrossLots(
 }
 
 // ---------------------------------------------------------------------------
+// Trade fees (brokerage commissions riding on the lot's own trades)
+// ---------------------------------------------------------------------------
+
+/** The account fields the path builder needs, however they were selected. */
+interface FeeAccountNode {
+  guid: string;
+  name: string | null;
+  parent_guid: string | null;
+  account_type: string | null;
+}
+
+/**
+ * Build full ":"-joined account paths ("Expenses:Brokerage:Commissions"),
+ * root account excluded — the SAME shape buildAccountPathMap
+ * (@/lib/reports/utils) hands the Investment Lots report and Form 8949.
+ *
+ * Fee classification reads the PATH, never the leaf name. Classifying on the
+ * bare leaf both drops real fees (a "Schwab" account under
+ * "Expenses:Commissions" reads as unrecognized on its own) and, worse, loses
+ * the ancestors that carry the DENY words: only the full path can see that
+ * "Fees" sits under "Expenses:Brokerage:Interest". Because adding ancestor
+ * text can only ADD matches and deny always beats allow, widening leaf ->
+ * path can never turn a non-fee into a fee; it can only recover a fee or
+ * refuse one. That is the conservative direction.
+ */
+export async function buildFeeAccountPaths(
+  seeds: FeeAccountNode[],
+  tx: PrismaTx,
+): Promise<Map<string, string>> {
+  const byGuid = new Map<string, FeeAccountNode>();
+  for (const node of seeds) if (node.guid) byGuid.set(node.guid, node);
+  const bookRoots = await loadBookRootGuids(tx);
+
+  // Pull in the ancestors the seed rows do not already carry, one level of
+  // the chart per round, UP TO THE BOOK BOUNDARY (see isBookBoundary).
+  //
+  // NO DEPTH CAP, because a cap here does not merely shorten a display
+  // string: fee classification reads this path, and the words that REFUSE a
+  // charge ("Interest", "Taxes", "Accrued") normally sit HIGH in the chart,
+  // near "Expenses" — exactly the part a cap drops first. Truncating the top
+  // of "Expenses:Margin Interest:...:Commissions" leaves a path that reads as
+  // a plain commission, so a charge that must be expensed is capitalized into
+  // COST BASIS instead, with no error and no warning: a wrong gain presented
+  // as correct, on a figure that ends up on a tax return. A 30-level chart of
+  // accounts is unusual bookkeeping, not corruption, and it must not be
+  // silently mis-costed.
+  //
+  // The lots report and Form 8949 build paths with their own walker,
+  // buildAccountPathMap (@/lib/reports/utils). The scoped 28-level fixture
+  // pins that the two produce the same path for a normal book, but does NOT
+  // establish general behavioral parity. The engine treats a guid named by
+  // `books.root_account_guid` as a boundary even when its account_type is not
+  // ROOT; the report stops only at a ROOT-typed account. Standard GnuCash
+  // roots are ROOT, but this extra engine boundary exists because nonstandard
+  // or corrupt root metadata is considered reachable. In that case the report
+  // can retain one leading segment (including a deny word) that the engine
+  // drops. The report also has no cycle guard and throws on a corrupt parent
+  // cycle, where this walker truncates via `seen`. The fixture protects the
+  // historic cap divergence ($440 ledger gain versus $500 reports), not those
+  // known asymmetries.
+  // They cannot simply be merged today: this walker must read through the
+  // scrub's own transaction client, while buildAccountPathMap reads the
+  // global prisma client and would not see uncommitted rows.
+  //
+  // Termination is structural rather than numeric. A guid is queried only
+  // while it is absent from `byGuid`, and every row returned is inserted, so
+  // each account enters at most once and the walk is bounded by the number of
+  // accounts in the book. That holds for a corrupt parent CYCLE too: the
+  // cycle's accounts are all resolved on the way up, after which nothing is
+  // missing and the loop ends. `resolve` below carries its own `seen` set, so
+  // a cycle yields a truncated path rather than infinite recursion.
+  for (;;) {
+    const missing = [...new Set(
+      [...byGuid.values()]
+        // A boundary account's parent is never fetched: past it lies another
+        // book, whose names must not enter this book's fee decision.
+        .filter(node => !isBookBoundary(node, bookRoots))
+        .map(node => node.parent_guid)
+        .filter((guid): guid is string => !!guid && !byGuid.has(guid)),
+    )];
+    if (missing.length === 0) break;
+    const parents = (await tx.accounts.findMany({
+      where: { guid: { in: missing } },
+      select: { guid: true, name: true, parent_guid: true, account_type: true },
+    })) ?? [];
+    const before = byGuid.size;
+    for (const parent of parents) byGuid.set(parent.guid, parent as FeeAccountNode);
+    // Nothing NEW resolved: the outstanding parent guids are dangling
+    // references, not a deeper chart. Stop rather than re-issue the same
+    // query forever. Checking growth rather than `parents.length` keeps the
+    // loop terminating even if a driver ever answered with rows it was not
+    // asked for.
+    if (byGuid.size === before) break;
+  }
+
+  const paths = new Map<string, string>();
+  const resolve = (guid: string, seen: Set<string>): string => {
+    const cached = paths.get(guid);
+    if (cached !== undefined) return cached;
+    const node = byGuid.get(guid);
+    if (!node || seen.has(guid)) return '';
+    // Book roots never appear in a path, and nothing above one is read.
+    if (node.account_type === 'ROOT' || bookRoots.has(guid)) {
+      paths.set(guid, '');
+      return '';
+    }
+    seen.add(guid);
+    const parentPath = node.parent_guid ? resolve(node.parent_guid, seen) : '';
+    const own = node.name ?? '';
+    const path = parentPath ? `${parentPath}:${own}` : own;
+    paths.set(guid, path);
+    return path;
+  };
+  for (const guid of byGuid.keys()) resolve(guid, new Set());
+  return paths;
+}
+
+/**
+ * Allocate the brokerage commissions attached to the trades that produced
+ * `lotSplits`, keyed by the security split each one belongs to.
+ *
+ * EVERY fee decision is delegated to allocateTradeFees (@/lib/trade-fees) —
+ * the one classifier the Investment Lots report and Form 8949 also call. This
+ * module deliberately owns no fee predicate of its own: a fourth opinion on
+ * "what is a fee" is precisely how the ledger and the two reports came to
+ * report three different numbers for the same sale.
+ */
+async function allocateLotTradeFees(
+  lotSplits: Array<{ tx_guid?: string | null }>,
+  tx: PrismaTx,
+): Promise<TradeFeeBySplit> {
+  const txGuids = [...new Set(
+    lotSplits
+      .map(split => split.tx_guid)
+      .filter((guid): guid is string => typeof guid === 'string' && guid.length > 0),
+  )];
+  if (txGuids.length === 0) return NO_TRADE_FEES;
+
+  const rows = (await tx.splits.findMany({
+    where: { tx_guid: { in: txGuids } },
+    include: {
+      account: { select: { guid: true, name: true, parent_guid: true, account_type: true } },
+      transaction: { select: { post_date: true, description: true } },
+    },
+  })) ?? [];
+  // No expense leg means there is no charge to classify at all, so skip the
+  // ancestor walk rather than paying for paths nothing will read.
+  if (!rows.some(split => split.account?.account_type === 'EXPENSE')) return NO_TRADE_FEES;
+
+  const paths = await buildFeeAccountPaths(
+    rows.map(split => ({
+      guid: split.account_guid,
+      name: split.account?.name ?? null,
+      parent_guid: split.account?.parent_guid ?? null,
+      account_type: split.account?.account_type ?? null,
+    })),
+    tx,
+  );
+
+  return allocateTradeFees(rows.map(split => ({
+    guid: split.guid,
+    txGuid: split.tx_guid,
+    accountGuid: split.account_guid,
+    accountType: split.account?.account_type ?? '',
+    accountPath: paths.get(split.account_guid) || split.account?.name || '',
+    value: toDecimalNumber(split.value_num, split.value_denom),
+    quantity: toDecimalNumber(split.quantity_num, split.quantity_denom),
+    txDescription: split.transaction?.description ?? undefined,
+    txDate: split.transaction?.post_date?.toISOString(),
+  }))).fees;
+}
+
+// ---------------------------------------------------------------------------
 // Carried basis (transfer basis carryover)
 // ---------------------------------------------------------------------------
 
@@ -1028,12 +1290,200 @@ export async function readCarriedBasis(lotGuid: string, tx: PrismaTx): Promise<n
 }
 
 /**
+ * Slot naming the source-lot OUTFLOW SPLIT a destination lot's basis left on,
+ * alongside the `source_lot_guid` that names the lot itself.
+ *
+ * A source lot can send shares out several times, and each outflow's slice
+ * depends on where it falls in the lot's outflow order — so re-deriving those
+ * slices (reconcileCarriedBasisForSourceLots) needs to know which destination
+ * lot belongs to which outflow, not merely to which source lot. Both revert
+ * paths delete it with the rest of a generated lot's slots.
+ */
+const SOURCE_SPLIT_SLOT = 'source_split_guid';
+
+/**
+ * The `carried_basis` slot stores a decimal string with six-decimal
+ * resolution, so basis is apportioned in integer millionths.
+ */
+const BASIS_UNITS_PER_DOLLAR = 1e6;
+
+/** Quantize a basis amount to the slot's stored resolution (integer millionths). */
+function toBasisUnits(amount: number): number {
+  return Math.round(amount * BASIS_UNITS_PER_DOLLAR);
+}
+
+/**
+ * Apportion a source lot's basis to ONE outflow of `shares`, given the shares
+ * that already left the lot ahead of it.
+ *
+ * Rounding each outflow's own pro-rata slice independently duplicates or loses
+ * fractions of a cent, and the slot only holds six decimals: 50,000 shares
+ * bought for $50,000.00 plus a $0.03 commission carry $1.0000006 each, which
+ * every destination lot rounds up to $1.000001 — $50,000.05 of stored basis
+ * against the $50,000.03 actually paid, so a later sale of all of them
+ * understates the aggregate gain by $0.02.
+ *
+ * So round the CUMULATIVE allocation and hand each outflow the difference — a
+ * running-residual carry. The differences telescope, so the apportioned
+ * amounts sum to exactly the quantized source basis once the lot has drained,
+ * however many outflows it took and however the per-share figure rounds.
+ */
+export function apportionCarriedBasis(params: {
+  /** The source lot's whole basis: buy cost + capitalized fees + basis carried in. */
+  totalBasis: number;
+  /** Shares that entered the source lot. */
+  boughtShares: number;
+  /** Shares that left the lot ahead of this outflow (sales included). */
+  sharesOutBefore: number;
+  /** Shares leaving in this outflow. */
+  shares: number;
+}): number {
+  const { totalBasis, boughtShares, sharesOutBefore, shares } = params;
+  if (!(boughtShares > 0) || !(shares > 0)) return 0;
+
+  const totalUnits = toBasisUnits(totalBasis);
+  // Shares are summed from fractions, so "drained" needs a tolerance; at this
+  // scale it is far below the smallest share GnuCash can represent.
+  const drainedEpsilon = Math.max(1e-9, boughtShares * 1e-12);
+  const cumulativeUnitsAt = (sharesOut: number): number => {
+    if (sharesOut <= 0) return 0;
+    // Draining the lot yields the WHOLE basis, never a rounded fraction of it.
+    if (sharesOut >= boughtShares - drainedEpsilon) return totalUnits;
+    return Math.round(totalUnits * (sharesOut / boughtShares));
+  };
+
+  const before = Math.min(Math.max(sharesOutBefore, 0), boughtShares);
+  const after = Math.min(before + shares, boughtShares);
+  return (cumulativeUnitsAt(after) - cumulativeUnitsAt(before)) / BASIS_UNITS_PER_DOLLAR;
+}
+
+/** Lexicographic string compare, for the tiebreak chains below. */
+function cmpStr(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/** The fields the outflow ordering reads, however the caller selected them. */
+export interface LotOutflowInput {
+  guid: string;
+  tx_guid?: string | null;
+  quantity_num: bigint;
+  quantity_denom: bigint;
+  transaction?: { post_date: Date | null } | null;
+}
+
+/** One outflow of a source lot, in the canonical order. */
+export interface LotOutflow {
+  guid: string;
+  txGuid: string;
+  postedAt: number;
+  /** Shares leaving, as a positive magnitude. */
+  shares: number;
+}
+
+/**
+ * A source lot's outflows in a STABLE TOTAL ORDER.
+ *
+ * This order decides which outflow receives the residual millionth of the
+ * lot's basis (see apportionCarriedBasis), so it must be a function of data
+ * that survives a revert-and-re-scrub — otherwise selling one specific lot
+ * yields a different taxable gain depending on scrub history alone.
+ *
+ * Split GUIDs do NOT survive: splitSellAcrossLots repartitions an outflow that
+ * spans several lots into sub-splits with FRESHLY GENERATED guids, so a
+ * guid-keyed order shuffles on every re-scrub. The keys, in order:
+ *
+ *   1. transaction post date — the economic order of the outflows;
+ *   2. tx_guid — the outflow's transaction is the user's own row and is never
+ *      regenerated by the engine (sub-splits inherit their parent's tx_guid),
+ *      so this is stable across revert-and-re-scrub;
+ *   3. shares descending — separates two outflows of one transaction out of
+ *      one lot, which the engine itself never produces (each sub-split of a
+ *      repartitioned outflow lands in a DIFFERENT lot) but a hand-edited book
+ *      can hold;
+ *   4. split guid — last resort, reachable only for outflows identical in date,
+ *      transaction AND size.
+ *
+ * WHAT KEY 4 DOES AND DOES NOT GUARANTEE. Being last resort, it is the one key
+ * that is not stable across a revert-and-re-scrub, so its limits are worth
+ * stating exactly rather than waving at.
+ *
+ * Guaranteed. The keys ahead of it — date, tx_guid, shares — are all stable
+ * (tx_guid in particular survives, because a repartitioned outflow's sub-splits
+ * inherit their parent's tx_guid), so key 4 is never consulted unless the
+ * outflows it is separating agree on all three. Whatever permutation it picks,
+ * the MULTISET of slices apportioned out of the source lot is the same, because
+ * apportionCarriedBasis derives each slice from the cumulative shares ahead of
+ * it and these outflows are the same size. So the source lot's basis is fully
+ * conserved, and any figure that aggregates over the whole set — the account's
+ * total basis, its total realized gain, the Form 8949 total — is unaffected by
+ * which permutation was chosen.
+ *
+ * NOT guaranteed. The slices in that multiset are not necessarily equal: when
+ * the source basis does not divide evenly, one of them carries the residual
+ * millionth. Two same-date, same-transaction, same-size outflows can land in
+ * DISTINCT destination lots, and those lots can later be disposed of
+ * separately — different years, different holding periods, one sold and one
+ * held. Which of them carries the residual therefore does affect an INDIVIDUAL
+ * lot's reported basis and its individual taxable gain, and a re-scrub can move
+ * it between them. The slices are interchangeable in aggregate, NOT per lot.
+ *
+ * Why that is acceptable here rather than merely tolerated: reaching key 4 at
+ * all requires a book the engine does not produce (see key 3), the two outflows
+ * differ by at most one millionth of a dollar, and no total moves. The
+ * regression this ordering exists to fix — a FRESHLY GENERATED guid reshuffling
+ * ordinary engine-produced outflows on every scrub, moving whole slices between
+ * lots — is fixed by keys 1-3, which never fall through to here.
+ */
+export function orderLotOutflows(splits: LotOutflowInput[]): LotOutflow[] {
+  return splits
+    .map(s => ({
+      guid: s.guid,
+      txGuid: s.tx_guid ?? '',
+      postedAt: s.transaction?.post_date ? new Date(s.transaction.post_date).getTime() : 0,
+      shares: -toDecimalNumber(s.quantity_num, s.quantity_denom),
+    }))
+    .filter(o => o.shares > 0)
+    .sort((a, b) =>
+      a.postedAt - b.postedAt
+      || cmpStr(a.txGuid, b.txGuid)
+      || (b.shares - a.shares)
+      || cmpStr(a.guid, b.guid));
+}
+
+/**
+ * Shares that left the source lot ahead of `splitGuid`, in the lot's own
+ * outflow order (see orderLotOutflows).
+ *
+ * Every outflow counts, sale or transfer: each consumes its slice of the lot's
+ * basis, so a transfer that follows a sale starts where the sale left off
+ * rather than back at zero.
+ *
+ * An outflow that is not in the lot (an unlotted source split, or a caller
+ * that has no split to name) reads as the first one — the pre-existing
+ * straight pro-rata behavior.
+ */
+function sharesOutBeforeSplit(splits: LotOutflowInput[], splitGuid?: string): number {
+  if (!splitGuid) return 0;
+  let sharesOut = 0;
+  for (const outflow of orderLotOutflows(splits)) {
+    if (outflow.guid === splitGuid) return sharesOut;
+    sharesOut += outflow.shares;
+  }
+  return 0;
+}
+
+/**
  * Compute the cost basis carried by `transferredShares` leaving a source lot:
- * pro-rata share of (buy cost + the source lot's own carried basis) over the
- * shares that entered the lot. Chains correctly across repeated transfers —
- * a scrub-created destination lot has one transfer-in split plus a
- * carried_basis slot, so its basis-per-share is carried_basis / shares. A
- * recorded transfer value is not purchase cost and must not create a step-up.
+ * that outflow's slice of (buy cost + the source lot's own carried basis),
+ * apportioned over the shares that entered the lot. Chains correctly across
+ * repeated transfers — a scrub-created destination lot has one transfer-in
+ * split plus a carried_basis slot, so its basis-per-share is
+ * carried_basis / shares. A recorded transfer value is not purchase cost and
+ * must not create a step-up.
+ *
+ * Pass `sourceSplit` (the transfer-out split this basis is leaving on) so
+ * repeated partial transfers out of one lot conserve the basis exactly rather
+ * than each rounding their own slice — see apportionCarriedBasis.
  *
  * Returns null when the source lot has no incoming shares to derive a basis
  * from (nothing to carry).
@@ -1063,6 +1513,47 @@ export async function computeCarriedBasis(
       return splitShares > 0 ? avgBasis * (transferredShares / splitShares) : avgBasis;
     }
   }
+  const source = await readSourceLotBasis(sourceLotGuid, tx);
+  if (!source) return null;
+  return apportionCarriedBasis({
+    totalBasis: source.totalBasis,
+    boughtShares: source.boughtShares,
+    sharesOutBefore: sharesOutBeforeSplit(source.splits, sourceSplit?.guid),
+    shares: transferredShares,
+  });
+}
+
+/** A source lot's split, as the basis apportionment reads it. */
+interface SourceLotSplit extends LotOutflowInput {
+  value_num: bigint;
+  value_denom: bigint;
+}
+
+/** Everything the apportionment needs about one source lot, read once. */
+interface SourceLotBasis {
+  /** buy cost + capitalized trade fees + basis carried in from an earlier transfer. */
+  totalBasis: number;
+  /** Shares that entered the lot. */
+  boughtShares: number;
+  /** The lot's own splits, for the outflow ordering. */
+  splits: SourceLotSplit[];
+}
+
+/**
+ * Read a source lot's whole basis and the shares it was acquired with.
+ *
+ * Fee classification runs on the FULL account path, exactly as it does on the
+ * Investment Lots and Form 8949 paths. This used to pass the bare leaf name,
+ * which silently dropped every commission whose account is named for the
+ * broker rather than the charge ("Expenses:Commissions:Schwab") and left the
+ * carried basis short by that amount on transfer.
+ *
+ * Returns null when nothing entered the lot, so there is no basis to carry.
+ */
+async function readSourceLotBasis(
+  sourceLotGuid: string,
+  tx: PrismaTx,
+): Promise<SourceLotBasis | null> {
   const sourceLotSplits = (await tx.splits.findMany({
     where: { lot_guid: sourceLotGuid },
     select: {
@@ -1072,29 +1563,10 @@ export async function computeCarriedBasis(
       quantity_denom: true,
       value_num: true,
       value_denom: true,
+      transaction: { select: { post_date: true } },
     },
   })) ?? [];
-  const sourceTxGuids = [...new Set(sourceLotSplits
-    .map(s => s.tx_guid)
-    .filter((guid): guid is string => typeof guid === 'string'))];
-  const feeRows = sourceTxGuids.length > 0 ? await tx.splits.findMany({
-    where: { tx_guid: { in: sourceTxGuids } },
-    include: {
-      account: { select: { name: true, account_type: true } },
-      transaction: { select: { post_date: true, description: true } },
-    },
-  }) : [];
-  const allocatedFees = allocateTradeFees(feeRows.map(s => ({
-    guid: s.guid,
-    txGuid: s.tx_guid,
-    accountGuid: s.account_guid,
-    accountType: s.account?.account_type ?? '',
-    accountPath: s.account?.name ?? '',
-    value: toDecimalNumber(s.value_num, s.value_denom),
-    quantity: toDecimalNumber(s.quantity_num, s.quantity_denom),
-    txDescription: s.transaction?.description ?? undefined,
-    txDate: s.transaction?.post_date?.toISOString(),
-  })));
+  const allocatedFees = await allocateLotTradeFees(sourceLotSplits, tx);
   const sourceLotSlot = await tx.slots.findFirst({
     where: { obj_guid: sourceLotGuid, name: 'source_lot_guid' },
     select: { string_val: true },
@@ -1110,33 +1582,243 @@ export async function computeCarriedBasis(
       // cost; its actual basis is in carried_basis.
       if (!sourceLotSlot?.string_val) {
         buyCost += Math.abs(toDecimalNumber(s.value_num, s.value_denom))
-          + (allocatedFees.fees.get(s.guid) ?? 0);
+          + (allocatedFees.get(s.guid) ?? 0);
       }
     }
   }
   if (boughtShares <= 0) return null;
   const carried = await readCarriedBasis(sourceLotGuid, tx);
-  return ((buyCost + carried) / boughtShares) * transferredShares;
+  return { totalBasis: buyCost + carried, boughtShares, splits: sourceLotSplits };
+}
+
+/**
+ * The `carried_basis` slot's stored text for an amount, or null when there is
+ * no basis to store.
+ *
+ * apportionCarriedBasis already hands over a whole number of millionths, so
+ * quantizing here is a no-op on that path and only guards a hand-built caller.
+ */
+function carriedBasisSlotValue(carriedBasis: number | null): string | null {
+  if (carriedBasis === null || !(Math.abs(carriedBasis) > 0)) return null;
+  return String(toBasisUnits(carriedBasis) / BASIS_UNITS_PER_DOLLAR);
 }
 
 /**
  * Store the carried basis on a destination lot as a `carried_basis` slot,
- * tagged like the other transfer-metadata slots. No-op for null/0.
+ * tagged like the other transfer-metadata slots.
+ *
+ * REPLACES any slot already there rather than adding a second one: a
+ * destination lot's slice is re-derived whenever the source lot's outflow set
+ * changes (see reconcileCarriedBasisForSourceLots), and readCarriedBasis takes
+ * the first row it finds. A null/0 basis leaves the lot with no slot at all.
  */
 async function writeCarriedBasisSlot(
   lotGuid: string,
   carriedBasis: number | null,
   tx: PrismaTx,
 ): Promise<void> {
-  if (carriedBasis === null || !(Math.abs(carriedBasis) > 0)) return;
+  await tx.slots.deleteMany({ where: { obj_guid: lotGuid, name: 'carried_basis' } });
+  const stored = carriedBasisSlotValue(carriedBasis);
+  if (stored === null) return;
   await tx.slots.create({
     data: {
       obj_guid: lotGuid,
       name: 'carried_basis',
       slot_type: 4,
-      string_val: String(Math.round(carriedBasis * 1e6) / 1e6),
+      string_val: stored,
     },
   });
+}
+
+/** A destination lot whose `carried_basis` slot this reconcile pass rewrote. */
+export interface ReconciledDestinationLot {
+  lotGuid: string;
+  accountGuid: string | null;
+  carriedBasis: number;
+}
+
+/**
+ * Re-apportion each named source lot's basis over its WHOLE outflow set and
+ * rewrite every destination lot's `carried_basis` accordingly.
+ *
+ * Why this exists. apportionCarriedBasis conserves basis by rounding the
+ * CUMULATIVE allocation, so an outflow's slice depends on the shares that left
+ * ahead of it. Computing a slice once, at the moment its transfer is linked,
+ * only conserves while outflows arrive in date order. Routine bookkeeping
+ * breaks that: a BACKDATED transfer (or sale) inserted later moves ahead of
+ * outflows already apportioned, shifting every slice behind it. Left alone,
+ * the stored slices no longer sum to the source basis — a $1,000.01 lot drifts
+ * to $1,000.010001 of stored basis and the eventual full sale understates the
+ * gain by the difference.
+ *
+ * So the slices are never treated as final: any pass that can have changed a
+ * lot's outflow set re-derives all of them from the current set. The walk is
+ * the same running-residual carry, which makes the write idempotent — a lot
+ * whose slice is unchanged is not rewritten, and the returned list holds only
+ * the lots that actually moved.
+ *
+ * Destination lots are found by their `source_lot_guid` slot and matched to
+ * their outflow by `source_split_guid`. Lots written before that slot existed
+ * are matched by the transaction their transfer-in sits on, which identifies
+ * the outflow just as well: the engine never puts two outflows of one
+ * transaction into one lot.
+ */
+export async function reconcileCarriedBasisForSourceLots(
+  sourceLotGuids: string[],
+  tx: PrismaTx,
+): Promise<ReconciledDestinationLot[]> {
+  // Transfers chain: a destination lot whose basis just moved is itself the
+  // source of any onward transfer, and that lot's slices are derived from the
+  // basis this pass rewrote. Follow the chain from each rewritten lot rather
+  // than leaving the far end stale until its own account is next scrubbed.
+  //
+  // WALKED TO EXHAUSTION, with `visited` as the ONLY termination condition.
+  // There is deliberately no hop limit. A depth cap here would silently stop
+  // partway down a long A -> B -> C -> ... chain and leave every lot beyond it
+  // holding a stale carried basis, with no error and no signal: a wrong cost
+  // basis presented as correct, on a figure that ends up on a tax return. A
+  // chain of 30 accounts is unusual bookkeeping but it is not corruption, and
+  // it must not be silently mis-costed.
+  //
+  // Termination is structural rather than numeric. Every lot enters `frontier`
+  // at most once — each iteration adds its whole frontier to `visited` and the
+  // next frontier is filtered against it — so `visited` grows by at least one
+  // lot per iteration and is bounded by the number of lots in the book. That
+  // holds for a corrupted source_lot_guid CYCLE too: the cycle's lots are all
+  // visited on the way in, so the walk closes instead of looping. It also stops
+  // a diamond (two source lots feeding one destination) being walked twice.
+  const rewritten: ReconciledDestinationLot[] = [];
+  const visited = new Set<string>();
+  let frontier = [...new Set(sourceLotGuids.filter(Boolean))];
+  while (frontier.length > 0) {
+    frontier.forEach(guid => visited.add(guid));
+    const level = await reconcileOneTransferLevel(frontier, tx);
+    rewritten.push(...level);
+    frontier = [...new Set(level.map(l => l.lotGuid))].filter(guid => !visited.has(guid));
+  }
+  return rewritten;
+}
+
+/** One transfer hop of reconcileCarriedBasisForSourceLots. */
+async function reconcileOneTransferLevel(
+  sourceLotGuids: string[],
+  tx: PrismaTx,
+): Promise<ReconciledDestinationLot[]> {
+  const wanted = [...new Set(sourceLotGuids.filter(Boolean))].sort();
+  if (wanted.length === 0) return [];
+
+  const linkSlots = (await tx.slots.findMany({
+    where: { name: 'source_lot_guid', string_val: { in: wanted } },
+    select: { obj_guid: true, string_val: true },
+  })) ?? [];
+  if (linkSlots.length === 0) return [];
+
+  const destBySource = new Map<string, string[]>();
+  for (const slot of linkSlots) {
+    if (!slot.string_val) continue;
+    const dests = destBySource.get(slot.string_val) ?? [];
+    dests.push(slot.obj_guid);
+    destBySource.set(slot.string_val, dests);
+  }
+  const destLotGuids = [...new Set(linkSlots.map(s => s.obj_guid))];
+
+  const destLots = (await tx.lots.findMany({
+    where: { guid: { in: destLotGuids } },
+    select: { guid: true, account_guid: true },
+  })) ?? [];
+  const accountOfLot = new Map(destLots.map(l => [l.guid, l.account_guid ?? null]));
+
+  const sourceSplitSlots = (await tx.slots.findMany({
+    where: { name: SOURCE_SPLIT_SLOT, obj_guid: { in: destLotGuids } },
+    select: { obj_guid: true, string_val: true },
+  })) ?? [];
+  const sourceSplitOfLot = new Map<string, string>();
+  for (const slot of sourceSplitSlots) {
+    if (slot.string_val) sourceSplitOfLot.set(slot.obj_guid, slot.string_val);
+  }
+
+  // Legacy destination lots (written before source_split_guid existed) are
+  // placed by the transaction their transfer-in sits on.
+  const txOfLegacyLot = new Map<string, string>();
+  const legacyLotGuids = destLotGuids.filter(g => !sourceSplitOfLot.has(g));
+  if (legacyLotGuids.length > 0) {
+    const inSplits = (await tx.splits.findMany({
+      where: { lot_guid: { in: legacyLotGuids } },
+      select: {
+        lot_guid: true, tx_guid: true, quantity_num: true, quantity_denom: true,
+      },
+    })) ?? [];
+    for (const s of inSplits) {
+      if (!s.lot_guid || !s.tx_guid || txOfLegacyLot.has(s.lot_guid)) continue;
+      if (toDecimalNumber(s.quantity_num, s.quantity_denom) <= 0) continue;
+      txOfLegacyLot.set(s.lot_guid, s.tx_guid);
+    }
+  }
+
+  const storedSlots = (await tx.slots.findMany({
+    where: { name: 'carried_basis', obj_guid: { in: destLotGuids } },
+    select: { obj_guid: true, string_val: true },
+  })) ?? [];
+  const storedOfLot = new Map<string, string | null>();
+  for (const slot of storedSlots) {
+    if (!storedOfLot.has(slot.obj_guid)) storedOfLot.set(slot.obj_guid, slot.string_val ?? null);
+  }
+
+  const rewritten: ReconciledDestinationLot[] = [];
+  for (const sourceLotGuid of wanted) {
+    const dests = destBySource.get(sourceLotGuid);
+    if (!dests || dests.length === 0) continue;
+    const source = await readSourceLotBasis(sourceLotGuid, tx);
+    if (!source) continue;
+
+    const lotBySourceSplit = new Map<string, string>();
+    const lotByTx = new Map<string, string>();
+    for (const destLotGuid of dests) {
+      const sourceSplitGuid = sourceSplitOfLot.get(destLotGuid);
+      if (sourceSplitGuid) {
+        lotBySourceSplit.set(sourceSplitGuid, destLotGuid);
+        continue;
+      }
+      const txGuid = txOfLegacyLot.get(destLotGuid);
+      if (txGuid && !lotByTx.has(txGuid)) lotByTx.set(txGuid, destLotGuid);
+    }
+
+    // Average-cost books: a transfer-out split carries the pooled basis of
+    // exactly the shares that left on it (see computeCarriedBasis). That is
+    // the slice, not a re-apportionment of the lot's own buy cost.
+    const avgBasisByOutflow = await readAvgCostBasisForSplits(
+      source.splits.map(split => split.guid),
+      tx,
+    );
+
+    let sharesOut = 0;
+    for (const outflow of orderLotOutflows(source.splits)) {
+      const avgBasis = avgBasisByOutflow.get(outflow.guid);
+      const slice = avgBasis !== undefined
+        ? avgBasis
+        : apportionCarriedBasis({
+            totalBasis: source.totalBasis,
+            boughtShares: source.boughtShares,
+            sharesOutBefore: sharesOut,
+            shares: outflow.shares,
+          });
+      sharesOut += outflow.shares;
+
+      const destLotGuid = lotBySourceSplit.get(outflow.guid) ?? lotByTx.get(outflow.txGuid);
+      if (!destLotGuid) continue;
+      const next = carriedBasisSlotValue(slice);
+      if ((storedOfLot.get(destLotGuid) ?? null) === next) continue;
+
+      await writeCarriedBasisSlot(destLotGuid, slice, tx);
+      storedOfLot.set(destLotGuid, next);
+      rewritten.push({
+        lotGuid: destLotGuid,
+        accountGuid: accountOfLot.get(destLotGuid) ?? null,
+        carriedBasis: slice,
+      });
+    }
+  }
+  return rewritten;
 }
 
 // ---------------------------------------------------------------------------
@@ -1234,8 +1916,23 @@ export async function linkTransferToLot(
       },
     });
 
+    // Name the outflow this lot's shares left on, so its basis slice can be
+    // re-derived when the source lot's outflow set changes underneath it.
+    await tx.slots.create({
+      data: {
+        obj_guid: lotGuid,
+        name: SOURCE_SPLIT_SLOT,
+        slot_type: 4,
+        string_val: sourceSplit.guid,
+      },
+    });
+
     // Carry original basis for every own-account transfer. A recorded value
     // is not a taxable disposition and must not step up the destination lot.
+    // This is the slice as of THIS outflow's place in the source lot's order;
+    // the reconcile pass at the end re-derives it (and every sibling's) once
+    // the lot exists, which is what keeps the total conserved when a later
+    // backdated outflow moves ahead of it.
     const transferQty = toDecimalNumber(split.quantity_num, split.quantity_denom);
     if (transferQty > 0) {
       const carried = await computeCarriedBasis(sourceSplit.lot_guid, transferQty, tx, {
@@ -1302,6 +1999,14 @@ export async function linkTransferToLot(
     data: { lot_guid: lotGuid },
   });
 
+  // Apportion the source lot's basis over its WHOLE outflow set, this new one
+  // included. Writing only this lot's slice would conserve basis solely while
+  // transfers are linked in date order; a backdated one moves ahead of slices
+  // already stored — see reconcileCarriedBasisForSourceLots.
+  if (sourceSplit?.lot_guid) {
+    await reconcileCarriedBasisForSourceLots([sourceSplit.lot_guid], tx);
+  }
+
   return { lotGuid, created: true };
 }
 
@@ -1365,8 +2070,19 @@ export async function splitTransferAcrossSourceLots(
       toDecimalNumber(s.quantity_num, s.quantity_denom) < 0,
   );
 
-  // Filter to only those with lot_guid
-  const lottedSourceSplits = sourceSplits.filter(s => s.lot_guid !== null);
+  // Filter to only those with lot_guid, in the canonical outflow order. The
+  // order decides which source lot the original split (rather than a generated
+  // sub-split) is assigned to and which allocation absorbs the share
+  // remainder, so it must not be left to however the driver returned the rows.
+  //
+  // These all share one transaction, so they are separated by size. Two source
+  // lots contributing EXACTLY equal shares to one transfer still fall through
+  // to the guid tiebreak; that only moves a sub-cent quantity remainder
+  // between two equal-sized destination lots, and never the carried basis,
+  // which each lot derives from its own source lot's outflow order.
+  const lottedSourceSplits = orderLotOutflows(sourceSplits.filter(s => s.lot_guid !== null))
+    .map(o => sourceSplits.find(s => s.guid === o.guid)!)
+    .filter(Boolean);
 
   // If <= 1 lotted source splits, delegate to linkTransferToLot
   if (lottedSourceSplits.length <= 1) {
@@ -1436,8 +2152,19 @@ export async function splitTransferAcrossSourceLots(
       },
     });
 
-    // Carry original basis for every own-account transfer (see
-    // linkTransferToLot — same rule, per source lot here).
+    // Name the outflow this lot's shares left on, then carry that outflow's
+    // basis slice (see linkTransferToLot — same rule, per source lot here).
+    // The reconcile pass at the end of this function re-derives every slice
+    // once all the destination lots exist.
+    await tx.slots.create({
+      data: {
+        obj_guid: lotGuid,
+        name: SOURCE_SPLIT_SLOT,
+        slot_type: 4,
+        string_val: sourceSplit.guid,
+      },
+    });
+
     if (allocShares > 0) {
       const carried = await computeCarriedBasis(sourceLotGuid, allocShares, tx, sourceSplit);
       await writeCarriedBasisSlot(lotGuid, carried, tx);
@@ -1610,6 +2337,11 @@ export async function splitTransferAcrossSourceLots(
 
     subSplitsCreated++;
   }
+
+  // Every destination lot now exists and names its outflow, so apportion each
+  // source lot's basis over its whole outflow set at once — the one place the
+  // conservation invariant is enforced.
+  await reconcileCarriedBasisForSourceLots(allocations.map(a => a.sourceLotGuid), tx);
 
   // Assert transaction balance == 0 (skip for $0 transfers where it's trivially satisfied)
   if (transferVal !== 0) {
@@ -1975,6 +2707,18 @@ export async function assignAdjustmentToLots(
  * in an `avg_cost_basis` slot and that number is used verbatim — see
  * AVG_COST_BASIS_SLOT and the replay in @/lib/lot-assignment.
  *
+ * Commissions: the classified trade fees of the lot's own trades
+ * (@/lib/trade-fees, the same allocator both money reports call) are netted
+ * into the booked figure, so the Income:Capital Gains entry equals what the
+ * Investment Lots report and Form 8949 report for the same sale. NOTE the
+ * bookkeeping consequence: the adjusting split now carries the NET gain, so a
+ * fully-sold lot's investment account retains a residual value equal to the
+ * capitalized fee, mirroring the commission that is still sitting in its
+ * expense account. That is the deliberate trade: the gains ACCOUNT agrees
+ * with the tax forms, which is the figure users reconcile against, and the
+ * tax aggregation already withholds those same expense splits from its
+ * deduction sums (capitalizedFeeSplitGuids) so the dollar is counted once.
+ *
  * @param lotGuid - GUID of the closed lot
  * @param runId - Unique run identifier for tagging
  * @param tx - Prisma transaction client
@@ -2088,19 +2832,41 @@ export async function generateCapitalGains(
     };
   }
 
+  // ── Brokerage commissions ────────────────────────────────────────────────
+  // A commission is booked as a separate EXPENSE split of the trade, so the
+  // lot's own splits cannot see it and the gain derived from them alone is
+  // GROSS. Both money reports net it (IRS Pub. 550: a buy-side commission is
+  // capitalized into basis, a sell-side one reduces the amount realized), so
+  // booking the gross figure here made the ledger disagree with both of them
+  // about the same sale. Recovered through the SAME allocator they call.
+  const tradeFees = await allocateLotTradeFees(lot.splits, tx);
+  const feeOf = (split: { guid: string }) => tradeFees.get(split.guid) ?? 0;
+
   // ── Calculate gain/loss ──────────────────────────────────────────────────
   // Native GnuCash sign convention: a buy split has POSITIVE value (debit)
   // and a sell split NEGATIVE value (credit), so the lot's splits sum to
   // basis - proceeds and gain = -(sum). That legacy form only holds when every
   // consumed share was SOLD and no basis was carried in from a transfer;
   // otherwise realize the sold shares' pro-rata share of the total basis
-  // (buy cost + carried_basis).
+  // (buy cost + carried_basis). Either way a fee moves the value toward the
+  // positive, so it shrinks the gain by its own amount — the identical rule
+  // computeRealizedGain (@/lib/lots) and lotToRealizedSales
+  // (@/lib/reports/capital-gains) apply.
   const carriedBasis = await readCarriedBasis(lotGuid, tx);
   const soldShares = sellSplits.reduce(
     (sum, s) => sum + Math.abs(toDecimalNumber(s.quantity_num, s.quantity_denom)), 0,
   );
-  const saleProceeds = -sellSplits.reduce(
+  // GROSS proceeds answer "is this a disposal at all?" (the zero-proceeds
+  // guard below); the fee-netted figure is what the gain is computed from. A
+  // fee must never be what makes a real sale look like a $0 non-event — that
+  // would silently delete a worthless-security write-off's deduction — nor
+  // what promotes a $0 transfer into a reportable sale. Same split of duties
+  // as lotToRealizedSales.
+  const grossSaleProceeds = -sellSplits.reduce(
     (sum, s) => sum + toDecimalNumber(s.value_num, s.value_denom), 0,
+  );
+  const saleProceeds = grossSaleProceeds - sellSplits.reduce(
+    (sum, s) => sum + feeOf(s), 0,
   );
 
   // AVERAGE COST: the disposal splits carry the pooled basis of exactly the
@@ -2122,7 +2888,7 @@ export async function generateCapitalGains(
     gainLoss = -lot.splits.reduce(
       (sum, s) => sum + toDecimalNumber(s.value_num, s.value_denom),
       0,
-    );
+    ) - lot.splits.reduce((sum, s) => sum + feeOf(s), 0);
   } else {
     const boughtShares = buySplits.reduce(
       (sum, s) => sum + toDecimalNumber(s.quantity_num, s.quantity_denom), 0,
@@ -2149,7 +2915,8 @@ export async function generateCapitalGains(
     const buyCost = buySplits.reduce(
       (sum, s) => sum + (transferInSplitGuids.has(s.guid)
         ? 0
-        : Math.abs(toDecimalNumber(s.value_num, s.value_denom))),
+        : Math.abs(toDecimalNumber(s.value_num, s.value_denom)))
+        + feeOf(s),
       0,
     );
     const basisPerShare = boughtShares > qtyEps ? (buyCost + carriedBasis) / boughtShares : 0;
@@ -2176,7 +2943,7 @@ export async function generateCapitalGains(
   // is an unvalued trade (no price in the price DB — see valueZeroValueTrade),
   // not a real sale at zero; refusing to book prevents a phantom loss equal to
   // the entire basis.
-  if (soldShares > qtyEps && Math.abs(saleProceeds) < 0.005) {
+  if (soldShares > qtyEps && Math.abs(grossSaleProceeds) < 0.005) {
     await tx.lots.update({
       where: { guid: lotGuid },
       data: { is_closed: 1 },
@@ -2250,6 +3017,9 @@ export async function generateCapitalGains(
     },
   });
   const accountsByGuid = new Map(allAccounts.map(a => [a.guid, a]));
+  // Every upward walk below stops here. A realized gain must be posted inside
+  // the lot's OWN book; see isBookBoundary.
+  const bookRoots = await loadBookRootGuids(tx);
 
   // --- Resolve the transaction currency -------------------------------------
   // The source transaction's currency is only trustworthy when it is a real
@@ -2278,10 +3048,22 @@ export async function generateCapitalGains(
     currencyGuid = sourceCurrencyGuid;
     currencyFraction = sourceCommodity.fraction || 100;
   } else {
-    // Walk up the investment account's ancestors and use the first account
-    // whose commodity is a currency.
+    // Walk up the investment account's ancestors, to the BOOK BOUNDARY and no
+    // further, and use the first account whose commodity is a currency.
+    //
+    // No level cap. Correcting an earlier comment here, which claimed an
+    // overrun "fails loudly": it does not, and it never did. Overrunning the
+    // old 20-level cap left currencyGuid null and fell through to the
+    // most-common-currency fallback below, which SILENTLY denominates the
+    // generated gains transaction in whichever currency happens to appear on
+    // the most accounts book-wide — EUR for a USD trade in a mostly-EUR book.
+    // That is a wrong number written into the ledger with no error, which is
+    // why the cap had to go. `seenAncestors` is the termination condition, so
+    // a corrupt parent cycle closes instead of spinning.
+    const seenAncestors = new Set<string>();
     let ancestorGuid = lot.account.parent_guid;
-    for (let i = 0; i < 20 && ancestorGuid && !currencyGuid; i++) {
+    while (ancestorGuid && !currencyGuid && !seenAncestors.has(ancestorGuid)) {
+      seenAncestors.add(ancestorGuid);
       const ancestor = accountsByGuid.get(ancestorGuid);
       if (!ancestor) break;
       const commodity = await getCommodity(ancestor.commodity_guid);
@@ -2289,12 +3071,18 @@ export async function generateCapitalGains(
         currencyGuid = ancestor.commodity_guid;
         currencyFraction = commodity.fraction || 100;
       }
+      // The boundary account's own commodity counts (checked above); anything
+      // above it belongs to another book and must not denominate this one.
+      if (isBookBoundary(ancestor, bookRoots)) break;
       ancestorGuid = ancestor.parent_guid;
     }
 
     if (!currencyGuid) {
-      // Last resort: the most-common CURRENCY commodity across accounts
-      // (deterministic: account count desc, then guid).
+      // Last resort, and a SILENT one: the most-common CURRENCY commodity
+      // across accounts (deterministic: account count desc, then guid). It is
+      // reachable only when neither the transaction nor any ancestor up to the
+      // book root names a currency, which a sound book cannot produce — a
+      // GnuCash root account always carries one.
       const currencies: Array<{ guid: string; fraction: number }> =
         await tx.commodities.findMany({
           where: { namespace: 'CURRENCY' },
@@ -2323,39 +3111,70 @@ export async function generateCapitalGains(
   }
 
   // --- Resolve the gains account ---------------------------------------------
-  // Walk up from the lot's account to its book root.
+  // Walk up from the lot's account to the BOOK BOUNDARY — the root of the book
+  // this lot actually lives in, and the only book its gain may be posted into.
+  //
+  // No hop cap: a cap silently disowned a deeply filed security account from
+  // its own book, and the old fallback then answered with whichever book came
+  // FIRST out of the table. Correcting the earlier comment here, that fallback
+  // never failed loudly either; it quietly adopted a stranger's root, and with
+  // more than one book on the connection it was a coin flip. Book A's realized
+  // gain then landed in BOOK B's capital-gains account.
+  //
+  // Termination is the `seen` set — a corrupt parent cycle closes instead of
+  // looping — and the boundary check keeps a corrupt root pointer from
+  // climbing on into the next book.
   let rootGuid: string | null = null;
   {
+    const seen = new Set<string>();
     let cursor = accountsByGuid.get(lot.account.guid) ?? null;
-    for (let i = 0; i < 20 && cursor; i++) {
-      if (!cursor.parent_guid) {
+    while (cursor && !seen.has(cursor.guid)) {
+      seen.add(cursor.guid);
+      if (isBookBoundary(cursor, bookRoots)) {
         rootGuid = cursor.guid;
         break;
       }
-      cursor = accountsByGuid.get(cursor.parent_guid) ?? null;
+      cursor = accountsByGuid.get(cursor.parent_guid!) ?? null;
     }
   }
   if (!rootGuid) {
-    // Broken parent chain — fall back to the first book's root.
-    const book = await tx.books.findFirst({ select: { root_account_guid: true } });
-    rootGuid = book?.root_account_guid ?? null;
-  }
-  if (!rootGuid) {
-    throw new Error('Cannot determine book root for gains transaction');
+    // The chain cycles, or dangles on a missing account: this lot's book is
+    // genuinely unknown. Refuse LOUDLY. Guessing (the old behaviour: take the
+    // first book's root) posts a realized gain into a book chosen at random,
+    // which is silently wrong money in someone else's ledger — strictly worse
+    // than a scrub that stops and says so.
+    throw new Error(
+      `Cannot determine book root for gains transaction: the parent chain above account `
+      + `${lot.account.guid} does not reach a book root (broken or cyclic parent_guid).`,
+    );
   }
 
   // Build a fullname (root excluded, ":"-joined) plus the root it belongs to.
+  //
+  // No hop cap, for the same reason buildFeeAccountPaths has none: the walk
+  // climbs, so a cap drops the TOP of the fullname — and the top is what the
+  // matching below reads. A truncated fullname loses the book root (so the
+  // account is filtered out of its own book and a DUPLICATE gains account is
+  // created beside it) and loses the "Tax-Deferred" ancestor (so a sheltered
+  // sale can be booked to the taxable gains account). It stops at the BOOK
+  // BOUNDARY, so the `root` it reports is the account's real owning book and
+  // the caller's `c.root !== rootGuid` filter is a true book test rather than
+  // a wherever-the-chain-ended test. Termination is the `seen` set, so a
+  // corrupt parent cycle closes rather than looping (reporting root null,
+  // which the filter then rejects).
   const fullnameOf = (guid: string): { fullname: string; root: string | null } => {
     const parts: string[] = [];
+    const seen = new Set<string>();
     let cur = accountsByGuid.get(guid) ?? null;
     let root: string | null = null;
-    for (let i = 0; i < 25 && cur; i++) {
-      if (!cur.parent_guid) {
+    while (cur && !seen.has(cur.guid)) {
+      seen.add(cur.guid);
+      if (isBookBoundary(cur, bookRoots)) {
         root = cur.guid;
         break;
       }
       parts.unshift(cur.name);
-      cur = accountsByGuid.get(cur.parent_guid) ?? null;
+      cur = accountsByGuid.get(cur.parent_guid!) ?? null;
     }
     return { fullname: parts.join(':'), root };
   };

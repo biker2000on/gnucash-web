@@ -371,10 +371,11 @@ describe('average cost — commissions', () => {
    * Pool 20 sh / $320 ⇒ $16.00 per share, so 10 shares sold carry $160 of
    * basis. Per IRS Pub. 550 a buy-side commission is capitalized into basis
    * (never deducted) and a sell-side commission reduces the amount realized:
-   *   ledger entry (gross proceeds, as for FIFO): 400 − 160 = $240
-   *   reported gain (net of the sell fee):        395 − 160 = $235
-   * Ignoring commissions entirely would give 400 − 150 = $250, and FIFO with
-   * commissions 400 − 110 = $290.
+   *   ledger entry AND reported gain (net of the sell fee): 395 − 160 = $235
+   * The ledger books the same NET figure the Investment Lots report and Form
+   * 8949 show, so one sale never reports two numbers. Ignoring commissions
+   * entirely would give 400 − 150 = $250, gross proceeds 400 − 160 = $240,
+   * and FIFO with commissions 400 − 110 = $290.
    */
   const seedBook = () => {
     addTrade('2024-01-01', 10, 100, 10);
@@ -387,7 +388,8 @@ describe('average cost — commissions', () => {
     const result = await autoAssignLots(STOCK_ACCT, 'average');
 
     expect(avgBasisOf(sellGuid)).toBeCloseTo(160, 6);
-    expect(result.totalRealizedGain).toBeCloseTo(240, 6);
+    expect(result.totalRealizedGain).toBeCloseTo(235, 6);
+    expect(result.totalRealizedGain).not.toBeCloseTo(240, 2); // gross proceeds
     expect(result.totalRealizedGain).not.toBeCloseTo(250, 2); // fees ignored
     expect(result.totalRealizedGain).not.toBeCloseTo(290, 2); // FIFO with fees
   });
