@@ -3794,6 +3794,115 @@ async function createUniqueConstraintGuards() {
 }
 
 /**
+ * Legacy inventory shipments with no recorded `unit_cost`.
+ *
+ * `getShipmentWeightedUnitCost` (inventory-engine) reconstructs the basis for
+ * a return from the ship movements' `unit_cost`. Shipments written before the
+ * engine started recording it have NULL there, which made the whole line
+ * un-returnable with a COGS reversal: the engine threw "Shipment cost is not
+ * recorded".
+ *
+ * This derives the missing cost once, most-authoritative source first:
+ *
+ *   1. `ledger_cogs` — the COGS split of the shipment's OWN posted ledger
+ *      transaction, divided by the shipped quantity. That is the exact amount
+ *      expensed, so a reversal derived from it is penny-accurate.
+ *   2. `item_avg_cost` — the item's current book-wide average cost, used when
+ *      the shipment was never posted (so there is no expensed amount to
+ *      recover) but a plausible standard cost exists.
+ *
+ * Where neither yields a cost the row is LEFT NULL and stays auditable as
+ * such; the engine now reverses at the item's current weighted cost with an
+ * explicit warning rather than refusing the return outright.
+ *
+ * `unit_cost_source` records which rule filled a row in. NULL means the cost
+ * was recorded by the engine at movement time (the normal case) — the column
+ * only ever marks reconstructed values.
+ *
+ * Idempotent by construction: both statements match only `unit_cost IS NULL`,
+ * which they then fill.
+ */
+const inventoryUnitCostSourceColumnDDL = `
+    DO $$
+    BEGIN
+        IF to_regclass('public.gnucash_web_inventory_movements') IS NULL THEN
+            RETURN;
+        END IF;
+        PERFORM pg_advisory_xact_lock(hashtext('gnucash_web_inventory_unit_cost_source'));
+        ALTER TABLE gnucash_web_inventory_movements
+            ADD COLUMN IF NOT EXISTS unit_cost_source VARCHAR(20);
+    END $$;
+`;
+
+const inventoryLegacyShipUnitCostBackfillSQL = `
+    UPDATE gnucash_web_inventory_movements mv
+       SET unit_cost = derived.unit_cost,
+           unit_cost_source = 'ledger_cogs'
+      FROM (
+            SELECT m.id,
+                   SUM(s.value_num::numeric / NULLIF(s.value_denom, 0)) / ABS(m.quantity)
+                       AS unit_cost
+              FROM gnucash_web_inventory_movements m
+              JOIN gnucash_web_inventory_items i ON i.id = m.item_id
+              JOIN splits s
+                ON s.tx_guid = m.txn_guid
+               AND s.account_guid = i.cogs_account_guid
+             WHERE m.unit_cost IS NULL
+               AND m.movement_type = 'ship'
+               AND m.txn_guid IS NOT NULL
+               AND i.cogs_account_guid IS NOT NULL
+               AND ABS(m.quantity) > 0
+             GROUP BY m.id, m.quantity
+            HAVING SUM(s.value_num::numeric / NULLIF(s.value_denom, 0)) > 0
+           ) derived
+     WHERE mv.id = derived.id;
+
+    UPDATE gnucash_web_inventory_movements mv
+       SET unit_cost = i.avg_cost,
+           unit_cost_source = 'item_avg_cost'
+      FROM gnucash_web_inventory_items i
+     WHERE i.id = mv.item_id
+       AND mv.unit_cost IS NULL
+       AND mv.movement_type = 'ship'
+       AND i.avg_cost > 0;
+`;
+
+/**
+ * Runs the legacy shipment-cost backfill, but ONLY when the inventory tables
+ * already exist.
+ *
+ * They are created lazily on first use (ensureInventoryTables), not here, so a
+ * deployment that has never opened the inventory feature has nothing to
+ * migrate. Recording the step as applied in that state would permanently skip
+ * it for a book that turns inventory on later, so the step is skipped WITHOUT
+ * being recorded and stays pending in case a legacy table appears later (a
+ * restored dump, say).
+ */
+export async function backfillLegacyInventoryShipmentCosts() {
+    try {
+        const present = await query(
+            `SELECT to_regclass('public.gnucash_web_inventory_movements') AS reg`,
+        );
+        if (!present.rows[0]?.reg) return;
+
+        await query(inventoryUnitCostSourceColumnDDL);
+        await runOneTimeMigration(
+            '2026-08-19-inventory-legacy-ship-unit-cost',
+            () => query(inventoryLegacyShipUnitCostBackfillSQL),
+        );
+    } catch (error) {
+        // Data repair, not structure: the engine tolerates a still-NULL
+        // unit_cost (it warns and reverses at current cost). Never block
+        // startup for it.
+        console.error(
+            'ERROR: legacy inventory shipment-cost backfill failed. Returns on affected'
+            + ' lines will reverse COGS at the current item cost with a warning.',
+            error,
+        );
+    }
+}
+
+/**
  * Initializes the database schema by creating required views and tables.
  * This should be called once when the application starts.
  */
@@ -3805,6 +3914,7 @@ export async function initializeDatabase() {
             await createAccountHierarchyView();
             await createExtensionTables();
             await migrateDuplicatePrices();
+            await backfillLegacyInventoryShipmentCosts();
             await createUniqueConstraintGuards();
             await createPerformanceIndexes();
             // After the superseding indexes exist, retire the redundant ones
