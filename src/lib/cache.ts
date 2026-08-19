@@ -38,9 +38,41 @@ export async function cacheSet(key: string, value: unknown, ttlSeconds: number =
       const tail = range ? `:${range[1]}-${range[2]}` : `:${single![1]}`;
       const indexKey = `idx:${key.slice(0, -tail.length)}`;
       await redis.zadd(indexKey, dateScore, key);
+      // The index must outlive the entries it points at, but no longer: a
+      // zset with no expiry accumulates members for every date range ever
+      // requested and is never reclaimed, so the SCAN in cacheInvalidateFrom
+      // walks (and range-deletes over) keys that expired months ago.
+      await extendIndexExpiry(redis, indexKey, ttlSeconds);
     }
   } catch (err) {
     console.warn('Cache set failed:', err);
+  }
+}
+
+/**
+ * Push an index key's TTL out to at least `ttlSeconds`, never pulling it in.
+ *
+ * An index is shared by every date range of one metric, and each entry renews
+ * it as it is written, so the index always expires a little after its
+ * longest-lived member — never before, which would strand that member until
+ * its own TTL.
+ */
+async function extendIndexExpiry(
+  redis: NonNullable<ReturnType<typeof getRedis>>,
+  indexKey: string,
+  ttlSeconds: number,
+): Promise<void> {
+  try {
+    // GT sets the TTL only when it would be longer (and when there is none).
+    await redis.expire(indexKey, ttlSeconds, 'GT');
+  } catch {
+    // Redis < 7.0 has no GT flag. Emulate it; the read-then-write race is
+    // harmless here (worst case the index expires early and one stale entry
+    // survives until its own TTL).
+    const current = await redis.ttl(indexKey);
+    if (current < ttlSeconds) {
+      await redis.expire(indexKey, ttlSeconds);
+    }
   }
 }
 

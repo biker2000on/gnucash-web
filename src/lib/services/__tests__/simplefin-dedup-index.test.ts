@@ -198,9 +198,10 @@ describe('runSimpleFinSync dedup index across N mapped accounts', () => {
     // The whole point of the fix: one query for three mapped accounts.
     expect(metaFindMany).toHaveBeenCalledTimes(1);
     // …and it is filtered to the feed rows this run could collide with.
-    const where = metaFindMany.mock.calls[0][0].where as {
-      OR: Array<Record<string, { in: string[] }>>;
-    };
+    const [findManyArgs] = metaFindMany.mock.calls[0] as unknown as [{
+      where: { OR: Array<Record<string, { in: string[] }>> };
+    }];
+    const where = findManyArgs.where;
     expect(where.OR[0].simplefin_transaction_id.in).toHaveLength(MAPPED * 2);
 
     // Dedup semantics unchanged: every row was already imported, so every row
