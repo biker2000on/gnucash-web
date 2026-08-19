@@ -1,6 +1,6 @@
-import type { CostBasisCoverage } from '@/lib/commodities';
+import type { CostBasisCoverage, PositionSide } from '@/lib/commodities';
 
-export type { CostBasisCoverage };
+export type { CostBasisCoverage, PositionSide };
 
 export interface CashByAccount {
   parentGuid: string;
@@ -36,6 +36,8 @@ export interface ConsolidatedHolding {
   totalCostBasis: number;
   /** Coverage of `totalCostBasis`, pooled across the accounts below. */
   totalCostBasisCoverage: CostBasisCoverage;
+  /** `mixed` when this commodity is held long in one account, short in another. */
+  totalPositionSide: PositionSide;
   totalMarketValue: number;
   totalGainLoss: number;
   totalGainLossPercent: number;
@@ -48,6 +50,7 @@ export interface ConsolidatedHolding {
     shares: number;
     costBasis: number;
     costBasisCoverage: CostBasisCoverage;
+    positionSide: PositionSide;
     marketValue: number;
     gainLoss: number;
     gainLossPercent: number;
@@ -97,6 +100,8 @@ export interface PortfolioData {
     costBasis: number;
     /** What `costBasis` and `gainLoss` describe — never assume all `shares`. */
     costBasisCoverage: CostBasisCoverage;
+    /** `short` marks a holding whose `costBasis` is proceeds, not cost. */
+    positionSide: PositionSide;
     marketValue: number;
     gainLoss: number;
     gainLossPercent: number;

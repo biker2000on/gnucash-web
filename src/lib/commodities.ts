@@ -15,6 +15,8 @@ import {
     addPurchaseToPool,
     addTracedTransferToPool,
     removeSharesFromPool,
+    poolPositionSide,
+    poolNetShares,
     type CostBasisMethod,
     type CostBasisCache,
 } from './cost-basis';
@@ -24,6 +26,7 @@ import {
     calculateGainLossPercent,
     type CostBasisCoverage,
     type HoldingsData,
+    type PositionSide,
     type PriceData,
 } from './holdings-coverage';
 
@@ -31,6 +34,8 @@ export {
     calculateGainLoss,
     calculateGainLossPercent,
     combineCoverage,
+    combinePositionSide,
+    positionSideBasisLabel,
     sameCoverageStatement,
     totalHoldings,
 } from './holdings-coverage';
@@ -41,6 +46,7 @@ export type {
     HoldingsData,
     HoldingsTotals,
     HoldingTotalsInput,
+    PositionSide,
     PriceData,
 } from './holdings-coverage';
 
@@ -207,6 +213,8 @@ export async function getAccountHoldings(
                 status: 'unknown',
                 reason: 'Account not found, or it holds no commodity.',
             },
+            positionSide: 'flat',
+            shortProceeds: 0,
             marketValue: 0,
             gainLoss: 0,
             gainLossPercent: 0,
@@ -240,6 +248,11 @@ export async function getAccountHoldings(
     // Coverage travels WITH the basis: `costBasis` below is the basis of the
     // shares `rawCoverage` describes, never automatically of all `shares`.
     let rawCoverage: CostBasisCoverage;
+    // Which way the position points, and — when it is short — the proceeds
+    // that stand in for a purchase cost. Only the traced path can tell: the
+    // untraced sum has no signed pool behind it.
+    let rawSide: PositionSide = 'long';
+    let rawShortProceeds = 0;
 
     if (costBasisOptions?.enabled && commodityGuid) {
         // Fetch splits with transaction/account data for transfer detection
@@ -291,27 +304,43 @@ export async function getAccountHoldings(
                     addPurchaseToPool(pool, qty, val);
                 }
             } else if (qty < 0) {
-                removeSharesFromPool(pool, Math.abs(qty));
+                // `val` is the sale's proceeds, so a sale past zero opens a
+                // short leg that knows what it was sold for instead of
+                // draining the basis to nothing.
+                removeSharesFromPool(pool, Math.abs(qty), val);
             }
         }
-
-        rawCostBasis = pool.basisOfCoveredShares;
 
         // The same commodity-aware share tolerance the lot engine and the
         // ledger route use, deliberately reused rather than re-derived: at
         // crypto's 1e8 precision a flat 0.0001 reads a real one-unit oversell
         // as agreement.
         const coverageEps = qtyEpsilonForScu(account.commodity_scu);
-        const poolShares = pool.coveredShares + pool.uncoveredShares;
-        if (Math.abs(shares - poolShares) >= coverageEps) {
-            // An oversell empties the pool while `shares` goes negative; it
-            // cannot describe a short position. The share count and basis stay
-            // as computed, but coverage becomes unknown rather than a
-            // "0 uncovered" claim a consumer would read as full coverage.
+        rawSide = poolPositionSide(pool, coverageEps);
+        rawShortProceeds = rawSide === 'short' ? pool.shortProceeds : 0;
+        // A short position's "basis" is the proceeds received for the shorted
+        // shares; a long one's is what was paid. Reporting the long figure for
+        // a short leg hands every consumer a ~$0 basis and an inverted gain.
+        rawCostBasis = rawSide === 'short' ? pool.shortProceeds : pool.basisOfCoveredShares;
+
+        if (Math.abs(shares - poolNetShares(pool)) >= coverageEps) {
+            // The signed pool no longer matches the share balance, so nothing
+            // it holds can be attached to the position on screen. The share
+            // count and basis stay as computed, but coverage becomes unknown
+            // rather than a "0 uncovered" claim read as full coverage.
             rawCoverage = {
                 status: 'unknown',
-                reason: 'The share balance and the cost-basis pool disagree (an oversell leaves a short position the pool cannot describe).',
+                reason: 'The share balance and the cost-basis pool disagree, so the basis cannot be matched to the position.',
             };
+        } else if (rawSide === 'short') {
+            // A short leg has no long shares left to be uncovered: its coverage
+            // is whether every short-opening sale's proceeds could be read.
+            rawCoverage = pool.shortProceedsIncomplete
+                ? {
+                    status: 'unknown',
+                    reason: 'Some shares were sold short without readable proceeds, so the short basis is incomplete.',
+                }
+                : { status: 'complete', coveredShares: pool.shortShares };
         } else if (pool.uncoveredShares >= coverageEps) {
             rawCoverage = {
                 status: 'partial',
@@ -325,6 +354,9 @@ export async function getAccountHoldings(
     } else {
         rawCostBasis = calculateCostBasis(splits);
         rawCoverage = UNTRACED_BASIS_COVERAGE;
+        // No signed pool ran, so this path states the side it actually
+        // modelled rather than inferring a short leg from the sign of `shares`.
+        rawSide = 'long';
     }
 
     // Get latest price
@@ -340,16 +372,19 @@ export async function getAccountHoldings(
     const coverage: CostBasisCoverage = isZeroShares
         ? { status: 'complete', coveredShares: 0 }
         : rawCoverage;
+    const positionSide: PositionSide = isZeroShares ? 'flat' : rawSide;
     const marketValue = isZeroShares ? 0 : calculateMarketValue(shares, pricePerShare);
     const gainLoss = isZeroShares
         ? 0
-        : calculateGainLoss({ shares, pricePerShare, costBasis, coverage });
+        : calculateGainLoss({ shares, pricePerShare, costBasis, coverage, positionSide });
     const gainLossPercent = calculateGainLossPercent(gainLoss, costBasis);
 
     return {
         shares: isZeroShares ? 0 : shares,
         costBasis,
         costBasisCoverage: coverage,
+        positionSide,
+        shortProceeds: isZeroShares ? 0 : rawShortProceeds,
         marketValue,
         gainLoss,
         gainLossPercent,
