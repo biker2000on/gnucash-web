@@ -17,7 +17,7 @@ import { formatDateForDisplay, parseDateInput } from '@/lib/date-format';
 import { toLocalDateString } from '@/lib/datePresets';
 import { useIsMobile } from '@/lib/hooks/useIsMobile';
 import { ErrorLiveRegion } from '@/components/a11y/LiveRegion';
-import { FieldError } from '@/components/ui/form';
+import { FieldError, inputClass } from '@/components/ui/form';
 import { ApiRequestError } from '@/lib/api-error';
 import {
     buildCurrencySplitAmounts,
@@ -26,6 +26,15 @@ import {
     parseExchangeRate,
 } from '@/lib/transaction-currency';
 import { Tip } from '@/components/ui/Tooltip';
+
+/**
+ * This form's control recipe. Its own base (the ledger-dense `bg-input-bg` /
+ * `py-2` pairing the rest of the row uses), but the invalid modifier comes from
+ * `ui/form.tsx` via `inputClass({ invalid })` — `INPUT_INVALID` is the one place
+ * that says validation failures are `--error`, never `--negative`.
+ */
+const TX_INPUT =
+    'w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50';
 
 export interface TransactionFormHandle {
     /**
@@ -1173,9 +1182,7 @@ export function TransactionForm({
                             placeholder="MM/DD/YYYY"
                             aria-invalid={fieldErrors.post_date ? true : undefined}
                             aria-describedby={fieldErrors.post_date ? 'tx-error-post_date' : undefined}
-                            className={`w-full bg-input-bg border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50 ${
-                                fieldErrors.post_date ? 'border-error' : 'border-border'
-                            }`}
+                            className={inputClass({ base: TX_INPUT, invalid: Boolean(fieldErrors.post_date) })}
                         />
                     )}
                     <FieldError id="tx-error-post_date" message={fieldErrors.post_date} />
@@ -1243,9 +1250,7 @@ export function TransactionForm({
                                     data-field="amount"
                                     aria-invalid={fieldErrors.amount ? true : undefined}
                                     aria-describedby={fieldErrors.amount ? 'tx-error-amount' : undefined}
-                                    className={`w-full bg-input-bg border rounded-lg px-3 py-2 text-sm text-foreground placeholder-foreground-muted focus:outline-none focus:border-primary/50 ${
-                                        fieldErrors.amount ? 'border-error' : 'border-border'
-                                    }`}
+                                    className={inputClass({ base: TX_INPUT, invalid: Boolean(fieldErrors.amount), extra: 'placeholder-foreground-muted' })}
                                 />
                                 {containsMathExpression(simpleData.amount) && (
                                     <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-primary pointer-events-none">=</span>

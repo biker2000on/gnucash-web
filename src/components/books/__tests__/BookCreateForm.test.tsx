@@ -4,6 +4,7 @@ import { cleanup } from '@testing-library/react';
 import BookCreateForm, { BOOK_NAME_REQUIRED, validateBookName } from '../BookCreateForm';
 import NewBookForm from '../NewBookForm';
 import { CreateBookWizard } from '@/components/CreateBookWizard';
+import { INPUT } from '@/components/ui/form';
 
 /**
  * `NewBookForm` (POST /api/books/default) and the wizard's import step
@@ -30,6 +31,16 @@ describe('validateBookName', () => {
 });
 
 describe('BookCreateForm', () => {
+    it('uses the shared INPUT recipe rather than a hand-rolled one', () => {
+        render(<BookCreateForm onSubmit={vi.fn()} onError={vi.fn()} />);
+        const input = screen.getByLabelText(/Book Name/);
+        // DESIGN.md: form controls are radius md and come from ui/form.tsx's
+        // INPUT. A fourth hand-rolled recipe (this one was rounded-lg with its
+        // own focus ring) is exactly what the shared constant exists to stop.
+        expect(input.className).toContain(INPUT);
+        expect(input.className).not.toContain('rounded-lg');
+    });
+
     it('keeps submit disabled until the name has content, then submits it trimmed', async () => {
         const onSubmit = vi.fn().mockResolvedValue(undefined);
         render(<BookCreateForm onSubmit={onSubmit} onError={vi.fn()} />);

@@ -9,6 +9,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TransactionForm } from '../TransactionForm';
 import { ApiRequestError } from '@/lib/api-error';
+import { INPUT_INVALID } from '@/components/ui/form';
 
 vi.mock('@/components/ui/AccountSelector', () => ({
     AccountSelector: (props: {
@@ -92,6 +93,21 @@ describe('TransactionForm server + validation errors', () => {
         const amount = screen.getByPlaceholderText('0.00');
         expect(amount.getAttribute('aria-invalid')).toBe('true');
         expect(amount.getAttribute('aria-describedby')).toBe('tx-error-amount');
+    });
+
+    it('marks a rejected control with the shared INPUT_INVALID recipe', async () => {
+        render(<TransactionForm onSave={vi.fn()} onCancel={() => {}} />);
+        await waitFor(() => expect(fetch).toHaveBeenCalled());
+
+        const amount = screen.getByPlaceholderText('0.00');
+        expect(amount.className).not.toContain('border-error');
+
+        fireEvent.click(screen.getByRole('button', { name: 'Create Transaction' }));
+
+        // The invalid look is INPUT_INVALID from ui/form.tsx, not a hand-rolled
+        // `border-error : border-border` ternary — that is what keeps validation
+        // failures on `--error` rather than drifting onto money's `--negative`.
+        await waitFor(() => expect(amount.className).toContain(INPUT_INVALID));
     });
 
     it('announces a server rejection and parks each field entry under its field', async () => {

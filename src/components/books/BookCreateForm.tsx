@@ -2,6 +2,7 @@
 
 import { ReactNode, useState } from 'react';
 import { CurrencySelect } from '@/components/CurrencySelect';
+import { Field, inputClass } from '@/components/ui/form';
 
 /** The one message both book-creation surfaces show for a missing name. */
 export const BOOK_NAME_REQUIRED = 'Please enter a book name';
@@ -91,29 +92,34 @@ export default function BookCreateForm({
         <div className="space-y-5">
             {beforeNameFields}
 
-            <div>
-                <label htmlFor={nameInputId} className="block text-sm font-medium text-foreground mb-1.5">
-                    Book Name <span className="text-negative">*</span>
-                </label>
+            {/* Controls come from the shared recipe in ui/form.tsx — DESIGN.md
+                closes the radius scale and forbids a hand-rolled fourth input
+                style. The `*` is a required marker, i.e. system state, so it is
+                `--error` and never `--negative` (which is money below zero). */}
+            <Field
+                className="block"
+                label={
+                    <>
+                        Book Name <span className="text-error">*</span>
+                    </>
+                }
+            >
                 <input
                     id={nameInputId}
                     type="text"
                     value={name}
                     onChange={(e) => setName(e.target.value)}
-                    className="w-full px-3 py-2 bg-input-bg border border-border rounded-lg text-foreground placeholder-foreground-muted focus:outline-none focus:ring-2 focus:ring-primary"
+                    className={inputClass({ extra: 'placeholder-foreground-muted' })}
                     placeholder={namePlaceholder}
                 />
-            </div>
+            </Field>
 
             {afterNameFields}
 
             {showCurrency && (
-                <div>
-                    <label htmlFor={`${nameInputId}-currency`} className="block text-sm font-medium text-foreground mb-1.5">
-                        Currency
-                    </label>
+                <Field label="Currency" className="block">
                     <CurrencySelect id={`${nameInputId}-currency`} value={currency} onChange={setCurrency} />
-                </div>
+                </Field>
             )}
 
             {afterCurrencyFields}
