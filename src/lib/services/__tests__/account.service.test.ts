@@ -14,7 +14,7 @@ const {
     logAuditMock,
 } = vi.hoisted(() => ({
     prismaMock: {
-        accounts: { findUnique: vi.fn(), update: vi.fn() },
+        accounts: { findUnique: vi.fn(), findFirst: vi.fn(), update: vi.fn() },
         commodities: { findUnique: vi.fn() },
         splits: { count: vi.fn() },
         slots: { findFirst: vi.fn(), update: vi.fn(), create: vi.fn() },
@@ -66,6 +66,9 @@ beforeEach(() => {
         }
         return null;
     });
+    // No sibling occupies the destination (parent, name) — see
+    // account-create-sibling-lock.test.ts for the refusal path.
+    prismaMock.accounts.findFirst.mockResolvedValue(null);
     prismaMock.accounts.update.mockResolvedValue({
         guid: ACCOUNT, name: 'Groceries', code: '', description: '',
         hidden: 0, placeholder: 0, parent_guid: NEW_PARENT,

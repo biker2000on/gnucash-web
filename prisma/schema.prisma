@@ -38,10 +38,15 @@ model accounts {
   lots           lots[]
   tags           gnucash_web_account_tags[]
 
-  // DB-only (created by db-init, prisma can't express partial indexes):
-  // uq_accounts_parent_name — UNIQUE ON accounts(parent_guid, name)
-  // WHERE parent_guid IS NOT NULL. Skipped with a warning when legacy
-  // duplicate siblings exist.
+  // There is deliberately NO unique key on (parent_guid, name), and db-init
+  // DROPS the `uq_accounts_parent_name` an earlier release created here:
+  // this table also stores scheduled-transaction templates, which have one
+  // child account per split all named '' under the same parent, so the index
+  // breaks every multi-split scheduled transaction with a 23505. Sibling-name
+  // uniqueness for REAL accounts is enforced by a per-(parent, name) advisory
+  // lock in application code instead — see ACCOUNTS_SIBLING_NAME_INDEX in
+  // src/lib/db-init.ts for the full reasoning and for exactly which writers
+  // are and are not covered.
 }
 
 model transactions {

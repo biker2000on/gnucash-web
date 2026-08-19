@@ -44,7 +44,10 @@ vi.mock('@/lib/services/book-cleanup.service', () => ({
   deleteBookExtensionRows: vi.fn(),
   deleteStoredFileKeys: vi.fn(),
 }));
-vi.mock('@/lib/book-lock', () => ({ acquireBookLock: vi.fn() }));
+vi.mock('@/lib/book-lock', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/book-lock')>()),
+  acquireBookLock: vi.fn(),
+}));
 vi.mock('@/lib/cache', () => ({ cacheInvalidateAllForBook: vi.fn() }));
 vi.mock('@/lib/data-events', () => ({ publishDataChange: vi.fn() }));
 vi.mock('@/lib/budget-ownership', () => ({ deleteOwnedBudgetsForBook: vi.fn() }));

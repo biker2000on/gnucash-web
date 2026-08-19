@@ -49,15 +49,21 @@ const { prismaMock, tryAcquireBookLockMock } = vi.hoisted(() => ({
     $transaction: vi.fn(),
     $queryRaw: vi.fn(),
     $executeRaw: vi.fn(),
+    // Provisioning DDL for the app-owned average-cost history table. This file
+    // asserts lock ORDER over $queryRaw, so the history table is deliberately
+    // left unbacked here rather than adding calls to that sequence; its
+    // behaviour is covered by lot-assignment-average-cost.test.ts and the
+    // real-PostgreSQL avg-basis-history.integration.test.ts.
+    $executeRawUnsafe: vi.fn(),
   },
   tryAcquireBookLockMock: vi.fn(),
 }));
 
 vi.mock('@/lib/prisma', () => ({ default: prismaMock }));
-vi.mock('@/lib/book-lock', () => {
-  class BookBusyError extends Error {}
+vi.mock('@/lib/book-lock', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/book-lock')>();
   return {
-    BookBusyError,
+    ...actual,
     bookLockKey: vi.fn(() => 'k'),
     tryAcquireBookLock: tryAcquireBookLockMock,
   };
@@ -97,6 +103,7 @@ beforeEach(() => {
   );
   prismaMock.$queryRaw.mockResolvedValue([]);
   prismaMock.$executeRaw.mockResolvedValue(0);
+  prismaMock.$executeRawUnsafe.mockResolvedValue(0);
   prismaMock.splits.update.mockResolvedValue({});
   prismaMock.splits.updateMany.mockResolvedValue({ count: 0 });
   prismaMock.splits.deleteMany.mockResolvedValue({ count: 0 });

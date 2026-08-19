@@ -82,7 +82,12 @@
  */
 
 import prisma from '@/lib/prisma';
-import { generateGuid, fromDecimal, toDecimalNumber, findOrCreateAccount } from '@/lib/gnucash';
+import { generateGuid, fromDecimal, toDecimalNumber } from '@/lib/gnucash';
+import {
+  SiblingKeyAdoptedError,
+  withAdoptionRetry,
+} from '@/lib/book-lock';
+import { acquireAccountNameLock, sortByLockOrder } from '@/lib/account-lock-order';
 import { assertAccountNotLocked } from '@/lib/services/period-lock.service';
 import { isEntityOwnedByBook } from '@/lib/business/entity-ownership';
 import {
@@ -847,16 +852,38 @@ async function writeLedgerTxn(
 // Account bootstrap
 // ---------------------------------------------------------------------------
 
+/** The two accounts {@link bootstrapInventoryAccounts} guarantees. */
+const INVENTORY_BOOTSTRAP_SPECS = [
+  { key: 'asset', name: 'Inventory', type: 'ASSET', description: 'Inventory on hand' },
+  { key: 'cogs', name: 'Cost of Goods Sold', type: 'EXPENSE', description: 'Cost of Goods Sold' },
+] as const;
+
 /**
  * Create (or find) the default 'Inventory' ASSET and 'Cost of Goods Sold'
  * EXPENSE accounts under the book root. Call this on demand (e.g. from a UI
  * "set up inventory accounts" action) and assign the returned guids to items.
+ *
+ * ## Why this is two phases and not two `findOrCreateAccount` calls
+ *
+ * `findOrCreateAccount` claims the per-(parent, name) advisory lock when the
+ * account is missing, and a transaction-scoped advisory lock is held until
+ * COMMIT. Coercing the SECOND account's type straight afterwards therefore
+ * took a row lock while still holding the FIRST account's name lock — the
+ * exact reverse of the order `AccountService.update`/`.move` use (row lock,
+ * then destination name lock), and enough to deadlock against a concurrent
+ * rename. `SiblingKeyAdoptedError` in src/lib/book-lock.ts works the cycle
+ * through.
+ *
+ * So: reconcile everything that already exists first, with no name lock held
+ * anywhere, and only then claim keys for what is missing. The claim path
+ * INSERTs and never updates; when it instead adopts a row a concurrent creator
+ * committed in the meantime, the transaction is retried so that row is coerced
+ * from the first phase of the next attempt.
  */
 export async function bootstrapInventoryAccounts(
   bookRootGuid: string,
 ): Promise<{ assetAccountGuid: string; cogsAccountGuid: string }> {
-  let result: { assetAccountGuid: string; cogsAccountGuid: string } | null = null;
-  await prisma.$transaction(async (tx) => {
+  const attempt = () => prisma.$transaction(async (tx) => {
     const root = await tx.accounts.findUnique({
       where: { guid: bookRootGuid },
       select: { guid: true, commodity_guid: true },
@@ -864,21 +891,74 @@ export async function bootstrapInventoryAccounts(
     if (!root) throw new InventoryNotFoundError(`Book root account not found: ${bookRootGuid}`);
     const currency = await resolvePostingCurrency(tx, bookRootGuid);
 
-    const assetGuid = await findOrCreateAccount('Inventory', bookRootGuid, currency.guid, tx);
-    await tx.accounts.update({
-      where: { guid: assetGuid },
-      data: { account_type: 'ASSET', placeholder: 0, description: 'Inventory on hand' },
-    });
+    const resolved = new Map<string, string>();
+    const missing: Array<(typeof INVENTORY_BOOTSTRAP_SPECS)[number]> = [];
 
-    const cogsGuid = await findOrCreateAccount('Cost of Goods Sold', bookRootGuid, currency.guid, tx);
-    await tx.accounts.update({
-      where: { guid: cogsGuid },
-      data: { account_type: 'EXPENSE', placeholder: 0, description: 'Cost of Goods Sold' },
-    });
+    // ---- Phase 2 — coerce the accounts that already exist. Row locks only,
+    // taken with no sibling-name lock held.
+    for (const spec of INVENTORY_BOOTSTRAP_SPECS) {
+      const existing = await tx.accounts.findFirst({
+        where: { parent_guid: bookRootGuid, name: spec.name },
+        select: { guid: true },
+      });
+      if (!existing) {
+        missing.push(spec);
+        continue;
+      }
+      await tx.accounts.update({
+        where: { guid: existing.guid },
+        data: { account_type: spec.type, placeholder: 0, description: spec.description },
+      });
+      resolved.set(spec.key, existing.guid);
+    }
 
-    result = { assetAccountGuid: assetGuid, cogsAccountGuid: cogsGuid };
+    // ---- Phase 3 — claim and INSERT what is missing. No row lock beyond
+    // this point: these accounts are created with their final type, so there
+    // is nothing left to coerce.
+    // Canonical order (src/lib/account-lock-order.ts), not the order the spec
+    // list happens to be written in: these are book-root children, so another
+    // multi-key holder can want the same names, and only a shared order keeps
+    // the two off a wait-for cycle.
+    for (const spec of sortByLockOrder(missing, ({ name }) => ({ bookRootGuid, path: [name] }))) {
+      await acquireAccountNameLock(tx, bookRootGuid, spec.name, {
+        bookRootGuid,
+        path: [spec.name],
+      });
+      const won = await tx.accounts.findFirst({
+        where: { parent_guid: bookRootGuid, name: spec.name },
+        select: { guid: true },
+      });
+      if (won) {
+        // Adopted from a concurrent creator, and it may carry the wrong type
+        // — which is a row UPDATE, forbidden from under this name lock.
+        throw new SiblingKeyAdoptedError(spec.name);
+      }
+      const guid = generateGuid();
+      await tx.accounts.create({
+        data: {
+          guid,
+          name: spec.name,
+          account_type: spec.type,
+          commodity_guid: currency.guid,
+          commodity_scu: 100,
+          non_std_scu: 0,
+          parent_guid: bookRootGuid,
+          code: '',
+          description: spec.description,
+          hidden: 0,
+          placeholder: 0,
+        },
+      });
+      resolved.set(spec.key, guid);
+    }
+
+    return {
+      assetAccountGuid: resolved.get('asset')!,
+      cogsAccountGuid: resolved.get('cogs')!,
+    };
   });
-  return result!;
+
+  return withAdoptionRetry(attempt);
 }
 
 // ---------------------------------------------------------------------------

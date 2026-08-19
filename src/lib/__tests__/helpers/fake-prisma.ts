@@ -7,6 +7,8 @@
  */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
+import { createAvgBasisHistoryFake, type AvgBasisHistoryFake } from './fake-avg-basis-history';
+
 export type Rec = Record<string, any>;
 
 function eqVal(a: any, b: any): boolean {
@@ -357,10 +359,16 @@ export class FakePrisma {
     },
   };
 
-  // Raw SQL entry points: the lot engine uses these only for row locking and
-  // the enter_date token bump — both irrelevant to this fake's assertions.
-  $queryRaw = async () => [];
-  $executeRaw = async () => 0;
+  // Raw SQL entry points. Row locking and the enter_date token bump are
+  // irrelevant to this fake's assertions and fall through to the defaults; the
+  // app-owned average-cost history table has no Prisma model, so it is served
+  // by a per-instance in-memory stand-in (fresh with every `new FakePrisma()`).
+  avgBasisHistory: AvgBasisHistoryFake = createAvgBasisHistoryFake();
+  $executeRawUnsafe = async () => 0;
+  $queryRaw = async (strings: TemplateStringsArray, ...values: unknown[]) =>
+    this.avgBasisHistory.query(strings, values) ?? [];
+  $executeRaw = async (strings: TemplateStringsArray, ...values: unknown[]) =>
+    this.avgBasisHistory.execute(strings, values) ?? 0;
 
   $transaction = async (fn: any) => {
     return fn(this);

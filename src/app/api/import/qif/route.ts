@@ -314,6 +314,7 @@ export async function POST(request: NextRequest) {
             newAccountParentGuid,
         };
         const baseContext = {
+            bookGuid: roleResult.bookGuid,
             bookRootGuid: rootGuid,
             bookAccountGuids: bookGuids,
             accounts,

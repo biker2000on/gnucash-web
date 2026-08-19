@@ -23,6 +23,9 @@ export default defineConfig({
       // every developer and every CI run that has no TEST_DATABASE_URL, which
       // is the default and correct state for the unit tier.
       'src/**/*.integration.{test,spec}.{js,mjs,cjs,ts,mts,cts,jsx,tsx}',
+      // This proof provisions its own Docker PostgreSQL instance, so it has a
+      // dedicated node-only config rather than inheriting this jsdom setup.
+      'src/**/*.docker.test.ts',
     ],
     coverage: {
       provider: 'v8',

@@ -8,6 +8,26 @@ Covers work landed since 0.23.2.0 (2026-07-29).
 
 ### ⚠️ Behavior changes you should read before upgrading
 
+- **Mortgage detection now treats material multi-draw and HELOC activity as an
+  estimate.** A book with a $50,000 initial draw followed by an $80,000 draw
+  previously reported a $50,000 original amount, 7.06% rate, and high
+  confidence. It now reports $130,000, 2.45%, and low confidence with an
+  explanation, preventing the first draw from being treated as the whole loan.
+  All same-day opening credits are included in principal, including ordinary
+  split-recorded openings and closing costs. Identical same-day opening credits
+  in separate transactions are also included, but produce a warning because
+  they may be a duplicated import and can overstate principal. Later credits
+  are assessed individually against opening principal, so recurring small
+  servicing charges do not accumulate into a draw. A credit must exceed 2%
+  *and* be at least $10,000 before it increases principal and marks the result
+  estimated. Any absorbed credit at least 0.5% of opening principal is
+  disclosed, without lowering confidence; the $10,000 floor applies only to
+  materiality. A genuine second draw below $10,000 can therefore remain
+  absorbed (for example, an $8,000 draw on a $50,000 HELOC), but is disclosed
+  because its reported APR may be overstated. Credits individually below 0.5%
+  remain silent even when their aggregate is large. The displayed principal,
+  APR, and confidence can change for HELOC and small-loan users.
+
 - **Unposting an invoice or bill now records a reversing transaction instead of
   deleting the original posting.** The ledger keeps both entries — the original
   and its reversal, which cancel out — and the invoice returns to draft. The
@@ -946,7 +966,7 @@ Closes every "worth building" gap from the GnuCash desktop parity audit
 - **"Since Last Run" batch mode**: contextual amber banner in the Upcoming view shows overdue count with a "Process All" button that batch-executes all overdue occurrences
 - **Enable/disable toggle**: interactive toggle switch on each scheduled transaction row replaces the static enabled/disabled badge. Optimistic UI with rollback on failure.
 - **Create new scheduled transactions**: slide-over panel with name, recurrence pattern (all 9 GnuCash period types), start/end dates, multi-split account picker, auto-create/notify options. Creates full GnuCash template structure (root account, child accounts, slot mappings, template transaction/splits, schedxaction, recurrence)
-- **Mortgage dynamic amounts**: `MortgageService.computePaymentForDate()` computes principal/interest splits from current balance and detected rate for mortgage-linked scheduled transactions
+- **Mortgage dynamic amounts**: `MortgageService.computePaymentForDate()` provides a reusable principal/interest split calculation from current balance and detected rate; it is not yet wired to scheduled-transaction posting
 - **Account editing modal**: notes, tax_related, retirement flags, reparenting support in account service
 - Concurrency protection prevents double-execution when processing scheduled transactions from multiple tabs
 - 18 new tests covering execute/skip, create, and mortgage payment computation

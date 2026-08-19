@@ -10,7 +10,11 @@ vi.mock('../db', () => ({
     withDatabaseAdvisoryLock: mocks.withDatabaseAdvisoryLock,
 }));
 
-import { initializeDatabase } from '../db-init';
+import {
+    ACCOUNTS_SIBLING_NAME_DROP_LOCK_TIMEOUT,
+    initializeDatabase,
+    isRetiredAccountsSiblingNameIndex,
+} from '../db-init';
 
 describe('initializeDatabase', () => {
     beforeEach(() => {
@@ -57,14 +61,6 @@ describe('initializeDatabase', () => {
         expect(commodities).toContain('RAISE WARNING');
         expect(commodities).not.toContain('DELETE FROM');
 
-        // H4/H7: sibling account names — partial (root accounts have NULL
-        // parent_guid), skip+warn on dirty data.
-        const accounts = sqls.find((s) => s.includes('uq_accounts_parent_name'));
-        expect(accounts).toBeDefined();
-        expect(accounts).toContain('WHERE parent_guid IS NOT NULL');
-        expect(accounts).toContain('RAISE WARNING');
-        expect(accounts).not.toContain('DELETE FROM');
-
         // H3: SimpleFin import dedup key — duplicate imports are real
         // transactions the user must reconcile manually, so skip+warn.
         const simplefin = sqls.find((s) => s.includes('uq_txn_meta_simplefin_id'));
@@ -92,6 +88,169 @@ describe('initializeDatabase', () => {
         // Deliberately absent: a unique on slots(obj_guid, name) would break
         // GnuCash KVP list slots, which legitimately repeat names.
         expect(sqls.some((s) => /CREATE UNIQUE INDEX[^;]*\bslots\b/i.test(s))).toBe(false);
+    });
+
+    it('never creates a unique index on accounts(parent_guid, name), and drops one an earlier release created', async () => {
+        await initializeDatabase();
+
+        const sqls = mocks.query.mock.calls.map((c) => String(c[0]));
+
+        // The key is NOT unique on a healthy book: createTemplateContents
+        // inserts one child account per split of a scheduled transaction, all
+        // named '' under that transaction's template root. A unique index makes
+        // every multi-split scheduled transaction fail with 23505 — in this app
+        // and in GnuCash desktop against the same database.
+        expect(sqls.some((s) => /CREATE UNIQUE INDEX[\s\S]*uq_accounts_parent_name/.test(s)))
+            .toBe(false);
+        expect(sqls.some((s) => /CREATE UNIQUE INDEX[^;]*\baccounts\b[^;]*parent_guid/i.test(s)))
+            .toBe(false);
+
+        // And it is actively retired, because a previous release created it
+        // on any book that happened to have no multi-split scheduled
+        // transaction at startup. The drop is bounded and self-verifying:
+        // see the dedicated block below.
+        const drop = sqls.find(
+            (s) => s.includes('DROP INDEX') && s.includes('uq_accounts_parent_name'),
+        );
+        expect(drop).toBeDefined();
+
+        // Report-only. The rejected alternative renamed the "losing" duplicate
+        // siblings, which (a) would have renamed template children on every
+        // healthy book and (b) is unsafe regardless: personal-import.ts,
+        // qif/importer.ts and settlement-import.service.ts all resolve accounts
+        // BY NAME, so a rename can redirect a later import into a different
+        // ledger account.
+        expect(sqls.some((s) => /UPDATE accounts SET name/i.test(s))).toBe(false);
+        expect(sqls.some((s) => s.includes('accounts-sibling-name-disambiguate'))).toBe(false);
+    });
+
+    it('bounds the retired-index drop and refuses to destroy an index it did not create', async () => {
+        await initializeDatabase();
+
+        const drop = mocks.query.mock.calls
+            .map((c) => String(c[0]))
+            .find((s) => s.includes('DROP INDEX') && s.includes('uq_accounts_parent_name'));
+        expect(drop).toBeDefined();
+
+        // Bounded: the init advisory lock only excludes competing INITIALIZERS.
+        // A live app request or a GnuCash desktop session holds ACCESS SHARE on
+        // `accounts`, and an unbounded DROP would queue behind it — with every
+        // later request queueing behind the DROP. A timeout turns a wedged
+        // startup into a logged retry.
+        expect(drop).toContain('SET LOCAL lock_timeout');
+        expect(drop).toContain(ACCOUNTS_SIBLING_NAME_DROP_LOCK_TIMEOUT);
+
+        // Identity is re-checked INSIDE the statement, not just app-side: the
+        // inspect query runs on another pooled connection, so authorizing there
+        // and dropping here would be a TOCTOU window in destructive DDL.
+        expect(drop).toContain('i.indisunique');
+        expect(drop).toContain('i.indexprs IS NULL');
+        expect(drop).toContain("to_regclass('accounts')");
+        expect(drop).toContain('USING btree (parent_guid, name)');
+        expect(drop).toContain('pg_constraint');
+
+        // Name alone is never sufficient authority to drop.
+        expect(drop).not.toContain('DROP INDEX IF EXISTS uq_accounts_parent_name;');
+    });
+
+    it('leaves a same-named index alone when it is not the one this app created', async () => {
+        const foreign = {
+            index_name: 'uq_accounts_parent_name',
+            table_name: 'public.accounts',
+            indexdef:
+                "CREATE UNIQUE INDEX uq_accounts_parent_name ON public.accounts " +
+                "USING btree (parent_guid, name) WHERE (name <> ''::text)",
+            is_unique: true,
+            is_partial: true,
+            has_expressions: false,
+            backs_constraint: false,
+        };
+        mocks.query.mockImplementation(async (sql: string) =>
+            String(sql).includes('pg_get_indexdef') ? { rows: [foreign], rowCount: 1 } : { rows: [] },
+        );
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+        await initializeDatabase();
+
+        // An operator's partial index wearing the retired name is somebody
+        // else's object. Report it; never delete it.
+        expect(mocks.query.mock.calls
+            .map((c) => String(c[0]))
+            .some((s) => s.includes('DROP INDEX') && s.includes('uq_accounts_parent_name')))
+            .toBe(false);
+        expect(warn.mock.calls.flat().join(' ')).toContain('is NOT the index this app retired');
+        warn.mockRestore();
+    });
+
+    it('recognizes only the exact index an earlier release created', () => {
+        const ours = {
+            index_name: 'uq_accounts_parent_name',
+            table_name: 'public.accounts',
+            indexdef:
+                'CREATE UNIQUE INDEX uq_accounts_parent_name ON public.accounts ' +
+                'USING btree (parent_guid, name)',
+            is_unique: true,
+            is_partial: false,
+            has_expressions: false,
+            backs_constraint: false,
+        };
+        // The shape every release that built this index actually built —
+        // partial, excluding the NULL-parent root rows.
+        const shipped = {
+            ...ours,
+            is_partial: true,
+            indexdef: `${ours.indexdef} WHERE (parent_guid IS NOT NULL)`,
+        };
+        expect(isRetiredAccountsSiblingNameIndex(ours)).toBe(true);
+        expect(isRetiredAccountsSiblingNameIndex(shipped)).toBe(true);
+        expect(isRetiredAccountsSiblingNameIndex({ ...ours, is_unique: false })).toBe(false);
+        expect(isRetiredAccountsSiblingNameIndex({ ...shipped, is_unique: false })).toBe(false);
+        // A DIFFERENT predicate is an operator's index, not ours.
+        expect(isRetiredAccountsSiblingNameIndex({
+            ...shipped,
+            indexdef: `${ours.indexdef} WHERE (name <> ''::text)`,
+        })).toBe(false);
+        expect(isRetiredAccountsSiblingNameIndex({ ...ours, has_expressions: true })).toBe(false);
+        expect(isRetiredAccountsSiblingNameIndex({ ...ours, backs_constraint: true })).toBe(false);
+        // Right shape, wrong table — and a table whose name merely ENDS in the
+        // right letters is not `accounts` either.
+        expect(isRetiredAccountsSiblingNameIndex({
+            ...ours,
+            table_name: 'public.other_table',
+            indexdef: ours.indexdef.replace('accounts', 'other_table'),
+        })).toBe(false);
+        expect(isRetiredAccountsSiblingNameIndex({ ...ours, table_name: 'public.sub_accounts' })).toBe(false);
+        // Different column list.
+        expect(isRetiredAccountsSiblingNameIndex({
+            ...ours,
+            indexdef: ours.indexdef.replace('(parent_guid, name)', '(name, parent_guid)'),
+        })).toBe(false);
+    });
+
+    it('reports duplicate real sibling names while structurally ignoring template accounts', async () => {
+        await initializeDatabase();
+
+        const sqls = mocks.query.mock.calls.map((c) => String(c[0]));
+        const report = sqls.find((s) => s.includes('AS dupes') && s.includes('template_forest'));
+        expect(report).toBeDefined();
+
+        // Structural exclusion — descend the template forest from
+        // books.root_template_guid and from ROOT accounts that are not a book's
+        // real root. NOT a name heuristic: neither 'Template Root' nor
+        // `name = ''` appears, because a user can produce both, and neither
+        // covers the per-transaction template roots.
+        expect(report).toContain('WITH RECURSIVE');
+        expect(report).toContain('b.root_template_guid');
+        expect(report).toContain("a.account_type = 'ROOT'");
+        expect(report).not.toContain('Template Root');
+        expect(report).not.toMatch(/name\s*(=|<>)\s*''/);
+
+        // A root_template_guid that is also a book's real root is ignored, so
+        // the report cannot classify a real tree as templates.
+        expect(report).toContain('b2.root_account_guid = b.root_template_guid');
+
+        // Read-only.
+        expect(report).not.toMatch(/UPDATE |DELETE |INSERT |DROP /);
     });
 
     it('creates the new performance indexes and no longer creates retired ones', async () => {

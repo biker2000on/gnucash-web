@@ -78,6 +78,14 @@ jobs:
       - name: Run integration tests
         run: npm run test:integration
 
+      # This test provisions a second, self-contained PostgreSQL container via
+      # docker's explicit default context. It does not share TEST_DATABASE_URL,
+      # so keeping it separate preserves the integration tier's no-truncate
+      # contract while still making the Prisma adapter error-shape proof a CI
+      # gate.
+      - name: Run Prisma deadlock oracle proof
+        run: npm run test:prisma-deadlock-oracle
+
       - name: Run lint
         run: npm run lint
 

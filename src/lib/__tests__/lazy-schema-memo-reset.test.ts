@@ -45,6 +45,9 @@ const HELPERS: Array<[string, () => Promise<{ ensure: () => Promise<void> }>]> =
   ['webhook-idempotency', async () => ({
     ensure: (await import('../webhook-idempotency')).ensureWebhookIdempotencyTable,
   })],
+  ['avg-basis-history', async () => ({
+    ensure: (await import('../avg-basis-history')).ensureAvgBasisHistoryTable,
+  })],
 ];
 
 describe.each(HELPERS)('%s ensure memo', (_name, load) => {

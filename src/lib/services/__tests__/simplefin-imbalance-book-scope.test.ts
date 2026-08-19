@@ -9,6 +9,10 @@ const mocks = vi.hoisted(() => ({
   prisma: {} as Record<string, unknown>,
   acquireNamedXactLock: vi.fn(),
   accountNameLockKey: vi.fn((parent: string, name: string) => `account:${parent}:${name}`),
+  // Unused by the Imbalance path, but the service imports it: a mock missing a
+  // real export fails as `undefined is not a function` the day this file grows
+  // a case that reaches the symbol-commodity path.
+  commodityLockKey: vi.fn((namespace: string, mnemonic: string) => `commodity:${namespace}:${mnemonic}`),
   guid: 0,
 }));
 
@@ -17,9 +21,13 @@ vi.mock('@/lib/prisma', () => ({
   generateGuid: () => `new-${++mocks.guid}`.padEnd(32, '0'),
 }));
 
-vi.mock('@/lib/book-lock', () => ({
+vi.mock('@/lib/book-lock', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/book-lock')>()),
   acquireNamedXactLock: mocks.acquireNamedXactLock,
+  // The account-key funnel in account-lock-order.ts locks through this.
+  acquireAccountKeyLockUnchecked: mocks.acquireNamedXactLock,
   accountNameLockKey: mocks.accountNameLockKey,
+  commodityLockKey: mocks.commodityLockKey,
 }));
 
 import { getOrCreateImbalanceAccount } from '../simplefin-sync.service';

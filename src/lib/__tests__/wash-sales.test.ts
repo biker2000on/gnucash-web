@@ -27,8 +27,8 @@ vi.mock('../prisma', () => ({
 vi.mock('../db', () => ({
   tryWithDatabaseAdvisoryLock: vi.fn(),
 }));
-vi.mock('../book-lock', () => ({
-  BookBusyError: class BookBusyError extends Error {},
+vi.mock('../book-lock', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../book-lock')>()),
   bookLockKey: vi.fn(() => 'lock'),
   tryAcquireBookLock: vi.fn(),
 }));

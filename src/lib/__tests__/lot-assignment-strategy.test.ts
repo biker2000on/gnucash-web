@@ -210,6 +210,13 @@ const { db, fakePrisma, resetDb } = vi.hoisted(() => {
     slots: slotsApi,
     $queryRaw: async () => [],
     $executeRaw: async () => 0,
+    // Provisioning DDL for the app-owned average-cost write-history table.
+    // This fake does not back that table: nothing here reads a lot's write
+    // history, only the live `avg_cost_basis_remaining` slot the engine still
+    // mirrors it into, which the slots fake above serves. The history itself
+    // is covered by lot-assignment-average-cost.test.ts and, against real
+    // PostgreSQL, by avg-basis-history.integration.test.ts.
+    $executeRawUnsafe: async () => 0,
   };
 
   function fakeTx() {
@@ -223,8 +230,8 @@ vi.mock('../prisma', () => ({ default: fakePrisma }));
 vi.mock('../db', () => ({
   tryWithDatabaseAdvisoryLock: vi.fn(),
 }));
-vi.mock('../book-lock', () => ({
-  BookBusyError: class BookBusyError extends Error {},
+vi.mock('../book-lock', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../book-lock')>()),
   bookLockKey: vi.fn(() => 'lock'),
   tryAcquireBookLock: vi.fn(async () => true),
 }));
@@ -334,15 +341,27 @@ describe('per-sale LIFO replay', () => {
   });
 });
 
-describe('average-cost labeling', () => {
-  it('states that assignment falls back to FIFO instead of claiming average gains', async () => {
+describe('average cost — method reporting', () => {
+  it('reports the method it actually used, with no FIFO fallback warning', async () => {
     addTrade('2024-01-01', 10, 1000);
     addTrade('2024-02-01', -5, 600);
 
     const result = await autoAssignLots(STOCK_ACCT, 'average');
 
-    expect(result.method).toContain('average cost not implemented');
-    expect(result.warnings.join(' ')).toMatch(/used FIFO/i);
+    expect(result.method).toBe('average');
+    expect(result.warnings.join(' ')).not.toMatch(/not implemented|used FIFO/i);
+  });
+
+  it('still consumes lots oldest-first, so the holding period is FIFO', async () => {
+    // Treas. Reg. §1.1012-1(e)(7)(ii): under the average-basis method shares
+    // are deemed sold in the order acquired. Basis is pooled; ORDER is not.
+    addTrade('2024-01-01', 10, 1000);
+    addTrade('2024-06-01', 10, 2000);
+    const sellGuid = addTrade('2024-07-01', -5, 1100);
+
+    await autoAssignLots(STOCK_ACCT, 'average');
+
+    expect(lotTitle(lotOfSplit(sellGuid))).toBe('Buy 2024-01-01');
   });
 });
 

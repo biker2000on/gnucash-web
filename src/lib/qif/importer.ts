@@ -52,6 +52,7 @@ export interface QifPlanOptions {
 }
 
 export interface QifPlanContext {
+    bookGuid: string;
     bookRootGuid: string;
     /** All account guids belonging to the active book (membership validation) */
     bookAccountGuids: string[];
@@ -119,6 +120,10 @@ export interface QifCategoryMapping {
 }
 
 export interface QifImportPlan {
+    /** The book being imported into — the executor's serialization key. */
+    bookGuid: string;
+    /** Book root: anchors the canonical lock order of every planned path. */
+    bookRootGuid: string;
     currencyGuid: string;
     accountsToCreate: PlannedAccountCreate[];
     transactions: PlannedTransaction[];
@@ -587,6 +592,8 @@ export function planQifImport(
     }
 
     return {
+        bookGuid: context.bookGuid,
+        bookRootGuid: context.bookRootGuid,
         currencyGuid: options.currencyGuid,
         accountsToCreate: Array.from(accountsToCreate.values()),
         transactions,
@@ -605,17 +612,41 @@ export function planQifImport(
 const CHUNK = 2000;
 
 /**
- * Create an account path via findOrCreateAccount, then fix the account_type
- * of any segments that were newly created (findOrCreateAccount defaults
- * them to INCOME).
+ * The BOOK-ROOT-RELATIVE path of a planned account, which is what orders its
+ * sibling-key claims (src/lib/account-lock-order.ts).
+ *
+ * `planned.path` is relative to `planned.anchorGuid`, which the user may have
+ * chosen; `displayPath` is the same path prefixed with the anchor's own
+ * fullname, so it is already root-relative.
+ */
+function plannedLockPath(planned: PlannedAccountCreate): string[] {
+    return planned.displayPath.split(':');
+}
+
+/** The prefix that leads from the book root down to a plan's anchor. */
+function plannedAnchorPrefix(planned: PlannedAccountCreate): string[] {
+    const full = plannedLockPath(planned);
+    return full.slice(0, full.length - planned.path.split(':').length);
+}
+
+/**
+ * Create an account path via findOrCreateAccountDetailed, then fix the
+ * account_type of the segments it actually inserted (they default to INCOME).
  */
 async function createPlannedAccount(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     tx: any,
     planned: PlannedAccountCreate,
     currencyGuid: string,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    findOrCreateAccount: (path: string, root: string, currency: string, tx?: any) => Promise<string>
+    bookRootGuid: string,
+    findOrCreateAccountDetailed: (
+        path: string,
+        root: string,
+        currency: string,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        tx?: any,
+        order?: { bookRootGuid: string; prefix: readonly string[] },
+    ) => Promise<{ guid: string; createdGuids: string[] }>
 ): Promise<{ guid: string; created: number }> {
     const segments = planned.path.split(':');
 
@@ -632,36 +663,36 @@ async function createPlannedAccount(
         existingDepth++;
     }
 
-    const leafGuid = await findOrCreateAccount(planned.path, planned.anchorGuid, currencyGuid, tx);
+    const { guid: leafGuid, createdGuids } = await findOrCreateAccountDetailed(
+        planned.path,
+        planned.anchorGuid,
+        currencyGuid,
+        tx,
+        { bookRootGuid, prefix: plannedAnchorPrefix(planned) },
+    );
 
-    // Re-walk to collect the guids of newly created segments and set their type.
-    if (existingDepth < segments.length) {
-        let walkGuid = planned.anchorGuid;
-        const newGuids: string[] = [];
-        for (let i = 0; i < segments.length; i++) {
-            const row = await tx.accounts.findFirst({
-                where: { name: segments[i], parent_guid: walkGuid },
-                select: { guid: true },
-            });
-            if (!row) break;
-            walkGuid = row.guid;
-            if (i >= existingDepth) newGuids.push(row.guid);
-        }
-        if (newGuids.length > 0) {
-            await tx.accounts.updateMany({
-                where: { guid: { in: newGuids } },
-                data: { account_type: planned.accountType },
-            });
-        }
-        return { guid: leafGuid, created: segments.length - existingDepth };
+    // Type the segments this transaction INSERTED — never one it merely
+    // adopted from a concurrent creator. The walk above is still holding the
+    // sibling-name lock of every segment it created, so a row lock taken here
+    // on a row belonging to another transaction runs the lock hierarchy
+    // backwards; see `SiblingKeyAdoptedError` in src/lib/book-lock.ts. An
+    // adopted segment keeps the type its creator gave it, which is also the
+    // better outcome: this import did not make that account.
+    if (createdGuids.length > 0) {
+        await tx.accounts.updateMany({
+            where: { guid: { in: createdGuids } },
+            data: { account_type: planned.accountType },
+        });
     }
-    return { guid: leafGuid, created: 0 };
+    return { guid: leafGuid, created: segments.length - existingDepth };
 }
 
 export async function executeQifImport(plan: QifImportPlan): Promise<QifImportResult> {
     // Lazy imports keep this module DB-free for unit tests of the planner.
     const { default: prisma } = await import('@/lib/prisma');
-    const { generateGuid, fromDecimal, findOrCreateAccount } = await import('@/lib/gnucash');
+    const { generateGuid, fromDecimal, findOrCreateAccountDetailed } = await import('@/lib/gnucash');
+    const { acquireBookLock } = await import('@/lib/book-lock');
+    const { sortByLockOrder } = await import('@/lib/account-lock-order');
 
     const result: QifImportResult = {
         accountsCreated: 0,
@@ -671,14 +702,43 @@ export async function executeQifImport(plan: QifImportPlan): Promise<QifImportRe
 
     await prisma.$transaction(
         async (tx) => {
-            // 1. Create accounts (few of them; sequential is fine)
+            // Serialize the whole import against other book-level work, the
+            // XML importer included (src/lib/gnucash-xml/importer.ts).
+            //
+            // The account set here is walked from USER INPUT — the order the
+            // QIF file happens to list its accounts and categories in. Two
+            // concurrent imports of two different files into one book would
+            // therefore claim shared sibling keys in whatever order their
+            // authors typed them: file A creating "Groceries" then "Utilities"
+            // while file B creates them the other way round is an ABBA
+            // deadlock on the two `account:(parent, name)` keys, and Postgres
+            // resolves it by aborting one import with SQLSTATE 40P01.
+            //
+            // Sorting below fixes the ordering; the book lock is what makes it
+            // unnecessary to reason about the interleaving at all. An import is
+            // a heavyweight, user-initiated operation, and two of them running
+            // into one book at once have nothing to gain from interleaving.
+            await acquireBookLock(tx, plan.bookGuid, 'qif-import');
+
+            // 1. Create accounts (few of them; sequential is fine).
+            //
+            // In canonical lock order (src/lib/account-lock-order.ts). Sorting
+            // whole paths yields the tree's pre-order, which is exactly the
+            // order `findOrCreateAccountDetailed` claims segments in as it
+            // descends — so a claim can never run backwards past one this
+            // transaction already holds.
             const newAccountGuids = new Map<string, string>();
-            for (const planned of plan.accountsToCreate) {
+            const orderedAccounts = sortByLockOrder(plan.accountsToCreate, (planned) => ({
+                bookRootGuid: plan.bookRootGuid,
+                path: plannedLockPath(planned),
+            }));
+            for (const planned of orderedAccounts) {
                 const { guid, created } = await createPlannedAccount(
                     tx,
                     planned,
                     plan.currencyGuid,
-                    findOrCreateAccount
+                    plan.bookRootGuid,
+                    findOrCreateAccountDetailed
                 );
                 newAccountGuids.set(planned.key, guid);
                 result.accountsCreated += created;

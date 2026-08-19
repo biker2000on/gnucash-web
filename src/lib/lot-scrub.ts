@@ -29,6 +29,15 @@ import { isLongTerm } from './holding-period';
 import { isOwnAccountCommodityTransfer } from './account-transfer';
 import { allocateTradeFees, NO_TRADE_FEES, type TradeFeeBySplit } from './trade-fees';
 import {
+  AvgBasisHistoryRepairRequiredError,
+  appendAvgBasisHistory,
+  isCorruptBasisValue,
+  popAvgBasisHistoryTopForRun,
+  readAvgBasisHistory,
+  replaceAvgBasisHistory,
+  type AvgBasisWrite,
+} from './avg-basis-history';
+import {
   assertSplitsNotProtected,
   lockTransactionsForSplits,
 } from './services/reconciled-split.service';
@@ -54,6 +63,472 @@ import {
  * fail-closed behaviour, not a silent pass.
  */
 export const PARENT_SPLIT_SLOT = 'gnucash_web_parent_split';
+
+/**
+ * Slot recording the AVERAGE-COST basis of the shares disposed by one split.
+ *
+ * Written per DISPOSAL split (sell or transfer-out, original splits and
+ * scrub-created sub-splits alike) by the average-cost replay in
+ * lot-assignment.ts, which knows the pooled basis-per-share AS OF that
+ * disposal's date. Everything downstream — generateCapitalGains, the lot
+ * summaries in @/lib/lots, and the Form 8949 rows in
+ * @/lib/reports/capital-gains — reads THIS number instead of pro-rating the
+ * lot's own buy cost, so a book scrubbed under the average-cost election
+ * reports average-cost gains everywhere rather than in one place.
+ *
+ * The amount is FEE-INCLUSIVE: buy-side commissions are capitalized into the
+ * pool at the moment shares enter it (IRS Pub. 550 — a commission adjusts
+ * basis, it is not deductible), which is what pooling means. Consumers must
+ * therefore NOT add buy-side fees again on top of this value; sell-side fees
+ * still reduce proceeds at the consumer, exactly as for a FIFO lot.
+ *
+ * Absence of the slot means "this disposal was not priced by the average-cost
+ * method" and every consumer falls back to its existing per-lot pro-rata
+ * basis, so FIFO/LIFO books are untouched.
+ */
+export const AVG_COST_BASIS_SLOT = 'avg_cost_basis';
+
+/**
+ * Slot recording a still-OPEN lot's remaining pooled basis after an
+ * average-cost scrub (shares remaining × the pool's final basis-per-share).
+ *
+ * Under pooling every open lot shares one basis-per-share, so a lot's own buy
+ * cost stops describing the basis of the shares it still holds the moment a
+ * later buy at a different price re-averages the pool. This slot is what lets
+ * `totalCost` / `unrealizedGain` in @/lib/lots stay consistent with the
+ * realized numbers instead of reverting to per-lot cost for the open side.
+ * Fee-inclusive for the same reason as AVG_COST_BASIS_SLOT.
+ */
+export const AVG_BASIS_REMAINING_SLOT = 'avg_cost_basis_remaining';
+
+/**
+ * RUN PROVENANCE for the two slots above — companion rows naming the scrub run
+ * that wrote the value they sit beside.
+ *
+ * ## Why provenance is needed at all
+ *
+ * `avg_cost_basis` records a FILED tax number: the basis of the shares one
+ * disposal sold. Without an owner recorded on the row, the only handle a
+ * cleanup has is the ACCOUNT — so reverting run B deleted run A's slots too,
+ * and run A's historic Form 8949 sale silently fell back to per-lot basis.
+ * A reversible action on an unrelated run rewrote a filed return, with no
+ * error and no visible symptom.
+ *
+ * ## Why the run id lives in a SEPARATE slot NAME, not on the artefact's owner
+ *
+ * The obvious fix — tag the disposal split with `gnucash_web_generated =
+ * runId`, the marker the rest of the engine uses — is WRONG and must never be
+ * reintroduced: revertScrubRun treats every `gnucash_web_generated` row as a
+ * generated entity and DELETES it, so tagging the user's own sell split would
+ * delete the user's transaction data on revert. (A one-lot sale is assigned
+ * directly to the user's split — see splitSellAcrossLots — so the average-cost
+ * slot genuinely does land on user-authored rows.)
+ *
+ * The discriminator is therefore the slot NAME. `avg_cost_basis_run` is in a
+ * namespace nothing else queries: the generated-entity sweep looks up
+ * `name: 'gnucash_web_generated'`, never matches these rows, and so can never
+ * mistake their owner for a generated row. Only the average-cost cleanup reads
+ * them, and it deletes slots — never splits, lots, or transactions.
+ *
+ * That gives all three required properties:
+ *   (a) identifies the writing run — the companion's string_val IS the runId;
+ *   (b) scopes cleanup to one run — `where name = <run slot>, string_val =
+ *       runId` enumerates exactly that run's slots, so a revert leaves every
+ *       other run's numbers standing;
+ *   (c) cannot promote a user row to "generated" — the marker is a different
+ *       slot name from the generated-entity marker, and its consumers only
+ *       ever delete slot rows.
+ */
+export const AVG_COST_BASIS_RUN_SLOT = 'avg_cost_basis_run';
+
+/** Run that wrote a lot's `avg_cost_basis_remaining`. See AVG_COST_BASIS_RUN_SLOT. */
+export const AVG_BASIS_REMAINING_RUN_SLOT = 'avg_cost_basis_remaining_run';
+
+/**
+ * The `avg_cost_basis_remaining` values earlier runs wrote and later runs
+ * DISPLACED — the whole history, oldest first, each entry naming its own run.
+ *
+ * The disposal slot is written once and never re-priced (a run only processes
+ * UNASSIGNED splits, so a disposal an earlier run already assigned is never
+ * revisited). A still-open lot is different: every average-cost run re-prices
+ * every open lot it can see, so run B overwrites run A's number on a lot run A
+ * created.
+ *
+ * Deleting on revert is then not enough. If reverting B merely dropped the
+ * lot's slot, the lot would fall back to `computeCarriedBasis` — its own buy
+ * cost — while run A's surviving disposal slot still says the pool already
+ * spent part of that cost. The two would double-count basis and understate
+ * every future gain, again with no symptom. So a displaced value is kept and
+ * restored when its displacer is reverted.
+ *
+ * ## Why a HISTORY and not a single displaced value
+ *
+ * One `_prev` pair can only ever describe one write, and reverts are neither
+ * depth-bounded nor ordered. With A=$100, B=$200, C=$300 on one lot, C's write
+ * displaced B and overwrote B's record of A; reverting C then B restored $200
+ * and then nothing, and the lot fell through to per-lot basis with run A's
+ * disposal slot still standing — the double-count above, reached from a
+ * two-step undo that reported success at every step.
+ *
+ * Ownership is therefore recorded PER WRITE rather than per slot: the lot
+ * carries the full stack of (run, value) writes, its top materialized into
+ * `avg_cost_basis_remaining` for readers. Reverting a run drops that run's
+ * entries wherever they sit in the stack and re-materializes the new top. That
+ * is correct at any depth (nothing is overwritten, so nothing is lost) and in
+ * any order (an entry is identified by its owner, not by its position), and it
+ * cannot resurrect an already-reverted run's number, because that run's entry
+ * was removed when it was reverted.
+ *
+ * ## THIS SLOT IS LEGACY — the history moved to an app-owned table
+ *
+ * The stack used to live here, as one JSON array in one slot row. That shape
+ * was forced by `slots`: it has no uniqueness or ordering column to lean on,
+ * and GnuCash desktop folds duplicate names on an object into a single KVP
+ * entry, so a multi-row history in `slots` would be silently truncated by a
+ * round trip through the desktop app.
+ *
+ * But `slots.string_val` is VARCHAR(4096), so the stack could hold only some
+ * 48-80 writes; past that the code DROPPED the oldest entries and logged a
+ * `console.warn`. Reverting an old run then fell back to per-lot basis, which
+ * is the wrong-number-on-a-filed-return this provenance exists to prevent,
+ * merely relocated to depth — and a warning in a server log is not a signal a
+ * user can act on. Worse, one JSON document means one malformed character
+ * erases the ENTIRE stack.
+ *
+ * The history therefore lives in `gnucash_web_avg_basis_history` — one row per
+ * write, no ceiling, one damaged row costing one entry — which is app-owned
+ * and so outside anything GnuCash desktop reads or reformats. The slot below
+ * is no longer written; it is still READ, so a book last touched by an older
+ * deploy keeps its history, and adopted into the table on first read. The
+ * startup migration in db-init.ts carries the rest over in bulk.
+ *
+ * @see avg-basis-history.ts
+ */
+export const AVG_BASIS_REMAINING_PREV_SLOT = 'avg_cost_basis_remaining_prev';
+
+/**
+ * LEGACY owner companion of a single-value `avg_cost_basis_remaining_prev`.
+ *
+ * Never written any more — an entry's owner now travels inside the history
+ * above. Still read (so a stash written before the history existed keeps its
+ * owner) and still swept, so no stale row survives a revert.
+ */
+export const AVG_BASIS_REMAINING_PREV_RUN_SLOT = 'avg_cost_basis_remaining_prev_run';
+
+/** Every slot name the average-cost election writes onto a disposal split. */
+export const AVG_SPLIT_SLOT_NAMES = [
+  AVG_COST_BASIS_SLOT,
+  AVG_COST_BASIS_RUN_SLOT,
+] as const;
+
+/** Every slot name the average-cost election writes onto a lot. */
+export const AVG_LOT_SLOT_NAMES = [
+  AVG_BASIS_REMAINING_SLOT,
+  AVG_BASIS_REMAINING_RUN_SLOT,
+  AVG_BASIS_REMAINING_PREV_SLOT,
+  AVG_BASIS_REMAINING_PREV_RUN_SLOT,
+] as const;
+
+/** Slot value formatting shared by both average-cost writers. */
+const formatBasis = (basis: number): string => String(Math.round(basis * 1e6) / 1e6);
+
+/** First matching slot's string value, or null. */
+async function readSlotString(
+  objGuid: string,
+  name: string,
+  tx: PrismaTx,
+): Promise<string | null> {
+  const row = await tx.slots.findFirst({
+    where: { obj_guid: objGuid, name },
+    select: { string_val: true },
+  });
+  return row?.string_val ?? null;
+}
+
+/**
+ * Write (or overwrite) a disposal split's average-cost basis slot, stamped
+ * with the run that computed it.
+ */
+export async function writeAvgCostBasis(
+  splitGuid: string,
+  basis: number,
+  runId: string,
+  tx: PrismaTx,
+): Promise<void> {
+  await tx.slots.deleteMany({
+    where: { obj_guid: splitGuid, name: { in: [...AVG_SPLIT_SLOT_NAMES] } },
+  });
+  await tx.slots.create({
+    data: {
+      obj_guid: splitGuid,
+      name: AVG_COST_BASIS_SLOT,
+      slot_type: 4,
+      string_val: formatBasis(basis),
+    },
+  });
+  await tx.slots.create({
+    data: {
+      obj_guid: splitGuid,
+      name: AVG_COST_BASIS_RUN_SLOT,
+      slot_type: 4,
+      string_val: runId,
+    },
+  });
+}
+
+export type { AvgBasisWrite };
+export { AvgBasisHistoryRepairRequiredError, isCorruptBasisValue };
+
+/**
+ * Parse a LEGACY JSON history document out of {@link AVG_BASIS_REMAINING_PREV_SLOT}.
+ *
+ * Retained for exactly two callers: the first-read adoption in
+ * {@link readAvgBasisWrites}, and the revert-time scan that has to find an
+ * un-adopted book's stashes by owner. Nothing writes this shape any more.
+ *
+ * Tolerant of the PRE-HISTORY shape a book may also carry: a bare number in
+ * the slot, its owner in the legacy `_prev_run` companion.
+ *
+ * A document that will not parse yields NO entries here. That is not a silent
+ * fallback: the caller adopts what it can and the live slot is untouched, and
+ * a lot whose pooled value is genuinely unrecoverable raises
+ * {@link AvgBasisHistoryRepairRequiredError} rather than quietly reverting to
+ * per-lot basis.
+ */
+export function decodeAvgBasisHistory(
+  raw: string | null,
+  legacyRun: string | null,
+): AvgBasisWrite[] {
+  if (raw === null || raw === '') return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    parsed = null;
+  }
+  if (Array.isArray(parsed)) {
+    const out: AvgBasisWrite[] = [];
+    for (const entry of parsed) {
+      if (typeof entry !== 'object' || entry === null) continue;
+      const { run, value } = entry as { run?: unknown; value?: unknown };
+      if (typeof value !== 'string') continue;
+      const write: AvgBasisWrite = { run: typeof run === 'string' ? run : null, value };
+      if (isCorruptBasisValue(value)) write.corrupt = true;
+      out.push(write);
+    }
+    return out;
+  }
+  // Pre-history single stash: the whole slot was the number.
+  if (!Number.isFinite(parseFloat(raw))) return [];
+  return [{ run: legacyRun, value: raw }];
+}
+
+/**
+ * Carry a legacy JSON slot history into the table, once, for one lot.
+ *
+ * Runs on first read of a lot whose history the bulk startup migration has
+ * not reached — an app process that writes before `initializeDatabase()` has
+ * run, or a database restored from an older deploy. The legacy slots are
+ * deleted afterwards so there is never a second source of truth.
+ */
+async function adoptLegacyAvgBasisHistory(
+  lotGuid: string,
+  tx: PrismaTx,
+): Promise<AvgBasisWrite[]> {
+  const legacyRaw = await readSlotString(lotGuid, AVG_BASIS_REMAINING_PREV_SLOT, tx);
+  const legacyRun = await readSlotString(lotGuid, AVG_BASIS_REMAINING_PREV_RUN_SLOT, tx);
+  const stack = decodeAvgBasisHistory(legacyRaw, legacyRun);
+
+  const current = await readSlotString(lotGuid, AVG_BASIS_REMAINING_SLOT, tx);
+  if (current !== null) {
+    const top: AvgBasisWrite = {
+      run: await readSlotString(lotGuid, AVG_BASIS_REMAINING_RUN_SLOT, tx),
+      value: current,
+    };
+    if (isCorruptBasisValue(current)) top.corrupt = true;
+    stack.push(top);
+  }
+
+  if (stack.length > 0) await replaceAvgBasisHistory(lotGuid, stack, tx);
+  if (legacyRaw !== null || legacyRun !== null) {
+    await tx.slots.deleteMany({
+      where: {
+        obj_guid: lotGuid,
+        name: { in: [AVG_BASIS_REMAINING_PREV_SLOT, AVG_BASIS_REMAINING_PREV_RUN_SLOT] },
+      },
+    });
+  }
+  return stack;
+}
+
+/**
+ * Every pooled-basis write a lot carries, oldest first. The last entry is the
+ * live value mirrored into `avg_cost_basis_remaining`.
+ *
+ * Reads the durable table. A lot with nothing there yet is adopted from the
+ * legacy JSON slots on the spot, so no book loses its history to a deploy.
+ */
+export async function readAvgBasisWrites(
+  lotGuid: string,
+  tx: PrismaTx,
+): Promise<AvgBasisWrite[]> {
+  const stored = await readAvgBasisHistory(lotGuid, tx);
+  if (stored.length > 0) return stored;
+  return adoptLegacyAvgBasisHistory(lotGuid, tx);
+}
+
+/**
+ * Replace a lot's pooled-basis writes with exactly this stack: the whole stack
+ * into the durable table, its top entry mirrored into the live slots every
+ * reader looks at. An empty stack leaves the lot with no average-cost state.
+ *
+ * A stack whose TOP is unreadable is refused. Writing it would put a
+ * non-numeric string where `lots.ts`, `openingBasisForExistingLot` and Form
+ * 8949 expect a basis, and every one of them would quietly fall back to the
+ * lot's own purchase cost — a wrong number on a filed return, produced by an
+ * operation reporting success. The entry is left exactly as stored so a repair
+ * can see it.
+ */
+export async function writeAvgBasisWrites(
+  lotGuid: string,
+  stack: readonly AvgBasisWrite[],
+  tx: PrismaTx,
+): Promise<void> {
+  const top = stack.length > 0 ? stack[stack.length - 1] : null;
+  if (top !== null && (top.corrupt || isCorruptBasisValue(top.value))) {
+    throw new AvgBasisHistoryRepairRequiredError(
+      lotGuid,
+      `the pooled basis that would become live is not a number: ${JSON.stringify(top.value)}`,
+    );
+  }
+
+  await replaceAvgBasisHistory(lotGuid, stack, tx);
+  await tx.slots.deleteMany({
+    where: { obj_guid: lotGuid, name: { in: [...AVG_LOT_SLOT_NAMES] } },
+  });
+  if (top === null) return;
+  await materializeAvgBasisTop(lotGuid, top, tx);
+}
+
+/** Mirror the top of the stack into the slots every reader uses. */
+async function materializeAvgBasisTop(
+  lotGuid: string,
+  top: AvgBasisWrite,
+  tx: PrismaTx,
+): Promise<void> {
+  await tx.slots.create({
+    data: {
+      obj_guid: lotGuid,
+      name: AVG_BASIS_REMAINING_SLOT,
+      slot_type: 4,
+      string_val: top.value,
+    },
+  });
+  // A legacy value has no owner; it is restored exactly as it was found.
+  if (top.run !== null) {
+    await tx.slots.create({
+      data: {
+        obj_guid: lotGuid,
+        name: AVG_BASIS_REMAINING_RUN_SLOT,
+        slot_type: 4,
+        string_val: top.run,
+      },
+    });
+  }
+}
+
+/**
+ * Record this run's remaining pooled basis for an open lot, pushing whatever
+ * value it displaces onto the lot's write history rather than over it.
+ *
+ * One INSERT plus the slot mirror, whatever the depth — the stack is never
+ * read back or rewritten wholesale on this path.
+ */
+export async function writeAvgBasisRemaining(
+  lotGuid: string,
+  basis: number,
+  runId: string,
+  tx: PrismaTx,
+): Promise<void> {
+  // A lot still carrying its history in the legacy slots is adopted first, so
+  // this run's write lands on top of that history instead of beside it.
+  await readAvgBasisWrites(lotGuid, tx);
+
+  const entry: AvgBasisWrite = { run: runId, value: formatBasis(basis) };
+  // This run touching the same lot twice is one write, not two: the second
+  // value supersedes the first, and both would be dropped by the same revert.
+  await popAvgBasisHistoryTopForRun(lotGuid, runId, tx);
+  await appendAvgBasisHistory(lotGuid, entry, tx);
+
+  await tx.slots.deleteMany({
+    where: { obj_guid: lotGuid, name: { in: [...AVG_LOT_SLOT_NAMES] } },
+  });
+  await materializeAvgBasisTop(lotGuid, entry, tx);
+}
+
+/**
+ * The pooled basis a reader should use for an open lot, or a refusal.
+ *
+ * The live slot is the fast path and is what every other reader consults. This
+ * is the one place that also asks whether the slot's ABSENCE is meaningful: a
+ * lot with recorded writes but no live value has lost its pooled basis, and
+ * the caller's fallback (the lot's own purchase cost) would double-count basis
+ * an earlier run's disposal slot already says was spent. That is refused
+ * rather than guessed.
+ *
+ * Returns null when the lot has no average-cost state at all — a lot the
+ * average method has never seen, where the per-lot fallback is correct.
+ */
+export async function readLiveAvgBasisRemaining(
+  lotGuid: string,
+  tx: PrismaTx,
+): Promise<number | null> {
+  const raw = await readSlotString(lotGuid, AVG_BASIS_REMAINING_SLOT, tx);
+  if (raw !== null && !isCorruptBasisValue(raw)) return parseFloat(raw);
+
+  const stack = await readAvgBasisWrites(lotGuid, tx);
+  if (stack.length === 0) return null;
+  const top = stack[stack.length - 1];
+  if (top.corrupt || isCorruptBasisValue(top.value)) {
+    throw new AvgBasisHistoryRepairRequiredError(
+      lotGuid,
+      `its most recent pooled-basis write is not a number: ${JSON.stringify(top.value)}`,
+    );
+  }
+  if (raw === null) {
+    throw new AvgBasisHistoryRepairRequiredError(
+      lotGuid,
+      'its live pooled basis is missing while its write history survives',
+    );
+  }
+  throw new AvgBasisHistoryRepairRequiredError(
+    lotGuid,
+    `its live pooled basis is not a number: ${JSON.stringify(raw)}`,
+  );
+}
+
+/** Batch-read `avg_cost_basis` slots for the given splits. Missing = absent. */
+export async function readAvgCostBasisForSplits(
+  splitGuids: string[],
+  tx: PrismaTx,
+): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  if (splitGuids.length === 0) return out;
+  // `?? []` for the same reason the rest of this module carries it: mocked
+  // Prisma clients in tests return undefined for queries they do not stub.
+  const rows = (await tx.slots.findMany({
+    where: { obj_guid: { in: splitGuids }, name: AVG_COST_BASIS_SLOT },
+    select: { obj_guid: true, name: true, string_val: true },
+  })) ?? [];
+  for (const row of rows) {
+    // Defensive against a test double that ignores the where clause: only an
+    // actual average-cost slot may switch a gain onto the pooled basis.
+    if (row.name !== undefined && row.name !== AVG_COST_BASIS_SLOT) continue;
+    const parsed = row.string_val ? parseFloat(row.string_val) : NaN;
+    if (Number.isFinite(parsed)) out.set(row.obj_guid, parsed);
+  }
+  return out;
+}
 
 /** Tag a generated sub-split with its run and the parent it was carved from. */
 async function tagGeneratedSubSplit(
@@ -178,6 +653,16 @@ export interface SplitSellResult {
   subSplitsCreated: string[];
   /** Lots the sell was assigned to */
   lotsUsed: string[];
+  /**
+   * One entry per lot this disposal actually consumed, naming the SPLIT row
+   * that carries those shares (the original split for the first allocation,
+   * a generated sub-split for the rest). The average-cost replay needs this
+   * mapping to record each row's pooled basis; deriving it by index from
+   * `subSplitsCreated` would break on the oversell remainder, which is a
+   * sub-split with no lot. The un-allocatable oversell remainder is
+   * deliberately absent — it consumed no lot and has no basis.
+   */
+  allocations: Array<{ splitGuid: string; lotGuid: string; shares: number }>;
   /** Warning if sell exceeds all lot balances */
   warning?: string;
 }
@@ -403,14 +888,14 @@ export async function splitSellAcrossLots(
   const remainingSell = Math.abs(sellQty);
 
   if (remainingSell < qtyEpsilon) {
-    return { subSplitsCreated: [], lotsUsed: [], warning: 'Sell quantity is zero' };
+    return { subSplitsCreated: [], lotsUsed: [], allocations: [], warning: 'Sell quantity is zero' };
   }
 
   // Filter lots with shares > 0
   const availableLots = openLots.filter(l => l.shares > qtyEpsilon);
 
   if (availableLots.length === 0) {
-    return { subSplitsCreated: [], lotsUsed: [], warning: 'No open lots available' };
+    return { subSplitsCreated: [], lotsUsed: [], allocations: [], warning: 'No open lots available' };
   }
 
   // Determine how many lots are needed
@@ -442,7 +927,11 @@ export async function splitSellAcrossLots(
     });
     // Mutate shares in-place
     alloc.lot.shares -= alloc.shares;
-    return { subSplitsCreated: [], lotsUsed: [alloc.lot.guid] };
+    return {
+      subSplitsCreated: [],
+      lotsUsed: [alloc.lot.guid],
+      allocations: [{ splitGuid: sellSplitGuid, lotGuid: alloc.lot.guid, shares: alloc.shares }],
+    };
   }
 
   // Multiple lots needed — save original qty/val as slots for revert, then create sub-splits
@@ -496,6 +985,7 @@ export async function splitSellAcrossLots(
   const valueSign = sellVal < 0 ? -1 : 1;
   const subSplitsCreated: string[] = [];
   const lotsUsed: string[] = [];
+  const allocationRows: SplitSellResult['allocations'] = [];
   const qtyDenom = Number(sellSplit.quantity_denom);
   const valDenom = Number(sellSplit.value_denom);
 
@@ -544,6 +1034,11 @@ export async function splitSellAcrossLots(
   });
   firstAlloc.lot.shares -= firstAlloc.shares;
   lotsUsed.push(firstAlloc.lot.guid);
+  allocationRows.push({
+    splitGuid: sellSplitGuid,
+    lotGuid: firstAlloc.lot.guid,
+    shares: firstAlloc.shares,
+  });
 
   let usedQtyNum = firstQty.num;
   let usedValNum = firstVal.num;
@@ -570,8 +1065,9 @@ export async function splitSellAcrossLots(
     usedQtyNum += subQty.num;
     usedValNum += subVal.num;
 
-    await createSubSplit(subQty, subVal, alloc.lot.guid);
+    const subGuid = await createSubSplit(subQty, subVal, alloc.lot.guid);
     lotsUsed.push(alloc.lot.guid);
+    allocationRows.push({ splitGuid: subGuid, lotGuid: alloc.lot.guid, shares: alloc.shares });
     alloc.lot.shares -= alloc.shares;
   }
 
@@ -599,7 +1095,7 @@ export async function splitSellAcrossLots(
     );
   }
 
-  return { subSplitsCreated, lotsUsed, warning };
+  return { subSplitsCreated, lotsUsed, allocations: allocationRows, warning };
 }
 
 // ---------------------------------------------------------------------------
@@ -985,25 +1481,44 @@ function sharesOutBeforeSplit(splits: LotOutflowInput[], splitGuid?: string): nu
  * carried_basis / shares. A recorded transfer value is not purchase cost and
  * must not create a step-up.
  *
- * Pass `sourceSplitGuid` (the transfer-out split this basis is leaving on) so
+ * Pass `sourceSplit` (the transfer-out split this basis is leaving on) so
  * repeated partial transfers out of one lot conserve the basis exactly rather
  * than each rounding their own slice — see apportionCarriedBasis.
  *
  * Returns null when the source lot has no incoming shares to derive a basis
  * from (nothing to carry).
+ *
+ * AVERAGE COST: when the source account was scrubbed under the average-cost
+ * election, the transfer-out split carries the pooled basis of exactly these
+ * shares in its `avg_cost_basis` slot (written by the source account's replay,
+ * which runs first — scrubAllAccounts orders accounts topologically by
+ * transfer dependency). That number, not the source lot's own buy cost, is
+ * what leaves the pool, so it is preferred whenever present. Pass
+ * `sourceSplit` to enable this; omit it and the per-lot pro-rata rule below
+ * applies unchanged, which is what FIFO/LIFO books get.
  */
 export async function computeCarriedBasis(
   sourceLotGuid: string,
   transferredShares: number,
   tx: PrismaTx,
-  sourceSplitGuid?: string,
+  sourceSplit?: { guid: string; shares: number },
 ): Promise<number | null> {
+  if (sourceSplit) {
+    const avgBasis = (await readAvgCostBasisForSplits([sourceSplit.guid], tx)).get(sourceSplit.guid);
+    if (avgBasis !== undefined) {
+      const splitShares = Math.abs(sourceSplit.shares);
+      // Normally the transfer-in allocation equals the source split's own
+      // quantity; scale defensively so a differing allocation carries its
+      // proportionate slice rather than the whole split's basis.
+      return splitShares > 0 ? avgBasis * (transferredShares / splitShares) : avgBasis;
+    }
+  }
   const source = await readSourceLotBasis(sourceLotGuid, tx);
   if (!source) return null;
   return apportionCarriedBasis({
     totalBasis: source.totalBasis,
     boughtShares: source.boughtShares,
-    sharesOutBefore: sharesOutBeforeSplit(source.splits, sourceSplitGuid),
+    sharesOutBefore: sharesOutBeforeSplit(source.splits, sourceSplit?.guid),
     shares: transferredShares,
   });
 }
@@ -1268,14 +1783,25 @@ async function reconcileOneTransferLevel(
       if (txGuid && !lotByTx.has(txGuid)) lotByTx.set(txGuid, destLotGuid);
     }
 
+    // Average-cost books: a transfer-out split carries the pooled basis of
+    // exactly the shares that left on it (see computeCarriedBasis). That is
+    // the slice, not a re-apportionment of the lot's own buy cost.
+    const avgBasisByOutflow = await readAvgCostBasisForSplits(
+      source.splits.map(split => split.guid),
+      tx,
+    );
+
     let sharesOut = 0;
     for (const outflow of orderLotOutflows(source.splits)) {
-      const slice = apportionCarriedBasis({
-        totalBasis: source.totalBasis,
-        boughtShares: source.boughtShares,
-        sharesOutBefore: sharesOut,
-        shares: outflow.shares,
-      });
+      const avgBasis = avgBasisByOutflow.get(outflow.guid);
+      const slice = avgBasis !== undefined
+        ? avgBasis
+        : apportionCarriedBasis({
+            totalBasis: source.totalBasis,
+            boughtShares: source.boughtShares,
+            sharesOutBefore: sharesOut,
+            shares: outflow.shares,
+          });
       sharesOut += outflow.shares;
 
       const destLotGuid = lotBySourceSplit.get(outflow.guid) ?? lotByTx.get(outflow.txGuid);
@@ -1409,9 +1935,10 @@ export async function linkTransferToLot(
     // backdated outflow moves ahead of it.
     const transferQty = toDecimalNumber(split.quantity_num, split.quantity_denom);
     if (transferQty > 0) {
-      const carried = await computeCarriedBasis(
-        sourceSplit.lot_guid, transferQty, tx, sourceSplit.guid,
-      );
+      const carried = await computeCarriedBasis(sourceSplit.lot_guid, transferQty, tx, {
+        guid: sourceSplit.guid,
+        shares: toDecimalNumber(sourceSplit.quantity_num, sourceSplit.quantity_denom),
+      });
       await writeCarriedBasisSlot(lotGuid, carried, tx);
     }
 
@@ -1575,8 +2102,8 @@ export async function splitTransferAcrossSourceLots(
 
   interface Allocation {
     sourceLotGuid: string;
-    /** The transfer-out split this allocation draws from, for basis apportionment. */
-    sourceSplitGuid: string;
+    /** The transfer-OUT split these shares left through (average-cost basis source). */
+    sourceSplit: { guid: string; shares: number };
     shares: number;
   }
   const totalSourceQty = lottedSourceSplits.reduce(
@@ -1585,7 +2112,7 @@ export async function splitTransferAcrossSourceLots(
 
   const allocations: Allocation[] = lottedSourceSplits.map(s => ({
     sourceLotGuid: s.lot_guid!,
-    sourceSplitGuid: s.guid,
+    sourceSplit: { guid: s.guid, shares: toDecimalNumber(s.quantity_num, s.quantity_denom) },
     shares: (Math.abs(toDecimalNumber(s.quantity_num, s.quantity_denom)) / totalSourceQty) * transferQty,
   }));
 
@@ -1594,7 +2121,7 @@ export async function splitTransferAcrossSourceLots(
     sourceLotGuid: string,
     postDate: Date | null | undefined,
     allocShares: number,
-    sourceSplitGuid: string,
+    sourceSplit: { guid: string; shares: number },
   ): Promise<string> {
     const lotGuid = generateGuid();
     await tx.lots.create({
@@ -1634,12 +2161,12 @@ export async function splitTransferAcrossSourceLots(
         obj_guid: lotGuid,
         name: SOURCE_SPLIT_SLOT,
         slot_type: 4,
-        string_val: sourceSplitGuid,
+        string_val: sourceSplit.guid,
       },
     });
 
     if (allocShares > 0) {
-      const carried = await computeCarriedBasis(sourceLotGuid, allocShares, tx, sourceSplitGuid);
+      const carried = await computeCarriedBasis(sourceLotGuid, allocShares, tx, sourceSplit);
       await writeCarriedBasisSlot(lotGuid, carried, tx);
     }
 
@@ -1743,9 +2270,7 @@ export async function splitTransferAcrossSourceLots(
 
   // First allocation reuses the original split
   const firstAlloc = allocations[0];
-  const firstLotGuid = await createDestLot(
-    firstAlloc.sourceLotGuid, split.transaction?.post_date, firstAlloc.shares, firstAlloc.sourceSplitGuid,
-  );
+  const firstLotGuid = await createDestLot(firstAlloc.sourceLotGuid, split.transaction?.post_date, firstAlloc.shares, firstAlloc.sourceSplit);
   lotGuids.push(firstLotGuid);
 
   const firstQty = fromDecimal(firstAlloc.shares, qtyDenom);
@@ -1771,9 +2296,7 @@ export async function splitTransferAcrossSourceLots(
   for (let i = 1; i < allocations.length; i++) {
     const alloc = allocations[i];
     const isLast = i === allocations.length - 1;
-    const lotGuid = await createDestLot(
-      alloc.sourceLotGuid, split.transaction?.post_date, alloc.shares, alloc.sourceSplitGuid,
-    );
+    const lotGuid = await createDestLot(alloc.sourceLotGuid, split.transaction?.post_date, alloc.shares, alloc.sourceSplit);
     lotGuids.push(lotGuid);
 
     let subQty: { num: bigint; denom: bigint };
@@ -2179,7 +2702,10 @@ export async function assignAdjustmentToLots(
  *
  * Basis: a destination lot's `carried_basis` slot (written by the transfer
  * linking functions) counts as additional basis. Mixed lots (partial sale +
- * transfer-out) realize only the SOLD shares' pro-rata gain.
+ * transfer-out) realize only the SOLD shares' pro-rata gain. Under the
+ * AVERAGE-COST election every sell split instead carries its own pooled basis
+ * in an `avg_cost_basis` slot and that number is used verbatim — see
+ * AVG_COST_BASIS_SLOT and the replay in @/lib/lot-assignment.
  *
  * Commissions: the classified trade fees of the lot's own trades
  * (@/lib/trade-fees, the same allocator both money reports call) are netted
@@ -2343,8 +2869,22 @@ export async function generateCapitalGains(
     (sum, s) => sum + feeOf(s), 0,
   );
 
+  // AVERAGE COST: the disposal splits carry the pooled basis of exactly the
+  // shares they disposed, priced as of their own dates by the replay in
+  // lot-assignment.ts. That number replaces every per-lot pro-rata rule below
+  // — under pooling a lot's own buy cost does not describe the basis of the
+  // shares sold out of it. Requiring EVERY sell split to carry the slot keeps
+  // a partially re-scrubbed lot (some sells priced by average, some not) on
+  // the legacy path rather than silently mixing two bases in one gain.
+  const avgBasisBySplit = await readAvgCostBasisForSplits(sellSplits.map(s => s.guid), tx);
+  const isAverageCostLot =
+    sellSplits.length > 0 && sellSplits.every(s => avgBasisBySplit.has(s.guid));
+
   let gainLoss: number;
-  if (transferOutSplits.length === 0 && Math.abs(carriedBasis) < 0.005) {
+  if (isAverageCostLot) {
+    const avgBasisTotal = sellSplits.reduce((sum, s) => sum + (avgBasisBySplit.get(s.guid) ?? 0), 0);
+    gainLoss = saleProceeds - avgBasisTotal;
+  } else if (transferOutSplits.length === 0 && Math.abs(carriedBasis) < 0.005) {
     gainLoss = -lot.splits.reduce(
       (sum, s) => sum + toDecimalNumber(s.value_num, s.value_denom),
       0,
@@ -2681,7 +3221,17 @@ export async function generateCapitalGains(
       taxClassification === 'TAX_DEFERRED'
         ? `Income:Capital Gains:Tax-Deferred:${periodLabel}`
         : `Income:Capital Gains:${periodLabel}`;
-    gainsAccountGuid = await findOrCreateAccount(gainsAccountPath, rootGuid, currencyGuid, tx);
+    // A scrub closes many lots in one transaction and each closed lot lands
+    // here, so a run that closes a short-term lot before a long-term one
+    // claims the two sibling leaves in the wrong order. Registered rather than
+    // fixed: ordering the loop needs the per-lot holding period, which is
+    // computed halfway through this function's own work. See
+    // UNORDERED_CLAIM_SITES in src/lib/account-lock-order.ts.
+    gainsAccountGuid = await findOrCreateAccount(gainsAccountPath, rootGuid, currencyGuid, tx, {
+      bookRootGuid: rootGuid,
+      prefix: [],
+      unorderedSite: 'lot-scrub:capital-gains',
+    });
   }
 
   // Split VALUES are denominated in the transaction currency's fraction;
