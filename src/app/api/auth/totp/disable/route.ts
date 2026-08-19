@@ -11,6 +11,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { requireAuth } from '@/lib/auth';
 import { disableTotp } from '@/lib/totp-store';
+import { validationErrorResponse } from '@/lib/api-validation';
 
 const DisableSchema = z.object({
     code: z.string().max(64).optional().default(''),
@@ -24,10 +25,7 @@ export async function POST(request: NextRequest) {
         const body = await request.json().catch(() => ({}));
         const parseResult = DisableSchema.safeParse(body);
         if (!parseResult.success) {
-            return NextResponse.json(
-                { error: 'Validation failed', errors: parseResult.error.issues },
-                { status: 400 }
-            );
+            return validationErrorResponse(parseResult);
         }
 
         const ok = await disableTotp(authResult.user.id, parseResult.data.code);

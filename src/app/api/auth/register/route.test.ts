@@ -91,4 +91,18 @@ describe('POST /api/auth/register', () => {
         expect(response.status).toBe(400);
         expect(mocks.registerUser).not.toHaveBeenCalled();
     });
+
+    // Regression: the route used to answer every failed parse with a generic
+    // `error: 'Validation failed'`, and the shared client reader surfaces `error`
+    // first — so the field-level detail in `errors` never reached the user.
+    it('names the offending field in the top-level error string', async () => {
+        mocks.count.mockResolvedValue(0);
+
+        const response = await POST(request({ username: 'someone', password: 'short' }));
+        const body = await response.json();
+
+        expect(response.status).toBe(400);
+        expect(body.error).toBe('password: Password must be at least 8 characters');
+        expect(body.errors[0].path).toEqual(['password']);
+    });
 });

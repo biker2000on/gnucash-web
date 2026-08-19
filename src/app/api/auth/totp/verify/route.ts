@@ -14,6 +14,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createSession } from '@/lib/auth';
 import { verifyLogin } from '@/lib/totp-store';
+import { validationErrorResponse } from '@/lib/api-validation';
 import {
     readTotpChallenge,
     clearTotpChallenge,
@@ -30,10 +31,7 @@ export async function POST(request: NextRequest) {
         const body = await request.json();
         const parseResult = VerifySchema.safeParse(body);
         if (!parseResult.success) {
-            return NextResponse.json(
-                { error: 'Validation failed', errors: parseResult.error.issues },
-                { status: 400 }
-            );
+            return validationErrorResponse(parseResult);
         }
 
         const challenge = await readTotpChallenge();

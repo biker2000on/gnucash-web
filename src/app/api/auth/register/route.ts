@@ -3,6 +3,7 @@ import { registerUser, createSession } from '@/lib/auth';
 import { z } from 'zod';
 import prisma from '@/lib/prisma';
 import { grantRole } from '@/lib/services/permission.service';
+import { validationErrorResponse } from '@/lib/api-validation';
 
 const RegisterSchema = z.object({
     username: z.string().min(3, 'Username must be at least 3 characters').max(50),
@@ -20,10 +21,7 @@ export async function POST(request: NextRequest) {
         const parseResult = RegisterSchema.safeParse(body);
 
         if (!parseResult.success) {
-            return NextResponse.json(
-                { error: 'Validation failed', errors: parseResult.error.issues },
-                { status: 400 }
-            );
+            return validationErrorResponse(parseResult);
         }
 
         const { username, password } = parseResult.data;

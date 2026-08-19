@@ -11,6 +11,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { requireAuth } from '@/lib/auth';
 import { confirmEnrollment } from '@/lib/totp-store';
+import { validationErrorResponse } from '@/lib/api-validation';
 
 const ConfirmSchema = z.object({
     code: z.string().min(1, 'Code is required').max(16),
@@ -24,10 +25,7 @@ export async function POST(request: NextRequest) {
         const body = await request.json();
         const parseResult = ConfirmSchema.safeParse(body);
         if (!parseResult.success) {
-            return NextResponse.json(
-                { error: 'Validation failed', errors: parseResult.error.issues },
-                { status: 400 }
-            );
+            return validationErrorResponse(parseResult);
         }
 
         const result = await confirmEnrollment(authResult.user.id, parseResult.data.code);

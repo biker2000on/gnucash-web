@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { requireRole } from '@/lib/auth';
 import { enqueueJob } from '@/lib/queue/queues';
 import { auditAndBackfillPrices } from '@/lib/price-service';
+import { validationErrorResponse } from '@/lib/api-validation';
 
 const AuditPricesSchema = z.object({
   symbols: z.array(z.string()).optional(),
@@ -23,10 +24,7 @@ export async function POST(request: NextRequest) {
       const parseResult = AuditPricesSchema.safeParse(body);
 
       if (!parseResult.success) {
-        return NextResponse.json(
-          { error: 'Validation failed', errors: parseResult.error.issues },
-          { status: 400 }
-        );
+        return validationErrorResponse(parseResult);
       }
 
       symbols = parseResult.data.symbols;

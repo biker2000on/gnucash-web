@@ -9,6 +9,7 @@ import {
     recordLoginFailure,
 } from '@/lib/login-throttle';
 import { z } from 'zod';
+import { validationErrorResponse } from '@/lib/api-validation';
 
 const LoginSchema = z.object({
     username: z.string().min(1, 'Username is required'),
@@ -21,10 +22,7 @@ export async function POST(request: NextRequest) {
         const parseResult = LoginSchema.safeParse(body);
 
         if (!parseResult.success) {
-            return NextResponse.json(
-                { error: 'Validation failed', errors: parseResult.error.issues },
-                { status: 400 }
-            );
+            return validationErrorResponse(parseResult);
         }
 
         const { username, password } = parseResult.data;
