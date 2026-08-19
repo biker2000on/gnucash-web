@@ -14,6 +14,7 @@ import { validatePayslipBalance, buildSplitsFromLineItems } from '@/lib/payslip-
 import { upsertTemplate, type PrismaTx } from '@/lib/payslips';
 import { assertNotLocked, assertTxnMutable } from '@/lib/services/period-lock.service';
 import { assertNoReconciledSplits } from '@/lib/services/reconciled-split.service';
+import { getAccountGuidsForBook } from '@/lib/book-scope';
 export type { PayslipSplit } from '@/lib/payslip-splits';
 export { validatePayslipBalance, buildSplitsFromLineItems } from '@/lib/payslip-splits';
 
@@ -338,7 +339,7 @@ export async function postPayslipTransaction(
         // and accounts. Refuse before the delete.
         await assertNoReconciledSplits('replace this deposit with payslip detail', {
           txGuids: [simpleFinMatch],
-        }, { client: tx });
+        }, { client: tx, bookAccountGuids: await getAccountGuidsForBook(bookGuid) });
 
         // Delete the old lump-sum splits
         await tx.$executeRaw`DELETE FROM splits WHERE tx_guid = ${simpleFinMatch}`;

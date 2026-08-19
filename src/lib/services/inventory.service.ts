@@ -36,8 +36,21 @@ import { createNotification, ensureNotificationsTable } from '@/lib/notification
 // Errors (shared by service + engine + API routes)
 // ---------------------------------------------------------------------------
 
-/** Caller-fixable input problem — API routes map to HTTP 400. */
-export class InventoryValidationError extends Error {}
+/**
+ * Caller-fixable input problem — API routes map to HTTP 400.
+ *
+ * `fields` is optional per-field detail, keyed by the INPUT field name
+ * (`incomeAccountGuid`, `cogsAccountGuid`, `assetAccountGuid`, ...). Routes
+ * echo it as `{ error, fields }` so a form can mark the offending inputs
+ * instead of only showing one toast.
+ */
+export class InventoryValidationError extends Error {
+  readonly fields?: Record<string, string>;
+  constructor(message: string, fields?: Record<string, string>) {
+    super(message);
+    this.fields = fields;
+  }
+}
 /** Missing entity — HTTP 404. */
 export class InventoryNotFoundError extends Error {}
 /** Insufficient stock (movement would drive on-hand below zero) — HTTP 409. */
@@ -76,6 +89,16 @@ export interface InventoryItem {
   incomeAccountGuid: string | null;
   cogsAccountGuid: string | null;
   assetAccountGuid: string | null;
+  /**
+   * Whether this item's stock movements post to the GnuCash ledger.
+   *
+   * TRUE (the default, matching the engine's default-on COGS recognition)
+   * means all three posting accounts are REQUIRED and validated when the item
+   * is saved — not discovered at fulfilment time, when the invoice is already
+   * posted and the user is mid-shipment. FALSE is the explicit "this item is
+   * tracked for stock only" mode, where the account guids may stay null.
+   */
+  postToLedger: boolean;
   /**
    * Book-wide moving average cost. Always maintained (even for FIFO items,
    * where it is informational only — FIFO items consume/post at layer cost).
@@ -166,6 +189,8 @@ export interface CreateItemInput {
   incomeAccountGuid?: string | null;
   cogsAccountGuid?: string | null;
   assetAccountGuid?: string | null;
+  /** Defaults to true — see InventoryItem.postToLedger. */
+  postToLedger?: boolean;
   valuationMethod?: ValuationMethod;
   reorderPoint?: number | null;
   reorderQuantity?: number | null;
@@ -180,6 +205,7 @@ export interface UpdateItemInput {
   incomeAccountGuid?: string | null;
   cogsAccountGuid?: string | null;
   assetAccountGuid?: string | null;
+  postToLedger?: boolean;
   valuationMethod?: ValuationMethod;
   reorderPoint?: number | null;
   reorderQuantity?: number | null;
@@ -257,6 +283,7 @@ interface ItemRow {
   income_account_guid: string | null;
   cogs_account_guid: string | null;
   asset_account_guid: string | null;
+  post_to_ledger: boolean;
   avg_cost: unknown;
   valuation_method: string;
   reorder_point: unknown;
@@ -320,6 +347,7 @@ export function mapItemRow(row: ItemRow): InventoryItem {
     incomeAccountGuid: row.income_account_guid,
     cogsAccountGuid: row.cogs_account_guid,
     assetAccountGuid: row.asset_account_guid,
+    postToLedger: row.post_to_ledger !== false,
     avgCost: num(row.avg_cost),
     valuationMethod: row.valuation_method === 'fifo' ? 'fifo' : 'average',
     reorderPoint: numOrNull(row.reorder_point),
@@ -385,7 +413,7 @@ function mapBomRow(row: BomRow, lines: BomLineRow[]): Bom {
 const ITEM_COLS = `
   id, book_guid, sku, name, description, unit, sale_price,
   income_account_guid, cogs_account_guid, asset_account_guid,
-  avg_cost, valuation_method, reorder_point, reorder_quantity,
+  post_to_ledger, avg_cost, valuation_method, reorder_point, reorder_quantity,
   active, created_at, updated_at
 `;
 
@@ -489,6 +517,35 @@ export function ensureInventoryTables(): Promise<void> {
             ADD COLUMN IF NOT EXISTS reorder_quantity NUMERIC;
           ALTER TABLE gnucash_web_inventory_items
             ADD COLUMN IF NOT EXISTS valuation_method VARCHAR(10) NOT NULL DEFAULT 'average';
+
+          -- v3: provenance of a RECONSTRUCTED movement cost. NULL means the
+          -- engine recorded unit_cost at movement time (the normal case); a
+          -- value means db-init's legacy backfill derived it
+          -- ('ledger_cogs' | 'item_avg_cost'). Declared here as well as in
+          -- db-init so a fresh lazily-created table already has it.
+          ALTER TABLE gnucash_web_inventory_movements
+            ADD COLUMN IF NOT EXISTS unit_cost_source VARCHAR(20);
+
+          -- v3: explicit ledger-posting opt-in. New items default to TRUE
+          -- (the engine already posts COGS by default), which makes the three
+          -- posting accounts required at SAVE time. Rows that predate the
+          -- column are backfilled to FALSE when they are not fully
+          -- configured, so an existing stock-only item stays saveable without
+          -- being forced to invent accounts. The backfill is guarded by the
+          -- column's own existence, so it runs exactly once.
+          IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'gnucash_web_inventory_items'
+              AND column_name = 'post_to_ledger'
+          ) THEN
+            ALTER TABLE gnucash_web_inventory_items
+              ADD COLUMN post_to_ledger BOOLEAN NOT NULL DEFAULT true;
+            UPDATE gnucash_web_inventory_items
+               SET post_to_ledger = false
+             WHERE income_account_guid IS NULL
+                OR cogs_account_guid IS NULL
+                OR asset_account_guid IS NULL;
+          END IF;
         END $$;
       `);
     })();
@@ -530,6 +587,144 @@ function validateValuationMethod(value: string | undefined): void {
 }
 
 // ---------------------------------------------------------------------------
+// Ledger posting targets
+// ---------------------------------------------------------------------------
+
+/**
+ * The pool or a $transaction client. Typed as the transaction client because
+ * that is the narrower of the two; the global `prisma` is a structural
+ * superset and is accepted wherever this is required.
+ */
+type PostableAccountClient = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
+
+/**
+ * The account types each posting slot may point at. Mirrors the
+ * `accountTypes` filters the item form's AccountSelector already applies, so
+ * a hand-rolled API call cannot configure what the UI would not let you pick.
+ */
+export const POSTING_ACCOUNT_TYPES = {
+  incomeAccountGuid: ['INCOME'],
+  cogsAccountGuid: ['EXPENSE'],
+  assetAccountGuid: ['ASSET'],
+} as const;
+
+const POSTING_ACCOUNT_LABELS = {
+  incomeAccountGuid: 'Income',
+  cogsAccountGuid: 'COGS',
+  assetAccountGuid: 'Asset',
+} as const;
+
+export type PostingAccountField = keyof typeof POSTING_ACCOUNT_TYPES;
+
+/**
+ * Verify that a ledger posting target belongs to the book being mutated.
+ *
+ * GnuCash accounts have no direct book foreign key: ownership is determined
+ * by walking parent_guid to the ROOT account referenced by books.root_account_guid.
+ *
+ * `expectedTypes`, when supplied, additionally pins the account's type (e.g.
+ * a COGS slot must be an EXPENSE account). It is deliberately optional: the
+ * engine's post-time call sites pass nothing, so an existing book whose
+ * accounts were configured before this check cannot be broken mid-shipment.
+ * Item SAVE-time validation passes it, which is where a mistyped account is
+ * still cheap to fix.
+ */
+export async function assertPostableAccount(
+  tx: PostableAccountClient,
+  guid: string,
+  label: string,
+  expectedBookGuid: string,
+  expectedTypes?: readonly string[],
+): Promise<void> {
+  const accounts = await tx.$queryRaw<Array<{
+    guid: string;
+    account_type: string | null;
+    placeholder: number | null;
+    book_guid: string | null;
+  }>>`
+    WITH RECURSIVE account_ancestors AS (
+      SELECT guid, parent_guid, 1 AS depth
+      FROM accounts
+      WHERE guid = ${guid}
+
+      UNION ALL
+
+      SELECT parent.guid, parent.parent_guid, account_ancestors.depth + 1
+      FROM accounts parent
+      JOIN account_ancestors ON parent.guid = account_ancestors.parent_guid
+      WHERE account_ancestors.depth < 200
+    )
+    SELECT account.guid,
+           account.account_type,
+           account.placeholder,
+           (
+             SELECT book.guid
+             FROM books book
+             JOIN account_ancestors ON account_ancestors.guid = book.root_account_guid
+             LIMIT 1
+           ) AS book_guid
+    FROM accounts account
+    WHERE account.guid = ${guid}
+  `;
+  const account = accounts[0];
+  if (!account) throw new InventoryValidationError(`${label} account not found: ${guid}`);
+  if (account.placeholder === 1) {
+    throw new InventoryValidationError(`${label} account ${guid} is a placeholder`);
+  }
+  if (account.book_guid !== expectedBookGuid) {
+    throw new InventoryValidationError(
+      `${label} account ${guid} belongs to book ${account.book_guid ?? 'none'}, not requested book ${expectedBookGuid}`,
+    );
+  }
+  if (expectedTypes && !expectedTypes.includes(account.account_type ?? '')) {
+    throw new InventoryValidationError(
+      `${label} account ${guid} is a ${account.account_type ?? 'typeless'} account;`
+      + ` expected ${expectedTypes.join(' or ')}`,
+    );
+  }
+}
+
+/**
+ * SAVE-time validation of an item's three posting accounts.
+ *
+ * Called only when the item opts into ledger posting. Every problem across the
+ * three slots is collected into ONE error carrying per-field messages, so the
+ * form marks all offending inputs at once rather than surfacing them one retry
+ * at a time. A non-posting item is free to leave all three null.
+ */
+export async function validatePostingAccounts(
+  bookGuid: string,
+  guids: Record<PostingAccountField, string | null | undefined>,
+): Promise<void> {
+  const fields: Record<string, string> = {};
+
+  for (const field of Object.keys(POSTING_ACCOUNT_TYPES) as PostingAccountField[]) {
+    const guid = guids[field];
+    const label = POSTING_ACCOUNT_LABELS[field];
+    if (!guid) {
+      fields[field] = `${label} account is required when ledger posting is enabled`;
+      continue;
+    }
+    try {
+      await assertPostableAccount(
+        prisma, guid, label, bookGuid, POSTING_ACCOUNT_TYPES[field],
+      );
+    } catch (error) {
+      if (!(error instanceof InventoryValidationError)) throw error;
+      fields[field] = error.message;
+    }
+  }
+
+  if (Object.keys(fields).length === 0) return;
+  throw new InventoryValidationError(
+    `Ledger posting is enabled for this item, so its posting accounts must be set`
+    + ` and valid: ${Object.values(fields).join('; ')}.`
+    + ` Turn ledger posting off to keep this item stock-only.`,
+    fields,
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Items
 // ---------------------------------------------------------------------------
 
@@ -547,14 +742,26 @@ export async function createItem(bookGuid: string, input: CreateItemInput): Prom
   validateNonNegativeOrNull(input.reorderQuantity, 'reorderQuantity');
   validateValuationMethod(input.valuationMethod);
 
+  // Ledger posting is on unless the caller opts out. When it is on, the three
+  // posting accounts are required HERE — not at fulfilment, where the invoice
+  // is already posted and the shipment cannot proceed.
+  const postToLedger = input.postToLedger !== false;
+  if (postToLedger) {
+    await validatePostingAccounts(bookGuid, {
+      incomeAccountGuid: input.incomeAccountGuid,
+      cogsAccountGuid: input.cogsAccountGuid,
+      assetAccountGuid: input.assetAccountGuid,
+    });
+  }
+
   try {
     const rows = await prisma.$queryRawUnsafe<ItemRow[]>(
       `
         INSERT INTO gnucash_web_inventory_items
           (book_guid, sku, name, description, unit, sale_price,
            income_account_guid, cogs_account_guid, asset_account_guid,
-           valuation_method, reorder_point, reorder_quantity)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+           post_to_ledger, valuation_method, reorder_point, reorder_quantity)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
         RETURNING ${ITEM_COLS}
       `,
       bookGuid,
@@ -566,6 +773,7 @@ export async function createItem(bookGuid: string, input: CreateItemInput): Prom
       input.incomeAccountGuid ?? null,
       input.cogsAccountGuid ?? null,
       input.assetAccountGuid ?? null,
+      postToLedger,
       input.valuationMethod ?? 'average',
       input.reorderPoint ?? null,
       input.reorderQuantity ?? null,
@@ -605,6 +813,33 @@ export async function updateItem(
   if (input.reorderQuantity !== undefined) validateNonNegativeOrNull(input.reorderQuantity, 'reorderQuantity');
   validateValuationMethod(input.valuationMethod);
 
+  // Resolve the post-update values first: clearing an account and turning
+  // posting on are both edits that must be judged against the SAVED result,
+  // not against whichever half of the pair happened to be in this request.
+  const incomeAccountGuid =
+    input.incomeAccountGuid !== undefined ? input.incomeAccountGuid : existing.incomeAccountGuid;
+  const cogsAccountGuid =
+    input.cogsAccountGuid !== undefined ? input.cogsAccountGuid : existing.cogsAccountGuid;
+  const assetAccountGuid =
+    input.assetAccountGuid !== undefined ? input.assetAccountGuid : existing.assetAccountGuid;
+  const postToLedger =
+    input.postToLedger !== undefined ? input.postToLedger : existing.postToLedger;
+  // Only re-validate when this request actually touches the posting config.
+  // An item whose account was deleted out from under it in GnuCash must still
+  // be renameable and deactivatable; the moment the user edits its posting
+  // setup (or turns posting on) the full check applies again.
+  const touchesPosting = input.postToLedger !== undefined
+    || input.incomeAccountGuid !== undefined
+    || input.cogsAccountGuid !== undefined
+    || input.assetAccountGuid !== undefined;
+  if (postToLedger && touchesPosting) {
+    await validatePostingAccounts(bookGuid, {
+      incomeAccountGuid,
+      cogsAccountGuid,
+      assetAccountGuid,
+    });
+  }
+
   try {
     const rows = await prisma.$queryRawUnsafe<ItemRow[]>(
       `
@@ -621,6 +856,7 @@ export async function updateItem(
           valuation_method = $12,
           reorder_point = $13,
           reorder_quantity = $14,
+          post_to_ledger = $15,
           updated_at = now()
         WHERE id = $1 AND book_guid = $2
         RETURNING ${ITEM_COLS}
@@ -632,13 +868,14 @@ export async function updateItem(
       input.description !== undefined ? input.description : existing.description,
       input.unit !== undefined ? (input.unit.trim() || 'ea') : existing.unit,
       input.salePrice !== undefined ? input.salePrice : existing.salePrice,
-      input.incomeAccountGuid !== undefined ? input.incomeAccountGuid : existing.incomeAccountGuid,
-      input.cogsAccountGuid !== undefined ? input.cogsAccountGuid : existing.cogsAccountGuid,
-      input.assetAccountGuid !== undefined ? input.assetAccountGuid : existing.assetAccountGuid,
+      incomeAccountGuid,
+      cogsAccountGuid,
+      assetAccountGuid,
       input.active !== undefined ? input.active : existing.active,
       input.valuationMethod !== undefined ? input.valuationMethod : existing.valuationMethod,
       input.reorderPoint !== undefined ? input.reorderPoint : existing.reorderPoint,
       input.reorderQuantity !== undefined ? input.reorderQuantity : existing.reorderQuantity,
+      postToLedger,
     );
     return mapItemRow(rows[0]);
   } catch (error) {

@@ -298,12 +298,14 @@ async function createTwoSplitTxn(
 }
 
 /** Delete a GnuCash transaction with its splits and slots (idempotent). */
-async function deleteTxn(db: PrismaTx, txnGuid: string): Promise<void> {
+async function deleteTxn(db: PrismaTx, bookGuid: string, txnGuid: string): Promise<void> {
     // A reconciled/frozen split pins this transaction to a statement; the
     // package lifecycle must not delete it out from under the reconciliation.
+    // Book-scoped: a txn guid that is not this book's is invisible to the
+    // guard, so its accounts can never be named in the 423 message.
     await assertNoReconciledSplits('delete this transaction', {
         txGuids: [txnGuid],
-    }, { client: db });
+    }, { client: db, bookAccountGuids: await getAccountGuidsForBook(bookGuid) });
 
     // Slots have no FK on obj_guid — split slots must be removed explicitly.
     const splitRows = await db.splits.findMany({
@@ -651,7 +653,7 @@ export async function deleteRedemption(bookGuid: string, redemptionId: number): 
                 select: { post_date: true },
             });
             await assertNotLocked(bookGuid, [txn?.post_date]);
-            await deleteTxn(tx, redemption.txn_guid);
+            await deleteTxn(tx, bookGuid, redemption.txn_guid);
         }
         await tx.gnucash_web_package_redemptions.delete({ where: { id: redemptionId } });
     });
@@ -728,9 +730,9 @@ export async function deletePackage(bookGuid: string, packageId: number): Promis
             await assertNotLocked(bookGuid, txns.map((t) => t.post_date));
         }
         for (const r of pkg.redemptions) {
-            if (r.txn_guid) await deleteTxn(tx, r.txn_guid);
+            if (r.txn_guid) await deleteTxn(tx, bookGuid, r.txn_guid);
         }
-        if (pkg.sale_txn_guid) await deleteTxn(tx, pkg.sale_txn_guid);
+        if (pkg.sale_txn_guid) await deleteTxn(tx, bookGuid, pkg.sale_txn_guid);
         await tx.gnucash_web_packages.delete({ where: { id: packageId } });
     });
 }

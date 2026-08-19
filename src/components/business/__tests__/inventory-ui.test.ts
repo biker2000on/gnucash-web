@@ -42,6 +42,7 @@ function makeItem(overrides: Partial<ItemDTO> = {}): ItemDTO {
         incomeAccountGuid: null,
         cogsAccountGuid: null,
         assetAccountGuid: null,
+        postToLedger: false,
         avgCost: 0,
         valuationMethod: 'average',
         reorderPoint: null,

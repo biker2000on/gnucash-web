@@ -64,7 +64,7 @@ function AllocationModal({
     onClose: () => void;
     onDone: () => void;
 }) {
-    const { success, error } = useToast();
+    const { success, error, warning } = useToast();
     const [rows, setRows] = useState<AllocationDraft[]>([]);
     const [date, setDate] = useState(todayIso());
     // Fulfillment is checked by default — shipping stock without recognizing
@@ -154,6 +154,11 @@ function AllocationModal({
             const data = await res.json().catch(() => null);
             if (!res.ok) throw new Error(extractErrorMessage(data, `Failed to ${mode === 'fulfill' ? 'fulfill' : 'return'}`));
             success(mode === 'fulfill' ? 'Stock shipped against invoice' : 'Stock returned');
+            // Non-fatal accounting notes (e.g. a COGS reversal posted at the
+            // item's current cost because no shipment cost was recorded).
+            if (Array.isArray(data?.warnings)) {
+                for (const w of data.warnings as string[]) warning(w);
+            }
             onClose();
             onDone();
         } catch (err) {

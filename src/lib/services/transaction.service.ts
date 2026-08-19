@@ -17,6 +17,7 @@ import {
   assertNoReconciledSplits,
   assertSplitsNotProtected,
 } from '@/lib/services/reconciled-split.service';
+import { getBookAccountGuids } from '@/lib/book-scope';
 import { Prisma } from '@prisma/client';
 
 // Validation schemas - using num/denom format for API compatibility
@@ -154,6 +155,11 @@ export class TransactionService {
     const anchorAccountGuid = existing.splits[0]?.account_guid ?? data.splits[0].account_guid;
     await assertAccountNotLocked(anchorAccountGuid, [existing.post_date, data.post_date]);
 
+    // Book scope for the reconciled-split guard: the guid comes from the
+    // request, so the guard must not lock — or name the accounts of — a
+    // transaction outside the caller's book.
+    const bookAccountGuids = await getBookAccountGuids();
+
     // Update transaction and replace splits atomically
     const transaction = await prisma.$transaction(async (tx) => {
       // Authoritative: locks the parent row, then re-reads the splits, so a
@@ -161,7 +167,7 @@ export class TransactionService {
       await assertNoReconciledSplits(
         'edit this transaction',
         { txGuids: [data.guid] },
-        { client: tx },
+        { client: tx, bookAccountGuids },
       );
 
       // Delete existing splits
@@ -249,13 +255,16 @@ export class TransactionService {
       await assertAccountNotLocked(existing.splits[0].account_guid, [existing.post_date]);
     }
 
+    // Book scope for the reconciled-split guard (see update() above).
+    const bookAccountGuids = await getBookAccountGuids();
+
     // Delete transaction and splits atomically
     await prisma.$transaction(async (tx) => {
       // Authoritative: locks the parent row, then re-reads the splits.
       await assertNoReconciledSplits(
         'delete this transaction',
         { txGuids: [guid] },
-        { client: tx },
+        { client: tx, bookAccountGuids },
       );
 
       // Delete splits first (due to foreign key)

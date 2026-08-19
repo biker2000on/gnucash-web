@@ -109,6 +109,7 @@ describe('receiveStock ledger posting book guard', () => {
     income_account_guid: null,
     cogs_account_guid: null,
     asset_account_guid: 'asset-account',
+    post_to_ledger: true,
     avg_cost: 0,
     valuation_method: 'average',
     reorder_point: null,
@@ -248,6 +249,7 @@ describe('invoice fulfillment COGS posting', () => {
     income_account_guid: 'income-account',
     cogs_account_guid: 'cogs-account',
     asset_account_guid: 'asset-account',
+    post_to_ledger: true,
     avg_cost: AVG_COST,
     valuation_method: 'average',
     reorder_point: null,
@@ -263,6 +265,7 @@ describe('invoice fulfillment COGS posting', () => {
     value_denom: bigint;
     quantity_num: bigint;
     quantity_denom: bigint;
+    memo: string;
   }
 
   function createFulfillmentTransaction() {
@@ -543,7 +546,7 @@ describe('invoice fulfillment COGS posting', () => {
     );
   });
 
-  it('preserves legacy data-only returns without shipment cost, but refuses their COGS reversal', async () => {
+  it('preserves legacy data-only returns without shipment cost', async () => {
     const { transaction, movementUnitCosts } = createFulfillmentTransaction();
     withFulfilledHistory(transaction, { missingCostCount: 1, totalCost: 0 });
 
@@ -551,11 +554,49 @@ describe('invoice fulfillment COGS posting', () => {
     expect(legacyReturn.movements[0].unitCost).toBe(AVG_COST);
     expect(movementUnitCosts).toEqual([AVG_COST]);
     expect(transaction.transactions.create).not.toHaveBeenCalled();
+    expect(legacyReturn.warnings).toEqual([]);
+  });
 
-    await expect(returnToStock(fulfillInput(true))).rejects.toThrow(
-      /Shipment cost is not recorded for WIDGET\. Resubmit with COGS posting turned off, or adjust COGS manually\./,
-    );
-    expect(transaction.transactions.create).not.toHaveBeenCalled();
+  /**
+   * A legacy shipment with NO recorded unit_cost used to make the whole return
+   * un-postable ("Shipment cost is not recorded ... turn COGS posting off"),
+   * leaving the user to reverse COGS by hand outside the app. db-init's
+   * one-time backfill reconstructs the cost where it can; where it cannot, the
+   * reversal now posts at the item's CURRENT weighted cost — the same cost the
+   * stock re-enters at, so asset and on-hand valuation stay consistent — and
+   * says so in warnings and in the ledger memo.
+   */
+  it('posts the reversal at the current cost, with a warning, when no shipment cost exists', async () => {
+    const { transaction, splitsCreated, movementUnitCosts } = createFulfillmentTransaction();
+    withFulfilledHistory(transaction, { missingCostCount: 1, totalCost: 0 });
+
+    const result = await returnToStock(fulfillInput(true));
+
+    expect(transaction.transactions.create).toHaveBeenCalledOnce();
+    expect(movementUnitCosts).toEqual([AVG_COST]);
+    // Reversal at the item's current cost, in the reversing direction.
+    expect(splitsCreated.find(s => s.account_guid === 'asset-account')?.value_num).toBe(EXPECTED_NUM);
+    expect(splitsCreated.find(s => s.account_guid === 'cogs-account')?.value_num).toBe(-EXPECTED_NUM);
+    // The estimate is reported, not silent...
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toContain('WIDGET');
+    expect(result.warnings[0]).toMatch(/no shipment cost/i);
+    // ...and carried into the ledger itself.
+    for (const split of splitsCreated) {
+      expect(split.memo).toContain('estimated basis');
+    }
+  });
+
+  it('leaves the warning list empty when the shipment basis IS recorded', async () => {
+    const { transaction, splitsCreated } = createFulfillmentTransaction();
+    withFulfilledHistory(transaction);
+
+    const result = await returnToStock(fulfillInput(true));
+
+    expect(result.warnings).toEqual([]);
+    for (const split of splitsCreated) {
+      expect(split.memo).not.toContain('estimated basis');
+    }
   });
 
   it('does not leave a residual when three units share a $10 shipment total', async () => {

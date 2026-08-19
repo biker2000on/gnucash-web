@@ -103,6 +103,7 @@ import {
   type InventoryMovement,
   type MovementType,
 } from '@/lib/services/inventory.service';
+import { assertPostableAccount } from '@/lib/services/inventory.service';
 
 // Re-export the shared error classes so engine consumers can import from here.
 export {
@@ -509,6 +510,7 @@ interface ItemRowRaw {
   income_account_guid: string | null;
   cogs_account_guid: string | null;
   asset_account_guid: string | null;
+  post_to_ledger: boolean;
   avg_cost: unknown;
   valuation_method: string;
   reorder_point: unknown;
@@ -521,7 +523,7 @@ interface ItemRowRaw {
 const ITEM_COLS = `
   id, book_guid, sku, name, description, unit, sale_price,
   income_account_guid, cogs_account_guid, asset_account_guid,
-  avg_cost, valuation_method, reorder_point, reorder_quantity,
+  post_to_ledger, avg_cost, valuation_method, reorder_point, reorder_quantity,
   active, created_at, updated_at
 `;
 
@@ -730,56 +732,12 @@ async function resolvePostingCurrency(
 }
 
 /**
- * Verify that a ledger posting target belongs to the book being mutated.
- *
- * GnuCash accounts have no direct book foreign key: ownership is determined
- * by walking parent_guid to the ROOT account referenced by books.root_account_guid.
+ * Re-exported from the service, which owns it now: item SAVE-time validation
+ * (createItem/updateItem) needs the same in-book / non-placeholder / account
+ * type check, and the service cannot import the engine without a cycle.
+ * Engine call sites and tests keep importing it from here.
  */
-export async function assertPostableAccount(
-  tx: PrismaTx,
-  guid: string,
-  label: string,
-  expectedBookGuid: string,
-): Promise<void> {
-  const accounts = await tx.$queryRaw<Array<{
-    guid: string;
-    placeholder: number | null;
-    book_guid: string | null;
-  }>>`
-    WITH RECURSIVE account_ancestors AS (
-      SELECT guid, parent_guid, 1 AS depth
-      FROM accounts
-      WHERE guid = ${guid}
-
-      UNION ALL
-
-      SELECT parent.guid, parent.parent_guid, account_ancestors.depth + 1
-      FROM accounts parent
-      JOIN account_ancestors ON parent.guid = account_ancestors.parent_guid
-      WHERE account_ancestors.depth < 200
-    )
-    SELECT account.guid,
-           account.placeholder,
-           (
-             SELECT book.guid
-             FROM books book
-             JOIN account_ancestors ON account_ancestors.guid = book.root_account_guid
-             LIMIT 1
-           ) AS book_guid
-    FROM accounts account
-    WHERE account.guid = ${guid}
-  `;
-  const account = accounts[0];
-  if (!account) throw new InventoryValidationError(`${label} account not found: ${guid}`);
-  if (account.placeholder === 1) {
-    throw new InventoryValidationError(`${label} account ${guid} is a placeholder`);
-  }
-  if (account.book_guid !== expectedBookGuid) {
-    throw new InventoryValidationError(
-      `${label} account ${guid} belongs to book ${account.book_guid ?? 'none'}, not requested book ${expectedBookGuid}`,
-    );
-  }
-}
+export { assertPostableAccount } from '@/lib/services/inventory.service';
 
 interface SplitSpec {
   accountGuid: string;
@@ -1138,9 +1096,11 @@ async function maybePostCogs(
   unitCost: number,
 ): Promise<string | null> {
   if (!shouldPostCogs(post)) return null;
-  if (!item.cogsAccountGuid || !item.assetAccountGuid) {
+  if (!item.postToLedger || !item.cogsAccountGuid || !item.assetAccountGuid) {
     throw new InventoryValidationError(
-      `Item ${item.sku} needs both cogsAccountGuid and assetAccountGuid configured before posting COGS`,
+      `Item ${item.sku} is not configured for ledger posting. Turn on ledger posting`
+      + ` for the item (which requires its income, COGS and inventory asset accounts),`
+      + ` or resubmit with COGS posting turned off.`,
     );
   }
   await assertPostableAccount(tx, item.cogsAccountGuid, 'COGS', bookGuid);
@@ -1177,6 +1137,8 @@ async function maybePostReturn(
   post: boolean | undefined,
   reference: string | null | undefined,
   unitCost: number,
+  /** True when unitCost is the item's current cost, not the shipment basis. */
+  estimatedBasis = false,
 ): Promise<string | null> {
   if (!shouldPostReturnCogs(post)) return null;
   if (!item.cogsAccountGuid || !item.assetAccountGuid) {
@@ -1187,12 +1149,17 @@ async function maybePostReturn(
   await assertPostableAccount(tx, item.cogsAccountGuid, 'COGS', bookGuid);
   await assertPostableAccount(tx, item.assetAccountGuid, 'Asset', bookGuid);
   const amount = positiveQty * unitCost;
+  // The memo carries the estimate forward into the ledger itself, so someone
+  // reading the transaction months later sees why the reversal may not match
+  // the original COGS to the penny.
+  const memo = [reference ?? '', estimatedBasis ? 'estimated basis (no shipment cost recorded)' : '']
+    .filter(Boolean).join(' — ');
   return writeLedgerTxn(tx, {
     date,
     description: `Inventory return: ${item.sku} × ${positiveQty}`,
     splits: [
-      { accountGuid: item.assetAccountGuid, value: amount, memo: reference ?? '' },
-      { accountGuid: item.cogsAccountGuid, value: -amount, memo: reference ?? '' },
+      { accountGuid: item.assetAccountGuid, value: amount, memo },
+      { accountGuid: item.cogsAccountGuid, value: -amount, memo },
     ],
   });
 }
@@ -1639,6 +1606,13 @@ export interface FulfillInput {
 export interface FulfillResult {
   invoiceGuid: string;
   movements: InventoryMovement[];
+  /**
+   * Non-fatal notes about the accounting the operation actually produced —
+   * currently the estimated-basis returns described on returnToStock. Always
+   * present (empty when there is nothing to say) so callers can render it
+   * without a null check; the API route returns this object verbatim.
+   */
+  warnings: string[];
 }
 
 /**
@@ -1652,8 +1626,16 @@ export interface FulfillResult {
  * once its own allocation is reached, after earlier allocations have run. The
  * shared transaction rolls all of them back, so no partial accounting escapes.
  *
- * This only turns a fix-one-retry-repeat loop into a single actionable message
- * for the common misconfiguration. No-op when the caller opted out of posting.
+ * SINCE THE SAVE-TIME CHECK (inventory.service validatePostingAccounts), an
+ * item with postToLedger = true is guaranteed to carry all three accounts, so
+ * reaching this error means the item is deliberately STOCK-ONLY
+ * (postToLedger = false). It still refuses rather than silently skipping the
+ * posting: omitting COGS on a default-on shipment would understate cost of
+ * sales with nothing in the response to say so. The message therefore names
+ * both ways forward — configure the item for posting, or ship with
+ * `post: false`.
+ *
+ * No-op when the caller already opted out of posting.
  */
 function assertItemsPostable(
   allocations: FulfillmentAllocation[],
@@ -1664,14 +1646,17 @@ function assertItemsPostable(
   const unpostable: string[] = [];
   for (const itemId of new Set(allocations.map((a) => a.itemId))) {
     const item = items.get(itemId);
-    if (item && !(item.cogsAccountGuid && item.assetAccountGuid)) unpostable.push(item.sku);
+    if (item && !(item.postToLedger && item.cogsAccountGuid && item.assetAccountGuid)) {
+      unpostable.push(item.sku);
+    }
   }
   if (unpostable.length === 0) return;
   unpostable.sort();
-  const subject = unpostable.length === 1 ? `Item ${unpostable[0]} needs` : `Items ${unpostable.join(', ')} need`;
+  const subject = unpostable.length === 1 ? `Item ${unpostable[0]} is` : `Items ${unpostable.join(', ')} are`;
   throw new InventoryValidationError(
-    `${subject} both a COGS account and an inventory asset account before COGS can be posted. ` +
-      `Set them on ${unpostable.length === 1 ? 'the item' : 'each item'}, or resubmit with COGS posting turned off.`,
+    `${subject} not configured for ledger posting. Turn on ledger posting for ` +
+      `${unpostable.length === 1 ? 'the item' : 'each item'} (which requires its income, COGS and ` +
+      `inventory asset accounts), or resubmit with COGS posting turned off.`,
   );
 }
 
@@ -1741,7 +1726,7 @@ export async function fulfillInvoiceLines(input: FulfillInput): Promise<FulfillR
         }),
       );
     }
-    result = { invoiceGuid: input.invoiceGuid, movements };
+    result = { invoiceGuid: input.invoiceGuid, movements, warnings: [] };
   });
   return result!;
 }
@@ -1752,6 +1737,12 @@ export async function fulfillInvoiceLines(input: FulfillInput): Promise<FulfillR
  * shipment cost) linked via invoice_guid + entry_guid, with an OPT-IN
  * reversing-COGS posting (debit asset / credit COGS) written only when the
  * caller passes `post: true`.
+ *
+ * When NO shipment cost is recorded (a legacy row db-init's backfill could not
+ * reconstruct), the reversal is posted at the item's CURRENT weighted cost —
+ * the same cost the stock re-enters at — and the estimate is reported in
+ * FulfillResult.warnings and written into the ledger memo. It used to throw
+ * instead, which left such a line returnable only outside the app.
  *
  * Because return_in is cost-bearing, re-entry at shipment basis updates the
  * running average when that differs from the current average. For FIFO it is
@@ -1774,20 +1765,38 @@ export async function returnToStock(input: FulfillInput): Promise<FulfillResult>
 
     const reference = `Invoice ${invoice.id} return`;
     const movements: InventoryMovement[] = [];
+    const warnings: string[] = [];
     const posting = shouldPostReturnCogs(input.post);
     for (const a of input.allocations) {
       const item = items.get(a.itemId)!;
       const basis = await getShipmentWeightedUnitCost(
         tx, input.invoiceGuid, a.entryGuid, item.id,
       );
-      if (posting && basis === null) {
-        throw new InventoryValidationError(
-          `Shipment cost is not recorded for ${item.sku}. Resubmit with COGS posting turned off, or adjust COGS manually.`,
+      // An UNRECORDED shipment cost used to abort the whole return. It no
+      // longer does. db-init's one-time backfill reconstructs the cost for
+      // legacy rows from the shipment's own posted COGS split, so what is
+      // left here is a shipment for which no cost is derivable at all — and
+      // refusing left the user with stock they could return in the ledger by
+      // hand but not in the app.
+      //
+      // The stock movement was ALREADY going to re-enter at item.avgCost
+      // (`basis ?? item.avgCost` below predates this change); reversing COGS
+      // at that same cost is the consistent choice — it keeps the inventory
+      // asset account and the on-hand valuation telling the same story. It is
+      // an ESTIMATE, so it is reported back in `warnings` rather than applied
+      // silently, and the ledger memo says so too.
+      const estimatedBasis = posting && basis === null;
+      const unitCost = basis ?? item.avgCost;
+      if (estimatedBasis) {
+        warnings.push(
+          `No shipment cost is recorded for ${item.sku}, so its COGS reversal was posted at`
+          + ` the item's current cost (${unitCost}) rather than the original basis.`
+          + ` Review the posting and adjust COGS if the original cost differed.`,
         );
       }
-      const unitCost = basis ?? item.avgCost;
       const txnGuid = await maybePostReturn(
         tx, item, input.bookGuid, a.quantity, date, input.post, reference, unitCost,
+        estimatedBasis,
       );
       const onHandTotal = await getOnHand(tx, item.id);
       const newAvg = applyMovementToAvgCost(item.avgCost, onHandTotal, 'return_in', a.quantity, unitCost);
@@ -1810,7 +1819,7 @@ export async function returnToStock(input: FulfillInput): Promise<FulfillResult>
         }),
       );
     }
-    result = { invoiceGuid: input.invoiceGuid, movements };
+    result = { invoiceGuid: input.invoiceGuid, movements, warnings };
   });
   return result!;
 }

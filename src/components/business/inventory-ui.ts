@@ -34,6 +34,12 @@ export interface ItemDTO {
     incomeAccountGuid: string | null;
     cogsAccountGuid: string | null;
     assetAccountGuid: string | null;
+    /**
+     * Whether the item's movements post to the GnuCash ledger. When true the
+     * three posting accounts are required at save time; when false the item is
+     * stock-only and may leave them empty.
+     */
+    postToLedger: boolean;
     /** Book-wide moving average cost (informational for FIFO items). */
     avgCost: number;
     /** 'average' (default) or 'fifo'. Affects future consumption only. */
