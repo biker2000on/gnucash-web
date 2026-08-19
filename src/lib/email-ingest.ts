@@ -25,15 +25,28 @@
  * keeps the reason in `detail` and raises an `error` notification for the
  * owning user.
  *
- * LIMITATION, stated rather than half-built: there is no per-message manual
- * retry here. A terminal failure is a report, not a queue — the operator fixes
- * the cause (sender allowlist, book config, storage) and re-forwards the email.
- * A manual re-arm needs an immutable owner column, exact-match mailbox
- * addressing, and a state-reconciliation pass, and is tracked as its own task.
- * Note in particular that an inbound message with NO Message-ID header is
- * recorded under a `fallback:` hash key derived from from/subject/date/uid; such
- * a message could not be individually re-identified in the mailbox even if a
- * retry path existed.
+ * MANUAL RETRY, and the ownership snapshot it rests on. A terminal failure can
+ * be re-armed once its cause is fixed (`requestIngestRetry` → the
+ * `retry_requested` state → the next poll re-fetches the message by Message-ID
+ * and reprocesses it). The hazard that once made this unsafe was attribution:
+ * routing is decided by the MUTABLE sender allowlist, so a retry that
+ * re-matched the allowlist could file a message into a different user's book
+ * than the one it was originally routed to. It no longer re-matches. Every row
+ * carries an IMMUTABLE OWNER SNAPSHOT — `owner_user_id`, `owner_book_guid`,
+ * `owner_sender_id`, `owner_sender_email` — written by the FIRST claim from the
+ * allowlist match of that moment and never rewritten afterwards (the claim
+ * upsert COALESCEs, so a later attempt cannot overwrite it). Retry authorizes
+ * against that snapshot and reprocesses under it, so editing or deleting an
+ * allowlist entry can never re-attribute an already-ingested message.
+ *
+ * Two classes of row are therefore NOT retriable, and both say so rather than
+ * failing silently: a row whose snapshot is NULL (recorded before the columns
+ * existed and whose routing sender could not be proven at migration time), and
+ * a message with NO Message-ID header — recorded under a `fallback:` hash key
+ * derived from from/subject/date/uid, which cannot be re-identified in the
+ * mailbox. Manual retries are bounded (INGEST_MAX_MANUAL_RETRIES) and
+ * rate-limited (INGEST_MANUAL_RETRY_COOLDOWN_MINUTES); `attempts` is never
+ * reset, so each one buys exactly one further attempt.
  *
  * The IMAP connection is hidden behind the small `IngestMailClient` interface
  * so unit tests never import imapflow (it is only loaded via dynamic import
@@ -227,7 +240,9 @@ export function isAllowedAttachment(att: {
  *   no_attachments    nothing ingestible attached — terminal
  *   error             TRANSIENT failure, an automatic retry is pending
  *   failed_permanent  terminal failure; reason kept in `detail`, user notified,
- *                     message left unread so a manual retry can reprocess it
+ *                     manually re-armable by the snapshotted owner
+ *   retry_requested   the owner re-armed a terminal failure; the next poll
+ *                     re-finds the message by Message-ID and claims it
  */
 export const INGEST_OUTCOME_PROCESSING = 'processing';
 export const INGEST_OUTCOME_INGESTED = 'ingested';
@@ -235,6 +250,8 @@ export const INGEST_OUTCOME_INGESTED = 'ingested';
 export const INGEST_OUTCOME_RETRYING = 'error';
 /** Terminal failure — inspectable in the ingest log and manually re-triable. */
 export const INGEST_OUTCOME_FAILED = 'failed_permanent';
+/** The snapshotted owner asked for one more attempt on a terminal failure. */
+export const INGEST_OUTCOME_RETRY_REQUESTED = 'retry_requested';
 
 export type IngestFailureKind = 'transient' | 'permanent';
 
@@ -483,6 +500,9 @@ export function ensureEmailIngestTables(): Promise<void> {
     ensurePromise = (async () => {
       await prisma.$executeRawUnsafe(`
         DO $$
+        DECLARE
+          owner_columns_existed BOOLEAN;
+          backfilled INTEGER := 0;
         BEGIN
           PERFORM pg_advisory_xact_lock(hashtext('gnucash_web_email_ingest_schema'));
 
@@ -519,23 +539,99 @@ export function ensureEmailIngestTables(): Promise<void> {
           CREATE INDEX IF NOT EXISTS idx_ingest_messages_processed
             ON gnucash_web_ingest_messages(processed_at DESC);
 
-          -- Migration: an earlier build of this module had a user-initiated
-          -- 'retry_requested' state, since removed. Any row left in it would be
-          -- an invisible tombstone under the current code — treated as finished
-          -- by getIngestMessageStates, absent from the attention list, and with
-          -- nothing left to re-arm it. Convert such rows to the terminal state
-          -- so they surface as failures the operator can actually see and act
-          -- on. Idempotent and self-healing: once converted there is nothing
-          -- left to match, and installs that never ran that build match nothing
-          -- in the first place.
-          UPDATE gnucash_web_ingest_messages
-          SET outcome = 'failed_permanent',
-              detail = COALESCE(NULLIF(detail, ''), 'Manual retry was requested')
-                       || ' — manual retry is no longer supported; '
-                       || 'forward the email again to re-ingest it'
-          WHERE outcome = 'retry_requested';
+          -- Has this install already been through the owner-snapshot upgrade?
+          -- Captured BEFORE the ALTER below so the one-shot legacy sweep that
+          -- follows it can tell a first upgrade from every later run.
+          SELECT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'gnucash_web_ingest_messages'
+              AND column_name = 'owner_user_id'
+          ) INTO owner_columns_existed;
+
+          -- IMMUTABLE OWNER SNAPSHOT. Routing is decided by the mutable sender
+          -- allowlist, so a message's user/book must be frozen onto its own row
+          -- at first ingest; otherwise a manual retry after an allowlist edit
+          -- could file the message into a different user's book. Written once
+          -- by claimIngestMessage and never updated (see the COALESCE there).
+          -- owner_sender_id/email record WHICH allowlist rule matched, for
+          -- audit and to recover the default kind; they are not authority.
+          ALTER TABLE gnucash_web_ingest_messages
+            ADD COLUMN IF NOT EXISTS owner_user_id INTEGER
+              REFERENCES gnucash_web_users(id) ON DELETE SET NULL,
+            ADD COLUMN IF NOT EXISTS owner_book_guid VARCHAR(32),
+            ADD COLUMN IF NOT EXISTS owner_sender_id INTEGER,
+            ADD COLUMN IF NOT EXISTS owner_sender_email VARCHAR(255),
+            ADD COLUMN IF NOT EXISTS manual_retries INTEGER NOT NULL DEFAULT 0;
+
+          CREATE INDEX IF NOT EXISTS idx_ingest_messages_owner
+            ON gnucash_web_ingest_messages(owner_user_id);
+
+          -- Backfill for rows that predate the columns. Attribution is only
+          -- written where it can be PROVEN: exactly one allowlist entry
+          -- normalizes to the row's sender AND that entry already existed when
+          -- the message was processed, so it is necessarily the rule that
+          -- routed it. Ambiguous or later-created rules prove nothing and are
+          -- left NULL — an unattributed row is reported as non-retriable rather
+          -- than guessed into somebody's book.
+          WITH candidate AS (
+            SELECT m.id AS message_id, MIN(s.id) AS sender_id, COUNT(*) AS matches
+            FROM gnucash_web_ingest_messages m
+            JOIN gnucash_web_ingest_senders s
+              ON regexp_replace(lower(s.email), '\\+[^@]*@', '@')
+               = regexp_replace(lower(m.from_email), '\\+[^@]*@', '@')
+             AND s.created_at <= m.processed_at
+            WHERE m.owner_user_id IS NULL
+              AND m.from_email IS NOT NULL
+            GROUP BY m.id
+          )
+          UPDATE gnucash_web_ingest_messages m
+          SET owner_user_id = s.user_id,
+              owner_book_guid = s.book_guid,
+              owner_sender_id = s.id,
+              owner_sender_email = s.email
+          FROM candidate c
+          JOIN gnucash_web_ingest_senders s ON s.id = c.sender_id
+          WHERE m.id = c.message_id AND c.matches = 1;
+          GET DIAGNOSTICS backfilled = ROW_COUNT;
+          IF backfilled > 0 THEN
+            RAISE NOTICE '[email-ingest] Backfilled an owner snapshot onto % ingest message row(s)', backfilled;
+          END IF;
+
+          -- One-shot legacy sweep. An intermediate build removed manual retry
+          -- and left any 'retry_requested' row as an invisible tombstone; such
+          -- a row also predates the owner snapshot, so it cannot be re-armed
+          -- safely even now. Convert it to the terminal state ONCE, on the
+          -- upgrade that introduces the columns. Guarded on
+          -- owner_columns_existed so it can never touch a row that the current
+          -- code legitimately re-armed.
+          IF NOT owner_columns_existed THEN
+            UPDATE gnucash_web_ingest_messages
+            SET outcome = 'failed_permanent',
+                detail = COALESCE(NULLIF(detail, ''), 'Manual retry was requested')
+                         || ' — re-arm it again now that manual retry is supported'
+            WHERE outcome = 'retry_requested';
+          END IF;
         END $$;
       `);
+
+      // Report what the backfill could NOT prove. These rows are readable and
+      // countable like any other, but they can never be manually retried —
+      // saying so once at startup beats a user discovering it from a refusal.
+      try {
+        const [counts] = await prisma.$queryRaw<Array<{ unattributed: number; total: number }>>`
+          SELECT COUNT(*) FILTER (WHERE owner_user_id IS NULL)::int AS unattributed,
+                 COUNT(*)::int AS total
+          FROM gnucash_web_ingest_messages`;
+        if (counts && counts.unattributed > 0) {
+          console.warn(
+            `[email-ingest] ${counts.unattributed} of ${counts.total} ingest message row(s) have no ` +
+            'owner snapshot (their routing sender could not be proven) — those messages are not manually retriable',
+          );
+        }
+      } catch (err) {
+        // Diagnostics only; never let a count failure break schema setup.
+        console.warn('[email-ingest] Could not count unattributed ingest rows:', err);
+      }
     })();
     ensurePromise.catch(() => { ensurePromise = null; });
   }
@@ -621,6 +717,22 @@ export async function deleteIngestSender(id: number, userId: number): Promise<bo
   return count > 0;
 }
 
+/**
+ * Who a message was routed to, frozen at first ingest.
+ *
+ * This is the ONLY authority for retry: it is written once from the allowlist
+ * match that actually routed the mail and never rewritten, so it survives any
+ * later edit or deletion of that allowlist entry. `senderId`/`senderEmail`
+ * record which rule matched — useful for audit and for recovering the sender's
+ * default kind — but they are not consulted for authorization.
+ */
+export interface IngestOwnerSnapshot {
+  userId: number;
+  bookGuid: string | null;
+  senderId: number | null;
+  senderEmail: string | null;
+}
+
 export interface IngestLogEntry {
   id: number;
   messageKey: string;
@@ -630,6 +742,13 @@ export interface IngestLogEntry {
   detail: string | null;
   ingestedCount: number;
   attempts: number;
+  /** Immutable routing snapshot; null on rows recorded before it existed. */
+  owner: IngestOwnerSnapshot | null;
+  manualRetries: number;
+  /** True when `requestIngestRetry` would accept this row (cooldown aside). */
+  retriable: boolean;
+  /** Why not, when `retriable` is false and the row is a terminal failure. */
+  retryBlockedReason: string | null;
   processedAt: Date;
 }
 
@@ -642,11 +761,63 @@ interface MessageRow {
   detail: string | null;
   ingested_count: number;
   attempts: number;
+  owner_user_id: number | null;
+  owner_book_guid: string | null;
+  owner_sender_id: number | null;
+  owner_sender_email: string | null;
+  manual_retries: number | null;
   processed_at: Date;
+}
+
+export function ownerSnapshotOf(row: {
+  owner_user_id: number | null;
+  owner_book_guid: string | null;
+  owner_sender_id: number | null;
+  owner_sender_email: string | null;
+}): IngestOwnerSnapshot | null {
+  if (row.owner_user_id === null || row.owner_user_id === undefined) return null;
+  return {
+    userId: row.owner_user_id,
+    bookGuid: row.owner_book_guid ?? null,
+    senderId: row.owner_sender_id ?? null,
+    senderEmail: row.owner_sender_email ?? null,
+  };
+}
+
+/**
+ * Why a terminal failure cannot be re-armed, or null when it can.
+ *
+ * Mirrors `requestIngestRetry`'s own preconditions (the time-based cooldown
+ * aside, which only the server can judge), so the UI never offers a control
+ * the server will refuse — and can say why when it doesn't.
+ */
+export function retryBlockedReason(row: {
+  outcome: string;
+  message_key: string;
+  owner_user_id: number | null;
+  manual_retries: number | null;
+}): string | null {
+  if (row.outcome === INGEST_OUTCOME_RETRY_REQUESTED) {
+    return 'Already re-armed — waiting for the next mailbox poll';
+  }
+  if (row.outcome !== INGEST_OUTCOME_FAILED) {
+    return 'Only a terminally failed message can be retried';
+  }
+  if (row.owner_user_id === null || row.owner_user_id === undefined) {
+    return 'No owner was recorded for this message, so it cannot be re-routed safely — forward the email again';
+  }
+  if (row.message_key.startsWith('fallback:')) {
+    return 'This email had no Message-ID header, so it cannot be found in the mailbox again — forward it again';
+  }
+  if ((row.manual_retries ?? 0) >= INGEST_MAX_MANUAL_RETRIES) {
+    return 'This message has used all of its manual retries';
+  }
+  return null;
 }
 
 function rowToLogEntry(row: MessageRow): IngestLogEntry {
   const attempts = row.attempts ?? 0;
+  const blocked = retryBlockedReason(row);
   return {
     id: row.id,
     messageKey: row.message_key,
@@ -656,6 +827,10 @@ function rowToLogEntry(row: MessageRow): IngestLogEntry {
     detail: row.detail,
     ingestedCount: row.ingested_count,
     attempts,
+    owner: ownerSnapshotOf(row),
+    manualRetries: row.manual_retries ?? 0,
+    retriable: blocked === null,
+    retryBlockedReason: row.outcome === INGEST_OUTCOME_FAILED ? blocked : null,
     processedAt: row.processed_at,
   };
 }
@@ -665,7 +840,8 @@ export async function listIngestLog(limit = 10): Promise<IngestLogEntry[]> {
   await ensureEmailIngestTables();
   const rows = await prisma.$queryRaw<MessageRow[]>`
     SELECT id, message_key, from_email, subject, outcome, detail, ingested_count,
-           attempts, processed_at
+           attempts, owner_user_id, owner_book_guid, owner_sender_id,
+           owner_sender_email, manual_retries, processed_at
     FROM gnucash_web_ingest_messages
     ORDER BY processed_at DESC, id DESC
     LIMIT ${limit}`;
@@ -685,10 +861,24 @@ export const INGEST_CLAIM_STALE_MINUTES = 15;
  * How many times a message may be claimed before a transient `error` outcome is
  * promoted to the terminal `failed_permanent` state. This is the hard bound on
  * the automatic retry loop: every reclaim increments `attempts`, so at most
- * INGEST_MAX_ATTEMPTS attempts can ever run for a given message key, full
- * stop — nothing in this module can hand back a fresh budget.
+ * INGEST_MAX_ATTEMPTS attempts can ever run for a given message key
+ * automatically. Only a deliberate act by the message's SNAPSHOTTED owner
+ * (`requestIngestRetry`) can add more, and that is separately bounded by
+ * INGEST_MAX_MANUAL_RETRIES.
  */
 export const INGEST_MAX_ATTEMPTS = 3;
+
+/**
+ * How many owner-initiated retries a message may receive on top of the
+ * automatic budget. Each buys exactly ONE more attempt — `attempts` is never
+ * reset — and `manual_retries` is its own counter, so the lifetime ceiling is
+ * INGEST_MAX_ATTEMPTS + INGEST_MAX_MANUAL_RETRIES claims regardless of how
+ * many of the automatic attempts a permanent failure actually consumed.
+ */
+export const INGEST_MAX_MANUAL_RETRIES = 2;
+
+/** Minimum wait between manual retries of the same message. */
+export const INGEST_MANUAL_RETRY_COOLDOWN_MINUTES = 10;
 
 /**
  * Base of the exponential backoff between automatic retries, in minutes.
@@ -751,6 +941,9 @@ export async function getIngestMessageStates(
       AND (
         (
           outcome <> 'processing'
+          -- A re-armed row is live work, not a finished one: the poller must
+          -- still be handed it so claimIngestMessage can pick it up.
+          AND outcome <> ${INGEST_OUTCOME_RETRY_REQUESTED}
           AND NOT (
             outcome = 'error'
             AND attempts < ${INGEST_MAX_ATTEMPTS}
@@ -802,10 +995,17 @@ export async function recordProcessedMessage(input: {
 /**
  * Atomically claim a message before any attachment side effects occur.
  *
- * Returns the attempt number this claim represents (1 for a first claim), or
- * null when the caller did not win. A fresh (live) claim, a finished row, an
- * `error` row still inside its backoff window, and a `processing` row whose
- * budget is spent all yield no RETURNING row, so the caller skips the message.
+ * Returns the attempt number this claim represents (1 for a first claim) plus
+ * the row's IMMUTABLE OWNER SNAPSHOT, or null when the caller did not win. A
+ * fresh (live) claim, a finished row, an `error` row still inside its backoff
+ * window, and a `processing` row whose budget is spent all yield no RETURNING
+ * row, so the caller skips the message.
+ *
+ * OWNERSHIP is written here and only here. On the INSERT it comes from the
+ * allowlist match the poller just made; on every DO UPDATE it is COALESCEd
+ * against the stored value, so the FIRST claim's attribution wins forever and
+ * a later allowlist edit cannot re-route an existing message. The caller must
+ * route by the RETURNED snapshot, never by its own match.
  *
  * Concurrency: `ON CONFLICT ... DO UPDATE` takes a row lock on the conflicting
  * row, so two concurrent inserts of the same key serialize. The loser
@@ -814,23 +1014,46 @@ export async function recordProcessedMessage(input: {
  * the loser updates nothing and returns no row. Exactly one claimant wins, for
  * both a brand-new key and a stolen stale one.
  *
- * Termination: the only two reclaim paths are (a) a stale in-flight claim,
+ * Termination: the only three reclaim paths are (a) a stale in-flight claim,
  * gated on INGEST_CLAIM_STALE_MINUTES of wall time AND
- * `attempts < INGEST_MAX_ATTEMPTS`, and (b) a transient `error`, gated on BOTH
- * `attempts < INGEST_MAX_ATTEMPTS` and an exponentially growing backoff. Both
- * stamp `processed_at = NOW()` and increment `attempts`, so neither can be
- * taken twice without time passing and both are attempt-bounded. This cannot
- * become a hot loop, and a crash-loop cannot replay a message forever.
+ * `attempts < INGEST_MAX_ATTEMPTS`, (b) a transient `error`, gated on BOTH
+ * `attempts < INGEST_MAX_ATTEMPTS` and an exponentially growing backoff, and
+ * (c) an explicit `retry_requested`, which only the snapshotted owner can set,
+ * at most INGEST_MAX_MANUAL_RETRIES times, behind a cooldown. All three stamp
+ * `processed_at = NOW()` and increment `attempts`, so none can be taken twice
+ * without time passing and all are bounded. This cannot become a hot loop, and
+ * a crash-loop cannot replay a message forever.
  */
+export interface IngestClaim {
+  attempt: number;
+  /** The row's frozen routing decision — route by THIS, not by the allowlist. */
+  owner: IngestOwnerSnapshot | null;
+  /** True when this claim came from an owner-requested manual retry. */
+  manual: boolean;
+}
+
 export async function claimIngestMessage(input: {
   messageKey: string;
   fromEmail?: string | null;
   subject?: string | null;
-}): Promise<number | null> {
+  /** Allowlist match for a FIRST ingest; ignored once a snapshot exists. */
+  owner?: IngestOwnerSnapshot | null;
+}): Promise<IngestClaim | null> {
   await ensureEmailIngestTables();
-  const claimed = await prisma.$queryRaw<Array<{ message_key: string; attempts: number }>>`
+  const claimed = await prisma.$queryRaw<
+    Array<{
+      message_key: string;
+      attempts: number;
+      owner_user_id: number | null;
+      owner_book_guid: string | null;
+      owner_sender_id: number | null;
+      owner_sender_email: string | null;
+      was_manual: boolean;
+    }>
+  >`
     INSERT INTO gnucash_web_ingest_messages
-      (message_key, from_email, subject, outcome, detail, ingested_count, attempts)
+      (message_key, from_email, subject, outcome, detail, ingested_count, attempts,
+       owner_user_id, owner_book_guid, owner_sender_id, owner_sender_email)
     VALUES (
       ${input.messageKey.slice(0, 512)},
       ${input.fromEmail?.slice(0, 255) ?? null},
@@ -838,15 +1061,38 @@ export async function claimIngestMessage(input: {
       'processing',
       'Claimed for ingestion',
       0,
-      1
+      1,
+      ${input.owner?.userId ?? null},
+      ${input.owner?.bookGuid ?? null},
+      ${input.owner?.senderId ?? null},
+      ${input.owner?.senderEmail?.slice(0, 255) ?? null}
     )
     ON CONFLICT (message_key) DO UPDATE SET
       from_email = EXCLUDED.from_email,
       subject = EXCLUDED.subject,
       outcome = 'processing',
-      detail = 'Reclaimed after stale or failed attempt',
+      detail = CASE
+        WHEN gnucash_web_ingest_messages.outcome = ${INGEST_OUTCOME_RETRY_REQUESTED}
+          THEN 'Reclaimed for an owner-requested retry'
+        ELSE 'Reclaimed after stale or failed attempt'
+      END,
       ingested_count = 0,
       attempts = gnucash_web_ingest_messages.attempts + 1,
+      -- WRITE-ONCE. COALESCE keeps the first claim's attribution no matter what
+      -- the allowlist says now, which is the whole reason a retry is safe.
+      owner_user_id = COALESCE(gnucash_web_ingest_messages.owner_user_id, EXCLUDED.owner_user_id),
+      owner_book_guid = CASE
+        WHEN gnucash_web_ingest_messages.owner_user_id IS NULL THEN EXCLUDED.owner_book_guid
+        ELSE gnucash_web_ingest_messages.owner_book_guid
+      END,
+      owner_sender_id = CASE
+        WHEN gnucash_web_ingest_messages.owner_user_id IS NULL THEN EXCLUDED.owner_sender_id
+        ELSE gnucash_web_ingest_messages.owner_sender_id
+      END,
+      owner_sender_email = CASE
+        WHEN gnucash_web_ingest_messages.owner_user_id IS NULL THEN EXCLUDED.owner_sender_email
+        ELSE gnucash_web_ingest_messages.owner_sender_email
+      END,
       processed_at = CURRENT_TIMESTAMP
     WHERE (
       gnucash_web_ingest_messages.outcome = 'processing'
@@ -860,10 +1106,157 @@ export async function claimIngestMessage(input: {
           < (NOW() - (${INGEST_RETRY_BACKOFF_MINUTES}
                       * POWER(2, GREATEST(gnucash_web_ingest_messages.attempts - 1, 0)))
                    * INTERVAL '1 minute')::timestamp
+    ) OR (
+      gnucash_web_ingest_messages.outcome = ${INGEST_OUTCOME_RETRY_REQUESTED}
     )
-    RETURNING message_key, attempts`;
+    RETURNING message_key, attempts, owner_user_id, owner_book_guid,
+              owner_sender_id, owner_sender_email,
+              (detail = 'Reclaimed for an owner-requested retry') AS was_manual`;
   if (claimed.length !== 1) return null;
-  return claimed[0].attempts ?? 1;
+  const row = claimed[0];
+  return {
+    attempt: row.attempts ?? 1,
+    owner: ownerSnapshotOf(row),
+    manual: row.was_manual === true,
+  };
+}
+
+/**
+ * Message keys the owner re-armed, which the poller must explicitly re-fetch.
+ *
+ * A terminal failure is flagged seen in the mailbox (leaving it unread would
+ * re-list it on every poll forever), so a re-armed message is no longer in the
+ * UNSEEN set and has to be located by Message-ID. Only Message-ID keys are
+ * returned — a `fallback:` key means the message had no Message-ID and could
+ * never be re-found, which is why `requestIngestRetry` refuses those outright.
+ */
+export async function listRetryRequestedKeys(limit = 50): Promise<string[]> {
+  await ensureEmailIngestTables();
+  const rows = await prisma.$queryRaw<Array<{ message_key: string }>>`
+    SELECT message_key FROM gnucash_web_ingest_messages
+    WHERE outcome = ${INGEST_OUTCOME_RETRY_REQUESTED}
+      AND message_key NOT LIKE 'fallback:%'
+    ORDER BY processed_at ASC
+    LIMIT ${limit}`;
+  return rows.map(r => r.message_key);
+}
+
+export type IngestRetryResult =
+  /** Re-armed; the next poll will re-fetch and reprocess the message. */
+  | { ok: true }
+  /** Missing, or not visible to the caller. Callers MUST answer 404 for both. */
+  | { ok: false; reason: 'not_found' }
+  /** Visible to the caller, but not in a re-armable state. `detail` says why. */
+  | { ok: false; reason: 'not_retriable'; detail: string }
+  /** Too soon since the last manual retry. */
+  | { ok: false; reason: 'cooldown'; retryAfterMinutes: number };
+
+export interface RequestIngestRetryOptions {
+  /**
+   * Optional escalation: lets a book ADMIN re-arm a message owned by another
+   * user in a book they administer. Called with the row's SNAPSHOTTED book
+   * guid, never with a guid derived from the current allowlist.
+   */
+  canAdministerBook?: (bookGuid: string) => Promise<boolean>;
+}
+
+/**
+ * Re-arm a terminally failed message so the next poll re-fetches and
+ * reprocesses it.
+ *
+ * AUTHORIZATION comes from the row's own IMMUTABLE SNAPSHOT (`owner_user_id`),
+ * not from the sender allowlist. That is the entire point: the allowlist is
+ * mutable, so deriving ownership from it at retry time could hand a message to
+ * whoever happens to own that sender address now. A row whose snapshot is NULL
+ * — recorded before the columns existed, and whose routing sender the backfill
+ * could not prove — is NEVER retriable, no matter who asks.
+ *
+ * VISIBILITY vs. AUTHORIZATION. A row the caller cannot see at all is reported
+ * as `not_found` rather than as a permission error: answering "forbidden"
+ * would confirm the row exists and turn this into an oracle for other users'
+ * inbound mail. A row the caller CAN already see in their attention list (same
+ * allowlist derivation `listIngestAttention` uses) but cannot re-arm gets the
+ * real reason, because that leaks nothing they were not already shown.
+ *
+ * BOUNDS. `attempts` is never reset — a manual retry grants exactly one
+ * further attempt — `manual_retries` is capped at INGEST_MAX_MANUAL_RETRIES,
+ * and INGEST_MANUAL_RETRY_COOLDOWN_MINUTES rate-limits repeats. The final
+ * UPDATE re-checks outcome, cap, and cooldown in its WHERE, so two concurrent
+ * requests cannot both succeed.
+ */
+export async function requestIngestRetry(
+  id: number,
+  requesterUserId: number,
+  options: RequestIngestRetryOptions = {},
+): Promise<IngestRetryResult> {
+  await ensureEmailIngestTables();
+
+  const rows = await prisma.$queryRaw<MessageRow[]>`
+    SELECT id, message_key, from_email, subject, outcome, detail, ingested_count,
+           attempts, owner_user_id, owner_book_guid, owner_sender_id,
+           owner_sender_email, manual_retries, processed_at
+    FROM gnucash_web_ingest_messages
+    WHERE id = ${id}
+    LIMIT 1`;
+  const row = rows[0];
+  if (!row) return { ok: false, reason: 'not_found' };
+
+  const owner = ownerSnapshotOf(row);
+  let authorized = owner?.userId === requesterUserId;
+  if (!authorized && owner?.bookGuid && options.canAdministerBook) {
+    authorized = await options.canAdministerBook(owner.bookGuid);
+  }
+
+  if (!authorized) {
+    // Not the owner. The row may still be one the caller can SEE — the
+    // attention list scopes by the allowlist — in which case an honest refusal
+    // is safe. Otherwise it must look exactly like a missing row.
+    const senders = await listIngestSenders();
+    const visibleTo = row.from_email ? matchAllowedSender(row.from_email, senders) : null;
+    if (!visibleTo || visibleTo.userId !== requesterUserId) {
+      return { ok: false, reason: 'not_found' };
+    }
+    const blocked = retryBlockedReason(row);
+    return {
+      ok: false,
+      reason: 'not_retriable',
+      detail: blocked
+        ?? 'This message belongs to another user; only its owner or a book admin can retry it',
+    };
+  }
+
+  const blocked = retryBlockedReason(row);
+  if (blocked) return { ok: false, reason: 'not_retriable', detail: blocked };
+
+  const elapsedMinutes = (Date.now() - row.processed_at.getTime()) / 60_000;
+  if (elapsedMinutes < INGEST_MANUAL_RETRY_COOLDOWN_MINUTES) {
+    return {
+      ok: false,
+      reason: 'cooldown',
+      retryAfterMinutes: Math.max(
+        1,
+        Math.ceil(INGEST_MANUAL_RETRY_COOLDOWN_MINUTES - elapsedMinutes),
+      ),
+    };
+  }
+
+  // Atomic re-check under the row lock: outcome, owner, cap, and cooldown are
+  // all re-evaluated, so a concurrent duplicate request updates nothing.
+  const updated = await prisma.$executeRaw`
+    UPDATE gnucash_web_ingest_messages
+    SET outcome = ${INGEST_OUTCOME_RETRY_REQUESTED},
+        detail = 'Manual retry requested; queued for the next mailbox poll',
+        manual_retries = manual_retries + 1,
+        processed_at = CURRENT_TIMESTAMP
+    WHERE id = ${id}
+      AND outcome = ${INGEST_OUTCOME_FAILED}
+      AND owner_user_id IS NOT NULL
+      AND message_key NOT LIKE 'fallback:%'
+      AND manual_retries < ${INGEST_MAX_MANUAL_RETRIES}
+      AND processed_at
+          < (NOW() - ${INGEST_MANUAL_RETRY_COOLDOWN_MINUTES} * INTERVAL '1 minute')::timestamp`;
+  if (updated === 0) return { ok: false, reason: 'cooldown', retryAfterMinutes: 1 };
+  return { ok: true };
 }
 
 /**
@@ -872,8 +1265,10 @@ export async function claimIngestMessage(input: {
  *   failed   terminal `failed_permanent` — no document was created, ever
  *   stalled  a claim whose worker never came back AND whose retry budget is
  *            spent, so nothing will pick it up again
+ *   requeued the owner re-armed it; the next poll re-fetches and reprocesses
+ *            it under the SNAPSHOTTED owner/book
  */
-export type IngestAttentionCategory = 'failed' | 'stalled';
+export type IngestAttentionCategory = 'failed' | 'stalled' | 'requeued';
 
 export interface IngestAttentionEntry extends IngestLogEntry {
   category: IngestAttentionCategory;
@@ -884,6 +1279,8 @@ export interface IngestAttentionList {
   /** TOTAL matching rows, not the truncated count — see the note below. */
   failedTotal: number;
   stalledTotal: number;
+  /** Re-armed by their owner, waiting for the next poll. */
+  requeuedTotal: number;
   /** True when `items` was truncated by `limit`. */
   truncated: boolean;
 }
@@ -901,10 +1298,13 @@ export interface IngestAttentionList {
  * it neither deletes the message nor stops a live worker, which addresses it
  * by UID.)
  *
- * SCOPING is derived from the sender allowlist — the same derivation the
- * poller uses to route the mail in the first place — because
- * `gnucash_web_ingest_messages` has no owner column. The comparison mirrors
- * `normalizeSenderEmail`: lowercase, plus-tag stripped.
+ * SCOPING prefers the row's IMMUTABLE OWNER SNAPSHOT: a message stays with the
+ * user it was routed to even after the allowlist entry that routed it is
+ * edited or deleted. Rows recorded before the snapshot existed (and whose
+ * routing sender the backfill could not prove) have none, so for those — and
+ * only those — scoping falls back to the allowlist derivation the poller uses,
+ * mirroring `normalizeSenderEmail`: lowercase, plus-tag stripped. Such rows are
+ * visible but not retriable, and say so.
  *
  * COUNTS are computed with a window function BEFORE the LIMIT, so a caller
  * always learns the true size of the backlog even when the list is truncated.
@@ -924,23 +1324,33 @@ export async function listIngestAttention(
       .map(sender => normalizeSenderEmail(sender.email))
       .filter(Boolean),
   )];
-  if (owned.length === 0) {
-    return { items: [], failedTotal: 0, stalledTotal: 0, truncated: false };
-  }
 
   const rows = await prisma.$queryRaw<
-    Array<MessageRow & { category: string; failed_total: number; stalled_total: number }>
+    Array<MessageRow & { category: string; failed_total: number; stalled_total: number; requeued_total: number }>
   >`
     WITH scoped AS (
       SELECT id, message_key, from_email, subject, outcome, detail, ingested_count,
-             attempts, processed_at,
-             CASE WHEN outcome = ${INGEST_OUTCOME_FAILED} THEN 'failed' ELSE 'stalled' END
-               AS category
+             attempts, owner_user_id, owner_book_guid, owner_sender_id,
+             owner_sender_email, manual_retries, processed_at,
+             CASE
+               WHEN outcome = ${INGEST_OUTCOME_FAILED} THEN 'failed'
+               WHEN outcome = ${INGEST_OUTCOME_RETRY_REQUESTED} THEN 'requeued'
+               ELSE 'stalled'
+             END AS category
       FROM gnucash_web_ingest_messages
-      WHERE from_email IS NOT NULL
-        AND regexp_replace(lower(from_email), ${'\\+[^@]*@'}, '@') = ANY(${owned}::text[])
+      WHERE (
+          owner_user_id = ${requesterUserId}
+          OR (
+            owner_user_id IS NULL
+            AND from_email IS NOT NULL
+            AND regexp_replace(lower(from_email), ${'\\+[^@]*@'}, '@') = ANY(${owned}::text[])
+          )
+        )
         AND (
           outcome = ${INGEST_OUTCOME_FAILED}
+          -- A re-armed message stays listed until the poll settles it, so the
+          -- item does not silently vanish the moment Retry is pressed.
+          OR outcome = ${INGEST_OUTCOME_RETRY_REQUESTED}
           OR (
             outcome = 'processing'
             AND attempts >= ${INGEST_MAX_ATTEMPTS}
@@ -950,8 +1360,9 @@ export async function listIngestAttention(
         )
     )
     SELECT *,
-           COUNT(*) FILTER (WHERE category = 'failed') OVER ()::int  AS failed_total,
-           COUNT(*) FILTER (WHERE category = 'stalled') OVER ()::int AS stalled_total
+           COUNT(*) FILTER (WHERE category = 'failed') OVER ()::int   AS failed_total,
+           COUNT(*) FILTER (WHERE category = 'stalled') OVER ()::int  AS stalled_total,
+           COUNT(*) FILTER (WHERE category = 'requeued') OVER ()::int AS requeued_total
     FROM scoped
     ORDER BY processed_at DESC, id DESC
     LIMIT ${limit}`;
@@ -963,20 +1374,28 @@ export async function listIngestAttention(
   // same silent-undercount bug this module exists to prevent.
   const failedTotal = rows[0]?.failed_total ?? 0;
   const stalledTotal = rows[0]?.stalled_total ?? 0;
+  const requeuedTotal = rows[0]?.requeued_total ?? 0;
 
   return {
-    items: rows.map(row => ({
-      ...rowToLogEntry(row),
-      category: row.category === 'stalled' ? 'stalled' : 'failed',
-      detail: row.category === 'stalled'
-        ? (row.detail
-            ? `${row.detail} — processing never completed and the retry budget is spent`
-            : 'Processing never completed and the retry budget is spent')
-        : row.detail,
-    })),
+    items: rows.map(row => {
+      const category: IngestAttentionCategory =
+        row.category === 'stalled' ? 'stalled'
+          : row.category === 'requeued' ? 'requeued'
+            : 'failed';
+      return {
+        ...rowToLogEntry(row),
+        category,
+        detail: category === 'stalled'
+          ? (row.detail
+              ? `${row.detail} — processing never completed and the retry budget is spent`
+              : 'Processing never completed and the retry budget is spent')
+          : row.detail,
+      };
+    }),
     failedTotal,
     stalledTotal,
-    truncated: failedTotal + stalledTotal > rows.length,
+    requeuedTotal,
+    truncated: failedTotal + stalledTotal + requeuedTotal > rows.length,
   };
 }
 
@@ -1001,6 +1420,16 @@ export interface IngestEnvelope {
 /** Narrow mailbox surface so the poller can be tested with a fake client. */
 export interface IngestMailClient {
   listUnseen(): Promise<IngestEnvelope[]>;
+  /**
+   * Re-find already-seen messages by Message-ID, for owner-requested retries.
+   *
+   * Terminal failures are flagged seen like everything else — leaving them
+   * unread would make every poll re-list them forever — so a re-armed message
+   * has to be located explicitly. Message-ID is used rather than a stored UID
+   * because a UID is only meaningful alongside the folder's UIDVALIDITY, which
+   * the server may invalidate at any time.
+   */
+  findByMessageIds(messageIds: string[]): Promise<IngestEnvelope[]>;
   fetchAttachments(uid: number): Promise<IngestAttachment[]>;
   markSeen(uid: number): Promise<void>;
   close(): Promise<void>;
@@ -1050,6 +1479,22 @@ export async function createImapIngestClient(config: EmailIngestConfig): Promise
       const uids = await client.search({ seen: false }, { uid: true });
       if (!uids || uids.length === 0) return [];
       return fetchEnvelopes(uids);
+    },
+
+    async findByMessageIds(messageIds) {
+      const found: IngestEnvelope[] = [];
+      // One search per id: IMAP HEADER search takes a single value, and the
+      // caller only ever passes the handful of messages an owner re-armed.
+      for (const messageId of messageIds) {
+        try {
+          const uids = await client.search({ header: { 'message-id': messageId } }, { uid: true });
+          if (!uids || uids.length === 0) continue;
+          found.push(...await fetchEnvelopes(uids));
+        } catch (err) {
+          console.warn(`[email-ingest] Could not re-find message ${messageId}:`, err);
+        }
+      }
+      return found;
     },
 
     async fetchAttachments(uid) {
@@ -1224,7 +1669,7 @@ async function recordIngestFailure(input: {
         message:
           `Could not ingest the email from ${input.fromEmail ?? '(unknown sender)'}` +
           `${input.subject ? ` — "${input.subject}"` : ''}. ${detail}. ` +
-          'The message was left unread; retry it from Settings → Email ingest once the cause is fixed.',
+          'Fix the cause, then press Retry under Settings → Email ingest (or forward the email again).',
         href: '/settings',
         source: 'email-ingest',
         sourceId: input.messageKey.slice(0, 255),
@@ -1347,7 +1792,20 @@ async function pollEmailIngestPass(
   try {
     const senders = await listIngestSenders();
 
-    const envelopes = await client.listUnseen();
+    const unseen = await client.listUnseen();
+
+    // Messages the owner re-armed are already flagged seen (terminal mail is
+    // never left unread — that would re-list it on every poll forever), so
+    // they have to be re-found explicitly by Message-ID.
+    const rearmedKeys = await listRetryRequestedKeys();
+    const rearmed = rearmedKeys.length > 0
+      ? await client.findByMessageIds(rearmedKeys)
+      : [];
+
+    // A re-armed message may also still be unseen; dedupe by uid.
+    const byUid = new Map<number, IngestEnvelope>();
+    for (const envelope of [...unseen, ...rearmed]) byUid.set(envelope.uid, envelope);
+    const envelopes = [...byUid.values()];
     if (envelopes.length === 0) return result;
 
     const states = await getIngestMessageStates(envelopes.map(e => messageDedupeKey(e)));
@@ -1356,7 +1814,8 @@ async function pollEmailIngestPass(
     /**
      * Tally a failure the poller has already persisted, and settle the
      * mailbox flag: a TERMINAL failure is flagged seen so ordinary polls stop
-     * re-listing it forever, while a transient one stays unread so the next
+     * re-listing it forever (an owner-requested retry re-finds it by
+     * Message-ID instead), while a transient one stays unread so the next
      * poll can pick it up.
      */
     const finishFailure = async (outcome: string, uid: number) => {
@@ -1380,6 +1839,10 @@ async function pollEmailIngestPass(
       // Resolved up front so the catch block below can still name the owner.
       const sender = envelope.from ? matchAllowedSender(envelope.from, senders) : null;
       let attempt = 0;
+      // The row's frozen attribution, once the claim reveals it. Preferred over
+      // `sender` on the failure paths so a retry's notification goes to the
+      // user the message actually belongs to.
+      let claimedOwner: IngestOwnerSnapshot | null = null;
 
       try {
         // Idempotency: skip anything already settled (or repeated in-batch).
@@ -1399,7 +1862,7 @@ async function pollEmailIngestPass(
           }
           // Every settled message — success, skip, terminal failure, or a
           // stalled claim — is flagged seen so an ordinary poll never selects
-          // it again.
+          // it again. A re-armed failure comes back through findByMessageIds.
           await markSeenQuietly(client, envelope.uid);
           result.skipped++;
           continue;
@@ -1413,34 +1876,64 @@ async function pollEmailIngestPass(
         // if that claimant dies the message must stay unread so the stale
         // claim can be reclaimed on a later poll. A transient failure still
         // inside its backoff window also loses here, and waits.
-        const claimedAttempt = await claimIngestMessage({
+        const claim = await claimIngestMessage({
           messageKey: key,
           fromEmail: envelope.from,
           subject: envelope.subject,
+          // Attribution for a FIRST ingest only. An existing row keeps its own
+          // snapshot (COALESCE in the SQL), which is what makes a retry after
+          // an allowlist edit land in the ORIGINAL user's book.
+          owner: sender
+            ? {
+                userId: sender.userId,
+                bookGuid: sender.bookGuid ?? config.defaultBookGuid,
+                senderId: sender.id,
+                senderEmail: sender.email,
+              }
+            : null,
         });
-        if (claimedAttempt === null) {
+        if (claim === null) {
           result.skipped++;
           continue;
         }
-        attempt = claimedAttempt;
+        attempt = claim.attempt;
 
-        if (!sender) {
+        // ROUTE BY THE SNAPSHOT, never by the allowlist match above. For a
+        // first ingest the two are the same row; for a retry the snapshot is
+        // the only trustworthy answer, because the allowlist may since have
+        // been edited, re-pointed at another user, or deleted outright.
+        const owner = claim.owner;
+        claimedOwner = owner;
+        if (!owner) {
+          // Either the sender was never allowlisted, or a re-armed message
+          // lost its owner because that user account was deleted (the FK is
+          // ON DELETE SET NULL). Both mean the same thing here: there is no
+          // book to file this into, and guessing one from the current
+          // allowlist is exactly what the snapshot exists to prevent.
           console.log(
-            `[email-ingest] Skipping message from non-allowlisted sender ${envelope.from ?? '(unknown)'}: "${envelope.subject}"`,
+            `[email-ingest] Skipping message with no owner (sender ${envelope.from ?? '(unknown)'}): "${envelope.subject}"`,
           );
           await recordProcessedMessage({
             messageKey: key,
             fromEmail: envelope.from,
             subject: envelope.subject,
             outcome: 'skipped_sender',
-            detail: 'Sender is not on the allowlist',
+            detail: claim.manual
+              ? 'The owner recorded for this message no longer exists'
+              : 'Sender is not on the allowlist',
           });
           await markSeenQuietly(client, envelope.uid);
           result.skipped++;
           continue;
         }
 
-        const bookGuid = sender.bookGuid ?? config.defaultBookGuid;
+        // The sender RULE is still consulted for presentation-level config
+        // (its default kind), which is not authority and is safe to re-read.
+        // Falls back to auto-detection when the rule is gone.
+        const ownerDefaultKind: IngestDefaultKind =
+          senders.find(s => s.id === owner.senderId)?.defaultKind ?? 'auto';
+
+        const bookGuid = owner.bookGuid ?? config.defaultBookGuid;
         if (!bookGuid) {
           // Permanent as far as this poll is concerned — retrying the same
           // config produces the same answer. The user is told, and can re-arm
@@ -1452,7 +1945,7 @@ async function pollEmailIngestPass(
             reason: 'No book configured for this sender and INGEST_DEFAULT_BOOK is unset',
             kind: 'permanent',
             attempt,
-            userId: sender.userId,
+            userId: owner.userId,
             bookGuid: null,
           });
           await finishFailure(outcome, envelope.uid);
@@ -1490,11 +1983,11 @@ async function pollEmailIngestPass(
           const kind = classifyKind({
             filename,
             subject: envelope.subject,
-            defaultKind: sender.defaultKind,
+            defaultKind: ownerDefaultKind,
           });
           const outcome = await ingestOneAttachment(kind, {
             bookGuid,
-            userId: sender.userId,
+            userId: owner.userId,
             filename,
             buffer: att.content,
             subject: envelope.subject,
@@ -1520,7 +2013,7 @@ async function pollEmailIngestPass(
             reason: `Failed: ${failedItems.join(', ')}`,
             kind: failureKind,
             attempt,
-            userId: sender.userId,
+            userId: owner.userId,
             bookGuid,
           });
           await finishFailure(outcome, envelope.uid);
@@ -1545,7 +2038,7 @@ async function pollEmailIngestPass(
 
         try {
           await createNotification({
-            userId: sender.userId,
+            userId: owner.userId,
             bookGuid,
             type: 'email_ingest',
             severity: failedItems.length > 0 ? 'warning' : 'success',
@@ -1570,8 +2063,10 @@ async function pollEmailIngestPass(
             reason: describeIngestError(err),
             kind: classifyIngestFailure(err),
             attempt,
-            userId: sender?.userId ?? null,
-            bookGuid: sender?.bookGuid ?? config.defaultBookGuid,
+            userId: claimedOwner?.userId ?? sender?.userId ?? null,
+            bookGuid: claimedOwner
+              ? (claimedOwner.bookGuid ?? config.defaultBookGuid)
+              : (sender?.bookGuid ?? config.defaultBookGuid),
           });
           await finishFailure(outcome, envelope.uid);
         } catch (recordErr) {
