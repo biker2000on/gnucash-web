@@ -10,6 +10,8 @@
  */
 
 import type { MonthlyAccountSum } from '@/lib/reports/utils';
+import { utcMonthKey } from '@/lib/date-utils';
+import { round2 } from '@/lib/format';
 
 export interface MonthlySeriesPoint {
     month: string;
@@ -35,14 +37,6 @@ export interface MonthlySeriesOptions {
     /** Window bounds; every month they span appears, zero-filled if empty. */
     startDate: Date;
     endDate: Date;
-}
-
-function monthKey(date: Date): string {
-    return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
-}
-
-function round2(value: number): number {
-    return Math.round(value * 100) / 100;
 }
 
 export function buildMonthlySeries(
@@ -79,7 +73,7 @@ export function buildMonthlySeries(
     const endMonth = new Date(Date.UTC(endDate.getUTCFullYear(), endDate.getUTCMonth(), 1));
 
     while (current <= endMonth) {
-        const key = monthKey(current);
+        const key = utcMonthKey(current);
         const data = monthlyData.get(key) || { income: 0, expenses: 0, taxes: 0 };
 
         monthly.push({

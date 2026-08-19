@@ -40,3 +40,16 @@ export async function getEffectiveStartDate(
   cachedBookKey = bookKey;
   return cachedEarliestDate;
 }
+
+/**
+ * `YYYY-MM` for a Date, read in UTC.
+ *
+ * UTC on purpose: GnuCash `post_date` is stored as a UTC timestamp and the
+ * monthly SQL rollups group by `date_trunc('month', post_date)`, so a local-time
+ * key would put a 1st-of-the-month transaction in the previous bucket for every
+ * user west of Greenwich. Several modules grew their own private copy of this;
+ * new callers use this one.
+ */
+export function utcMonthKey(date: Date): string {
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
+}

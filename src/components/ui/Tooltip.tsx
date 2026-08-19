@@ -18,6 +18,194 @@ import { createPortal } from 'react-dom';
 const EDGE_GAP = 8; // min distance from viewport edges
 const TRIGGER_GAP = 6; // distance between trigger and tooltip
 
+/** The one panel recipe (DESIGN.md: surface-elevated, 1px border, radius md, 13px). */
+const PANEL_CLASS =
+    'z-[10000] rounded-md border border-border bg-surface-elevated px-3 py-2 text-[13px] leading-snug text-foreground shadow-lg';
+
+interface TooltipPanelController {
+    /** Whether the panel is currently rendered. */
+    open: boolean;
+    /**
+     * Ref CALLBACK for the element the panel is positioned against. A callback
+     * rather than a ref object so nothing here is a ref the caller could read
+     * during render — `Tip` in particular has to merge it into a cloned child.
+     */
+    setAnchor: (element: HTMLElement | null) => void;
+    /** Open immediately (keyboard focus). */
+    show: () => void;
+    /** Close immediately and unpin (blur, Escape). */
+    hide: () => void;
+    /** Open after `showDelay` (hover). */
+    scheduleShow: () => void;
+    /** Close after `hideDelay` (pointer-out). No-op while pinned. */
+    scheduleHide: () => void;
+    /**
+     * Tap/click behaviour: pin open, or unpin and close when already pinned.
+     * Touch has no pointer-out, so a tapped tooltip must survive until it is
+     * dismissed explicitly (Escape, outside tap, blur).
+     */
+    togglePinned: () => void;
+    /**
+     * The visible panel, portalled to `document.body` and positioned by this
+     * hook. Returned as a render function rather than a component taking the
+     * panel ref as a prop, so the ref never leaves the hook.
+     */
+    renderPanel: (id: string, maxWidth: number, content: ReactNode) => ReactNode;
+}
+
+/**
+ * Everything a tooltip needs that is not its trigger: open state, the
+ * show/hide timers, viewport-aware positioning against an anchor, and the
+ * Escape / outside-tap dismissal.
+ *
+ * `Tooltip` and `Tip` differ only in what they hang the handlers off — a
+ * `<span>` of their own versus a cloned child — so this hook is deliberately
+ * the whole of the shared behaviour. When it lived twice the two copies drifted
+ * (only one of them pinned on tap), which is exactly the bug this prevents.
+ */
+function useTooltipPanel({
+    showDelay,
+    hideDelay,
+}: {
+    showDelay: number;
+    hideDelay: number;
+}): TooltipPanelController {
+    const [open, setOpen] = useState(false);
+    const anchorRef = useRef<HTMLElement | null>(null);
+    const panelRef = useRef<HTMLDivElement>(null);
+    const showTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    // Tap-to-open should stay open until dismissed; hover uses the hide delay.
+    const pinnedRef = useRef(false);
+
+    const clearTimers = useCallback(() => {
+        if (showTimer.current) clearTimeout(showTimer.current);
+        if (hideTimer.current) clearTimeout(hideTimer.current);
+        showTimer.current = null;
+        hideTimer.current = null;
+    }, []);
+
+    const show = useCallback(() => {
+        clearTimers();
+        setOpen(true);
+    }, [clearTimers]);
+
+    const hide = useCallback(() => {
+        clearTimers();
+        pinnedRef.current = false;
+        setOpen(false);
+    }, [clearTimers]);
+
+    const scheduleShow = useCallback(() => {
+        clearTimers();
+        showTimer.current = setTimeout(() => setOpen(true), showDelay);
+    }, [clearTimers, showDelay]);
+
+    const scheduleHide = useCallback(() => {
+        if (pinnedRef.current) return;
+        clearTimers();
+        hideTimer.current = setTimeout(() => setOpen(false), hideDelay);
+    }, [clearTimers, hideDelay]);
+
+    const togglePinned = useCallback(() => {
+        if (pinnedRef.current) {
+            hide();
+            return;
+        }
+        pinnedRef.current = true;
+        show();
+    }, [hide, show]);
+
+    useEffect(() => clearTimers, [clearTimers]);
+
+    // Position: above the anchor, centered; flip below when out of room; clamp X.
+    // Applied imperatively to the portal panel (DOM is the external system here),
+    // so measuring + positioning never round-trips through React state.
+    const reposition = useCallback(() => {
+        const anchor = anchorRef.current;
+        const panel = panelRef.current;
+        if (!anchor || !panel) return;
+        const rect = anchor.getBoundingClientRect();
+        const panelRect = panel.getBoundingClientRect();
+        const vw = window.innerWidth;
+        const vh = window.innerHeight;
+
+        let top = rect.top - panelRect.height - TRIGGER_GAP;
+        if (top < EDGE_GAP) {
+            const below = rect.bottom + TRIGGER_GAP;
+            // Flip below unless that would push it off the bottom edge too.
+            if (below + panelRect.height + EDGE_GAP <= vh || below < EDGE_GAP) top = below;
+            else top = Math.max(EDGE_GAP, vh - panelRect.height - EDGE_GAP);
+        }
+
+        let left = rect.left + rect.width / 2 - panelRect.width / 2;
+        left = Math.min(Math.max(left, EDGE_GAP), Math.max(EDGE_GAP, vw - panelRect.width - EDGE_GAP));
+
+        panel.style.top = `${top}px`;
+        panel.style.left = `${left}px`;
+        panel.style.visibility = 'visible';
+    }, []);
+
+    useLayoutEffect(() => {
+        if (!open) return;
+        reposition();
+        window.addEventListener('scroll', reposition, true);
+        window.addEventListener('resize', reposition);
+        return () => {
+            window.removeEventListener('scroll', reposition, true);
+            window.removeEventListener('resize', reposition);
+        };
+    }, [open, reposition]);
+
+    // Escape + outside-tap dismissal while open.
+    useEffect(() => {
+        if (!open) return;
+        const onKeyDown = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') hide();
+        };
+        const onPointerDown = (e: Event) => {
+            const target = e.target as Node;
+            if (anchorRef.current?.contains(target) || panelRef.current?.contains(target)) return;
+            hide();
+        };
+        document.addEventListener('keydown', onKeyDown);
+        document.addEventListener('pointerdown', onPointerDown);
+        document.addEventListener('touchstart', onPointerDown);
+        return () => {
+            document.removeEventListener('keydown', onKeyDown);
+            document.removeEventListener('pointerdown', onPointerDown);
+            document.removeEventListener('touchstart', onPointerDown);
+        };
+    }, [open, hide]);
+
+    const setAnchor = useCallback((element: HTMLElement | null) => {
+        anchorRef.current = element;
+    }, []);
+
+    const renderPanel = useCallback(
+        (id: string, maxWidth: number, content: ReactNode): ReactNode => {
+            if (typeof document === 'undefined') return null;
+            return createPortal(
+                <div
+                    ref={panelRef}
+                    id={id}
+                    role="tooltip"
+                    style={{ position: 'fixed', top: 0, left: 0, visibility: 'hidden', maxWidth }}
+                    className={PANEL_CLASS}
+                    onMouseEnter={clearTimers}
+                    onMouseLeave={scheduleHide}
+                >
+                    {content}
+                </div>,
+                document.body,
+            );
+        },
+        [clearTimers, scheduleHide],
+    );
+
+    return { open, setAnchor, show, hide, scheduleShow, scheduleHide, togglePinned, renderPanel };
+}
+
 export interface TooltipProps {
     /** Tooltip body. Keep it to one or two short sentences. */
     content: ReactNode;
@@ -61,104 +249,8 @@ export function Tooltip({
 }: TooltipProps) {
     const id = useId();
     const tooltipId = `tooltip-${id}`;
-    const [open, setOpen] = useState(false);
-    const triggerRef = useRef<HTMLSpanElement>(null);
-    const panelRef = useRef<HTMLDivElement>(null);
-    const showTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-    // Tap-to-open should stay open until dismissed; hover uses the hide delay.
-    const pinnedRef = useRef(false);
-
-    const clearTimers = useCallback(() => {
-        if (showTimer.current) clearTimeout(showTimer.current);
-        if (hideTimer.current) clearTimeout(hideTimer.current);
-        showTimer.current = null;
-        hideTimer.current = null;
-    }, []);
-
-    const show = useCallback(() => {
-        clearTimers();
-        setOpen(true);
-    }, [clearTimers]);
-
-    const hide = useCallback(() => {
-        clearTimers();
-        pinnedRef.current = false;
-        setOpen(false);
-    }, [clearTimers]);
-
-    const scheduleShow = useCallback(() => {
-        clearTimers();
-        showTimer.current = setTimeout(() => setOpen(true), showDelay);
-    }, [clearTimers, showDelay]);
-
-    const scheduleHide = useCallback(() => {
-        if (pinnedRef.current) return;
-        clearTimers();
-        hideTimer.current = setTimeout(() => setOpen(false), hideDelay);
-    }, [clearTimers, hideDelay]);
-
-    useEffect(() => clearTimers, [clearTimers]);
-
-    // Position: above the trigger, centered; flip below when out of room; clamp X.
-    // Applied imperatively to the portal panel (DOM is the external system here),
-    // so measuring + positioning never round-trips through React state.
-    const reposition = useCallback(() => {
-        const trigger = triggerRef.current;
-        const panel = panelRef.current;
-        if (!trigger || !panel) return;
-        const rect = trigger.getBoundingClientRect();
-        const panelRect = panel.getBoundingClientRect();
-        const vw = window.innerWidth;
-        const vh = window.innerHeight;
-
-        let top = rect.top - panelRect.height - TRIGGER_GAP;
-        if (top < EDGE_GAP) {
-            const below = rect.bottom + TRIGGER_GAP;
-            // Flip below unless that would push it off the bottom edge too.
-            if (below + panelRect.height + EDGE_GAP <= vh || below < EDGE_GAP) top = below;
-            else top = Math.max(EDGE_GAP, vh - panelRect.height - EDGE_GAP);
-        }
-
-        let left = rect.left + rect.width / 2 - panelRect.width / 2;
-        left = Math.min(Math.max(left, EDGE_GAP), Math.max(EDGE_GAP, vw - panelRect.width - EDGE_GAP));
-
-        panel.style.top = `${top}px`;
-        panel.style.left = `${left}px`;
-        panel.style.visibility = 'visible';
-    }, []);
-
-    useLayoutEffect(() => {
-        if (!open) return;
-        reposition();
-        window.addEventListener('scroll', reposition, true);
-        window.addEventListener('resize', reposition);
-        return () => {
-            window.removeEventListener('scroll', reposition, true);
-            window.removeEventListener('resize', reposition);
-        };
-    }, [open, reposition]);
-
-    // Escape + outside-tap dismissal while open.
-    useEffect(() => {
-        if (!open) return;
-        const onKeyDown = (e: KeyboardEvent) => {
-            if (e.key === 'Escape') hide();
-        };
-        const onPointerDown = (e: Event) => {
-            const target = e.target as Node;
-            if (triggerRef.current?.contains(target) || panelRef.current?.contains(target)) return;
-            hide();
-        };
-        document.addEventListener('keydown', onKeyDown);
-        document.addEventListener('pointerdown', onPointerDown);
-        document.addEventListener('touchstart', onPointerDown);
-        return () => {
-            document.removeEventListener('keydown', onKeyDown);
-            document.removeEventListener('pointerdown', onPointerDown);
-            document.removeEventListener('touchstart', onPointerDown);
-        };
-    }, [open, hide]);
+    const { open, setAnchor, show, hide, scheduleShow, scheduleHide, togglePinned, renderPanel } =
+        useTooltipPanel({ showDelay, hideDelay });
 
     const onTriggerKeyDown = (e: ReactKeyboardEvent<HTMLSpanElement>) => {
         if (e.key === 'Escape' && open) {
@@ -169,7 +261,7 @@ export function Tooltip({
 
     return (
         <span
-            ref={triggerRef}
+            ref={setAnchor}
             tabIndex={nested ? undefined : 0}
             role={nested ? undefined : 'button'}
             aria-label={ariaLabel}
@@ -187,36 +279,21 @@ export function Tooltip({
                 // nothing else.
                 e.preventDefault();
                 e.stopPropagation();
-                if (open && pinnedRef.current) {
-                    hide();
-                } else {
-                    pinnedRef.current = true;
-                    show();
-                }
+                togglePinned();
             }}
         >
             {children}
-            {open &&
-                typeof document !== 'undefined' &&
-                createPortal(
-                    <div
-                        ref={panelRef}
-                        id={tooltipId}
-                        role="tooltip"
-                        style={{ position: 'fixed', top: 0, left: 0, visibility: 'hidden', maxWidth }}
-                        className="z-[10000] rounded-md border border-border bg-surface-elevated px-3 py-2 text-[13px] leading-snug text-foreground shadow-lg"
-                        onMouseEnter={show}
-                        onMouseLeave={scheduleHide}
-                    >
-                        {content}
-                    </div>,
-                    document.body,
-                )}
+            {open && renderPanel(tooltipId, maxWidth, content)}
         </span>
     );
 }
 
 /* ------------------------------------------------------------------------- */
+
+/** Call the child's own handler for an event Tip also listens to, if it has one. */
+function callHandler(handler: unknown, event: unknown): void {
+    if (typeof handler === 'function') (handler as (e: unknown) => void)(event);
+}
 
 /**
  * Forward an element to whatever ref the cloned child already had.
@@ -227,11 +304,6 @@ export function Tooltip({
  * rule cannot see that through the alias, and taking the ref as a plain
  * parameter is both the fix and the clearer statement of intent.
  */
-/** Call the child's own handler for an event Tip also listens to, if it has one. */
-function callHandler(handler: unknown, event: unknown): void {
-    if (typeof handler === 'function') (handler as (e: unknown) => void)(event);
-}
-
 function assignRef(ref: Ref<HTMLElement> | undefined, element: HTMLElement | null): void {
     if (!ref) return;
     if (typeof ref === 'function') ref(element);
@@ -248,20 +320,24 @@ function assignRef(ref: Ref<HTMLElement> | undefined, element: HTMLElement | nul
  * into flex and grid rows — wrapping each in `Tooltip`'s focusable `<span>`
  * would both change layout and, on a `<td>`, produce invalid HTML.
  *
- * `Tip` therefore renders **no element of its own**. It clones its single
- * child and merges in the hover/focus handlers plus `aria-describedby`, so the
- * DOM shape, the CSS selectors, the table structure and the tab order all stay
- * exactly what they were. What changes is that the hint now opens on keyboard
- * focus and on tap as well as hover, is styled, and is a real `role="tooltip"`
- * wired to its trigger.
+ * `Tip` therefore renders **no element of its own** for an enabled child. It
+ * clones the child and merges in the hover/focus/tap handlers plus
+ * `aria-describedby`, so the DOM shape, the CSS selectors, the table structure
+ * and the tab order all stay exactly what they were. What changes is that the
+ * hint now opens on keyboard focus and on tap as well as hover, is styled, and
+ * is a real `role="tooltip"` wired to its trigger.
  *
- * Two cases a plain wrapper cannot handle:
+ * Two cases the clone alone cannot handle:
  *
  *  - **Disabled children.** Browsers fire no pointer events on a disabled
- *    control, so a hover tooltip on one is dead on arrival (that is most of
- *    the read-only hints). When the child is disabled, `Tip` instead mounts a
- *    permanently hidden description node and points `aria-describedby` at it —
- *    the only channel a disabled control still has.
+ *    control, so handlers merged onto one are dead on arrival — and that is
+ *    most of the read-only hints. Native `title=` *did* still render on a
+ *    disabled control, so replacing it with a description node alone silently
+ *    took the hint away from every sighted user. For a disabled child `Tip`
+ *    therefore renders one `inline-flex` wrapper `<span>` (focusable, and
+ *    keeping pointer events, which the disabled child itself does not) that
+ *    opens the same visible panel, *and* keeps the permanently mounted
+ *    description wired to the child through `aria-describedby`.
  *  - **Text that is already the accessible name.** Pass `describedBy={false}`
  *    when the same string is on the child as `aria-label` (icon-only buttons),
  *    so a screen reader does not read it twice.
@@ -290,96 +366,8 @@ export function Tip({
 }) {
     const id = useId();
     const tooltipId = `tip-${id}`;
-    const [open, setOpen] = useState(false);
-    const [node, setNode] = useState<HTMLElement | null>(null);
-    const panelRef = useRef<HTMLDivElement>(null);
-    const showTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-    const clearTimers = useCallback(() => {
-        if (showTimer.current) clearTimeout(showTimer.current);
-        if (hideTimer.current) clearTimeout(hideTimer.current);
-        showTimer.current = null;
-        hideTimer.current = null;
-    }, []);
-    useEffect(() => clearTimers, [clearTimers]);
-
-    const reposition = useCallback(() => {
-        const panel = panelRef.current;
-        if (!node || !panel) return;
-        const rect = node.getBoundingClientRect();
-        const panelRect = panel.getBoundingClientRect();
-        const vw = window.innerWidth;
-        const vh = window.innerHeight;
-
-        let top = rect.top - panelRect.height - TRIGGER_GAP;
-        if (top < EDGE_GAP) {
-            const below = rect.bottom + TRIGGER_GAP;
-            if (below + panelRect.height + EDGE_GAP <= vh || below < EDGE_GAP) top = below;
-            else top = Math.max(EDGE_GAP, vh - panelRect.height - EDGE_GAP);
-        }
-        let left = rect.left + rect.width / 2 - panelRect.width / 2;
-        left = Math.min(Math.max(left, EDGE_GAP), Math.max(EDGE_GAP, vw - panelRect.width - EDGE_GAP));
-
-        panel.style.top = `${top}px`;
-        panel.style.left = `${left}px`;
-        panel.style.visibility = 'visible';
-    }, [node]);
-
-    useLayoutEffect(() => {
-        if (!open) return;
-        reposition();
-        window.addEventListener('scroll', reposition, true);
-        window.addEventListener('resize', reposition);
-        return () => {
-            window.removeEventListener('scroll', reposition, true);
-            window.removeEventListener('resize', reposition);
-        };
-    }, [open, reposition]);
-
-    useEffect(() => {
-        if (!open) return;
-        const onKeyDown = (e: KeyboardEvent) => {
-            if (e.key === 'Escape') {
-                clearTimers();
-                setOpen(false);
-            }
-        };
-        const onPointerDown = (e: Event) => {
-            const target = e.target as Node;
-            if (node?.contains(target) || panelRef.current?.contains(target)) return;
-            clearTimers();
-            setOpen(false);
-        };
-        document.addEventListener('keydown', onKeyDown);
-        document.addEventListener('pointerdown', onPointerDown);
-        document.addEventListener('touchstart', onPointerDown);
-        return () => {
-            document.removeEventListener('keydown', onKeyDown);
-            document.removeEventListener('pointerdown', onPointerDown);
-            document.removeEventListener('touchstart', onPointerDown);
-        };
-    }, [open, node, clearTimers]);
-
-    // The four handlers are memoised rather than written inline in the
-    // cloneElement call because they touch the timer refs, and refs may not be
-    // read during render (react-hooks/refs).
-    const openAfterDelay = useCallback(() => {
-        clearTimers();
-        showTimer.current = setTimeout(() => setOpen(true), showDelay);
-    }, [clearTimers, showDelay]);
-    const closeAfterDelay = useCallback(() => {
-        clearTimers();
-        hideTimer.current = setTimeout(() => setOpen(false), hideDelay);
-    }, [clearTimers, hideDelay]);
-    const openNow = useCallback(() => {
-        clearTimers();
-        setOpen(true);
-    }, [clearTimers]);
-    const closeNow = useCallback(() => {
-        clearTimers();
-        setOpen(false);
-    }, [clearTimers]);
+    const { open, setAnchor, show, hide, scheduleShow, scheduleHide, togglePinned, renderPanel } =
+        useTooltipPanel({ showDelay, hideDelay });
 
     if (content === null || content === undefined || content === false || content === '') {
         return children;
@@ -391,13 +379,60 @@ export function Tip({
         'aria-describedby'?: string;
     };
     const isDisabled = childProps.disabled === true;
-    // A disabled control fires no pointer events, so the hidden description is
-    // the only channel left; otherwise describe it only while the tip is open.
+    // A disabled control fires no pointer events, so the hidden description
+    // stays mounted for it; otherwise describe the child only while open.
     const describe = describedBy && (isDisabled || open);
+    const describedByValue = describe
+        ? [childProps['aria-describedby'], tooltipId].filter(Boolean).join(' ')
+        : childProps['aria-describedby'];
+
+    if (isDisabled) {
+        // The wrapper is the anchor AND the event target: pointer and focus
+        // events on the disabled child never fire, but they do fire on a
+        // sibling wrapper that still has pointer-events. `inline-flex` keeps
+        // it out of the layout's way in the flex/grid rows these buttons live in.
+        return (
+            <>
+                <span
+                    ref={setAnchor}
+                    className="inline-flex"
+                    tabIndex={0}
+                    aria-describedby={describedBy ? tooltipId : undefined}
+                    onMouseEnter={scheduleShow}
+                    onMouseLeave={scheduleHide}
+                    onFocus={show}
+                    onBlur={hide}
+                    onClick={(e) => {
+                        // Nothing underneath to activate — the child is disabled —
+                        // so a tap only pins the hint.
+                        e.preventDefault();
+                        e.stopPropagation();
+                        togglePinned();
+                    }}
+                >
+                    {cloneElement(children, {
+                        'aria-describedby': describedByValue,
+                    } as Record<string, unknown>)}
+                </span>
+                {open ? (
+                    renderPanel(tooltipId, maxWidth, content)
+                ) : (
+                    describedBy &&
+                    typeof document !== 'undefined' &&
+                    createPortal(
+                        <div id={tooltipId} className="sr-only">
+                            {content}
+                        </div>,
+                        document.body,
+                    )
+                )}
+            </>
+        );
+    }
 
     const existingRef = childProps.ref ?? (children as { ref?: Ref<HTMLElement> }).ref;
     const setRef = (element: HTMLElement | null) => {
-        setNode(element);
+        setAnchor(element);
         assignRef(existingRef, element);
     };
 
@@ -408,54 +443,39 @@ export function Tip({
     // eslint-disable-next-line react-hooks/refs
     const cloned = cloneElement(children, {
         ref: setRef,
-        'aria-describedby': describe
-            ? [childProps['aria-describedby'], tooltipId].filter(Boolean).join(' ')
-            : childProps['aria-describedby'],
+        'aria-describedby': describedByValue,
         // The child's own handler still runs — Tip is additive, never a
         // replacement for what the call site already wired up.
         onMouseEnter: (e: unknown) => {
-            openAfterDelay();
+            scheduleShow();
             callHandler(childProps.onMouseEnter, e);
         },
         onMouseLeave: (e: unknown) => {
-            closeAfterDelay();
+            scheduleHide();
             callHandler(childProps.onMouseLeave, e);
         },
         onFocus: (e: unknown) => {
-            openNow();
+            show();
             callHandler(childProps.onFocus, e);
         },
         onBlur: (e: unknown) => {
-            closeNow();
+            hide();
             callHandler(childProps.onBlur, e);
+        },
+        // Tap pins the hint open, exactly as it does on a `Tooltip` trigger —
+        // touch has no pointer-out to dismiss with. Unlike `Tooltip` the event
+        // is NOT cancelled: the child here is the app's own control and its
+        // click is the action the user asked for.
+        onClick: (e: unknown) => {
+            togglePinned();
+            callHandler(childProps.onClick, e);
         },
     } as Record<string, unknown>);
 
     return (
         <>
             {cloned}
-            {typeof document !== 'undefined' &&
-                (open || (isDisabled && describedBy)) &&
-                createPortal(
-                    open ? (
-                        <div
-                            ref={panelRef}
-                            id={tooltipId}
-                            role="tooltip"
-                            style={{ position: 'fixed', top: 0, left: 0, visibility: 'hidden', maxWidth }}
-                            className="z-[10000] rounded-md border border-border bg-surface-elevated px-3 py-2 text-[13px] leading-snug text-foreground shadow-lg"
-                            onMouseEnter={clearTimers}
-                            onMouseLeave={closeAfterDelay}
-                        >
-                            {content}
-                        </div>
-                    ) : (
-                        <div id={tooltipId} className="sr-only">
-                            {content}
-                        </div>
-                    ),
-                    document.body,
-                )}
+            {open && renderPanel(tooltipId, maxWidth, content)}
         </>
     );
 }
