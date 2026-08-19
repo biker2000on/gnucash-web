@@ -52,7 +52,10 @@ function accountRow(overrides: Record<string, unknown> = {}) {
 
 /** Route the account lookup per guid so each slot can be posed separately. */
 function accountsByGuid(byGuid: Record<string, ReturnType<typeof accountRow>>) {
-  queryRawMock.mockImplementation((_strings: unknown, guid: string) => {
+  // The query composes the shared ancestor CTE fragment first, so the guid is
+  // the LAST string value interpolated, not the first.
+  queryRawMock.mockImplementation((_strings: unknown, ...values: unknown[]) => {
+    const guid = [...values].reverse().find((v): v is string => typeof v === 'string') ?? '';
     const row = byGuid[guid];
     return Promise.resolve(row ? [row] : []);
   });
