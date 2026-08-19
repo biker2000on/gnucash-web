@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
-import { toDecimal } from '@/lib/gnucash';
+import { sumSplitsByAccountAndMonth } from '@/lib/reports/utils';
+import { buildMonthlySeries } from '@/lib/dashboard/income-expense-series';
 import { getBookAccountGuids, getActiveBookGuid } from '@/lib/book-scope';
 import { getEffectiveStartDate } from '@/lib/date-utils';
 import { getBaseCurrency, findExchangeRate } from '@/lib/currency';
@@ -134,91 +135,31 @@ export async function GET(request: NextRequest) {
             }
         }
 
-        // Fetch all splits for these accounts within date range
-        const splits = await prisma.splits.findMany({
-            where: {
-                account_guid: {
-                    in: allRelevantGuids,
-                },
-                transaction: {
-                    post_date: {
-                        gte: startDate,
-                        lte: endDate,
-                    },
-                },
-            },
-            select: {
-                account_guid: true,
-                quantity_num: true,
-                quantity_denom: true,
-                transaction: {
-                    select: {
-                        post_date: true,
-                    },
-                },
-            },
+        // Per-account, per-month split sums, summed in PostgreSQL `numeric`
+        // with a single float8 cast at the boundary. This used to fetch every
+        // split in the window and reduce them in JS, which scaled with the
+        // transaction count rather than with the size of the answer.
+        const monthlySums = await sumSplitsByAccountAndMonth(allRelevantGuids, {
+            gte: startDate,
+            lte: endDate,
         });
 
-        // Group by month
-        const monthlyData = new Map<
-            string,
-            { income: number; expenses: number; taxes: number }
-        >();
-
-        for (const split of splits) {
-            const postDate = split.transaction.post_date;
-            if (!postDate) continue;
-
-            const monthKey = `${postDate.getUTCFullYear()}-${String(postDate.getUTCMonth() + 1).padStart(2, '0')}`;
-            const entry = monthlyData.get(monthKey) || { income: 0, expenses: 0, taxes: 0 };
-
-            const rawValue = parseFloat(toDecimal(split.quantity_num, split.quantity_denom));
-            const accountCurrGuid = accountCurrencyMap.get(split.account_guid);
-            const rate = (accountCurrGuid && accountCurrGuid !== baseCurrency.guid)
-                ? (exchangeRates.get(accountCurrGuid) || 1) : 1;
-            const value = rawValue * rate;
-
-            if (incomeGuids.has(split.account_guid)) {
-                // Income splits are negative in GnuCash; negate to get positive income
-                entry.income += -value;
-            } else if (expenseGuids.has(split.account_guid)) {
-                // Expense splits are positive in GnuCash
-                entry.expenses += value;
-
-                if (taxExpenseGuids.has(split.account_guid)) {
-                    entry.taxes += value;
-                }
-            }
-
-            monthlyData.set(monthKey, entry);
+        // Per-account multiplier into the base currency; the previous code
+        // resolved this per split from the same two maps.
+        const ratesByAccount = new Map<string, number>();
+        for (const [accountGuid, currGuid] of accountCurrencyMap) {
+            if (currGuid === baseCurrency.guid) continue;
+            ratesByAccount.set(accountGuid, exchangeRates.get(currGuid) || 1);
         }
 
-        // Generate all months in range (even if no data)
-        const monthly: Array<{
-            month: string;
-            income: number;
-            expenses: number;
-            taxes: number;
-            netProfit: number;
-        }> = [];
-
-        const current = new Date(Date.UTC(startDate.getUTCFullYear(), startDate.getUTCMonth(), 1));
-        const endMonth = new Date(Date.UTC(endDate.getUTCFullYear(), endDate.getUTCMonth(), 1));
-
-        while (current <= endMonth) {
-            const monthKey = `${current.getUTCFullYear()}-${String(current.getUTCMonth() + 1).padStart(2, '0')}`;
-            const data = monthlyData.get(monthKey) || { income: 0, expenses: 0, taxes: 0 };
-
-            monthly.push({
-                month: monthKey,
-                income: Math.round(data.income * 100) / 100,
-                expenses: Math.round(data.expenses * 100) / 100,
-                taxes: Math.round(data.taxes * 100) / 100,
-                netProfit: Math.round((data.income - data.expenses) * 100) / 100,
-            });
-
-            current.setUTCMonth(current.getUTCMonth() + 1);
-        }
+        const monthly = buildMonthlySeries(monthlySums, {
+            incomeGuids,
+            expenseGuids,
+            taxExpenseGuids,
+            ratesByAccount,
+            startDate,
+            endDate,
+        });
 
         const responseData = { monthly };
 

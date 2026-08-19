@@ -50,6 +50,8 @@ vi.mock('@/lib/cache', () => ({ cacheInvalidateAllForBook: cacheInvalidateAllFor
 vi.mock('@/lib/book-scope', () => ({ invalidateBookAccountGuidsCache: invalidateBookScopeMock }));
 
 import {
+    DASHBOARD_INVALIDATE_DEBOUNCE_MS,
+    flushPendingCacheInvalidations,
     handleDataChangeMessage,
     startDataEventsSubscriber,
     stopDataEventsSubscriber,
@@ -61,7 +63,10 @@ function event(entity: string, bookGuid: string | null = BOOK): string {
     return JSON.stringify({ entity, bookGuid: bookGuid ?? undefined, ts: new Date().toISOString() });
 }
 
-beforeEach(() => {
+beforeEach(async () => {
+    // Invalidation is coalesced per book; clear any window a previous test
+    // left open so each test starts on the leading edge.
+    await flushPendingCacheInvalidations();
     cacheInvalidateAllForBookMock.mockClear();
     invalidateBookScopeMock.mockClear();
     fakeRedis.instances.length = 0;
@@ -157,5 +162,88 @@ describe('startDataEventsSubscriber lifecycle', () => {
 
         startDataEventsSubscriber();
         expect(fakeRedis.instances.length).toBe(2);
+    });
+});
+
+describe('dashboard invalidation debounce', () => {
+    const OTHER_BOOK = 'c'.repeat(32);
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    it('collapses a burst of writes into one leading + one trailing invalidation', async () => {
+        for (let i = 0; i < 12; i++) {
+            await handleDataChangeMessage(event('transactions'));
+        }
+
+        // Leading edge fired immediately; the other eleven were coalesced.
+        expect(cacheInvalidateAllForBookMock).toHaveBeenCalledTimes(1);
+
+        await vi.advanceTimersByTimeAsync(DASHBOARD_INVALIDATE_DEBOUNCE_MS + 1);
+        expect(cacheInvalidateAllForBookMock).toHaveBeenCalledTimes(2);
+
+        // Nothing further is queued once the burst has settled.
+        await vi.advanceTimersByTimeAsync(DASHBOARD_INVALIDATE_DEBOUNCE_MS * 4);
+        expect(cacheInvalidateAllForBookMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not delay a single write — the first event invalidates at once', async () => {
+        await handleDataChangeMessage(event('transactions'));
+        expect(cacheInvalidateAllForBookMock).toHaveBeenCalledTimes(1);
+        expect(cacheInvalidateAllForBookMock).toHaveBeenCalledWith(BOOK);
+
+        // A lone event leaves no trailing pass behind.
+        await vi.advanceTimersByTimeAsync(DASHBOARD_INVALIDATE_DEBOUNCE_MS * 4);
+        expect(cacheInvalidateAllForBookMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps a long burst coalesced instead of degrading to one call per event', async () => {
+        for (let window = 0; window < 3; window++) {
+            for (let i = 0; i < 5; i++) {
+                await handleDataChangeMessage(event('transactions'));
+            }
+            await vi.advanceTimersByTimeAsync(DASHBOARD_INVALIDATE_DEBOUNCE_MS + 1);
+        }
+        // 15 events, three quiet windows: one call each, plus the leading one.
+        expect(cacheInvalidateAllForBookMock).toHaveBeenCalledTimes(4);
+    });
+
+    it('debounces per book — a busy book never starves a quiet one', async () => {
+        await handleDataChangeMessage(event('transactions'));
+        await handleDataChangeMessage(event('transactions'));
+        await handleDataChangeMessage(event('transactions', OTHER_BOOK));
+
+        expect(cacheInvalidateAllForBookMock).toHaveBeenCalledTimes(2);
+        expect(cacheInvalidateAllForBookMock).toHaveBeenCalledWith(BOOK);
+        expect(cacheInvalidateAllForBookMock).toHaveBeenCalledWith(OTHER_BOOK);
+    });
+
+    it('flushes a pending trailing pass on shutdown rather than dropping it', async () => {
+        await handleDataChangeMessage(event('transactions'));
+        await handleDataChangeMessage(event('transactions'));
+        expect(cacheInvalidateAllForBookMock).toHaveBeenCalledTimes(1);
+
+        await flushPendingCacheInvalidations();
+        expect(cacheInvalidateAllForBookMock).toHaveBeenCalledTimes(2);
+
+        // The window is gone, so the timer cannot fire a third time.
+        await vi.advanceTimersByTimeAsync(DASHBOARD_INVALIDATE_DEBOUNCE_MS * 4);
+        expect(cacheInvalidateAllForBookMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('still invalidates the book-scope cache for every account event in a burst', async () => {
+        await handleDataChangeMessage(event('accounts'));
+        await handleDataChangeMessage(event('accounts'));
+        await handleDataChangeMessage(event('accounts'));
+
+        // The in-memory account-tree drop is cheap and correctness-critical;
+        // only the Redis SCAN pass is coalesced.
+        expect(invalidateBookScopeMock).toHaveBeenCalledTimes(3);
+        expect(cacheInvalidateAllForBookMock).toHaveBeenCalledTimes(1);
     });
 });

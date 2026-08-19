@@ -61,6 +61,59 @@ export async function sumSplitsByAccount(
     return new Map(rows.map(r => [r.account_guid, { quantity: r.quantity_sum, value: r.value_sum }]));
 }
 
+/** One (month, account) bucket of summed split quantities. */
+export interface MonthlyAccountSum {
+    /** `YYYY-MM`, taken from the raw `timestamp` post_date (i.e. UTC). */
+    month: string;
+    accountGuid: string;
+    /** SUM(quantity_num / quantity_denom) over the bucket's splits. */
+    quantity: number;
+}
+
+/**
+ * Per-account split quantity sums bucketed by calendar month, in one GROUP BY.
+ *
+ * Same contract as {@link sumSplitsByAccount} — `numeric` division and
+ * summation, a single `::float8` cast at the boundary — but with the month a
+ * grouping key, so a monthly series costs one row per (month, account) instead
+ * of one row per split. Splits whose transaction has a NULL post_date are
+ * excluded, matching the Prisma `transaction: { post_date: ... }` filters.
+ *
+ * `post_date` is `timestamp without time zone`, so `to_char` reads the stored
+ * wall-clock value with no session-timezone shift — the same instant the
+ * Prisma-returned `Date` reports through its `getUTC*` accessors.
+ */
+export async function sumSplitsByAccountAndMonth(
+    accountGuids: string[],
+    dateRange: { lt?: Date; gte?: Date; lte?: Date }
+): Promise<MonthlyAccountSum[]> {
+    if (accountGuids.length === 0) return [];
+
+    const rows = await prisma.$queryRaw<Array<{
+        month: string;
+        account_guid: string;
+        quantity_sum: number;
+    }>>`
+        SELECT to_char(t.post_date, 'YYYY-MM') AS month,
+               s.account_guid,
+               COALESCE(SUM(s.quantity_num::numeric / NULLIF(s.quantity_denom, 0)::numeric), 0)::float8 AS quantity_sum
+        FROM splits s
+        JOIN transactions t ON t.guid = s.tx_guid
+        WHERE s.account_guid = ANY(${accountGuids}::text[])
+          AND t.post_date IS NOT NULL
+        ${dateRange.gte ? Prisma.sql`AND t.post_date >= ${dateRange.gte}` : Prisma.empty}
+        ${dateRange.lt ? Prisma.sql`AND t.post_date < ${dateRange.lt}` : Prisma.empty}
+        ${dateRange.lte ? Prisma.sql`AND t.post_date <= ${dateRange.lte}` : Prisma.empty}
+        GROUP BY 1, 2
+    `;
+
+    return rows.map(r => ({
+        month: r.month,
+        accountGuid: r.account_guid,
+        quantity: r.quantity_sum,
+    }));
+}
+
 export interface AccountWithBalance {
     guid: string;
     name: string;

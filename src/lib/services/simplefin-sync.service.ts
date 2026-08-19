@@ -484,6 +484,77 @@ export async function syncSimpleFin(
   return outcome.result;
 }
 
+/** Postgres bind-parameter budget is finite; chunk the dedup `IN (...)` list. */
+export const SIMPLEFIN_DEDUP_ID_CHUNK = 5000;
+
+/**
+ * Every feed transaction id this run could import, across all mapped accounts.
+ *
+ * Only mapped accounts contribute: an unmapped SimpleFin account is never
+ * imported, so its ids can never be deduped against and would only widen the
+ * dedup lookup.
+ */
+export function collectFeedTransactionIds(
+  mappedAccounts: Array<{ simplefin_account_id: string }>,
+  sfAccountMap: Map<string, { transactions?: Array<{ id: string }> }>,
+): string[] {
+  const ids = new Set<string>();
+  for (const mapped of mappedAccounts) {
+    const sfAccount = sfAccountMap.get(mapped.simplefin_account_id);
+    for (const txn of sfAccount?.transactions ?? []) {
+      if (txn.id) ids.add(txn.id);
+    }
+  }
+  return [...ids];
+}
+
+type SimpleFinMetaIdRow = {
+  simplefin_transaction_id: string | null;
+  simplefin_transaction_id_2: string | null;
+};
+
+/**
+ * Load, in ONE query (per chunk), which of `candidateIds` are already imported.
+ *
+ * `findMany` is injectable so the query count is observable in tests; it
+ * defaults to the real `gnucash_web_transaction_meta` lookup.
+ */
+export async function loadExistingSimpleFinIds(
+  candidateIds: string[],
+  findMany: (ids: string[]) => Promise<SimpleFinMetaIdRow[]> = defaultFindSimpleFinMetaIds,
+): Promise<Set<string>> {
+  const existingIds = new Set<string>();
+  if (candidateIds.length === 0) return existingIds;
+
+  for (let offset = 0; offset < candidateIds.length; offset += SIMPLEFIN_DEDUP_ID_CHUNK) {
+    const chunk = candidateIds.slice(offset, offset + SIMPLEFIN_DEDUP_ID_CHUNK);
+    const rows = await findMany(chunk);
+    for (const row of rows) {
+      // A row matches on either column; only the ids we asked about matter,
+      // so the other column of a two-legged transfer is ignored unless it is
+      // itself a candidate.
+      if (row.simplefin_transaction_id) existingIds.add(row.simplefin_transaction_id);
+      if (row.simplefin_transaction_id_2) existingIds.add(row.simplefin_transaction_id_2);
+    }
+  }
+  return existingIds;
+}
+
+function defaultFindSimpleFinMetaIds(ids: string[]): Promise<SimpleFinMetaIdRow[]> {
+  return prisma.gnucash_web_transaction_meta.findMany({
+    where: {
+      OR: [
+        { simplefin_transaction_id: { in: ids } },
+        { simplefin_transaction_id_2: { in: ids } },
+      ],
+    },
+    select: {
+      simplefin_transaction_id: true,
+      simplefin_transaction_id_2: true,
+    },
+  });
+}
+
 export async function runSimpleFinSync(
   connectionId: number,
   bookGuid: string,
@@ -653,6 +724,23 @@ export async function runSimpleFinSync(
     percent: 10,
   });
 
+  // Dedup index, loaded ONCE for the whole run rather than once per mapped
+  // account (the old per-account query was also unfiltered, so N mapped
+  // accounts meant N full scans of gnucash_web_transaction_meta). The lookup
+  // is restricted to the feed ids this run could actually collide with, which
+  // keeps the semantics identical — dedup on simplefin_transaction_id is
+  // global, not book-scoped, because the unique key on that column is — while
+  // bounding the rows returned by what SimpleFin just handed us.
+  //
+  // Sharing one Set across accounts is what the per-account refetch was
+  // emulating: every path that consumes a feed row (import, skip, manual
+  // match, transfer dedup, concurrent-duplicate violation) adds its id to the
+  // Set below, so an id first seen under account A is already excluded when
+  // account B is processed.
+  const existingIds = await loadExistingSimpleFinIds(
+    collectFeedTransactionIds(mappedAccounts, sfAccountMap),
+  );
+
   // Process each mapped account
   let accountIndex = 0;
   for (const mappedAccount of mappedAccounts) {
@@ -706,25 +794,6 @@ export async function runSimpleFinSync(
     let earliestFailedPostDate: Date | null = null;
 
     try {
-      // Get existing SimpleFin transaction IDs for this account to dedup
-      const existingMeta = await prisma.gnucash_web_transaction_meta.findMany({
-        where: {
-          OR: [
-            { simplefin_transaction_id: { not: null } },
-            { simplefin_transaction_id_2: { not: null } },
-          ],
-        },
-        select: {
-          simplefin_transaction_id: true,
-          simplefin_transaction_id_2: true,
-        },
-      });
-      const existingIds = new Set<string>();
-      for (const m of existingMeta) {
-        if (m.simplefin_transaction_id) existingIds.add(m.simplefin_transaction_id);
-        if (m.simplefin_transaction_id_2) existingIds.add(m.simplefin_transaction_id_2);
-      }
-
       // Get the GnuCash account's commodity/currency for the splits
       const gnucashAccount = await prisma.accounts.findFirst({
         where: {
