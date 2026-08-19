@@ -21,6 +21,7 @@ interface ItemForm {
     incomeAccountGuid: string;
     cogsAccountGuid: string;
     assetAccountGuid: string;
+    postToLedger: boolean;
     valuationMethod: ValuationMethod;
     reorderPoint: string;
     reorderQuantity: string;
@@ -36,6 +37,7 @@ const EMPTY_FORM: ItemForm = {
     incomeAccountGuid: '',
     cogsAccountGuid: '',
     assetAccountGuid: '',
+    postToLedger: true,
     valuationMethod: 'average',
     reorderPoint: '',
     reorderQuantity: '',
@@ -52,6 +54,7 @@ function itemToForm(item: ItemDTO): ItemForm {
         incomeAccountGuid: item.incomeAccountGuid ?? '',
         cogsAccountGuid: item.cogsAccountGuid ?? '',
         assetAccountGuid: item.assetAccountGuid ?? '',
+        postToLedger: item.postToLedger !== false,
         valuationMethod: item.valuationMethod ?? 'average',
         reorderPoint: item.reorderPoint != null ? String(item.reorderPoint) : '',
         reorderQuantity: item.reorderQuantity != null ? String(item.reorderQuantity) : '',
@@ -78,14 +81,23 @@ export function ItemFormModal({ editing, onClose, onSaved }: ItemFormModalProps)
     const [form, setForm] = useState<ItemForm>(EMPTY_FORM);
     const [saving, setSaving] = useState(false);
     const [bootstrapping, setBootstrapping] = useState(false);
+    /** Per-field messages echoed by the API's 400 { error, fields } body. */
+    const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
     const isNew = editing === 'new';
     const isOpen = editing !== null;
 
     useEffect(() => {
+        setFieldErrors({});
         if (editing === 'new') setForm(EMPTY_FORM);
         else if (editing) setForm(itemToForm(editing));
     }, [editing]);
+
+    const postingFieldLabels: Record<string, string> = {
+        incomeAccountGuid: 'Income account',
+        cogsAccountGuid: 'COGS account',
+        assetAccountGuid: 'Asset account',
+    };
 
     const handleBootstrap = async () => {
         setBootstrapping(true);
@@ -130,6 +142,20 @@ export function ItemFormModal({ editing, onClose, onSaved }: ItemFormModalProps)
             error('Reorder quantity must be a non-negative number');
             return;
         }
+        // Posting is either on — and then all three accounts are required,
+        // matching the server's save-time rule — or off, and the item is
+        // stock-only. Catching it here saves a round trip; the server check is
+        // still the authority.
+        if (form.postToLedger) {
+            const missing = (['incomeAccountGuid', 'cogsAccountGuid', 'assetAccountGuid'] as const)
+                .filter((f) => !form[f]);
+            if (missing.length > 0) {
+                setFieldErrors(Object.fromEntries(missing.map((f) => [f, 'Required for ledger posting'])));
+                error(`${missing.map((f) => postingFieldLabels[f]).join(', ')} required while ledger posting is on`);
+                return;
+            }
+        }
+        setFieldErrors({});
         setSaving(true);
         try {
             const payload = {
@@ -141,6 +167,7 @@ export function ItemFormModal({ editing, onClose, onSaved }: ItemFormModalProps)
                 incomeAccountGuid: form.incomeAccountGuid || null,
                 cogsAccountGuid: form.cogsAccountGuid || null,
                 assetAccountGuid: form.assetAccountGuid || null,
+                postToLedger: form.postToLedger,
                 valuationMethod: form.valuationMethod,
                 reorderPoint,
                 reorderQuantity,
@@ -153,7 +180,10 @@ export function ItemFormModal({ editing, onClose, onSaved }: ItemFormModalProps)
                 body: JSON.stringify(payload),
             });
             const data = await res.json().catch(() => null);
-            if (!res.ok) throw new Error(data?.error || 'Failed to save item');
+            if (!res.ok) {
+                if (data?.fields && typeof data.fields === 'object') setFieldErrors(data.fields);
+                throw new Error(data?.error || 'Failed to save item');
+            }
             success(isNew ? `Item ${payload.sku} created` : 'Item updated');
             onSaved(data.item);
             onClose();
@@ -301,41 +331,47 @@ export function ItemFormModal({ editing, onClose, onSaved }: ItemFormModalProps)
                             {bootstrapping ? 'Creating...' : 'Create default accounts'}
                         </button>
                     </div>
+                    <label className="flex items-start gap-2 text-sm text-foreground-secondary mb-2">
+                        <input
+                            type="checkbox"
+                            checked={form.postToLedger}
+                            onChange={(e) => setForm({ ...form, postToLedger: e.target.checked })}
+                            className="accent-primary mt-0.5"
+                        />
+                        <span>
+                            Post this item&rsquo;s movements to the ledger
+                            <span className="block text-xs text-foreground-muted">
+                                On: all three accounts below are required, and shipping records{' '}
+                                <Abbr term="COGS" /> automatically. Off: the item is tracked for stock
+                                only and the accounts may stay empty.
+                            </span>
+                        </span>
+                    </label>
                     <p className="text-xs text-foreground-muted mb-2">
-                        Only needed for posting to the ledger: shipping with post requires <Abbr term="COGS" /> + asset accounts;
-                        receiving with post also needs an offset account at receive time.
+                        Receiving with post also needs an offset account, chosen at receive time.
                     </p>
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                        <div>
-                            <label className={labelClass}>Income account</label>
-                            <AccountSelector
-                                value={form.incomeAccountGuid}
-                                onChange={(guid) => setForm((f) => ({ ...f, incomeAccountGuid: guid }))}
-                                accountTypes={['INCOME']}
-                                placeholder="Optional"
-                                compact
-                            />
-                        </div>
-                        <div>
-                            <label className={labelClass}>COGS account</label>
-                            <AccountSelector
-                                value={form.cogsAccountGuid}
-                                onChange={(guid) => setForm((f) => ({ ...f, cogsAccountGuid: guid }))}
-                                accountTypes={['EXPENSE']}
-                                placeholder="Optional"
-                                compact
-                            />
-                        </div>
-                        <div>
-                            <label className={labelClass}>Asset account</label>
-                            <AccountSelector
-                                value={form.assetAccountGuid}
-                                onChange={(guid) => setForm((f) => ({ ...f, assetAccountGuid: guid }))}
-                                accountTypes={['ASSET']}
-                                placeholder="Optional"
-                                compact
-                            />
-                        </div>
+                        {([
+                            { field: 'incomeAccountGuid', label: 'Income account', types: ['INCOME'] },
+                            { field: 'cogsAccountGuid', label: 'COGS account', types: ['EXPENSE'] },
+                            { field: 'assetAccountGuid', label: 'Asset account', types: ['ASSET'] },
+                        ] as const).map(({ field, label, types }) => (
+                            <div key={field}>
+                                <label className={labelClass}>
+                                    {label}{form.postToLedger ? ' *' : ''}
+                                </label>
+                                <AccountSelector
+                                    value={form[field]}
+                                    onChange={(guid) => setForm((f) => ({ ...f, [field]: guid }))}
+                                    accountTypes={[...types]}
+                                    placeholder={form.postToLedger ? 'Required' : 'Optional'}
+                                    compact
+                                />
+                                {fieldErrors[field] && (
+                                    <p className="mt-1 text-[11px] text-error">{fieldErrors[field]}</p>
+                                )}
+                            </div>
+                        ))}
                     </div>
                 </div>
 

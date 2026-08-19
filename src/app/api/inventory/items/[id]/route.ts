@@ -33,8 +33,11 @@ export async function GET(
 /**
  * PUT /api/inventory/items/[id] — partial update.
  * Body (all optional): { sku, name, description, unit, salePrice,
- *   incomeAccountGuid, cogsAccountGuid, assetAccountGuid,
+ *   incomeAccountGuid, cogsAccountGuid, assetAccountGuid, postToLedger,
  *   valuationMethod ('average'|'fifo'), reorderPoint, reorderQuantity, active }
+ *
+ * Editing the posting setup while postToLedger is on re-validates all three
+ * accounts; a 400 comes back as { error, fields }.
  * Response: { item: InventoryItem }
  */
 export async function PUT(
@@ -58,6 +61,7 @@ export async function PUT(
       incomeAccountGuid: body.incomeAccountGuid,
       cogsAccountGuid: body.cogsAccountGuid,
       assetAccountGuid: body.assetAccountGuid,
+      postToLedger: body.postToLedger,
       valuationMethod: body.valuationMethod,
       reorderPoint: body.reorderPoint,
       reorderQuantity: body.reorderQuantity,

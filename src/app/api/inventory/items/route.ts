@@ -27,8 +27,12 @@ export async function GET(request: NextRequest) {
 /**
  * POST /api/inventory/items — create an item.
  * Body: { sku, name, description?, unit?, salePrice?,
- *         incomeAccountGuid?, cogsAccountGuid?, assetAccountGuid?,
+ *         incomeAccountGuid?, cogsAccountGuid?, assetAccountGuid?, postToLedger?,
  *         valuationMethod? ('average'|'fifo'), reorderPoint?, reorderQuantity? }
+ *
+ * postToLedger defaults to TRUE, and then all three account guids are
+ * REQUIRED and must be non-placeholder in-book accounts of the right type;
+ * a 400 comes back as { error, fields } with per-field messages.
  * Response 201: { item: InventoryItem }
  */
 export async function POST(request: NextRequest) {
@@ -50,6 +54,7 @@ export async function POST(request: NextRequest) {
       incomeAccountGuid: body.incomeAccountGuid,
       cogsAccountGuid: body.cogsAccountGuid,
       assetAccountGuid: body.assetAccountGuid,
+      postToLedger: body.postToLedger,
       valuationMethod: body.valuationMethod,
       reorderPoint: body.reorderPoint,
       reorderQuantity: body.reorderQuantity,

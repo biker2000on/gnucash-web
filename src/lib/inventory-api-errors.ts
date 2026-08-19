@@ -29,7 +29,12 @@ export function mapInventoryError(error: unknown): NextResponse {
     return periodLockedResponse(error);
   }
   if (error instanceof InventoryValidationError) {
-    return NextResponse.json({ error: error.message }, { status: 400 });
+    // `fields` is present only for the multi-field validations (item posting
+    // accounts); omitted otherwise so the existing { error } shape is intact.
+    return NextResponse.json(
+      error.fields ? { error: error.message, fields: error.fields } : { error: error.message },
+      { status: 400 },
+    );
   }
   if (error instanceof InventoryNotFoundError) {
     return NextResponse.json({ error: error.message }, { status: 404 });
