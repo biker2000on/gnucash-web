@@ -263,6 +263,18 @@ export function commodityLockKey(namespace: string, mnemonic: string): string {
 }
 
 /**
+ * Lock key guarding a SimpleFIN transaction id.
+ *
+ * Unlike the optional partial unique index on transaction metadata, this key
+ * is available even when a legacy book already contains duplicate imports.
+ * Callers claim it inside their write transaction, then re-check the id
+ * before inserting or linking it.
+ */
+export function simpleFinTransactionIdLockKey(simpleFinTransactionId: string): string {
+    return `simplefin-transaction:${simpleFinTransactionId}`;
+}
+
+/**
  * Lock key guarding find-or-create of an account by (parent, name).
  *
  * ## THE ORDERING RULE FOR EVERY HOLDER OF THIS LOCK

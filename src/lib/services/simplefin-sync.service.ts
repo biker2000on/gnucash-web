@@ -8,7 +8,12 @@
 import prisma, { generateGuid } from '@/lib/prisma';
 import { tryWithDatabaseAdvisoryLock } from '@/lib/db';
 import { getAccountGuidsForBook } from '@/lib/book-scope';
-import { acquireNamedXactLock, commodityLockKey } from '@/lib/book-lock';
+import {
+  acquireNamedXactLock,
+  commodityLockKey,
+  simpleFinTransactionIdLockKey,
+  type MaybeRawClient,
+} from '@/lib/book-lock';
 import { acquireSoleAccountNameLock } from '@/lib/account-lock-order';
 import { decryptAccessUrl, fetchAccountsChunked, SimpleFinTransaction, SimpleFinAccessRevokedError, SimpleFinHolding } from './simplefin.service';
 import { toNumDenom } from '@/lib/validation';
@@ -810,7 +815,7 @@ export async function runSimpleFinSync(
               isSymbolMatched = false;
             }
 
-            await importInvestmentTransaction(
+            const imported = await importInvestmentTransaction(
               sfTxn,
               targetAccountGuid,
               cashChildGuid!,
@@ -821,10 +826,15 @@ export async function runSimpleFinSync(
               bookAccountGuidSet,
               mappedAccount.gnucash_account_guid,
             );
+            if (!imported) {
+              result.transactionsSkipped++;
+              existingIds.add(sfTxn.id);
+              continue;
+            }
             result.investmentTransactionsImported++;
           } else {
             // Normal mode: route directly to mapped account
-            await importTransaction(
+            const imported = await importTransaction(
               sfTxn,
               mappedAccount.gnucash_account_guid,
               currencyGuid,
@@ -832,6 +842,11 @@ export async function runSimpleFinSync(
               bookGuid,
               bookAccountGuidSet,
             );
+            if (!imported) {
+              result.transactionsSkipped++;
+              existingIds.add(sfTxn.id);
+              continue;
+            }
           }
           result.transactionsImported++;
           existingIds.add(sfTxn.id); // Prevent re-import within same sync
@@ -1239,7 +1254,9 @@ async function findAndLinkManualMatch(
   // in original_description via COALESCE — set only when still null, never
   // overwriting an original captured earlier.
   const providerPayee = importedOriginalDescription(sfTxn);
-  await prisma.$transaction(async (tx) => {
+  return prisma.$transaction(async (tx) => {
+    if (!await claimSimpleFinTransactionId(tx, sfTxn.id)) return false;
+
     if (match.has_meta) {
       await tx.$executeRaw`
         UPDATE gnucash_web_transaction_meta
@@ -1264,9 +1281,8 @@ async function findAndLinkManualMatch(
         },
       });
     }
+    return true;
   });
-
-  return true;
 }
 
 /**
@@ -1374,6 +1390,34 @@ export function buildImportedTransactionMeta(
 }
 
 /**
+ * Claim a primary SimpleFIN transaction id for the current transaction.
+ *
+ * The partial unique index is a useful backstop on clean books, but legacy
+ * duplicate metadata prevents it from being created. The named advisory lock
+ * therefore supplies the correctness boundary in every book: after acquiring
+ * it, re-read the id on this same interactive transaction before writing it.
+ *
+ * This key is not an account sibling-name key and the callers below acquire no
+ * book/account/commodity key while holding it, so it has no co-held ordering
+ * edge in the account-lock-order graph.
+ */
+export async function claimSimpleFinTransactionId(
+  tx: MaybeRawClient,
+  simpleFinTransactionId: string,
+): Promise<boolean> {
+  await acquireNamedXactLock(tx, simpleFinTransactionIdLockKey(simpleFinTransactionId));
+  if (typeof tx.$queryRaw !== 'function') return true;
+
+  const existing = await tx.$queryRaw<Array<{ id: number }>>`
+    SELECT id
+    FROM gnucash_web_transaction_meta
+    WHERE simplefin_transaction_id = ${simpleFinTransactionId}
+    LIMIT 1
+  `;
+  return existing.length === 0;
+}
+
+/**
  * Import a single SimpleFin transaction into GnuCash.
  */
 async function importTransaction(
@@ -1383,9 +1427,9 @@ async function importTransaction(
   currencyMnemonic: string,
   bookGuid: string,
   bookAccountGuids: ReadonlySet<string>,
-): Promise<void> {
+): Promise<boolean> {
   const amount = parseFloat(sfTxn.amount);
-  if (isNaN(amount) || amount === 0) return;
+  if (isNaN(amount) || amount === 0) return false;
 
   // Guess the destination account: explicit rules first, then history
   const guess = await guessCategory(
@@ -1410,7 +1454,9 @@ async function importTransaction(
   const bankValueNum = amount > 0 ? absNum : -absNum;
   const destValueNum = amount > 0 ? -absNum : absNum;
 
-  await prisma.$transaction(async (tx) => {
+  return prisma.$transaction(async (tx) => {
+    if (!await claimSimpleFinTransactionId(tx, sfTxn.id)) return false;
+
     // Create transaction
     await tx.transactions.create({
       data: {
@@ -1464,6 +1510,7 @@ async function importTransaction(
     await tx.gnucash_web_transaction_meta.create({
       data: buildImportedTransactionMeta(sfTxn, txGuid, guess.confidence),
     });
+    return true;
   });
 }
 
@@ -1918,9 +1965,9 @@ async function importInvestmentTransaction(
   bookGuid: string,
   bookAccountGuids: ReadonlySet<string>,
   bankAccountGuid: string,
-): Promise<void> {
+): Promise<boolean> {
   const amount = parseFloat(sfTxn.amount);
-  if (isNaN(amount) || amount === 0) return;
+  if (isNaN(amount) || amount === 0) return false;
 
   // Determine the counter-account:
   // - Symbol-matched (STOCK child): counter = Cash child (brokerage sweep)
@@ -1956,7 +2003,9 @@ async function importInvestmentTransaction(
   const targetValueNum = amount > 0 ? absNum : -absNum;
   const counterValueNum = amount > 0 ? -absNum : absNum;
 
-  await prisma.$transaction(async (tx) => {
+  return prisma.$transaction(async (tx) => {
+    if (!await claimSimpleFinTransactionId(tx, sfTxn.id)) return false;
+
     // Create transaction
     await tx.transactions.create({
       data: {
@@ -2015,6 +2064,7 @@ async function importInvestmentTransaction(
         isSymbolMatched ? 'medium' : counterConfidence,
       ),
     });
+    return true;
   });
 }
 
