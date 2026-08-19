@@ -13,6 +13,7 @@ import { useToast } from '@/contexts/ToastContext';
 import { useCurrentUser, READONLY_TOOLTIP } from '@/hooks/useCurrentUser';
 import { formatCurrency } from '@/lib/format';
 import type { EstimateView, EstimateStatus } from '@/lib/business/estimates.service';
+import { Tip } from '@/components/ui/Tooltip';
 
 const TNUM = { fontFeatureSettings: "'tnum'" } as const;
 const inputClass = 'w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder-foreground-muted focus:outline-none focus:border-primary/50 transition-all';
@@ -327,15 +328,16 @@ export default function EstimatesPage() {
                 title="Estimates"
                 subtitle="Quotes with line items — send, track acceptance, and convert to invoices."
                 actions={
+                    <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                     <button
                         type="button"
                         onClick={openNew}
                         disabled={isReadonly}
-                        title={isReadonly ? READONLY_TOOLTIP : undefined}
                         className="px-4 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 disabled:cursor-not-allowed text-primary-foreground rounded-lg transition-colors whitespace-nowrap"
                     >
                         + New Estimate
                     </button>
+                    </Tip>
                 }
                 toolbar={
                     <FilterBar
@@ -414,34 +416,46 @@ export default function EstimatesPage() {
                                             </td>
                                             <td className="px-4 py-2 text-right whitespace-nowrap">
                                                 {est.status === 'draft' && (
-                                                    <button type="button" onClick={() => setStatus(est, 'sent')} disabled={isReadonly || busy} title={isReadonly ? READONLY_TOOLTIP : undefined} className={rowActionClass}>
+                                                    <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
+                                                    <button type="button" onClick={() => setStatus(est, 'sent')} disabled={isReadonly || busy} className={rowActionClass}>
                                                         Mark sent
                                                     </button>
+                                                    </Tip>
                                                 )}
                                                 {est.status === 'sent' && (
                                                     <>
-                                                        <button type="button" onClick={() => setStatus(est, 'accepted')} disabled={isReadonly || busy} title={isReadonly ? READONLY_TOOLTIP : undefined} className="px-2 py-1 text-xs rounded-md text-positive hover:bg-positive/10 transition-colors disabled:opacity-50">
+                                                        <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
+                                                        <button type="button" onClick={() => setStatus(est, 'accepted')} disabled={isReadonly || busy} className="px-2 py-1 text-xs rounded-md text-positive hover:bg-positive/10 transition-colors disabled:opacity-50">
                                                             Accept
                                                         </button>
-                                                        <button type="button" onClick={() => setStatus(est, 'declined')} disabled={isReadonly || busy} title={isReadonly ? READONLY_TOOLTIP : undefined} className="ml-1 px-2 py-1 text-xs rounded-md text-negative hover:bg-negative/10 transition-colors disabled:opacity-50">
+                                                        </Tip>
+                                                        <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
+                                                        <button type="button" onClick={() => setStatus(est, 'declined')} disabled={isReadonly || busy} className="ml-1 px-2 py-1 text-xs rounded-md text-negative hover:bg-negative/10 transition-colors disabled:opacity-50">
                                                             Decline
                                                         </button>
+                                                        </Tip>
                                                     </>
                                                 )}
                                                 {est.status !== 'converted' && est.status !== 'declined' && (
-                                                    <button type="button" onClick={() => handleConvert(est)} disabled={isReadonly || busy} title={isReadonly ? READONLY_TOOLTIP : 'Create a draft invoice from this estimate'} className="ml-1 px-2 py-1 text-xs rounded-md text-primary hover:bg-primary-light transition-colors disabled:opacity-50">
+                                                    <Tip content={isReadonly ? READONLY_TOOLTIP : 'Create a draft invoice from this estimate'}>
+                                                    <button type="button" onClick={() => handleConvert(est)} disabled={isReadonly || busy} className="ml-1 px-2 py-1 text-xs rounded-md text-primary hover:bg-primary-light transition-colors disabled:opacity-50">
                                                         Convert
                                                     </button>
+                                                    </Tip>
                                                 )}
                                                 {est.status !== 'converted' && (
-                                                    <button type="button" onClick={() => handleCopyLink(est)} disabled={isReadonly || busy} title={isReadonly ? READONLY_TOOLTIP : 'Copy a customer-facing link'} className={`ml-1 ${rowActionClass}`}>
+                                                    <Tip content={isReadonly ? READONLY_TOOLTIP : 'Copy a customer-facing link'}>
+                                                    <button type="button" onClick={() => handleCopyLink(est)} disabled={isReadonly || busy} className={`ml-1 ${rowActionClass}`}>
                                                         Copy link
                                                     </button>
+                                                    </Tip>
                                                 )}
                                                 {est.status !== 'converted' && (
-                                                    <button type="button" onClick={() => setConfirmDelete(est)} disabled={isReadonly || busy} title={isReadonly ? READONLY_TOOLTIP : undefined} className="ml-1 px-2 py-1 text-xs rounded-md text-negative hover:bg-negative/10 transition-colors disabled:opacity-50">
+                                                    <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
+                                                    <button type="button" onClick={() => setConfirmDelete(est)} disabled={isReadonly || busy} className="ml-1 px-2 py-1 text-xs rounded-md text-negative hover:bg-negative/10 transition-colors disabled:opacity-50">
                                                         Delete
                                                     </button>
+                                                    </Tip>
                                                 )}
                                             </td>
                                         </tr>
@@ -567,15 +581,16 @@ export default function EstimatesPage() {
                                                 {formatCurrency(lineAmount(l), 'USD')}
                                             </td>
                                             <td className="px-1 py-1.5 text-center">
+                                                <Tip content="Remove line">
                                                 <button
                                                     type="button"
                                                     onClick={() => removeLine(l.key)}
                                                     disabled={editingConverted}
                                                     className="px-1.5 py-0.5 text-xs rounded-md text-foreground-muted hover:text-negative hover:bg-negative/10 transition-colors disabled:opacity-30"
-                                                    title="Remove line"
                                                 >
                                                     ✕
                                                 </button>
+                                                </Tip>
                                             </td>
                                         </tr>
                                     ))}
@@ -635,14 +650,15 @@ export default function EstimatesPage() {
                             {editingConverted ? 'Close' : 'Cancel'}
                         </button>
                         {!editingConverted && (
+                            <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                             <button
                                 type="submit"
                                 disabled={saving || isReadonly}
-                                title={isReadonly ? READONLY_TOOLTIP : undefined}
                                 className="px-4 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 disabled:cursor-not-allowed text-primary-foreground rounded-lg transition-colors"
                             >
                                 {saving ? 'Saving...' : editing === 'new' ? 'Create Estimate' : 'Save'}
                             </button>
+                            </Tip>
                         )}
                     </div>
                 </form>

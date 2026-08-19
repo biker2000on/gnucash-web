@@ -15,6 +15,7 @@ import { TransactionFormModal } from '@/components/TransactionFormModal';
 import { ConfirmationDialog } from '@/components/ui/ConfirmationDialog';
 import { ReconcileSummary } from './ReconcileSummary';
 import { CandidateTable } from './CandidateTable';
+import { Tip } from '@/components/ui/Tooltip';
 
 function todayIsoDate(): string {
     return new Date().toISOString().slice(0, 10);
@@ -452,27 +453,27 @@ function ReconcilePageContent() {
                     </span>
                 </div>
                 <div className="flex items-center gap-2">
+                    <Tip content="New transaction (Alt+N)">
                     <button
                         type="button"
                         onClick={() => setNewTransactionOpen(true)}
                         className="px-3 py-2 text-sm font-medium border border-border hover:border-border-hover text-foreground-secondary hover:text-foreground rounded-md transition-colors"
-                        title="New transaction (Alt+N)"
                     >
                         New Transaction
                         <kbd className="ml-2 font-mono text-[10px] text-foreground-muted">Alt+N</kbd>
                     </button>
+                    </Tip>
+                    <Tip content={canFinish
+                                ? 'Mark selected splits reconciled'
+                                : 'Difference must be exactly 0.00 to finish'}>
                     <button
                         onClick={handleFinish}
                         disabled={!canFinish}
-                        title={
-                            canFinish
-                                ? 'Mark selected splits reconciled'
-                                : 'Difference must be exactly 0.00 to finish'
-                        }
                         className="px-4 py-2 text-sm font-medium bg-primary hover:bg-primary-hover text-primary-foreground rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                         {submitting ? 'Finishing...' : 'Finish'}
                     </button>
+                    </Tip>
                 </div>
             </div>
 

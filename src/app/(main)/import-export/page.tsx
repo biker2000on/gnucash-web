@@ -4,6 +4,7 @@ import { useState, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import { ImportPreview } from '@/components/ImportPreview';
 import { useBooks } from '@/contexts/BookContext';
+import { Tip } from '@/components/ui/Tooltip';
 
 interface PreviewData {
   commodities: number;
@@ -435,12 +436,13 @@ export default function ImportExportPage() {
                 {businessObjectTotal(importResult) > 0 && (
                   <div>
                     <span className="text-foreground-muted">Business: </span>
+                    <Tip content="Customers, vendors, employees, jobs, invoices, entries, orders, bill terms, and tax tables">
                     <span
                       className="text-foreground"
-                      title="Customers, vendors, employees, jobs, invoices, entries, orders, bill terms, and tax tables"
                     >
                       {businessObjectTotal(importResult)}
                     </span>
+                    </Tip>
                   </div>
                 )}
               </div>

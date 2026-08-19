@@ -13,6 +13,7 @@ import type {
     BudgetActualsResponse,
     PacingStatus,
 } from '@/lib/budget-actuals';
+import { Tip } from '@/components/ui/Tooltip';
 
 interface BudgetProgressProps {
     data: BudgetActualsResponse;
@@ -58,11 +59,12 @@ function ProgressBar({
                 style={{ width: `${fillPct}%` }}
             />
             {paceMarker !== null && paceMarker > 0 && paceMarker < 1 && (
+                <Tip content={`${Math.round(paceMarker * 100)}% of period elapsed`}>
                 <div
                     className="absolute inset-y-0 w-px bg-foreground-muted"
                     style={{ left: `${paceMarker * 100}%` }}
-                    title={`${Math.round(paceMarker * 100)}% of period elapsed`}
                 />
+                </Tip>
             )}
         </div>
     );
@@ -312,9 +314,11 @@ export function BudgetProgress({ data }: BudgetProgressProps) {
                                 <th className="px-4 py-3 text-right font-semibold min-w-[100px]">Actual</th>
                                 <th className="px-4 py-3 text-right font-semibold min-w-[100px]">Remaining</th>
                                 {showAvailableColumn && (
-                                    <th className="px-4 py-3 text-right font-semibold min-w-[110px]" title="Remaining including rollover carry">
+                                    <Tip content="Remaining including rollover carry">
+                                    <th className="px-4 py-3 text-right font-semibold min-w-[110px]">
                                         Available
                                     </th>
+                                    </Tip>
                                 )}
                                 <th className="px-4 py-3 text-right font-semibold min-w-[110px]">Projected</th>
                                 <th className="px-4 py-3 text-left font-semibold min-w-[110px]">Status</th>
@@ -422,10 +426,10 @@ export function BudgetProgress({ data }: BudgetProgressProps) {
                                         </td>
                                         <td className="px-2 py-2 text-center">
                                             {!isIncome && envelopeView && (
+                                                <Tip content="Envelope settings">
                                                 <button
                                                     onClick={() => setSettingsAccount({ guid: account.guid, name: account.name })}
                                                     className="p-1.5 text-foreground-muted hover:text-primary hover:bg-primary/10 rounded transition-colors"
-                                                    title="Envelope settings"
                                                     aria-label={`Envelope settings for ${account.name}`}
                                                 >
                                                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -433,6 +437,7 @@ export function BudgetProgress({ data }: BudgetProgressProps) {
                                                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                                                     </svg>
                                                 </button>
+                                                </Tip>
                                             )}
                                         </td>
                                     </tr>

@@ -22,6 +22,7 @@ import type {
     FixedIncomeKind,
     LadderBucket,
 } from '@/lib/fixed-income';
+import { Tip } from '@/components/ui/Tooltip';
 
 const TNUM = { fontFeatureSettings: "'tnum'" } as const;
 
@@ -46,9 +47,11 @@ function KindBadge({ kind, callable }: { kind: FixedIncomeKind; callable?: boole
                 {KIND_LABELS[kind]}
             </span>
             {callable && (
-                <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider bg-background-tertiary text-foreground-muted" title="Issuer may redeem before maturity">
+                <Tip content="Issuer may redeem before maturity">
+                <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider bg-background-tertiary text-foreground-muted">
                     Callable
                 </span>
+                </Tip>
             )}
         </span>
     );

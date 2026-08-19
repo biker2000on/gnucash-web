@@ -22,6 +22,7 @@ import {
     getPeriodLabel,
     sortBudgets,
 } from '@/lib/budget-list-utils';
+import { Tip } from '@/components/ui/Tooltip';
 
 interface BudgetListProps {
     budgets: BudgetListItem[];
@@ -76,11 +77,12 @@ function CompactProgress({ summary }: { summary: SummaryState }) {
                     style={{ width: `${fill}%` }}
                 />
                 {summary.elapsedFraction !== null && summary.elapsedFraction > 0 && summary.elapsedFraction < 1 && (
+                    <Tip content={`${Math.round(summary.elapsedFraction * 100)}% of period elapsed`}>
                     <div
                         className="absolute inset-y-0 w-px bg-foreground-muted"
                         style={{ left: `${summary.elapsedFraction * 100}%` }}
-                        title={`${Math.round(summary.elapsedFraction * 100)}% of period elapsed`}
                     />
+                    </Tip>
                 )}
             </div>
             <div className="mt-1 text-[11px] font-mono tabular-nums text-foreground-muted whitespace-nowrap">
@@ -125,9 +127,9 @@ function SortHeader({
             aria-sort={active ? (sortDir === 'asc' ? 'ascending' : 'descending') : undefined}
             className={`px-4 py-3 font-semibold ${align === 'right' ? 'text-right' : 'text-left'} ${className}`}
         >
+            <Tip content={title}>
             <button
                 onClick={() => onSort(column)}
-                title={title}
                 className={`inline-flex items-center gap-1 uppercase tracking-widest text-xs transition-colors ${
                     active ? 'text-foreground' : 'hover:text-foreground'
                 }`}
@@ -136,6 +138,7 @@ function SortHeader({
                 {label}
                 {align === 'left' && <span className="w-3 text-primary">{active ? (sortDir === 'asc' ? '↑' : '↓') : ''}</span>}
             </button>
+            </Tip>
         </th>
     );
 }

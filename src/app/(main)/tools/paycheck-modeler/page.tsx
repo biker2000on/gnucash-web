@@ -29,6 +29,7 @@ import {
 } from '@/lib/tax/filing-status-inheritance';
 import { useHouseholdFilingStatus } from '@/lib/hooks/useHouseholdNames';
 import { FilingStatusSourceNote } from '@/components/tools/tax/FilingStatusSourceNote';
+import { Tip } from '@/components/ui/Tooltip';
 
 const MONO = { fontFeatureSettings: "'tnum'" } as const;
 const TOOL_TYPE = 'paycheck_scenarios';
@@ -745,7 +746,7 @@ export default function PaycheckModelerPage() {
                     : 'border-border text-foreground-secondary hover:text-foreground hover:border-border-hover'
                 }`}
               >
-                {isBaseline && <span title="Baseline" aria-label="Baseline">★</span>}
+                {isBaseline && <Tip content="Baseline"><span>★</span></Tip>}
                 {s.name}
               </button>
             );

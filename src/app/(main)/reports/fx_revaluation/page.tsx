@@ -6,6 +6,7 @@ import { ReportFilters } from '@/lib/reports/types';
 import type { FxRevaluationData } from '@/lib/reports/fx-revaluation';
 import { formatCurrency } from '@/lib/format';
 import { Abbr } from '@/components/ui/Abbr';
+import { Tip } from '@/components/ui/Tooltip';
 
 function getDefaultFilters(): ReportFilters {
     const now = new Date();
@@ -119,7 +120,7 @@ export default function FxRevaluationPage() {
                                             <td className="px-4 py-2 text-foreground font-medium">
                                                 {position.currency}
                                                 {Math.abs(position.otherQuantity) > 1e-9 && (
-                                                    <span className="text-warning ml-1" title="Position includes cross-currency flows with no base-currency valuation; average rate is partly estimated.">*</span>
+                                                    <Tip content="Position includes cross-currency flows with no base-currency valuation; average rate is partly estimated."><span className="text-warning ml-1">*</span></Tip>
                                                 )}
                                             </td>
                                             <td className="px-4 py-2 text-right font-mono tabular-nums text-foreground">

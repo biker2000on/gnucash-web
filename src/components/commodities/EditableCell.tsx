@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { Tip } from '@/components/ui/Tooltip';
 
 interface EditableCellProps {
     value: string;
@@ -111,6 +112,7 @@ export function EditableCell({
     const display = value ? (upper ? value.toUpperCase() : value) : '';
 
     return (
+        <Tip content={display || placeholder}>
         <div
             ref={wrapperRef}
             data-cell={cellId}
@@ -142,9 +144,9 @@ export function EditableCell({
             className={`${baseClasses} cursor-text rounded px-2 py-1 text-foreground focus:outline-none focus:bg-primary/10 focus:ring-1 focus:ring-primary/40 hover:bg-surface-hover/40 truncate ${
                 display ? '' : 'text-foreground-muted'
             }`}
-            title={display || placeholder}
         >
             {display || placeholder}
         </div>
+        </Tip>
     );
 }

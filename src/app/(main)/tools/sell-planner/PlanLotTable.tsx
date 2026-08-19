@@ -2,6 +2,7 @@
 
 import { formatCurrency } from '@/lib/format';
 import type { SellPlan } from '@/lib/sell-planner';
+import { Tip } from '@/components/ui/Tooltip';
 
 const MONO = { fontFeatureSettings: "'tnum'" } as const;
 
@@ -51,9 +52,11 @@ export default function PlanLotTable({ plan }: { plan: SellPlan }) {
                         {plan.sales.map(sale => (
                             <tr key={`${sale.lotGuid}`} className="border-b border-border/50">
                                 <td className="py-2 pr-3 font-medium text-foreground">{sale.ticker}</td>
-                                <td className="py-2 pr-3 text-foreground-secondary" title={sale.accountPath}>
+                                <Tip content={sale.accountPath}>
+                                <td className="py-2 pr-3 text-foreground-secondary">
                                     {sale.accountName}
                                 </td>
+                                </Tip>
                                 <td className="py-2 pr-3 text-right font-mono text-foreground" style={MONO}>
                                     {fmtShares(sale.sharesToSell)}
                                     {sale.partial && (

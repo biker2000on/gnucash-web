@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { CollapsibleConfigSection } from '@/components/ui/CollapsibleConfigSection';
 import { useToast } from '@/contexts/ToastContext';
+import { Tip } from '@/components/ui/Tooltip';
 
 interface Webhook {
     id: number;
@@ -191,10 +192,11 @@ export function WebhooksSection() {
                             const dot = statusDot(hook);
                             return (
                                 <li key={hook.id} className="flex items-center gap-3 border border-border rounded-lg px-3 py-2">
+                                    <Tip content={dot.label}>
                                     <span
                                         className={`inline-block w-2.5 h-2.5 rounded-full shrink-0 ${dot.color}`}
-                                        title={dot.label}
                                     />
+                                    </Tip>
                                     <div className="min-w-0 flex-1">
                                         <div className="text-sm text-foreground font-mono truncate">{hook.url}</div>
                                         <div className="text-xs text-foreground-muted">

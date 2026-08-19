@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useState } from 'react';
 import { SavedReport, REPORTS } from '@/lib/reports/types';
+import { Tip } from '@/components/ui/Tooltip';
 
 interface SavedReportCardProps {
     report: SavedReport;
@@ -43,11 +44,10 @@ export default function SavedReportCard({ report, onToggleStar, onEdit, onDelete
     return (
         <div className="relative bg-background-secondary/30 backdrop-blur-xl border border-border rounded-lg p-5 hover:border-primary/50 transition-all group">
             {/* Star button */}
+            <Tip content={report.isStarred ? 'Unstar' : 'Star'}>
             <button
                 onClick={() => onToggleStar(report.id)}
                 className="absolute top-4 right-4 text-foreground-muted hover:text-warning transition-colors"
-                aria-label={report.isStarred ? 'Unstar' : 'Star'}
-                title={report.isStarred ? 'Unstar' : 'Star'}
             >
                 {report.isStarred ? (
                     <svg className="w-5 h-5 text-warning" fill="currentColor" viewBox="0 0 24 24">
@@ -59,6 +59,7 @@ export default function SavedReportCard({ report, onToggleStar, onEdit, onDelete
                     </svg>
                 )}
             </button>
+            </Tip>
 
             {/* Report name as link */}
             <Link href={href} className="block mb-2 pr-8">
@@ -106,26 +107,28 @@ export default function SavedReportCard({ report, onToggleStar, onEdit, onDelete
                 </div>
             ) : (
                 <div className="flex items-center gap-2">
+                    <Tip content="Edit" describedBy={false}>
                     <button
                         onClick={() => onEdit(report)}
                         className="text-foreground-muted hover:text-foreground transition-colors"
                         aria-label="Edit"
-                        title="Edit"
                     >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
                         </svg>
                     </button>
+                    </Tip>
+                    <Tip content="Delete" describedBy={false}>
                     <button
                         onClick={() => setConfirmingDelete(true)}
                         className="text-foreground-muted hover:text-error transition-colors"
                         aria-label="Delete"
-                        title="Delete"
                     >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                         </svg>
                     </button>
+                    </Tip>
                 </div>
             )}
         </div>

@@ -5,6 +5,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useToast } from '@/contexts/ToastContext';
 import { TransactionPicker } from './TransactionPicker';
+import { Tip } from '@/components/ui/Tooltip';
 
 interface ExtractedData {
   amount: number | null;
@@ -205,11 +206,11 @@ function InboxCard({ receipt, onLinked, onDismissed }: InboxCardProps) {
                 </p>
               </div>
               <div className="flex gap-1.5 shrink-0">
+                <Tip content="Not this transaction">
                 <button
                   onClick={() => handleDismiss(candidate.guid)}
                   disabled={dismissing === candidate.guid || linking}
                   className="text-xs px-2 py-1.5 rounded-lg bg-surface-hover hover:bg-border transition-colors text-foreground-secondary min-h-[36px] disabled:opacity-50"
-                  title="Not this transaction"
                 >
                   {dismissing === candidate.guid ? (
                     <span className="animate-spin inline-block w-3 h-3 border border-current border-t-transparent rounded-full" />
@@ -217,6 +218,7 @@ function InboxCard({ receipt, onLinked, onDismissed }: InboxCardProps) {
                     'Not this'
                   )}
                 </button>
+                </Tip>
                 <button
                   onClick={() => handleLink(candidate.guid)}
                   disabled={linking || dismissing !== null}

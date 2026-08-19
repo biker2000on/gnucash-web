@@ -5,6 +5,7 @@ import { ReportViewer } from '@/components/reports/ReportViewer';
 import { ReportFilters } from '@/lib/reports/types';
 import { TransactionReportData } from '@/lib/reports/transaction-report';
 import { formatCurrency } from '@/lib/format';
+import { Tip } from '@/components/ui/Tooltip';
 
 function getDefaultFilters(): ReportFilters {
     const now = new Date();
@@ -19,11 +20,11 @@ function getDefaultFilters(): ReportFilters {
 function ReconcileIcon({ state }: { state: string }) {
     switch (state) {
         case 'y':
-            return <span className="text-positive" title="Reconciled">R</span>;
+            return <Tip content="Reconciled"><span className="text-positive">R</span></Tip>;
         case 'c':
-            return <span className="text-warning" title="Cleared">C</span>;
+            return <Tip content="Cleared"><span className="text-warning">C</span></Tip>;
         default:
-            return <span className="text-foreground-muted" title="Not reconciled">-</span>;
+            return <Tip content="Not reconciled"><span className="text-foreground-muted">-</span></Tip>;
     }
 }
 

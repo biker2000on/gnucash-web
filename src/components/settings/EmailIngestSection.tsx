@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { CollapsibleConfigSection } from '@/components/ui/CollapsibleConfigSection';
 import { useToast } from '@/contexts/ToastContext';
+import { Tip } from '@/components/ui/Tooltip';
 
 interface IngestSender {
     id: number;
@@ -99,22 +100,25 @@ interface LogRowProps {
 function LogRow({ entry, badge }: LogRowProps) {
     return (
         <li className="flex items-start gap-3 text-sm border border-border rounded-lg px-3 py-2">
+            <Tip content={badge.label}>
             <span
                 className={`inline-block w-2.5 h-2.5 mt-1 rounded-full shrink-0 ${badge.color}`}
-                title={badge.label}
             />
+            </Tip>
             <div className="min-w-0 flex-1">
                 <div className="text-foreground truncate">
                     {entry.subject || '(no subject)'}
                     <span className="text-foreground-muted"> — {entry.fromEmail ?? 'unknown sender'}</span>
                 </div>
-                <div className="text-xs text-foreground-muted truncate" title={entry.detail ?? undefined}>
+                <Tip content={entry.detail ?? undefined}>
+                <div className="text-xs text-foreground-muted truncate">
                     {badge.label}
                     {entry.attempts > 0 && ` · attempt ${entry.attempts}`}
                     {entry.ingestedCount > 0 && ` · ${entry.ingestedCount} document${entry.ingestedCount === 1 ? '' : 's'}`}
                     {' · '}{new Date(entry.processedAt).toLocaleString()}
                     {entry.detail && ` · ${entry.detail}`}
                 </div>
+                </Tip>
             </div>
         </li>
     );

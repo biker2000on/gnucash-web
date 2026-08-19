@@ -15,6 +15,7 @@ import {
     parseQty,
     todayIso,
 } from '@/components/business/inventory-ui';
+import { Tip } from '@/components/ui/Tooltip';
 
 const TNUM = { fontFeatureSettings: "'tnum'" } as const;
 const inputClass = 'w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder-foreground-muted focus:outline-none focus:border-primary/50 transition-all';
@@ -348,24 +349,26 @@ export function InvoiceFulfillmentSection({ invoiceGuid, entries }: InvoiceFulfi
                 </div>
                 {fulfillment && (
                     <div className="flex items-center gap-1.5">
+                        <Tip content={isReadonly ? READONLY_TOOLTIP : !canReturn ? 'Nothing has been fulfilled yet' : undefined}>
                         <button
                             type="button"
                             onClick={() => setMode('return')}
                             disabled={isReadonly || !canReturn}
-                            title={isReadonly ? READONLY_TOOLTIP : !canReturn ? 'Nothing has been fulfilled yet' : undefined}
                             className="px-2.5 py-1 text-xs rounded-md text-foreground-secondary hover:text-foreground hover:bg-surface-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                             Return...
                         </button>
+                        </Tip>
+                        <Tip content={isReadonly ? READONLY_TOOLTIP : !canFulfill ? 'All lines are fully fulfilled' : undefined}>
                         <button
                             type="button"
                             onClick={() => setMode('fulfill')}
                             disabled={isReadonly || !canFulfill}
-                            title={isReadonly ? READONLY_TOOLTIP : !canFulfill ? 'All lines are fully fulfilled' : undefined}
                             className="px-2.5 py-1 text-xs rounded-md bg-primary hover:bg-primary-hover disabled:bg-primary/50 disabled:cursor-not-allowed text-primary-foreground transition-colors"
                         >
                             Fulfill...
                         </button>
+                        </Tip>
                     </div>
                 )}
             </div>

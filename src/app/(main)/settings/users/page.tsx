@@ -236,7 +236,7 @@ export default function UsersPage() {
                                             value={u.role}
                                             onChange={(e) => handleRoleChange(u.userId, e.target.value)}
                                             disabled={isLastAdmin}
-                                            title={isLastAdmin ? 'Cannot demote the last admin' : undefined}
+                                            aria-label={isLastAdmin ? 'Cannot demote the last admin' : undefined}
                                             className="bg-input-bg border border-border rounded-lg px-2.5 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50 disabled:opacity-60 disabled:cursor-not-allowed"
                                         >
                                             {ROLE_OPTIONS.map((r) => (

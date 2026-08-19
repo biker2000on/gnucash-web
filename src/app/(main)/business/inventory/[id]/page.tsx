@@ -28,6 +28,7 @@ import {
     parseQty,
     todayIso,
 } from '@/components/business/inventory-ui';
+import { Tip } from '@/components/ui/Tooltip';
 
 const TNUM = { fontFeatureSettings: "'tnum'" } as const;
 const inputClass = 'w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder-foreground-muted focus:outline-none focus:border-primary/50 transition-all';
@@ -539,17 +540,18 @@ function BomEditorModal({
                                     className={`${inputClass} font-mono text-right w-24 shrink-0`}
                                     style={TNUM}
                                     placeholder="Qty"
-                                    title="Quantity per batch"
+                                    aria-label="Quantity per batch"
                                 />
+                                <Tip content="Remove component">
                                 <button
                                     type="button"
                                     onClick={() => setLines((prev) => prev.filter((l) => l.key !== line.key))}
                                     disabled={lines.length <= 1}
                                     className="px-1.5 py-0.5 text-xs rounded-md text-foreground-muted hover:text-negative hover:bg-negative/10 transition-colors disabled:opacity-40 shrink-0"
-                                    title="Remove component"
                                 >
                                     ✕
                                 </button>
+                                </Tip>
                             </div>
                         ))}
                     </div>
@@ -564,14 +566,15 @@ function BomEditorModal({
 
                 <div className="flex justify-end gap-3 pt-2 border-t border-border">
                     <button type="button" onClick={onClose} className={cancelButtonClass}>Cancel</button>
+                    <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                     <button
                         type="submit"
                         disabled={saving || isReadonly}
-                        title={isReadonly ? READONLY_TOOLTIP : undefined}
                         className={submitButtonClass}
                     >
                         {saving ? 'Saving...' : 'Save BOM'}
                     </button>
+                    </Tip>
                 </div>
             </form>
         </Modal>
@@ -972,15 +975,16 @@ export default function InventoryItemPage() {
                 title={`${item.sku} — ${item.name}`}
                 subtitle={item.description || `Unit: ${item.unit}`}
                 actions={
+                    <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                     <button
                         type="button"
                         onClick={() => setEditingItem(item)}
                         disabled={isReadonly}
-                        title={isReadonly ? READONLY_TOOLTIP : undefined}
                         className="px-4 py-2 text-sm bg-surface-hover hover:bg-border text-foreground rounded-lg transition-colors"
                     >
                         Edit Item
                     </button>
+                    </Tip>
                 }
                 menuActions={[
                     ...(item.active
@@ -1028,42 +1032,46 @@ export default function InventoryItemPage() {
 
             {/* Stock actions */}
             <div className="flex items-center gap-2 flex-wrap">
+                <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                 <button
                     type="button"
                     onClick={() => setStockAction('receive')}
                     disabled={isReadonly}
-                    title={isReadonly ? READONLY_TOOLTIP : undefined}
                     className="px-4 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 disabled:cursor-not-allowed text-primary-foreground rounded-lg transition-colors"
                 >
                     Receive
                 </button>
+                </Tip>
+                <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                 <button
                     type="button"
                     onClick={() => setStockAction('ship')}
                     disabled={isReadonly}
-                    title={isReadonly ? READONLY_TOOLTIP : undefined}
                     className={actionButtonClass}
                 >
                     Ship
                 </button>
+                </Tip>
+                <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                 <button
                     type="button"
                     onClick={() => setStockAction('adjust')}
                     disabled={isReadonly}
-                    title={isReadonly ? READONLY_TOOLTIP : undefined}
                     className={actionButtonClass}
                 >
                     Adjust
                 </button>
+                </Tip>
+                <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                 <button
                     type="button"
                     onClick={() => setStockAction('transfer')}
                     disabled={isReadonly || item.stockByLocation.length === 0}
-                    title={isReadonly ? READONLY_TOOLTIP : undefined}
                     className={actionButtonClass}
                 >
                     Transfer
                 </button>
+                </Tip>
             </div>
 
             {/* Stock by location */}
@@ -1105,15 +1113,16 @@ export default function InventoryItemPage() {
             <div className="bg-surface border border-border rounded-lg overflow-hidden">
                 <div className="px-4 py-2.5 border-b border-border flex items-center justify-between">
                     <h2 className="text-sm font-semibold text-foreground">Bills of materials</h2>
+                    <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                     <button
                         type="button"
                         onClick={() => setEditingBom('new')}
                         disabled={isReadonly}
-                        title={isReadonly ? READONLY_TOOLTIP : undefined}
                         className="px-2 py-1 text-xs rounded-md text-primary hover:bg-primary-light transition-colors disabled:opacity-50"
                     >
                         + New BOM
                     </button>
+                    </Tip>
                 </div>
                 {boms.length === 0 ? (
                     <p className="px-4 py-4 text-sm text-foreground-muted">
@@ -1153,15 +1162,16 @@ export default function InventoryItemPage() {
                                         )}
                                     </td>
                                     <td className="px-4 py-2 text-right whitespace-nowrap">
+                                        <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                                         <button
                                             type="button"
                                             onClick={() => setAssembling(bom)}
                                             disabled={isReadonly || !bom.active}
-                                            title={isReadonly ? READONLY_TOOLTIP : undefined}
                                             className="px-2 py-1 text-xs rounded-md text-primary hover:bg-primary-light transition-colors disabled:opacity-50"
                                         >
                                             Assemble
                                         </button>
+                                        </Tip>
                                         <button
                                             type="button"
                                             onClick={() => setEditingBom(bom)}
@@ -1169,15 +1179,16 @@ export default function InventoryItemPage() {
                                         >
                                             Edit
                                         </button>
+                                        <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                                         <button
                                             type="button"
                                             onClick={() => handleBomToggle(bom)}
                                             disabled={isReadonly}
-                                            title={isReadonly ? READONLY_TOOLTIP : undefined}
                                             className="ml-1 px-2 py-1 text-xs rounded-md text-foreground-muted hover:text-foreground hover:bg-surface-hover transition-colors disabled:opacity-50"
                                         >
                                             {bom.active ? 'Deactivate' : 'Activate'}
                                         </button>
+                                        </Tip>
                                     </td>
                                 </tr>
                             ))}

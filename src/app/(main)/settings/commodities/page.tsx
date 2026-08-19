@@ -18,6 +18,7 @@ import { EditableCell } from '@/components/commodities/EditableCell';
 import { verifySymbol, verifySymbolsBulk } from '@/lib/hooks/useYahooSymbolVerify';
 import { useIsMobile } from '@/lib/hooks/useIsMobile';
 import { MobileCard } from '@/components/ui/MobileCard';
+import { Tip } from '@/components/ui/Tooltip';
 
 const COL_ORDER = ['namespace', 'mnemonic', 'fullname', 'cusip', 'fraction', 'quoteFlag', 'quoteSource', 'quoteTz'] as const;
 type ColKey = typeof COL_ORDER[number];
@@ -388,23 +389,28 @@ export default function CommodityPriceSettingsPage() {
     if (status === 'idle') return null;
     if (status === 'pending') {
       return (
+        <Tip content="Checking Yahoo Finance...">
         <span
           className="inline-block w-3 h-3 border-2 border-foreground-muted/40 border-t-foreground-muted rounded-full animate-spin"
-          title="Checking Yahoo Finance..."
         />
+        </Tip>
       );
     }
     if (status === 'verified') {
       return (
-        <span className="text-success text-xs" title="Verified on Yahoo Finance" aria-label="verified">
+        <Tip content="Verified on Yahoo Finance">
+        <span className="text-success text-xs" aria-label="verified">
           ✅
         </span>
+        </Tip>
       );
     }
     return (
-      <span className="text-warning text-xs" title="Not found on Yahoo Finance" aria-label="not found">
+      <Tip content="Not found on Yahoo Finance">
+      <span className="text-warning text-xs" aria-label="not found">
         ⚠️
       </span>
+      </Tip>
     );
   }, []);
 
@@ -562,20 +568,23 @@ export default function CommodityPriceSettingsPage() {
           return (
             <div className="flex items-center gap-2">
               {dirty && (
-                <span className="text-xs text-warning" title="Unsaved changes">
+                <Tip content="Unsaved changes">
+                <span className="text-xs text-warning">
                   ●
                 </span>
+                </Tip>
               )}
+              <Tip content="Edit in modal">
               <button
                 onClick={() => handleOpenEdit(row.original)}
                 className="p-1.5 text-foreground-secondary hover:text-foreground hover:bg-surface-hover rounded transition-colors"
-                title="Edit in modal"
                 aria-label="Edit commodity in modal"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                 </svg>
               </button>
+              </Tip>
             </div>
           );
         },
@@ -681,16 +690,17 @@ export default function CommodityPriceSettingsPage() {
         </div>
 
         <div className="p-4 border-b border-border flex flex-wrap items-center gap-2">
+          <Tip content="Add commodity (Alt+N)">
           <button
             onClick={handleOpenCreate}
             className="px-4 py-2 text-sm bg-primary hover:bg-primary-hover text-primary-foreground rounded-lg transition-colors inline-flex items-center gap-2"
-            title="Add commodity (Alt+N)"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
             </svg>
             Add Commodity
           </button>
+          </Tip>
           <button
             onClick={handleSaveAll}
             disabled={dirtyRows.length === 0 || savingAll}
@@ -730,9 +740,11 @@ export default function CommodityPriceSettingsPage() {
                       value: (
                         <span className="inline-flex items-center gap-2">
                           {dirty && (
-                            <span className="text-xs text-warning" title="Unsaved changes">
+                            <Tip content="Unsaved changes">
+                            <span className="text-xs text-warning">
                               ●
                             </span>
+                            </Tip>
                           )}
                           <span className="font-mono font-medium">{row.mnemonic}</span>
                           {renderVerifyBadge(row.verifyStatus)}
@@ -771,17 +783,18 @@ export default function CommodityPriceSettingsPage() {
                         className="px-3 py-3 text-left text-sm font-medium text-foreground-secondary whitespace-nowrap"
                       >
                         {header.isPlaceholder ? null : header.column.getCanSort() ? (
+                          <Tip content="Sort">
                           <button
                             type="button"
                             onClick={header.column.getToggleSortingHandler()}
                             className="inline-flex items-center gap-1 hover:text-foreground transition-colors"
-                            title="Sort"
                           >
                             {flexRender(header.column.columnDef.header, header.getContext())}
                             <span className="text-xs text-foreground-muted w-3">
                               {header.column.getIsSorted() === 'asc' ? '▲' : header.column.getIsSorted() === 'desc' ? '▼' : ''}
                             </span>
                           </button>
+                          </Tip>
                         ) : (
                           flexRender(header.column.columnDef.header, header.getContext())
                         )}

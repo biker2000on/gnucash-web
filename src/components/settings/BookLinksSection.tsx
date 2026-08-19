@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useToast } from '@/contexts/ToastContext';
 import { useBooks } from '@/contexts/BookContext';
 import { CollapsibleConfigSection } from '@/components/ui/CollapsibleConfigSection';
+import { Tip } from '@/components/ui/Tooltip';
 
 interface BookLinkWithNames {
   businessBookGuid: string;
@@ -254,17 +255,18 @@ export function BookLinksSection() {
                   <span className="text-xs text-foreground-muted">%</span>
                 </div>
                 {isAdmin && (
+                  <Tip content="Remove link">
                   <button
                     onClick={() => removeLink(link.householdBookGuid)}
                     disabled={saving}
                     className="text-foreground-muted hover:text-negative transition-colors p-1 disabled:opacity-50"
                     aria-label={`Remove link to ${link.name || 'household book'}`}
-                    title="Remove link"
                   >
                     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                     </svg>
                   </button>
+                  </Tip>
                 )}
               </div>
             ))}

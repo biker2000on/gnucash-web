@@ -7,6 +7,7 @@ import { COMBINED_GUID } from '@/lib/forecast';
 import { StatCard, StatGrid } from '@/components/ui/StatCard';
 import { ProvenanceModal } from '@/components/provenance/ProvenanceModal';
 import ForecastChart from './ForecastChart';
+import { Tip } from '@/components/ui/Tooltip';
 
 const HORIZON_OPTIONS = [30, 60, 90, 180] as const;
 
@@ -226,6 +227,7 @@ export default function CashFlowForecastPage() {
                         {data.availableAccounts.map(account => {
                             const active = selectedSet.has(account.guid);
                             return (
+                                <Tip content={account.accountType} key={account.guid}>
                                 <button
                                     key={account.guid}
                                     onClick={() => toggleAccount(account.guid)}
@@ -234,10 +236,10 @@ export default function CashFlowForecastPage() {
                                             ? 'bg-primary/15 border-primary/40 text-primary'
                                             : 'bg-surface/50 border-border text-foreground-muted hover:border-border-hover hover:text-foreground-secondary'
                                     }`}
-                                    title={account.accountType}
                                 >
                                     {account.name}
                                 </button>
+                                </Tip>
                             );
                         })}
                     </div>

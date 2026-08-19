@@ -12,6 +12,7 @@ import { ChartSettingsPanel } from './ChartSettingsPanel';
 import type { ChartDefaults } from '@/lib/user-preferences';
 import type { CashFlowPoint, IndicesData } from '@/types/investments';
 import { calculateMoneyWeightedReturn, calculateTimeWeightedReturn } from '@/lib/investment-performance';
+import { Tip } from '@/components/ui/Tooltip';
 
 export type { ChartDefaults };
 
@@ -312,9 +313,9 @@ export function PerformanceChart({
 
           {/* Value / return metric toggle */}
           <div className="flex gap-1 border-l border-border pl-1">
+            <Tip content="Show dollar value">
             <button
               onClick={() => setChartMode('value')}
-              title="Show dollar value"
               className={`px-2.5 py-1.5 min-h-[44px] min-w-[44px] text-xs rounded transition-colors flex items-center justify-center ${
                 chartMode === 'value'
                   ? 'bg-primary text-primary-foreground'
@@ -323,12 +324,13 @@ export function PerformanceChart({
             >
               $
             </button>
+            </Tip>
+            <Tip content="Time-weighted return">
             <button
               onClick={() => {
                 setChartMode('twr');
                 onReturnMetricChange?.('twr');
               }}
-              title="Time-weighted return"
               className={`px-2.5 py-1.5 min-h-[44px] min-w-[44px] text-xs rounded transition-colors flex items-center justify-center ${
                 chartMode === 'twr'
                   ? 'bg-primary text-primary-foreground'
@@ -337,12 +339,13 @@ export function PerformanceChart({
             >
               TWR
             </button>
+            </Tip>
+            <Tip content="Money-weighted return">
             <button
               onClick={() => {
                 setChartMode('mwr');
                 onReturnMetricChange?.('mwr');
               }}
-              title="Money-weighted return"
               className={`px-2.5 py-1.5 min-h-[44px] min-w-[44px] text-xs rounded transition-colors flex items-center justify-center ${
                 chartMode === 'mwr'
                   ? 'bg-primary text-primary-foreground'
@@ -351,6 +354,7 @@ export function PerformanceChart({
             >
               MWR
             </button>
+            </Tip>
           </div>
 
           {/* Index toggle buttons. The active chip's background comes from the
@@ -358,10 +362,10 @@ export function PerformanceChart({
               in both themes rather than following a theme token. */}
           {hasIndices && (
             <div className="flex gap-1 border-l border-border pl-1 relative">
+              <Tip content={!isTimeWeightedMode ? 'Switch to TWR mode for index comparison' : (showSP500 ? 'Hide S&P 500' : 'Show S&P 500')}>
               <button
                 onClick={() => isTimeWeightedMode && setShowSP500(!showSP500)}
                 disabled={!isTimeWeightedMode}
-                title={!isTimeWeightedMode ? 'Switch to TWR mode for index comparison' : (showSP500 ? 'Hide S&P 500' : 'Show S&P 500')}
                 className={`px-2.5 py-1.5 min-h-[44px] text-xs rounded transition-colors flex items-center justify-center ${
                   !isTimeWeightedMode
                     ? 'bg-background-tertiary text-foreground-muted opacity-50 cursor-not-allowed'
@@ -373,10 +377,11 @@ export function PerformanceChart({
               >
                 S&P
               </button>
+              </Tip>
+              <Tip content={!isTimeWeightedMode ? 'Switch to TWR mode for index comparison' : (showDJIA ? 'Hide DJIA' : 'Show DJIA')}>
               <button
                 onClick={() => isTimeWeightedMode && setShowDJIA(!showDJIA)}
                 disabled={!isTimeWeightedMode}
-                title={!isTimeWeightedMode ? 'Switch to TWR mode for index comparison' : (showDJIA ? 'Hide DJIA' : 'Show DJIA')}
                 className={`px-2.5 py-1.5 min-h-[44px] text-xs rounded transition-colors flex items-center justify-center ${
                   !isTimeWeightedMode
                     ? 'bg-background-tertiary text-foreground-muted opacity-50 cursor-not-allowed'
@@ -388,10 +393,11 @@ export function PerformanceChart({
               >
                 DJIA
               </button>
+              </Tip>
+              <Tip content={!isTimeWeightedMode ? 'Switch to TWR mode for index comparison' : (showNasdaq ? 'Hide NASDAQ' : 'Show NASDAQ')}>
               <button
                 onClick={() => isTimeWeightedMode && setShowNasdaq(!showNasdaq)}
                 disabled={!isTimeWeightedMode}
-                title={!isTimeWeightedMode ? 'Switch to TWR mode for index comparison' : (showNasdaq ? 'Hide NASDAQ' : 'Show NASDAQ')}
                 className={`px-2.5 py-1.5 min-h-[44px] text-xs rounded transition-colors flex items-center justify-center ${
                   !isTimeWeightedMode
                     ? 'bg-background-tertiary text-foreground-muted opacity-50 cursor-not-allowed'
@@ -403,10 +409,11 @@ export function PerformanceChart({
               >
                 NDQ
               </button>
+              </Tip>
+              <Tip content={!isTimeWeightedMode ? 'Switch to TWR mode for index comparison' : (showRussell2000 ? 'Hide Russell 2000' : 'Show Russell 2000')}>
               <button
                 onClick={() => isTimeWeightedMode && setShowRussell2000(!showRussell2000)}
                 disabled={!isTimeWeightedMode}
-                title={!isTimeWeightedMode ? 'Switch to TWR mode for index comparison' : (showRussell2000 ? 'Hide Russell 2000' : 'Show Russell 2000')}
                 className={`px-2.5 py-1.5 min-h-[44px] text-xs rounded transition-colors flex items-center justify-center ${
                   !isTimeWeightedMode
                     ? 'bg-background-tertiary text-foreground-muted opacity-50 cursor-not-allowed'
@@ -418,6 +425,7 @@ export function PerformanceChart({
               >
                 R2K
               </button>
+              </Tip>
             </div>
           )}
         </div>

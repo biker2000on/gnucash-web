@@ -11,6 +11,7 @@ import { formatCurrency } from '@/lib/format';
 import type { ReimbursementRequest, ReimbursementStatus } from '@/lib/business/reimbursements';
 import type { DomainCommandRecord } from '@/lib/domain-commands';
 import type { EmployeeDTO } from '@/lib/business/employees.service';
+import { Tip } from '@/components/ui/Tooltip';
 
 interface ReceiptOption {
   id: number;
@@ -176,15 +177,16 @@ export default function ReimbursementsPage() {
         title="Employee Reimbursements"
         subtitle="Receipt-backed submission, explicit approval, draft voucher creation, and posting status in one queue."
         actions={(
+          <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
           <button
             type="button"
             onClick={() => setShowForm(value => !value)}
             disabled={isReadonly}
-            title={isReadonly ? READONLY_TOOLTIP : undefined}
             className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-50"
           >
             {showForm ? 'Close form' : '+ Submit expense'}
           </button>
+          </Tip>
         )}
       />
 

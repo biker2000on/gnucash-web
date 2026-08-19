@@ -132,6 +132,27 @@ contract is restated next to the tokens in `src/app/globals.css`.
 - **Table column alignment:** Right-align all numeric columns
 - **Date format in tables:** Use JetBrains Mono for dates too (consistent monospace column)
 
+## Tooltips and hints
+- **Native `title=` is banned on every DOM element.** It never appears on touch, cannot be opened or
+  dismissed from the keyboard, cannot be styled, waits ~1s before appearing, and reaches screen readers
+  only inconsistently and by opt-in. `src/__tests__/no-native-title.test.ts` parses every `.tsx` file and
+  fails on any new one; its allowlist is empty and must stay that way.
+- **Explanatory hint → `<Tip content="…">`** (`src/components/ui/Tooltip.tsx`). `Tip` renders no element
+  of its own — it clones its single child and merges in the handlers, the ref and `aria-describedby` — so
+  it wraps a `<td>`, a `<tr>` cell or a button inside a flex row without touching layout, DOM validity or
+  tab order. Opens on hover, keyboard focus and tap; dismisses on Escape, blur and outside tap. On a
+  **disabled** child (which fires no pointer events) it falls back to a permanently mounted hidden
+  description, the only channel such a control has.
+- **Icon-only control → `aria-label`**, plus `<Tip … describedBy={false}>` when sighted users also need
+  the text. A control with no visible text and no `aria-label` has no accessible name at all; a tooltip
+  does not give it one.
+- **A hint that is really a form control's label → `aria-label`** on the control (or a real `<label>`),
+  not a tooltip.
+- `<abbr title>`, `<iframe title>` and SVG `<title>` are unaffected — there `title` is the platform's own
+  naming mechanism, not a hover hint.
+- Exception, still: an abbreviation uses `<Abbr>` (below), which is built on `Tooltip` and adds the
+  glossary lookup and the dotted-underline affordance.
+
 ## Abbreviations
 - **Every user-visible abbreviation must render through `<Abbr term="..." />`** (`src/components/ui/Abbr.tsx`), backed by the central glossary in `src/lib/glossary.ts` (term → expansion + optional one/two-sentence plain-English gloss). Add new terms to the glossary first.
 - **Affordance:** the abbreviation gets a dotted underline and a small (i) icon; the tooltip (shared `src/components/ui/Tooltip.tsx` primitive) opens on hover, keyboard focus, and tap, and dismisses on Escape/blur/outside tap. Native `title=` attributes are banned for this purpose (no mobile support, no styling, no discoverability).
@@ -149,3 +170,7 @@ contract is restated next to the tokens in `src/app/globals.css`.
 | 2026-04-03 | Dark navy over pure black | Navy (#0c1322) is warmer, easier on eyes for long sessions, and makes teal accent pop |
 | 2026-04-03 | JetBrains Mono for all financial data | Tabular-nums ensures perfect column alignment for account balances and transaction amounts |
 | 2026-08-04 | Abbreviation glossary + `<Abbr>` tooltips | App is dense with tax/finance abbreviations; central glossary with (i) hover/focus/tap tooltips beats scattered `title=` attributes |
+| 2026-08-19 | Radius scale closed; `rounded-xl`/`2xl` removed everywhere | 446 uses sat off the published scale, including on cards and modals; the doc has no carve-out for them |
+| 2026-08-19 | One input recipe (`INPUT`/`SELECT`/`TEXTAREA` in `ui/form.tsx`) | Three forms had three different recipes; a shared constant is the only thing that keeps radius, padding and focus consistent |
+| 2026-08-19 | `--negative` is money-only; `--error` is system state | Same hex today, different roles; writing the split down is what lets either pair be re-tuned later |
+| 2026-08-19 | Native `title=` banned app-wide, replaced by `Tip` | The 2026-08-04 rule only covered abbreviations; ~350 other sites kept an untouchable, unstyleable, touch-invisible hint |

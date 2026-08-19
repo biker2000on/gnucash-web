@@ -13,6 +13,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { StatCard, StatGrid } from '@/components/ui/StatCard';
 import { useToast } from '@/contexts/ToastContext';
 import { LinkedDocumentsPanel } from '@/components/documents/LinkedDocumentsPanel';
+import { Tip } from '@/components/ui/Tooltip';
 
 const TNUM = { fontFeatureSettings: "'tnum'" } as const;
 
@@ -420,15 +421,16 @@ export default function Nec1099Page() {
                                                             onClick={(e) => e.stopPropagation()}
                                                         >
                                                             {row.filedDate ? (
+                                                                <Tip content="Clear filing status">
                                                                 <button
                                                                     type="button"
                                                                     onClick={() => handleFilingToggle(row)}
-                                                                    title="Clear filing status"
                                                                     className="font-mono text-xs text-positive hover:text-foreground transition-colors"
                                                                     style={TNUM}
                                                                 >
                                                                     ✓ {row.filedDate}
                                                                 </button>
+                                                                </Tip>
                                                             ) : row.crosses600 && row.status !== 'exempt' ? (
                                                                 <button
                                                                     type="button"

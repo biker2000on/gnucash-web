@@ -19,6 +19,7 @@ import type {
     TaxtableDTO,
     AddressDTO,
 } from '@/lib/business-types';
+import { Tip } from '@/components/ui/Tooltip';
 
 type ContactDTO = CustomerDTO | VendorDTO;
 
@@ -302,24 +303,26 @@ function JobsSection({ ownerGuid, kind }: { ownerGuid: string; kind: ContactKind
                                 {job.name}
                                 {job.reference && <span className="ml-2 text-foreground-muted">({job.reference})</span>}
                             </span>
+                            <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                             <button
                                 type="button"
                                 onClick={() => handleToggle(job)}
                                 disabled={busy || isReadonly}
-                                title={isReadonly ? READONLY_TOOLTIP : undefined}
                                 className="px-2 py-0.5 text-xs rounded-md text-foreground-muted hover:text-foreground hover:bg-surface-hover transition-colors disabled:opacity-50"
                             >
                                 {job.active ? 'Deactivate' : 'Activate'}
                             </button>
+                            </Tip>
+                            <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                             <button
                                 type="button"
                                 onClick={() => handleDelete(job)}
                                 disabled={busy || isReadonly}
-                                title={isReadonly ? READONLY_TOOLTIP : undefined}
                                 className="px-2 py-0.5 text-xs rounded-md text-negative hover:bg-negative/10 transition-colors disabled:opacity-50"
                             >
                                 Delete
                             </button>
+                            </Tip>
                         </li>
                     ))}
                 </ul>
@@ -343,15 +346,16 @@ function JobsSection({ ownerGuid, kind }: { ownerGuid: string; kind: ContactKind
                     disabled={isReadonly}
                     className={inputClass}
                 />
+                <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                 <button
                     type="button"
                     onClick={handleAdd}
                     disabled={busy || !newName.trim() || isReadonly}
-                    title={isReadonly ? READONLY_TOOLTIP : undefined}
                     className="px-3 py-2 text-sm bg-surface-hover hover:bg-border text-foreground rounded-lg transition-colors whitespace-nowrap disabled:opacity-50"
                 >
                     + Add Job
                 </button>
+                </Tip>
             </div>
         </div>
     );
@@ -567,15 +571,16 @@ export function ContactManager({ kind, enableStatements = false }: ContactManage
                     ? 'People and companies you invoice.'
                     : 'People and companies that bill you.'}
                 actions={
+                    <Tip content={isReadonly ? READONLY_TOOLTIP : `New ${singular} (n)`}>
                     <button
                         type="button"
                         onClick={openCreate}
                         disabled={isReadonly}
-                        title={isReadonly ? READONLY_TOOLTIP : `New ${singular} (n)`}
                         className="px-4 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 disabled:cursor-not-allowed text-primary-foreground rounded-lg transition-colors whitespace-nowrap"
                     >
                         + New {singular}
                     </button>
+                    </Tip>
                 }
                 toolbar={
                     <FilterBar
@@ -655,24 +660,26 @@ export function ContactManager({ kind, enableStatements = false }: ContactManage
                                             >
                                                 Edit
                                             </button>
+                                            <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                                             <button
                                                 type="button"
                                                 onClick={() => handleToggleActive(contact)}
                                                 disabled={isReadonly}
-                                                title={isReadonly ? READONLY_TOOLTIP : undefined}
                                                 className="ml-1 px-2 py-1 text-xs rounded-md text-foreground-muted hover:text-foreground hover:bg-surface-hover transition-colors disabled:opacity-50"
                                             >
                                                 {contact.active ? 'Deactivate' : 'Activate'}
                                             </button>
+                                            </Tip>
+                                            <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                                             <button
                                                 type="button"
                                                 onClick={() => setDeleting(contact)}
                                                 disabled={isReadonly}
-                                                title={isReadonly ? READONLY_TOOLTIP : undefined}
                                                 className="ml-1 px-2 py-1 text-xs rounded-md text-negative hover:bg-negative/10 transition-colors disabled:opacity-50"
                                             >
                                                 Delete
                                             </button>
+                                            </Tip>
                                             {enableStatements && (
                                                 <ActionMenu
                                                     className="ml-1 inline-block align-middle"
@@ -840,14 +847,15 @@ export function ContactManager({ kind, enableStatements = false }: ContactManage
                         >
                             Cancel
                         </button>
+                        <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                         <button
                             type="submit"
                             disabled={saving || isReadonly}
-                            title={isReadonly ? READONLY_TOOLTIP : undefined}
                             className="px-4 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 disabled:cursor-not-allowed text-primary-foreground rounded-lg transition-colors"
                         >
                             {saving ? 'Saving...' : 'Save'}
                         </button>
+                        </Tip>
                     </div>
                 </form>
             </Modal>

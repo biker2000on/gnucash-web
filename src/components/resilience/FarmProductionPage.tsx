@@ -15,6 +15,7 @@ import type {
   FarmSale,
 } from '@/lib/resilience/types';
 import { Empty, Field, FieldGrid, INPUT, Metric, Panel, RecordCard, SaveBar, TNUM } from './ui';
+import { Tip } from '@/components/ui/Tooltip';
 
 const uid = () => crypto.randomUUID();
 const today = () => new Date().toISOString().slice(0, 10);
@@ -170,15 +171,16 @@ export function FarmProductionPage() {
   const totals = production?.current.totals;
   const marginPercent = totals && totals.revenue > 0 ? totals.grossMargin / totals.revenue * 100 : null;
   const addRecordButton = (label: string, onClick: () => void) => (
+    <Tip content={hasProducts ? undefined : 'Add a product first'}>
     <button
       type="button"
       onClick={onClick}
       disabled={!hasProducts}
-      title={hasProducts ? undefined : 'Add a product first'}
       className="rounded-md bg-primary px-3 py-1.5 text-sm font-semibold text-primary-foreground hover:bg-primary-hover disabled:opacity-50"
     >
       {label}
     </button>
+    </Tip>
   );
 
   return (
@@ -224,7 +226,7 @@ export function FarmProductionPage() {
                       {Object.entries(CATEGORY_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
                     </select>
                   </Field>
-                  <Field label="Target price per unit"><input type="number" min={0} step={0.01} className={`${INPUT} font-mono`} title="Target price per unit" value={product.targetPrice ?? ''} onChange={event => updateProduct(product.id, { targetPrice: event.target.value === '' ? null : numberValue(event.target.value) })} /></Field>
+                  <Field label="Target price per unit"><input type="number" min={0} step={0.01} className={`${INPUT} font-mono`} aria-label="Target price per unit" value={product.targetPrice ?? ''} onChange={event => updateProduct(product.id, { targetPrice: event.target.value === '' ? null : numberValue(event.target.value) })} /></Field>
                 </FieldGrid>
               </RecordCard>
             ))}
@@ -251,7 +253,7 @@ export function FarmProductionPage() {
                   <FieldGrid>
                     <Field label="Date"><input type="date" className={`${INPUT} font-mono`} disabled={locked} value={harvest.date} onChange={event => updateHarvest(harvest.id, { date: event.target.value })} /></Field>
                     <Field label="Product">{productSelect(harvest.productId, locked, next => updateHarvest(harvest.id, { productId: next }))}</Field>
-                    <Field label="Quantity"><input type="number" min={0} step={0.01} className={`${INPUT} font-mono`} title="Quantity" disabled={locked} value={harvest.quantity} onChange={event => updateHarvest(harvest.id, { quantity: numberValue(event.target.value) })} /></Field>
+                    <Field label="Quantity"><input type="number" min={0} step={0.01} className={`${INPUT} font-mono`} aria-label="Quantity" disabled={locked} value={harvest.quantity} onChange={event => updateHarvest(harvest.id, { quantity: numberValue(event.target.value) })} /></Field>
                     <Field label="Notes (optional)"><input className={INPUT} disabled={locked} value={harvest.notes ?? ''} onChange={event => updateHarvest(harvest.id, { notes: event.target.value || null })} /></Field>
                   </FieldGrid>
                   <SourceBadge source={harvest.source} />
@@ -286,8 +288,8 @@ export function FarmProductionPage() {
                         {Object.entries(CHANNEL_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
                       </select>
                     </Field>
-                    <Field label="Quantity"><input type="number" min={0} step={0.01} className={`${INPUT} font-mono`} title="Quantity" disabled={locked} value={sale.quantity} onChange={event => updateSale(sale.id, { quantity: numberValue(event.target.value) })} /></Field>
-                    <Field label="Total revenue"><input type="number" min={0} step={0.01} className={`${INPUT} font-mono`} title="Total revenue" disabled={locked} value={sale.revenue} onChange={event => updateSale(sale.id, { revenue: numberValue(event.target.value) })} /></Field>
+                    <Field label="Quantity"><input type="number" min={0} step={0.01} className={`${INPUT} font-mono`} aria-label="Quantity" disabled={locked} value={sale.quantity} onChange={event => updateSale(sale.id, { quantity: numberValue(event.target.value) })} /></Field>
+                    <Field label="Total revenue"><input type="number" min={0} step={0.01} className={`${INPUT} font-mono`} aria-label="Total revenue" disabled={locked} value={sale.revenue} onChange={event => updateSale(sale.id, { revenue: numberValue(event.target.value) })} /></Field>
                     <Field label="Transaction GUID (optional)"><input className={`${INPUT} font-mono`} maxLength={32} value={sale.transactionGuid ?? ''} onChange={event => updateSale(sale.id, { transactionGuid: event.target.value || null })} /></Field>
                   </FieldGrid>
                   <SourceBadge source={sale.source} />
@@ -315,7 +317,7 @@ export function FarmProductionPage() {
                 <FieldGrid>
                   <Field label="Date"><input type="date" className={`${INPUT} font-mono`} value={adjustment.date} onChange={event => updateAdjustment(adjustment.id, { date: event.target.value })} /></Field>
                   <Field label="Product">{productSelect(adjustment.productId, false, next => updateAdjustment(adjustment.id, { productId: next }))}</Field>
-                  <Field label="Quantity delta (signed)"><input type="number" step={0.01} className={`${INPUT} font-mono`} title="Quantity delta (signed)" value={adjustment.quantityDelta} onChange={event => updateAdjustment(adjustment.id, { quantityDelta: numberValue(event.target.value) })} /></Field>
+                  <Field label="Quantity delta (signed)"><input type="number" step={0.01} className={`${INPUT} font-mono`} aria-label="Quantity delta (signed)" value={adjustment.quantityDelta} onChange={event => updateAdjustment(adjustment.id, { quantityDelta: numberValue(event.target.value) })} /></Field>
                   <Field label="Reason (optional)"><input className={INPUT} value={adjustment.reason ?? ''} onChange={event => updateAdjustment(adjustment.id, { reason: event.target.value || null })} /></Field>
                 </FieldGrid>
               </RecordCard>
@@ -339,7 +341,7 @@ export function FarmProductionPage() {
                 onRemove={() => state.change({ ...state.profile, costs: state.profile.costs.filter(item => item.id !== cost.id) })}
               >
                 <FieldGrid>
-                  <Field label="Year"><input type="number" min={1900} max={2300} className={`${INPUT} font-mono`} title="Year" value={cost.year} onChange={event => updateCost(cost.id, { year: numberValue(event.target.value) })} /></Field>
+                  <Field label="Year"><input type="number" min={1900} max={2300} className={`${INPUT} font-mono`} aria-label="Year" value={cost.year} onChange={event => updateCost(cost.id, { year: numberValue(event.target.value) })} /></Field>
                   <Field label="Applies to">
                     <select className={INPUT} value={cost.productId ?? ''} onChange={event => updateCost(cost.id, { productId: event.target.value || null })}>
                       <option value="">Whole farm</option>
@@ -347,7 +349,7 @@ export function FarmProductionPage() {
                     </select>
                   </Field>
                   <Field label="Label"><input className={INPUT} placeholder="jars, feed, packaging" value={cost.label} onChange={event => updateCost(cost.id, { label: event.target.value })} /></Field>
-                  <Field label="Annual amount"><input type="number" min={0} step={0.01} className={`${INPUT} font-mono`} title="Annual amount" value={cost.amount} onChange={event => updateCost(cost.id, { amount: numberValue(event.target.value) })} /></Field>
+                  <Field label="Annual amount"><input type="number" min={0} step={0.01} className={`${INPUT} font-mono`} aria-label="Annual amount" value={cost.amount} onChange={event => updateCost(cost.id, { amount: numberValue(event.target.value) })} /></Field>
                 </FieldGrid>
               </RecordCard>
             ))}

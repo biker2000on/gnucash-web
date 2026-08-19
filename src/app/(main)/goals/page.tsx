@@ -7,6 +7,7 @@ import { useToast } from '@/contexts/ToastContext';
 import { useCurrentUser, READONLY_TOOLTIP } from '@/hooks/useCurrentUser';
 import { GoalCard, type GoalWithProgress } from './GoalCard';
 import { GoalForm, goalToFormValues, type GoalFormValues } from './GoalForm';
+import { Tip } from '@/components/ui/Tooltip';
 
 function valuesToBody(values: GoalFormValues) {
     const num = (s: string): number | null => {
@@ -120,15 +121,16 @@ export default function GoalsPage() {
                         Track emergency funds, savings targets, and debt payoff — with projected completion dates.
                     </p>
                 </div>
+                <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                 <button
                     type="button"
                     onClick={openCreate}
                     disabled={isReadonly}
-                    title={isReadonly ? READONLY_TOOLTIP : undefined}
                     className="px-4 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 disabled:cursor-not-allowed text-primary-foreground rounded-lg transition-colors whitespace-nowrap self-start"
                 >
                     + New Goal
                 </button>
+                </Tip>
             </header>
 
             {loading ? (
@@ -141,15 +143,16 @@ export default function GoalsPage() {
                     <p className="text-foreground-muted mb-4">
                         No goals yet. Create one to start tracking your progress.
                     </p>
+                    <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                     <button
                         type="button"
                         onClick={openCreate}
                         disabled={isReadonly}
-                        title={isReadonly ? READONLY_TOOLTIP : undefined}
                         className="px-4 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 disabled:cursor-not-allowed text-primary-foreground rounded-lg transition-colors"
                     >
                         + New Goal
                     </button>
+                    </Tip>
                 </div>
             ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">

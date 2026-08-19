@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from 'react';
 import { useBooks } from '@/contexts/BookContext';
 import BookEditorModal from '@/components/BookEditorModal';
 import NewBookWizard from '@/components/NewBookWizard';
+import { Tip } from '@/components/ui/Tooltip';
 
 function IconBook({ className = "w-4 h-4" }: { className?: string }) {
     return (
@@ -181,12 +182,12 @@ export default function BookSwitcher({ collapsed = false }: BookSwitcherProps) {
 
     return (
         <div className="relative" ref={dropdownRef}>
+            <Tip content={collapsed ? (activeBook?.name || 'Select Book') : undefined}>
             <button
                 onClick={() => setOpen(!open)}
                 className={`flex items-center w-full rounded-lg transition-all duration-200 text-sidebar-text hover:bg-sidebar-hover hover:text-foreground
                     ${collapsed ? 'justify-center px-0 py-3' : 'px-4 py-2.5 gap-2'}`}
                 aria-label={activeBook?.name || 'Select Book'}
-                title={collapsed ? (activeBook?.name || 'Select Book') : undefined}
             >
                 <IconBook className="w-4 h-4 shrink-0" />
                 {!collapsed && (
@@ -199,6 +200,7 @@ export default function BookSwitcher({ collapsed = false }: BookSwitcherProps) {
                     </>
                 )}
             </button>
+            </Tip>
 
             {open && (
                 <div
@@ -249,6 +251,7 @@ export default function BookSwitcher({ collapsed = false }: BookSwitcherProps) {
                                     )}
                                 </button>
                                 {book.role !== 'timekeeper' && (
+                                    <Tip content="Edit book" describedBy={false}>
                                     <button
                                         onClick={(e) => {
                                             e.stopPropagation();
@@ -257,10 +260,10 @@ export default function BookSwitcher({ collapsed = false }: BookSwitcherProps) {
                                         }}
                                         className="p-2 hover:bg-surface-hover/50 transition-colors"
                                         aria-label="Edit book"
-                                        title="Edit book"
                                     >
                                         <IconPencil className="w-3.5 h-3.5" />
                                     </button>
+                                    </Tip>
                                 )}
                             </div>
                         ))}

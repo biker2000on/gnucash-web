@@ -17,6 +17,7 @@ import {
     validatePayment,
     type OpenInvoiceLite,
 } from '@/components/business/invoice-ui';
+import { Tip } from '@/components/ui/Tooltip';
 
 /** Account types offered as the transfer (deposit/funding) side of a payment. */
 const TRANSFER_ACCOUNT_TYPES = ['BANK', 'CASH', 'ASSET', 'CREDIT'];
@@ -371,14 +372,15 @@ export function PaymentModal({
                     >
                         Cancel
                     </button>
+                    <Tip content={validationError ?? undefined}>
                     <button
                         type="submit"
                         disabled={submitting || !!validationError || openInvoices.length === 0}
-                        title={validationError ?? undefined}
                         className="px-4 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 disabled:cursor-not-allowed text-primary-foreground rounded-lg transition-colors"
                     >
                         {submitting ? 'Recording...' : 'Record Payment'}
                     </button>
+                    </Tip>
                 </div>
             </form>
         </Modal>

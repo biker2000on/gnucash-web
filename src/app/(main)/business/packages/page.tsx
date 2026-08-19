@@ -12,6 +12,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { Modal } from '@/components/ui/Modal';
 import { StatCard, StatGrid } from '@/components/ui/StatCard';
 import { formatCurrency } from '@/lib/format';
+import { Tip } from '@/components/ui/Tooltip';
 
 const TNUM = { fontFeatureSettings: "'tnum'" } as const;
 
@@ -522,14 +523,15 @@ function PackageDetailModal({
                                         <td className="px-3 py-2 text-right font-mono text-foreground" style={TNUM}>{formatCurrency(r.amount)}</td>
                                         <td className="px-3 py-2 text-foreground-secondary">{r.notes ?? ''}</td>
                                         <td className="px-3 py-2 text-right">
+                                            <Tip content="Delete redemption (removes its transaction)">
                                             <button
                                                 onClick={() => handleDeleteRedemption(r.id)}
                                                 disabled={busy}
                                                 className="text-xs text-foreground-muted hover:text-negative transition-colors disabled:opacity-50"
-                                                title="Delete redemption (removes its transaction)"
                                             >
                                                 Delete
                                             </button>
+                                            </Tip>
                                         </td>
                                     </tr>
                                 ))}

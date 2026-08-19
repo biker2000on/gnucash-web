@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import SimpleFinSyncIndicator, { isSimpleFinSyncFailure } from '../SimpleFinSyncIndicator';
 
 describe('SimpleFinSyncIndicator', () => {
@@ -21,8 +21,10 @@ describe('SimpleFinSyncIndicator', () => {
 
         const indicator = screen.getByRole('status', { name: 'SimpleFIN sync failed' });
         expect(indicator).toHaveClass('text-error');
-        expect(indicator).toHaveAttribute(
-            'title',
+        // The detail is a Tip, not a native title= (DESIGN.md); it opens on
+        // hover, focus and tap rather than hover alone.
+        fireEvent.focus(indicator);
+        expect(screen.getByRole('tooltip').textContent).toBe(
             'SimpleFIN sync failed: SimpleFIN could not fetch the account',
         );
     });

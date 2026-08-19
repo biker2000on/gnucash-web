@@ -7,6 +7,7 @@ import { useToast } from '@/contexts/ToastContext';
 import { AccountSelector } from '@/components/ui/AccountSelector';
 import { CollapsibleConfigSection } from '@/components/ui/CollapsibleConfigSection';
 import { formatAccountPath } from '@/lib/account-utils';
+import { Tip } from '@/components/ui/Tooltip';
 
 interface DepreciationScheduleInfo {
   id: number;
@@ -466,8 +467,8 @@ export default function AssetsPage() {
                     </div>
                     <div>
                       {asset.depreciationSchedule ? (
+                        <Tip content={describeSchedule(asset.depreciationSchedule)}>
                         <span
-                          title={describeSchedule(asset.depreciationSchedule)}
                           className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
                             asset.depreciationSchedule.enabled
                               ? asset.depreciationSchedule.isAppreciation
@@ -478,6 +479,7 @@ export default function AssetsPage() {
                         >
                           {asset.depreciationSchedule.isAppreciation ? 'Appreciating' : 'Depreciating'}
                         </span>
+                        </Tip>
                       ) : (
                         <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-foreground-muted/20 text-foreground-muted">
                           No schedule

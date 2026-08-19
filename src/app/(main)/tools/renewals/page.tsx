@@ -7,6 +7,7 @@ import { PersonalToolNotice } from '@/components/PersonalToolNotice';
 import { Modal } from '@/components/ui/Modal';
 import { useDocumentPreview } from '@/components/documents/DocumentPreviewModal';
 import { useToast } from '@/contexts/ToastContext';
+import { Tip } from '@/components/ui/Tooltip';
 
 /* ------------------------------------------------------------------ */
 /* API payload types                                                   */
@@ -421,6 +422,7 @@ export default function RenewalsPage() {
                                                             </span>
                                                         )}
                                                         {r.documentId != null && (
+                                                            <Tip content={r.documentTitle ? `Preview document: ${r.documentTitle}` : 'Preview linked document'}>
                                                             <button
                                                                 type="button"
                                                                 onClick={() => documentPreview.open({
@@ -428,7 +430,6 @@ export default function RenewalsPage() {
                                                                     title: r.documentTitle,
                                                                     fileName: r.documentFileName,
                                                                 })}
-                                                                title={r.documentTitle ? `Preview document: ${r.documentTitle}` : 'Preview linked document'}
                                                                 className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border border-primary/40 text-primary hover:bg-primary-light transition-colors"
                                                             >
                                                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-3 h-3" aria-hidden="true">
@@ -436,6 +437,7 @@ export default function RenewalsPage() {
                                                                 </svg>
                                                                 Doc
                                                             </button>
+                                                            </Tip>
                                                         )}
                                                     </div>
                                                     <p className="text-xs text-foreground-muted mt-0.5">

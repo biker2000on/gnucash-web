@@ -7,6 +7,7 @@ import { escapeCSVField, downloadCSV } from '@/lib/reports/csv-export';
 import { formatMinutesAsHours, projectKeyOf, type TimeProject } from '@/lib/timesheet';
 import { ProjectSelect } from './ProjectSelect';
 import type { TimeEntryDTO } from '@/lib/business/time-tracking.service';
+import { Tip } from '@/components/ui/Tooltip';
 
 const TNUM = { fontFeatureSettings: "'tnum'" } as const;
 const inputClass = 'bg-input-bg border border-border rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50 transition-colors duration-150';
@@ -204,11 +205,11 @@ export function TimeEntryList({ projects, canWrite, canSeeRates, canFilterUsers,
                         </thead>
                         <tbody className="divide-y divide-border/60">
                             {filtered.map((e) => (
+                                <Tip content={e.invoicedInvoiceGuid ? 'Invoiced — read only' : canWrite ? 'Click to edit' : undefined} key={e.id}>
                                 <tr
                                     key={e.id}
                                     onClick={() => onEditEntry(e)}
                                     className="cursor-pointer hover:bg-surface-hover transition-colors duration-150"
-                                    title={e.invoicedInvoiceGuid ? 'Invoiced — read only' : canWrite ? 'Click to edit' : undefined}
                                 >
                                     <td className="px-3 py-1.5 font-mono text-foreground-secondary" style={TNUM}>{e.entryDate}</td>
                                     <td className="px-3 py-1.5 text-foreground">
@@ -244,6 +245,7 @@ export function TimeEntryList({ projects, canWrite, canSeeRates, canFilterUsers,
                                         </span>
                                     </td>
                                 </tr>
+                                </Tip>
                             ))}
                         </tbody>
                     </table>

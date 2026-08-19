@@ -2,6 +2,7 @@
 
 import type { RecurringSeries, Cadence, SeriesStatus } from '@/lib/recurring-detection';
 import { formatCurrency } from '@/lib/format';
+import { Tip } from '@/components/ui/Tooltip';
 
 const TNUM = { fontFeatureSettings: "'tnum'" } as const;
 
@@ -115,9 +116,11 @@ export default function SubscriptionsTable({ series }: { series: RecurringSeries
                             <td className="py-2 pr-3 text-right font-mono text-foreground" style={TNUM}>
                                 {formatCurrency(s.currentAmount)}
                             </td>
-                            <td className="py-2 pr-3 text-right" title={`Typical: ${formatCurrency(s.typicalAmount)}`}>
+                            <Tip content={`Typical: ${formatCurrency(s.typicalAmount)}`}>
+                            <td className="py-2 pr-3 text-right">
                                 <ChangeCell pct={s.amountChangePct} />
                             </td>
+                            </Tip>
                             <td className="py-2 pr-3 text-right font-mono text-foreground-secondary" style={TNUM}>
                                 {formatCurrency(s.monthlyEquivalent)}
                             </td>
@@ -130,9 +133,11 @@ export default function SubscriptionsTable({ series }: { series: RecurringSeries
                             <td className="py-2 pr-3">
                                 <StatusBadge status={s.status} />
                             </td>
-                            <td className="py-2 text-xs text-foreground-secondary max-w-[220px] truncate" title={s.accountName}>
+                            <Tip content={s.accountName}>
+                            <td className="py-2 text-xs text-foreground-secondary max-w-[220px] truncate">
                                 {s.accountName}
                             </td>
+                            </Tip>
                         </tr>
                     ))}
                 </tbody>

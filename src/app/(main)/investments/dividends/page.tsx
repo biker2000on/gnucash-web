@@ -8,6 +8,7 @@ import { DividendMonthlyChart } from './DividendMonthlyChart';
 import { PerSecurityTable } from './PerSecurityTable';
 import { DividendCalendar } from './DividendCalendar';
 import { TTM_TITLE } from './ttm';
+import { Tip } from '@/components/ui/Tooltip';
 
 export default function DividendsPage() {
     const [data, setData] = useState<DividendSummary | null>(null);
@@ -121,9 +122,9 @@ export default function DividendsPage() {
                 subtitle="Dividend tracking and forward calendar"
                 actions={
                     <div className="flex items-center gap-1">
+                        <Tip content={TTM_TITLE}>
                         <button
                             onClick={() => setYear(null)}
-                            title={TTM_TITLE}
                             className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${
                                 year == null
                                     ? 'bg-primary text-primary-foreground'
@@ -132,6 +133,7 @@ export default function DividendsPage() {
                         >
                             TTM
                         </button>
+                        </Tip>
                         {years.slice(0, 6).map(y => (
                             <button
                                 key={y}

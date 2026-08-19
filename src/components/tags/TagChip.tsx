@@ -1,5 +1,7 @@
 'use client';
 
+import { Tip } from '@/components/ui/Tooltip';
+
 /**
  * Small colored tag chip (modeled on ledger/LotBadge).
  * Colors are stored by name in gnucash_web_tags.color and mapped to
@@ -44,9 +46,9 @@ export default function TagChip({ name, color, size = 'xs', onClick, onRemove, c
     const interactive = onClick ? 'cursor-pointer hover:brightness-125 transition-all' : 'cursor-default';
 
     return (
+        <Tip content={title}>
         <span
             onClick={onClick ? (e) => { e.stopPropagation(); onClick(); } : undefined}
-            title={title}
             className={`inline-flex items-center gap-1 rounded font-medium border whitespace-nowrap ${sizeClass} ${tagColorClass(color)} ${interactive} ${className}`}
         >
             <span aria-hidden="true" className="opacity-70">#</span>
@@ -67,5 +69,6 @@ export default function TagChip({ name, color, size = 'xs', onClick, onRemove, c
                 </button>
             )}
         </span>
+        </Tip>
     );
 }

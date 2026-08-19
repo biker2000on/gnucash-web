@@ -9,6 +9,7 @@ import { formatCurrency } from '@/lib/format';
 import { formatAccountPath } from '@/lib/account-utils';
 import { PopoutButton } from './popout/PopoutButton';
 import { usePopoutHost } from '@/lib/popout/usePopout';
+import { Tip } from '@/components/ui/Tooltip';
 
 function getReconcileStatus(splits: Split[] | undefined): {
     hasReconciled: boolean;
@@ -224,9 +225,11 @@ export function TransactionDetailContent({
                                                 <span className="ml-2 text-xs text-foreground-muted">({split.action})</span>
                                             )}
                                         </td>
-                                        <td className="hidden truncate px-4 py-3 text-sm italic text-foreground-muted lg:table-cell" title={split.memo || undefined}>
+                                        <Tip content={split.memo || undefined}>
+                                        <td className="hidden truncate px-4 py-3 text-sm italic text-foreground-muted lg:table-cell">
                                             {split.memo || '—'}
                                         </td>
+                                        </Tip>
                                         <td className="px-2 py-3 text-center align-top">
                                             <span className={`text-xs px-2 py-1 rounded-full ${reconcile.color}`}>
                                                 {split.reconcile_state.toUpperCase()}
@@ -274,9 +277,11 @@ export function TransactionDetailContent({
                 </div>
                 <div className="min-w-0 rounded-lg border border-border bg-input-bg p-4">
                     <div className="text-foreground-muted text-xs uppercase tracking-wider mb-1">Transaction ID</div>
-                    <div className="break-all font-mono text-xs text-foreground-secondary" title={transaction.guid}>
+                    <Tip content={transaction.guid}>
+                    <div className="break-all font-mono text-xs text-foreground-secondary">
                         {transaction.guid}
                     </div>
+                    </Tip>
                 </div>
             </div>
 

@@ -31,6 +31,7 @@ import {
     totalStockValue,
     formatQty,
 } from '@/components/business/inventory-ui';
+import { Tip } from '@/components/ui/Tooltip';
 
 const TNUM = { fontFeatureSettings: "'tnum'" } as const;
 const inputClass = 'w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder-foreground-muted focus:outline-none focus:border-primary/50 transition-all';
@@ -173,14 +174,15 @@ function MovementsView({
                             className="flex-1 min-w-0"
                         />
                         {itemId != null && (
+                            <Tip content="Clear item filter">
                             <button
                                 type="button"
                                 onClick={() => setItemId(null)}
                                 className="px-1.5 py-0.5 text-xs rounded-md text-foreground-muted hover:text-foreground hover:bg-surface-hover transition-colors shrink-0"
-                                title="Clear item filter"
                             >
                                 ✕
                             </button>
+                            </Tip>
                         )}
                     </div>
                 }
@@ -212,7 +214,7 @@ function MovementsView({
                     onChange={(e) => setDateFrom(e.target.value)}
                     className={`${inputClass} md:w-40 font-mono`}
                     style={TNUM}
-                    title="From date"
+                    aria-label="From date"
                 />
                 <input
                     type="date"
@@ -220,7 +222,7 @@ function MovementsView({
                     onChange={(e) => setDateTo(e.target.value)}
                     className={`${inputClass} md:w-40 font-mono`}
                     style={TNUM}
-                    title="To date"
+                    aria-label="To date"
                 />
             </FilterBar>
 
@@ -463,24 +465,26 @@ export default function InventoryPage() {
                 subtitle="Items, stock levels, and movements. Valuation is book-wide — moving average or FIFO per item."
                 actions={
                     <>
+                        <Tip content={isReadonly ? READONLY_TOOLTIP : 'Create alerts for items at or below their reorder point'}>
                         <button
                             type="button"
                             onClick={handleReorderScan}
                             disabled={isReadonly || scanning}
-                            title={isReadonly ? READONLY_TOOLTIP : 'Create alerts for items at or below their reorder point'}
                             className="px-3 py-2 text-sm rounded-lg border border-border bg-surface/50 text-foreground-secondary hover:text-foreground hover:border-border-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
                         >
                             {scanning ? 'Scanning...' : 'Scan reorder points'}
                         </button>
+                        </Tip>
+                        <Tip content={isReadonly ? READONLY_TOOLTIP : 'New Item (n)'}>
                         <button
                             type="button"
                             onClick={() => setEditing('new')}
                             disabled={isReadonly}
-                            title={isReadonly ? READONLY_TOOLTIP : 'New Item (n)'}
                             className="px-4 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 disabled:cursor-not-allowed text-primary-foreground rounded-lg transition-colors whitespace-nowrap"
                         >
                             + New Item
                         </button>
+                        </Tip>
                     </>
                 }
                 menuActions={[
@@ -609,12 +613,13 @@ export default function InventoryPage() {
                                                         style={TNUM}
                                                     >
                                                         {item.active && isBelowReorder(item) && (
+                                                            <Tip content={`At or below reorder point (${formatQty(item.reorderPoint ?? 0)})`}>
                                                             <span
                                                                 className="inline-block mr-1.5 px-1.5 py-0.5 text-[10px] uppercase tracking-wider rounded-md bg-warning/10 text-warning align-middle"
-                                                                title={`At or below reorder point (${formatQty(item.reorderPoint ?? 0)})`}
                                                             >
                                                                 Reorder
                                                             </span>
+                                                            </Tip>
                                                         )}
                                                         {formatQty(item.onHand)}
                                                     </td>

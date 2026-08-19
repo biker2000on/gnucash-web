@@ -19,6 +19,7 @@ import type {
 } from '@/lib/resilience/types';
 import { Empty, Field, FieldGrid, INPUT, Metric, Panel, SaveBar, Tabs, TNUM } from '@/components/resilience/ui';
 import { DocumentChip, type VaultDocument } from '@/components/resilience/DocumentLinkField';
+import { Tip } from '@/components/ui/Tooltip';
 
 type Tab = 'insurance' | 'capital' | 'life';
 const uid = () => crypto.randomUUID();
@@ -495,19 +496,20 @@ export default function ProtectionPage() {
             >
               {uploadingId === policy.id ? 'Uploading…' : 'Upload document'}
             </button>
+            <Tip content={!aiConfigured
+                ? 'Set up an AI provider under Settings → AI to parse policy documents'
+                : policy.documentIds.length === 0
+                  ? 'Link or upload a policy document first'
+                  : 'Fill this form from the linked document — nothing is saved until you review'}>
             <button
               type="button"
               disabled={!aiConfigured || policy.documentIds.length === 0 || parsingId === policy.id}
               onClick={() => parsePolicyDocument(policy)}
               className={SMALL_PRIMARY}
-              title={!aiConfigured
-                ? 'Set up an AI provider under Settings → AI to parse policy documents'
-                : policy.documentIds.length === 0
-                  ? 'Link or upload a policy document first'
-                  : 'Fill this form from the linked document — nothing is saved until you review'}
             >
               {parsingId === policy.id ? 'Parsing…' : 'Parse from document'}
             </button>
+            </Tip>
           </div>
           {!aiConfigured && (
             <p className="mt-2 text-xs text-foreground-muted">

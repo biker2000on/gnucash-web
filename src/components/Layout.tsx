@@ -15,6 +15,7 @@ import { ContextualHelpLink } from './docs/ContextualHelpLink';
 import { BrandLockup } from '@/components/brand/BrandLockup';
 import { FEATURES, featureById, type FeatureDomain } from '@/lib/feature-registry';
 import { isFeatureIdEnabled, type ResolvedBookFeatures } from '@/lib/book-features';
+import { Tip } from '@/components/ui/Tooltip';
 
 // ---------------------------------------------------------------------------
 // Inline SVG icon components (no external icon library)
@@ -812,14 +813,13 @@ export default function Layout({ children }: { children: ReactNode }) {
                 {/* Global search (opens the command palette; hidden for timekeepers) */}
                 {!isTimekeeper && (
                 <div className={`transition-all duration-300 ${collapsed && hydrated ? 'px-2 pt-3' : 'px-4 pt-3'}`}>
+                    <Tip content="Search everything (Ctrl+K)">
                     <button
                         type="button"
                         onClick={() => window.dispatchEvent(new CustomEvent('open-command-palette'))}
                         className={`w-full flex items-center gap-2 rounded-lg border border-sidebar-border bg-background/40 text-sidebar-text hover:text-foreground hover:border-border-hover transition-colors duration-150 ${
                             collapsed && hydrated ? 'justify-center px-0 py-2' : 'px-3 py-2'
                         }`}
-                        aria-label="Search everything (Ctrl+K)"
-                        title="Search everything (Ctrl+K)"
                     >
                         <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -831,6 +831,7 @@ export default function Layout({ children }: { children: ReactNode }) {
                             </>
                         )}
                     </button>
+                    </Tip>
                 </div>
                 )}
 
@@ -842,11 +843,12 @@ export default function Layout({ children }: { children: ReactNode }) {
 
                 {/* Drag handle */}
                 {!(collapsed && hydrated) && (
+                    <Tip content="Drag to resize sidebar">
                     <div
                         onPointerDown={handleDragStart}
                         className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/30 active:bg-primary/50 transition-colors z-10"
-                        title="Drag to resize sidebar"
                     />
+                    </Tip>
                 )}
             </aside>
 

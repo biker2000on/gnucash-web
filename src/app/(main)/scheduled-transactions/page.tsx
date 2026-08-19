@@ -6,6 +6,7 @@ import { formatCurrency } from '@/lib/format';
 import { CreateScheduledPanel } from '@/components/scheduled-transactions/CreateScheduledPanel';
 import { useCurrentUser, READONLY_TOOLTIP } from '@/hooks/useCurrentUser';
 import { suppressNextDataEvent } from '@/components/DataEventsProvider';
+import { Tip } from '@/components/ui/Tooltip';
 
 // ---------------------------------------------------------------------------
 // Types matching API responses
@@ -619,22 +620,24 @@ export default function ScheduledTransactionsPage() {
             <span className="text-xs text-error font-medium">Failed — try again</span>
           ) : (
             <>
+              <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
               <button
                 onClick={() => handleExecute(occ.scheduledTransactionGuid, occ.date)}
                 disabled={actionState === 'loading' || isReadonly}
-                title={isReadonly ? READONLY_TOOLTIP : undefined}
                 className="px-3 py-1 text-xs font-medium rounded-md bg-primary hover:bg-primary-hover text-primary-foreground transition-colors disabled:opacity-50"
               >
                 {actionState === 'loading' ? '...' : 'Execute'}
               </button>
+              </Tip>
+              <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
               <button
                 onClick={() => handleSkip(occ.scheduledTransactionGuid, occ.date)}
                 disabled={actionState === 'loading' || isReadonly}
-                title={isReadonly ? READONLY_TOOLTIP : undefined}
                 className="px-3 py-1 text-xs font-medium rounded-md bg-background-tertiary hover:bg-border-hover text-foreground-muted transition-colors disabled:opacity-50"
               >
                 {actionState === 'loading' ? '...' : 'Skip'}
               </button>
+              </Tip>
             </>
           )}
         </div>
@@ -667,22 +670,24 @@ export default function ScheduledTransactionsPage() {
               <span className="text-xs text-error font-medium whitespace-nowrap">Failed — try again</span>
             ) : (
               <>
+                <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                 <button
                   onClick={() => handleExecute(occ.scheduledTransactionGuid, occ.date)}
                   disabled={actionState === 'loading' || isReadonly}
-                  title={isReadonly ? READONLY_TOOLTIP : undefined}
                   className="px-3 py-1.5 text-xs font-medium rounded-md bg-primary hover:bg-primary-hover text-primary-foreground transition-colors disabled:opacity-50 whitespace-nowrap"
                 >
                   {actionState === 'loading' ? '...' : 'Execute'}
                 </button>
+                </Tip>
+                <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                 <button
                   onClick={() => handleSkip(occ.scheduledTransactionGuid, occ.date)}
                   disabled={actionState === 'loading' || isReadonly}
-                  title={isReadonly ? READONLY_TOOLTIP : undefined}
                   className="px-3 py-1.5 text-xs font-medium rounded-md bg-background-tertiary hover:bg-border-hover text-foreground-muted transition-colors disabled:opacity-50 whitespace-nowrap"
                 >
                   {actionState === 'loading' ? '...' : 'Skip'}
                 </button>
+                </Tip>
               </>
             )}
           </div>
@@ -714,6 +719,7 @@ export default function ScheduledTransactionsPage() {
             Manage recurring and one-time scheduled transactions.
           </p>
         </div>
+        <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
         <button
           onClick={() => {
             setEditingTransaction(null);
@@ -721,7 +727,6 @@ export default function ScheduledTransactionsPage() {
             setShowCreatePanel(true);
           }}
           disabled={isReadonly}
-          title={isReadonly ? READONLY_TOOLTIP : undefined}
           className="px-4 py-2 text-sm font-medium rounded-lg bg-primary hover:bg-primary-hover text-primary-foreground transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -729,6 +734,7 @@ export default function ScheduledTransactionsPage() {
           </svg>
           New
         </button>
+        </Tip>
       </header>
 
       {/* Tab toggle */}
@@ -856,14 +862,15 @@ export default function ScheduledTransactionsPage() {
                 <span className="text-sm text-warning font-medium">
                   {overdueOccurrences.length} overdue transaction{overdueOccurrences.length !== 1 ? 's' : ''}
                 </span>
+                <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                 <button
                   onClick={handleBatchExecute}
                   disabled={batchLoading || isReadonly}
-                  title={isReadonly ? READONLY_TOOLTIP : undefined}
                   className="px-3 py-1.5 text-xs font-medium rounded-md bg-warning/20 hover:bg-warning/30 text-warning border border-warning/30 transition-colors disabled:opacity-50"
                 >
                   {batchLoading ? 'Processing...' : 'Process All'}
                 </button>
+                </Tip>
               </div>
             )}
             {filteredUpcoming.map(renderUpcomingRow)}

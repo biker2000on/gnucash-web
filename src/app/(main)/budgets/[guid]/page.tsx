@@ -18,6 +18,7 @@ import { BudgetProgress } from './BudgetProgress';
 import { BudgetYoY } from './BudgetYoY';
 import type { BudgetActualsResponse } from '@/lib/budget-actuals';
 import { suppressNextDataEvent } from '@/components/DataEventsProvider';
+import { Tip } from '@/components/ui/Tooltip';
 
 interface BudgetAmount {
     id: number;
@@ -917,10 +918,10 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                                             {showAllAccounts ? 'All Accounts' : 'Budgeted Only'}
                                         </button>
                                         {showAllAccounts && (
+                                            <Tip content="Include accounts marked hidden">
                                             <button
                                                 onClick={() => setShowHiddenAccounts(v => !v)}
                                                 aria-pressed={showHiddenAccounts}
-                                                title="Include accounts marked hidden"
                                                 className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
                                                     showHiddenAccounts
                                                         ? 'bg-primary/20 text-primary border border-primary/30'
@@ -929,6 +930,7 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                                             >
                                                 {showHiddenAccounts ? 'Hidden shown' : 'Show hidden'}
                                             </button>
+                                            </Tip>
                                         )}
                                     </div>
                                 }
@@ -945,13 +947,14 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                                 >
                                     Collapse All
                                 </button>
+                                <Tip content="Expand only branches that contain budgeted accounts">
                                 <button
                                     onClick={autoExpandBudgeted}
                                     className="text-xs text-primary hover:text-primary-hover px-2 py-1 rounded hover:bg-primary/10 transition-colors"
-                                    title="Expand only branches that contain budgeted accounts"
                                 >
                                     Auto-expand
                                 </button>
+                                </Tip>
                                 <select
                                     value={expandLevel}
                                     onChange={(e) => handleLevelChange(parseInt(e.target.value))}
@@ -1059,6 +1062,7 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                                                         // Any BLANK cell in All Accounts view is clickable to add a
                                                         // budget amount — works for leaf AND parent accounts.
                                                         return (
+                                                            <Tip content="Click to add budget amount" key={i}>
                                                             <td key={i} className="px-2 py-1 text-right text-foreground-muted cursor-pointer hover:bg-surface-hover/50 transition-colors"
                                                                 onClick={async () => {
                                                                     try {
@@ -1080,10 +1084,10 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                                                                         toast.error('Failed to add budget amount');
                                                                     }
                                                                 }}
-                                                                title="Click to add budget amount"
                                                             >
                                                                 {'—'}
                                                             </td>
+                                                            </Tip>
                                                         );
                                                     } else {
                                                         // Show rolled up value (read-only) or dash for unbudgeted
@@ -1120,45 +1124,53 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                                                 <td className="px-2 py-2 max-md:px-1 max-md:py-1 text-center">
                                                     {account.hasOwnBudget ? (
                                                         <div className="flex items-center justify-center gap-1">
+                                                            <Tip content="Set all periods" describedBy={false}>
                                                             <button
                                                                 onClick={() => setBatchEditAccount({ guid: account.guid, name: account.name, type: account.type })}
                                                                 className="p-1.5 text-foreground-secondary hover:text-primary hover:bg-primary/10 rounded transition-colors"
-                                                                title="Set all periods"
+                                                                aria-label="Set all periods"
                                                             >
                                                                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                                                                 </svg>
                                                             </button>
+                                                            </Tip>
+                                                            <Tip content="Estimate from history" describedBy={false}>
                                                             <button
                                                                 onClick={() => setEstimateAccount({ guid: account.guid, name: account.name, type: account.type, mnemonic: account.mnemonic })}
                                                                 className="p-1.5 text-foreground-secondary hover:text-primary hover:bg-primary/10 rounded transition-colors"
-                                                                title="Estimate from history"
+                                                                aria-label="Estimate from history"
                                                             >
                                                                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
                                                                 </svg>
                                                             </button>
+                                                            </Tip>
+                                                            <Tip content="Remove from budget" describedBy={false}>
                                                             <button
                                                                 onClick={() => handleDeleteAccount(account.guid)}
                                                                 disabled={isDeleting === account.guid}
                                                                 className="p-1.5 text-foreground-secondary hover:text-negative hover:bg-negative/10 rounded transition-colors disabled:opacity-50"
-                                                                title="Remove from budget"
+                                                                aria-label="Remove from budget"
                                                             >
                                                                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                                                                 </svg>
                                                             </button>
+                                                            </Tip>
                                                         </div>
                                                     ) : showAllAccounts ? (
+                                                        <Tip content="Add to budget" describedBy={false}>
                                                         <button
                                                             onClick={() => handleAddToBudget(account.guid)}
                                                             className="p-1.5 text-foreground-secondary hover:text-primary hover:bg-primary/10 rounded transition-colors"
-                                                            title="Add to budget"
+                                                            aria-label="Add to budget"
                                                         >
                                                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
                                                             </svg>
                                                         </button>
+                                                        </Tip>
                                                     ) : null}
                                                 </td>
                                             </tr>

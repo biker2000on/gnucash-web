@@ -5,6 +5,7 @@ import { AccountTransaction } from '@/components/AccountLedger';
 import { AccountCell } from '@/components/ledger/cells/AccountCell';
 import { AmountCell } from '@/components/ledger/cells/AmountCell';
 import type { Split } from '@/lib/types';
+import { Tip } from '@/components/ui/Tooltip';
 
 /** The stored state of a split, carried through edits untouched. */
 interface StoredFractions {
@@ -684,6 +685,7 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
                             ? trailingIds.map((id, i) => (
                                 <td key={id} className="px-3 py-1.5">
                                     {i === 0 && !isPlaceholder && realSplitCount > 2 && (
+                                        <Tip content="Delete split">
                                         <button
                                             tabIndex={-1}
                                             onClick={e => {
@@ -691,17 +693,17 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
                                                 deleteSplit(index);
                                             }}
                                             className="text-xs text-foreground-muted hover:text-error transition-colors"
-                                            aria-label="Delete split"
-                                            title="Delete split"
                                         >
                                             &times;
                                         </button>
+                                        </Tip>
                                     )}
                                 </td>
                             ))
                             : Array.from({ length: actualTrailing }, (_, i) => (
                                 <td key={`trail-${i}`} className="px-3 py-1.5">
                                     {i === 0 && !isPlaceholder && realSplitCount > 2 && (
+                                        <Tip content="Delete split">
                                         <button
                                             tabIndex={-1}
                                             onClick={e => {
@@ -709,11 +711,10 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
                                                 deleteSplit(index);
                                             }}
                                             className="text-xs text-foreground-muted hover:text-error transition-colors"
-                                            aria-label="Delete split"
-                                            title="Delete split"
                                         >
                                             &times;
                                         </button>
+                                        </Tip>
                                     )}
                                 </td>
                             ))

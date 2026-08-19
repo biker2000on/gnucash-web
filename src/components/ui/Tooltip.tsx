@@ -219,6 +219,26 @@ export function Tooltip({
 /* ------------------------------------------------------------------------- */
 
 /**
+ * Forward an element to whatever ref the cloned child already had.
+ *
+ * Module-level on purpose: writing `ref.current` inside `Tip` reads to the
+ * `react-hooks/immutability` lint rule as mutating a value reached through the
+ * `children` prop. It is not — a ref object exists to be written — but the
+ * rule cannot see that through the alias, and taking the ref as a plain
+ * parameter is both the fix and the clearer statement of intent.
+ */
+/** Call the child's own handler for an event Tip also listens to, if it has one. */
+function callHandler(handler: unknown, event: unknown): void {
+    if (typeof handler === 'function') (handler as (e: unknown) => void)(event);
+}
+
+function assignRef(ref: Ref<HTMLElement> | undefined, element: HTMLElement | null): void {
+    if (!ref) return;
+    if (typeof ref === 'function') ref(element);
+    else (ref as { current: HTMLElement | null }).current = element;
+}
+
+/**
  * `Tip` — the accessible replacement for a native `title=` attribute.
  *
  * DESIGN.md bans `title=` as a hint mechanism: it never appears on touch, it
@@ -341,6 +361,26 @@ export function Tip({
         };
     }, [open, node, clearTimers]);
 
+    // The four handlers are memoised rather than written inline in the
+    // cloneElement call because they touch the timer refs, and refs may not be
+    // read during render (react-hooks/refs).
+    const openAfterDelay = useCallback(() => {
+        clearTimers();
+        showTimer.current = setTimeout(() => setOpen(true), showDelay);
+    }, [clearTimers, showDelay]);
+    const closeAfterDelay = useCallback(() => {
+        clearTimers();
+        hideTimer.current = setTimeout(() => setOpen(false), hideDelay);
+    }, [clearTimers, hideDelay]);
+    const openNow = useCallback(() => {
+        clearTimers();
+        setOpen(true);
+    }, [clearTimers]);
+    const closeNow = useCallback(() => {
+        clearTimers();
+        setOpen(false);
+    }, [clearTimers]);
+
     if (content === null || content === undefined || content === false || content === '') {
         return children;
     }
@@ -355,43 +395,40 @@ export function Tip({
     // the only channel left; otherwise describe it only while the tip is open.
     const describe = describedBy && (isDisabled || open);
 
-    const chain =
-        <E,>(mine: (e: E) => void, theirs?: unknown) =>
-        (e: E) => {
-            mine(e);
-            if (typeof theirs === 'function') (theirs as (event: E) => void)(e);
-        };
-
+    const existingRef = childProps.ref ?? (children as { ref?: Ref<HTMLElement> }).ref;
     const setRef = (element: HTMLElement | null) => {
         setNode(element);
-        const existing = childProps.ref ?? (children as { ref?: Ref<HTMLElement> }).ref;
-        if (typeof existing === 'function') existing(element);
-        else if (existing && typeof existing === 'object') {
-            (existing as { current: HTMLElement | null }).current = element;
-        }
+        assignRef(existingRef, element);
     };
 
+    // react-hooks/refs reads "a ref in a props object during render" as reading
+    // a ref's value during render. Here `setRef` is a ref CALLBACK being handed
+    // to React to invoke after commit — the one legal way to attach to a child
+    // you did not create. Nothing reads `.current` here.
+    // eslint-disable-next-line react-hooks/refs
     const cloned = cloneElement(children, {
         ref: setRef,
         'aria-describedby': describe
             ? [childProps['aria-describedby'], tooltipId].filter(Boolean).join(' ')
             : childProps['aria-describedby'],
-        onMouseEnter: chain(() => {
-            clearTimers();
-            showTimer.current = setTimeout(() => setOpen(true), showDelay);
-        }, childProps.onMouseEnter),
-        onMouseLeave: chain(() => {
-            clearTimers();
-            hideTimer.current = setTimeout(() => setOpen(false), hideDelay);
-        }, childProps.onMouseLeave),
-        onFocus: chain(() => {
-            clearTimers();
-            setOpen(true);
-        }, childProps.onFocus),
-        onBlur: chain(() => {
-            clearTimers();
-            setOpen(false);
-        }, childProps.onBlur),
+        // The child's own handler still runs — Tip is additive, never a
+        // replacement for what the call site already wired up.
+        onMouseEnter: (e: unknown) => {
+            openAfterDelay();
+            callHandler(childProps.onMouseEnter, e);
+        },
+        onMouseLeave: (e: unknown) => {
+            closeAfterDelay();
+            callHandler(childProps.onMouseLeave, e);
+        },
+        onFocus: (e: unknown) => {
+            openNow();
+            callHandler(childProps.onFocus, e);
+        },
+        onBlur: (e: unknown) => {
+            closeNow();
+            callHandler(childProps.onBlur, e);
+        },
     } as Record<string, unknown>);
 
     return (
@@ -408,10 +445,7 @@ export function Tip({
                             style={{ position: 'fixed', top: 0, left: 0, visibility: 'hidden', maxWidth }}
                             className="z-[10000] rounded-md border border-border bg-surface-elevated px-3 py-2 text-[13px] leading-snug text-foreground shadow-lg"
                             onMouseEnter={clearTimers}
-                            onMouseLeave={() => {
-                                clearTimers();
-                                hideTimer.current = setTimeout(() => setOpen(false), hideDelay);
-                            }}
+                            onMouseLeave={closeAfterDelay}
                         >
                             {content}
                         </div>

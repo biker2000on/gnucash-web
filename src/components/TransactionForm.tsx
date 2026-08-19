@@ -25,6 +25,7 @@ import {
     editableDecimalMagnitude,
     parseExchangeRate,
 } from '@/lib/transaction-currency';
+import { Tip } from '@/components/ui/Tooltip';
 
 export interface TransactionFormHandle {
     /**
@@ -1251,16 +1252,18 @@ export function TransactionForm({
                                 )}
                             </div>
                             {defaultTaxRate > 0 && (
+                                <Tip content={`Apply tax (${(defaultTaxRate * 100).toFixed(1)}%)`} describedBy={false}>
                                 <button
                                     type="button"
                                     onClick={applyTax}
                                     className="p-2 rounded-lg bg-input-bg border border-border text-foreground-muted hover:text-foreground hover:border-border-hover transition-colors"
-                                    title={`Apply tax (${(defaultTaxRate * 100).toFixed(1)}%)`}
+                                    aria-label={`Apply tax (${(defaultTaxRate * 100).toFixed(1)}%)`}
                                 >
                                     <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
                                         <path strokeLinecap="round" d="M19 5L5 19M6.5 9a2.5 2.5 0 100-5 2.5 2.5 0 000 5zM17.5 20a2.5 2.5 0 100-5 2.5 2.5 0 000 5z" />
                                     </svg>
                                 </button>
+                                </Tip>
                             )}
                         </div>
                         <FieldError id="tx-error-amount" message={fieldErrors.amount} />
@@ -1280,6 +1283,7 @@ export function TransactionForm({
                             <FieldError id="tx-error-fromAccount" message={fieldErrors.fromAccount} />
                         </div>
                         <div className="flex items-center justify-center md:pt-5">
+                            <Tip content="Swap accounts (reverse transfer direction)" describedBy={false}>
                             <button
                                 type="button"
                                 onClick={() => setSimpleData(prev => ({
@@ -1288,12 +1292,13 @@ export function TransactionForm({
                                     toAccountGuid: prev.fromAccountGuid,
                                 }))}
                                 className="p-1.5 rounded-lg text-foreground-muted hover:text-primary hover:bg-primary/10 transition-colors"
-                                title="Swap accounts (reverse transfer direction)"
+                                aria-label="Swap accounts (reverse transfer direction)"
                             >
                                 <svg className="w-5 h-5 md:w-6 md:h-6 md:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" />
                                 </svg>
                             </button>
+                            </Tip>
                         </div>
                         <div className="w-full md:flex-1">
                             <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-1">

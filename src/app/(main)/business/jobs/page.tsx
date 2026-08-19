@@ -13,6 +13,7 @@ import { useCurrentUser, READONLY_TOOLTIP } from '@/hooks/useCurrentUser';
 import { formatCurrency } from '@/lib/format';
 import type { ContactKind } from '@/lib/business-types';
 import type { JobExDTO, JobProfitabilityReport } from '@/lib/business/jobs.service';
+import { Tip } from '@/components/ui/Tooltip';
 
 const TNUM = { fontFeatureSettings: "'tnum'" } as const;
 const inputClass = 'w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder-foreground-muted focus:outline-none focus:border-primary/50 transition-all';
@@ -417,15 +418,16 @@ export default function JobsPage() {
                 title="Jobs"
                 subtitle="Projects grouping invoices and bills per customer or vendor."
                 actions={
+                    <Tip content={isReadonly ? READONLY_TOOLTIP : 'New Job (n)'}>
                     <button
                         type="button"
                         onClick={openCreate}
                         disabled={isReadonly}
-                        title={isReadonly ? READONLY_TOOLTIP : 'New Job (n)'}
                         className="px-4 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 disabled:cursor-not-allowed text-primary-foreground rounded-lg transition-colors whitespace-nowrap"
                     >
                         + New Job
                     </button>
+                    </Tip>
                 }
                 toolbar={
                     <FilterBar
@@ -521,15 +523,16 @@ export default function JobsPage() {
                                                     >
                                                         Edit
                                                     </button>
+                                                    <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                                                     <button
                                                         type="button"
                                                         onClick={() => handleToggleActive(job)}
                                                         disabled={isReadonly}
-                                                        title={isReadonly ? READONLY_TOOLTIP : undefined}
                                                         className="ml-1 px-2 py-1 text-xs rounded-md text-foreground-muted hover:text-foreground hover:bg-surface-hover transition-colors disabled:opacity-50"
                                                     >
                                                         {job.active ? 'Deactivate' : 'Activate'}
                                                     </button>
+                                                    </Tip>
                                                 </td>
                                             </tr>
                                             {isOpen && (
@@ -648,14 +651,15 @@ export default function JobsPage() {
                         >
                             Cancel
                         </button>
+                        <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                         <button
                             type="submit"
                             disabled={saving || isReadonly}
-                            title={isReadonly ? READONLY_TOOLTIP : undefined}
                             className="px-4 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 disabled:cursor-not-allowed text-primary-foreground rounded-lg transition-colors"
                         >
                             {saving ? 'Saving...' : 'Save'}
                         </button>
+                        </Tip>
                     </div>
                 </form>
             </Modal>

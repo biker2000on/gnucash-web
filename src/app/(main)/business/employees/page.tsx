@@ -11,6 +11,7 @@ import { useToast } from '@/contexts/ToastContext';
 import { useCurrentUser, READONLY_TOOLTIP } from '@/hooks/useCurrentUser';
 import { formatCurrency } from '@/lib/format';
 import type { EmployeeDTO, EmployeeVoucherSummary } from '@/lib/business/employees.service';
+import { Tip } from '@/components/ui/Tooltip';
 
 const TNUM = { fontFeatureSettings: "'tnum'" } as const;
 const inputClass = 'w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder-foreground-muted focus:outline-none focus:border-primary/50 transition-all';
@@ -332,15 +333,16 @@ export default function EmployeesPage() {
                 title="Employees"
                 subtitle="People whose expenses you reimburse through expense vouchers."
                 actions={
+                    <Tip content={isReadonly ? READONLY_TOOLTIP : 'New Employee (n)'}>
                     <button
                         type="button"
                         onClick={openCreate}
                         disabled={isReadonly}
-                        title={isReadonly ? READONLY_TOOLTIP : 'New Employee (n)'}
                         className="px-4 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 disabled:cursor-not-allowed text-primary-foreground rounded-lg transition-colors whitespace-nowrap"
                     >
                         + New Employee
                     </button>
+                    </Tip>
                 }
                 toolbar={
                     <FilterBar
@@ -438,24 +440,26 @@ export default function EmployeesPage() {
                                                     >
                                                         Edit
                                                     </button>
+                                                    <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                                                     <button
                                                         type="button"
                                                         onClick={() => handleToggleActive(employee)}
                                                         disabled={isReadonly}
-                                                        title={isReadonly ? READONLY_TOOLTIP : undefined}
                                                         className="ml-1 px-2 py-1 text-xs rounded-md text-foreground-muted hover:text-foreground hover:bg-surface-hover transition-colors disabled:opacity-50"
                                                     >
                                                         {employee.active ? 'Deactivate' : 'Activate'}
                                                     </button>
+                                                    </Tip>
+                                                    <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                                                     <button
                                                         type="button"
                                                         onClick={() => setDeleting(employee)}
                                                         disabled={isReadonly}
-                                                        title={isReadonly ? READONLY_TOOLTIP : undefined}
                                                         className="ml-1 px-2 py-1 text-xs rounded-md text-negative hover:bg-negative/10 transition-colors disabled:opacity-50"
                                                     >
                                                         Delete
                                                     </button>
+                                                    </Tip>
                                                 </td>
                                             </tr>
                                             {isOpen && (
@@ -585,14 +589,15 @@ export default function EmployeesPage() {
                         >
                             Cancel
                         </button>
+                        <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                         <button
                             type="submit"
                             disabled={saving || isReadonly}
-                            title={isReadonly ? READONLY_TOOLTIP : undefined}
                             className="px-4 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 disabled:cursor-not-allowed text-primary-foreground rounded-lg transition-colors"
                         >
                             {saving ? 'Saving...' : 'Save'}
                         </button>
+                        </Tip>
                     </div>
                 </form>
             </Modal>

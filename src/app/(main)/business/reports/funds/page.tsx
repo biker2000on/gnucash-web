@@ -12,6 +12,7 @@ import { FilterBar } from '@/components/ui/FilterBar';
 import { DateRangePicker } from '@/components/ui/DateRangePicker';
 import { Modal } from '@/components/ui/Modal';
 import { formatCurrency } from '@/lib/format';
+import { Tip } from '@/components/ui/Tooltip';
 
 const TNUM = { fontFeatureSettings: "'tnum'" } as const;
 
@@ -437,14 +438,15 @@ function ManageFundsModal({
                                             >
                                                 {fund.active ? 'Deactivate' : 'Activate'}
                                             </button>
+                                            <Tip content="Delete (blocked while accounts are assigned)">
                                             <button
                                                 onClick={() => handleDelete(fund)}
                                                 disabled={busy}
                                                 className="text-xs text-foreground-muted hover:text-negative disabled:opacity-50"
-                                                title="Delete (blocked while accounts are assigned)"
                                             >
                                                 Delete
                                             </button>
+                                            </Tip>
                                         </td>
                                     </tr>
                                 ))}

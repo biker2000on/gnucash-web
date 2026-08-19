@@ -25,6 +25,7 @@ import {
   type MissingDecision,
 } from '../statement-ui';
 import { AssignAccountForm } from '../AssignAccountForm';
+import { Tip } from '@/components/ui/Tooltip';
 
 // ---------------------------------------------------------------------------
 // Types (from GET /api/statements/[id]/reconcile)
@@ -388,9 +389,11 @@ export default function StatementReconcilePage() {
       <div className="space-y-3">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
-            <h1 className="text-xl sm:text-2xl font-bold text-foreground truncate" title={batch.originalFilename}>
+            <Tip content={batch.originalFilename}>
+            <h1 className="text-xl sm:text-2xl font-bold text-foreground truncate">
               {batch.originalFilename}
             </h1>
+            </Tip>
             <p className="text-sm text-foreground-secondary mt-0.5">
               {accountName(batch.accountGuid) || 'No account assigned'}
               {' · '}
@@ -540,16 +543,19 @@ export default function StatementReconcilePage() {
                     {view.matched.map((m) => (
                       <tr key={m.lineId} className="border-b border-border/50 last:border-0 bg-[color:var(--positive)]/[0.04]">
                         <td className="py-2 px-3">
-                          <div className="text-foreground truncate max-w-[220px]" title={m.line.description}>
+                          <Tip content={m.line.description}>
+                          <div className="text-foreground truncate max-w-[220px]">
                             {m.line.description}
                           </div>
+                          </Tip>
                           <div className="font-mono tabular-nums text-xs text-foreground-muted">{formatDate(m.line.date)}</div>
                         </td>
                         <td className="py-2 px-3 text-right whitespace-nowrap">
                           <Amount value={num(m.line.amount)} currency={currency} />
                         </td>
                         <td className="py-2 px-3">
-                          <div className="text-foreground truncate max-w-[220px] flex items-center gap-1.5" title={m.split.description}>
+                          <Tip content={m.split.description}>
+                          <div className="text-foreground truncate max-w-[220px] flex items-center gap-1.5">
                             {m.split.description}
                             {m.auto && (
                               <span className="text-[10px] font-medium uppercase tracking-wider text-secondary bg-secondary-light rounded px-1 py-px">
@@ -557,6 +563,7 @@ export default function StatementReconcilePage() {
                               </span>
                             )}
                           </div>
+                          </Tip>
                           <div className="font-mono tabular-nums text-xs text-foreground-muted">{formatDate(m.split.date)}</div>
                         </td>
                         <td className="py-2 px-3 text-right whitespace-nowrap">
@@ -614,7 +621,7 @@ export default function StatementReconcilePage() {
                       }`}
                     >
                       <div className="min-w-0 flex-1">
-                        <div className="text-[13px] text-foreground truncate" title={m.description}>{m.description}</div>
+                        <Tip content={m.description}><div className="text-[13px] text-foreground truncate">{m.description}</div></Tip>
                         <div className="font-mono tabular-nums text-xs text-foreground-muted">{formatDate(m.date)}</div>
                       </div>
                       <div className="w-28 text-right shrink-0">
@@ -668,7 +675,7 @@ export default function StatementReconcilePage() {
                     {view.inLedgerNotOnStatement.map((l) => (
                       <tr key={l.splitGuid} className="border-b border-border/50 last:border-0 text-foreground-muted">
                         <td className="py-2 px-3 font-mono tabular-nums whitespace-nowrap">{formatDate(l.date)}</td>
-                        <td className="py-2 px-3 truncate max-w-[320px]" title={l.description}>{l.description}</td>
+                        <Tip content={l.description}><td className="py-2 px-3 truncate max-w-[320px]">{l.description}</td></Tip>
                         <td className="py-2 px-3 text-right font-mono tabular-nums whitespace-nowrap">
                           {formatCurrency(num(l.amount), currency)}
                         </td>
@@ -686,15 +693,16 @@ export default function StatementReconcilePage() {
               Finalizing adds the reviewed missing transactions and marks every matched entry reconciled
               to this statement. Enabled only when the statement ties out exactly.
             </p>
+            <Tip content={!canFinalize(tieOut) ? 'Statement must tie out before finalizing' : 'Finalize (f)'}>
             <button
               onClick={handleFinalize}
               disabled={!canFinalize(tieOut) || finalizing}
-              title={!canFinalize(tieOut) ? 'Statement must tie out before finalizing' : 'Finalize (f)'}
               className="px-5 py-2 text-sm font-medium rounded-lg bg-primary text-primary-foreground hover:bg-primary-hover disabled:opacity-40 disabled:cursor-not-allowed transition-colors inline-flex items-center justify-center gap-2 shrink-0"
             >
               {finalizing && <span className="w-4 h-4 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />}
               {finalizing ? 'Finalizing…' : 'Finalize reconciliation'}
             </button>
+            </Tip>
           </div>
         </>
       )}
@@ -794,9 +802,11 @@ function CreateRuleModal({
             <div className="text-[10px] text-foreground-muted uppercase tracking-wider mb-0.5">
               Statement line
             </div>
-            <div className="text-[13px] font-mono text-foreground-secondary truncate" title={line.description}>
+            <Tip content={line.description}>
+            <div className="text-[13px] font-mono text-foreground-secondary truncate">
               {line.description || '(no description)'}
             </div>
+            </Tip>
           </div>
         )}
 

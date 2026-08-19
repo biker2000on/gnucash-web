@@ -11,6 +11,7 @@ import { formatCurrency } from '@/lib/format';
 import { STATUS_META, roundCents } from '@/components/business/invoice-ui';
 import type { InvoiceView, PaymentView } from '@/lib/business/invoice-engine';
 import type { ContactKind } from '@/lib/business-types';
+import { Tip } from '@/components/ui/Tooltip';
 
 const TNUM = { fontFeatureSettings: "'tnum'" } as const;
 
@@ -91,15 +92,16 @@ export default function PaymentsPage() {
                 title="Payments"
                 subtitle="Receive customer payments and pay vendor bills."
                 actions={
+                    <Tip content={isReadonly ? READONLY_TOOLTIP : !ownerGuid ? `Select a ${ownerType} first` : undefined}>
                     <button
                         type="button"
                         onClick={() => setModalOpen(true)}
                         disabled={isReadonly || !ownerGuid || invoices.length === 0}
-                        title={isReadonly ? READONLY_TOOLTIP : !ownerGuid ? `Select a ${ownerType} first` : undefined}
                         className="px-4 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 disabled:cursor-not-allowed text-primary-foreground rounded-lg transition-colors whitespace-nowrap"
                     >
                         Record Payment
                     </button>
+                    </Tip>
                 }
                 toolbar={
                     <div className="flex flex-wrap items-center gap-2">

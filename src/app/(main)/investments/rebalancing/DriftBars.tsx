@@ -1,6 +1,7 @@
 'use client';
 
 import type { RebalanceRow } from '@/lib/rebalancing';
+import { Tip } from '@/components/ui/Tooltip';
 
 interface DriftBarsProps {
     rows: RebalanceRow[];
@@ -48,23 +49,25 @@ export function DriftBars({ rows, bandPct, keyWidthClass = 'w-16' }: DriftBarsPr
 
                     return (
                         <div key={row.key} className="flex items-center gap-3">
+                            <Tip content={row.key}>
                             <span
                                 className={`${keyWidthClass} shrink-0 font-mono text-xs text-foreground truncate`}
-                                title={row.key}
                             >
                                 {row.key}
                             </span>
+                            </Tip>
                             <div className="relative flex-1 h-4 bg-background-tertiary rounded-sm overflow-hidden">
                                 <div
                                     className={`absolute inset-y-0 left-0 rounded-sm ${barColor} transition-[width] duration-150`}
                                     style={{ width: `${currentWidth}%` }}
                                 />
                                 {row.targetPct > 0 && (
+                                    <Tip content={`Target ${row.targetPct.toFixed(1)}%`}>
                                     <div
                                         className="absolute inset-y-0 w-0.5 bg-primary"
                                         style={{ left: `${targetLeft}%` }}
-                                        title={`Target ${row.targetPct.toFixed(1)}%`}
                                     />
+                                    </Tip>
                                 )}
                             </div>
                             <span className="w-28 shrink-0 text-right font-mono tabular-nums text-xs text-foreground-secondary">

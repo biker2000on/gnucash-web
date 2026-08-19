@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import type { ChartDefaults } from './PerformanceChart';
 import { ErrorLiveRegion } from '@/components/a11y/LiveRegion';
+import { Tip } from '@/components/ui/Tooltip';
 
 interface ChartSettingsPanelProps {
   currentDefaults?: ChartDefaults;
@@ -98,10 +99,10 @@ export function ChartSettingsPanel({ currentDefaults, onSettingsChange }: ChartS
   return (
     <div className="relative" ref={panelRef}>
       {/* Gear icon */}
+      <Tip content="Chart settings" describedBy={false}>
       <button
         onClick={() => setOpen(!open)}
         aria-label="Chart settings"
-        title="Chart settings"
         className="p-1 text-foreground-muted hover:text-foreground transition-colors rounded"
       >
         <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
@@ -109,6 +110,7 @@ export function ChartSettingsPanel({ currentDefaults, onSettingsChange }: ChartS
           <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
         </svg>
       </button>
+      </Tip>
 
       {/* Settings dropdown panel */}
       {open && (

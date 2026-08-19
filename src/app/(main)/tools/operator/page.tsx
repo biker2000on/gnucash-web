@@ -7,6 +7,7 @@ import { useToast } from '@/contexts/ToastContext';
 import { useCurrentUser, READONLY_TOOLTIP } from '@/hooks/useCurrentUser';
 import { CommandPreviewCard } from '@/components/domain-commands/CommandPreviewCard';
 import type { DomainCommandRecord } from '@/lib/domain-commands';
+import { Tip } from '@/components/ui/Tooltip';
 
 const INTENTS = [
   {
@@ -133,15 +134,16 @@ export default function SafeOperatorPage() {
             className="min-w-0 flex-1 rounded-lg border border-border bg-input-bg px-3 py-2.5 text-sm text-foreground placeholder:text-foreground-muted focus:border-primary/50 focus:outline-none"
           />
           {matchedIntent?.id === 'close' ? (
+            <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
             <button
               type="button"
               onClick={prepareClose}
               disabled={isReadonly || busyId === 'new-close'}
-              title={isReadonly ? READONLY_TOOLTIP : undefined}
               className="rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground disabled:opacity-50"
             >
               Preview close
             </button>
+            </Tip>
           ) : matchedIntent ? (
             <Link href={matchedIntent.href} className="rounded-lg bg-primary px-4 py-2.5 text-center text-sm font-semibold text-primary-foreground">
               Open workflow

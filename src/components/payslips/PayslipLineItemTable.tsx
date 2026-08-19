@@ -4,6 +4,7 @@ import { PayslipLineItem, PayslipLineItemCategory } from '@/lib/types';
 import { AccountSelector } from '@/components/ui/AccountSelector';
 import { useIsMobile } from '@/lib/hooks/useIsMobile';
 import { MobileCard } from '@/components/ui/MobileCard';
+import { Tip } from '@/components/ui/Tooltip';
 
 interface MappingEntry {
   normalized_label: string;
@@ -170,16 +171,17 @@ export function PayslipLineItemTable({
                           </span>
                         )}
                         {editable && onRemoveLineItem && (
+                          <Tip content="Remove line item" describedBy={false}>
                           <button
                             onClick={() => onRemoveLineItem(index)}
                             className="text-foreground-muted hover:text-error transition-colors py-1"
                             aria-label="Remove line item"
-                            title="Remove line item"
                           >
                             <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
                               <path strokeLinecap="round" d="M6 18L18 6M6 6l12 12" />
                             </svg>
                           </button>
+                          </Tip>
                         )}
                       </div>
                     </div>
@@ -315,16 +317,17 @@ export function PayslipLineItemTable({
                   {/* Remove button */}
                   {editable && onRemoveLineItem && (
                     <td className="py-2 pl-2">
+                      <Tip content="Remove line item" describedBy={false}>
                       <button
                         onClick={() => onRemoveLineItem(index)}
                         className="text-foreground-muted hover:text-error transition-colors"
                         aria-label="Remove line item"
-                        title="Remove line item"
                       >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
                           <path strokeLinecap="round" d="M6 18L18 6M6 6l12 12" />
                         </svg>
                       </button>
+                      </Tip>
                     </td>
                   )}
                 </tr>

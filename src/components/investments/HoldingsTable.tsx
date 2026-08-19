@@ -12,6 +12,7 @@ import {
   BASIS_CONSEQUENCE,
 } from '@/components/investments/CostBasisCoverageMark';
 import type { CostBasisCoverage } from '@/lib/holdings-coverage';
+import { Tip } from '@/components/ui/Tooltip';
 
 function stripRoot(path: string): string {
   const idx = path.indexOf(':');
@@ -415,7 +416,7 @@ export function HoldingsTable({ holdings, consolidatedHoldings }: HoldingsTableP
                   className={`transition-colors ${holding.disableNavigation ? '' : 'hover:bg-surface-hover/50 cursor-pointer'}`}
                 >
                   <td className="px-4 py-3">
-                    <div className="font-medium text-foreground" title={holding.accountPath ? stripRoot(holding.accountPath) : undefined}>{holding.symbol}</div>
+                    <Tip content={holding.accountPath ? stripRoot(holding.accountPath) : undefined}><div className="font-medium text-foreground">{holding.symbol}</div></Tip>
                     <div className="text-sm text-foreground-muted">{holding.accountName}</div>
                   </td>
                   <td className="px-4 py-3 text-foreground-secondary">

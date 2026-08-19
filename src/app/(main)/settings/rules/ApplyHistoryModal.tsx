@@ -10,6 +10,7 @@
 import { useEffect, useState } from 'react';
 import { Modal } from '@/components/ui/Modal';
 import { useToast } from '@/contexts/ToastContext';
+import { Tip } from '@/components/ui/Tooltip';
 
 export interface ApplyHistoryRule {
   id: number;
@@ -295,14 +296,15 @@ export default function ApplyHistoryModal({ rule, onClose }: ApplyHistoryModalPr
           >
             Close
           </button>
+          <Tip content={!preview ? 'Run Preview first' : undefined}>
           <button
             onClick={() => void runApply()}
             disabled={!preview || preview.matchCount === 0 || applying || previewing}
-            title={!preview ? 'Run Preview first' : undefined}
             className="px-4 py-2 text-sm font-medium bg-primary text-primary-foreground rounded-md hover:bg-primary-hover transition-colors disabled:opacity-50"
           >
             {applying ? 'Applying…' : `Apply${preview ? ` ${preview.matchCount} change${preview.matchCount !== 1 ? 's' : ''}` : ''}`}
           </button>
+          </Tip>
         </div>
       </div>
     </Modal>

@@ -18,6 +18,7 @@ import type {
 import { DocumentChip, DocumentLinkField, type VaultDocument } from './DocumentLinkField';
 import { Empty, Field, FieldGrid, INPUT, Metric, Panel, SaveBar, TNUM } from './ui';
 import { Abbr } from '@/components/ui/Abbr';
+import { Tip } from '@/components/ui/Tooltip';
 
 const uid = () => crypto.randomUUID();
 const today = () => new Date().toISOString().slice(0, 10);
@@ -384,19 +385,20 @@ export function EstatePage() {
           }}
           onError={message => toast.error(message)}
           actions={
+            <Tip content={!aiConfigured
+                ? 'Set up an AI provider under Settings → AI to parse estate documents'
+                : !document.documentId
+                  ? 'Link or upload an estate document first'
+                  : 'Fill this form from the linked document — nothing is saved until you review'}>
             <button
               type="button"
               disabled={!aiConfigured || !document.documentId || parsingId === document.id}
               onClick={() => parseDocument(document)}
               className={SMALL_PRIMARY}
-              title={!aiConfigured
-                ? 'Set up an AI provider under Settings → AI to parse estate documents'
-                : !document.documentId
-                  ? 'Link or upload an estate document first'
-                  : 'Fill this form from the linked document — nothing is saved until you review'}
             >
               {parsingId === document.id ? 'Parsing…' : 'Parse from document'}
             </button>
+            </Tip>
           }
           hint={!aiConfigured ? (
             <p className="mt-2 text-xs text-foreground-muted">

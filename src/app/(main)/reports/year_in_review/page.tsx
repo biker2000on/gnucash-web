@@ -5,6 +5,7 @@ import type {
     YearInReviewData,
     YirHoldingPerf,
 } from '@/lib/reports/year-in-review';
+import { Tip } from '@/components/ui/Tooltip';
 
 function formatFullCurrency(value: number): string {
     return new Intl.NumberFormat('en-US', {
@@ -88,7 +89,7 @@ function HoldingBlock({ label, holding }: { label: string; holding: YirHoldingPe
     return (
         <div className="rounded-md border border-border bg-background-tertiary/30 px-4 py-3">
             <p className="text-xs text-foreground-muted mb-1">{label}</p>
-            <p className="text-sm text-foreground mb-1 truncate" title={holding.name}>{holding.name}</p>
+            <Tip content={holding.name}><p className="text-sm text-foreground mb-1 truncate">{holding.name}</p></Tip>
             <p className={`font-mono tabular-nums text-xl font-semibold ${amountClass(holding.returnPct)}`}>
                 {formatSignedPercent(holding.returnPct)}
             </p>
@@ -396,7 +397,7 @@ export default function YearInReviewPage() {
                                         <ul className="space-y-1.5">
                                             {cards.subscriptions.added.map(s => (
                                                 <li key={`${s.label}-${s.date}`} className="flex justify-between gap-2 text-sm">
-                                                    <span className="text-foreground truncate" title={s.label}>{s.label}</span>
+                                                    <Tip content={s.label}><span className="text-foreground truncate">{s.label}</span></Tip>
                                                     <span className="font-mono tabular-nums text-negative shrink-0">
                                                         {formatFullCurrency(s.monthlyEquivalent)}/mo
                                                     </span>
@@ -415,7 +416,7 @@ export default function YearInReviewPage() {
                                         <ul className="space-y-1.5">
                                             {cards.subscriptions.dropped.map(s => (
                                                 <li key={`${s.label}-${s.date}`} className="flex justify-between gap-2 text-sm">
-                                                    <span className="text-foreground truncate" title={s.label}>{s.label}</span>
+                                                    <Tip content={s.label}><span className="text-foreground truncate">{s.label}</span></Tip>
                                                     <span className="font-mono tabular-nums text-positive shrink-0">
                                                         {formatFullCurrency(s.monthlyEquivalent)}/mo
                                                     </span>
@@ -464,9 +465,9 @@ export default function YearInReviewPage() {
                             </div>
                             <div className="flex gap-1.5 flex-wrap">
                                 {cards.budgetStreak.monthly.map(m => (
+                                    <Tip content={`${m.month}: spent ${formatFullCurrency(m.actual)} of ${formatFullCurrency(m.budgeted)}`} key={m.month}>
                                     <div
                                         key={m.month}
-                                        title={`${m.month}: spent ${formatFullCurrency(m.actual)} of ${formatFullCurrency(m.budgeted)}`}
                                         className={`px-2 py-1 rounded-sm text-[11px] font-mono ${
                                             m.under
                                                 ? 'bg-positive/15 text-positive'
@@ -475,6 +476,7 @@ export default function YearInReviewPage() {
                                     >
                                         {formatMonth(m.month)}
                                     </div>
+                                    </Tip>
                                 ))}
                             </div>
                         </Card>

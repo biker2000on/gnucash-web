@@ -8,6 +8,7 @@ import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 import { useToast } from '@/contexts/ToastContext';
 import { useTaxShortcut } from '@/lib/hooks/useTaxShortcut';
 import { formatEvaluatedAccountAmount } from '@/lib/transaction-currency';
+import { Tip } from '@/components/ui/Tooltip';
 
 interface SplitRowProps {
     split: SplitFormData;
@@ -202,17 +203,18 @@ export function SplitRow({
                     {/* Remove Button */}
                     <div className="md:col-span-1 flex justify-center">
                         {canRemove && (
+                            <Tip content="Remove split" describedBy={false}>
                             <button
                                 type="button"
                                 onClick={() => onRemove(index)}
                                 className="p-2 text-foreground-muted hover:text-negative transition-colors"
                                 aria-label="Remove split"
-                                title="Remove split"
                             >
                                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                                 </svg>
                             </button>
+                            </Tip>
                         )}
                     </div>
                 </div>

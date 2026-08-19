@@ -11,6 +11,7 @@ import {
     availableWidgets,
     describeCustomWidget,
 } from '@/lib/dashboard-widgets';
+import { Tip } from '@/components/ui/Tooltip';
 
 interface WidgetGalleryProps {
     isOpen: boolean;
@@ -205,26 +206,28 @@ export default function WidgetGallery({
                                         </div>
                                     </div>
                                     <div className="flex items-center gap-1 shrink-0">
+                                        <Tip content="Edit widget" describedBy={false}>
                                         <button
                                             onClick={() => onEditCustom(def)}
                                             aria-label="Edit widget"
-                                            title="Edit widget"
                                             className="p-1.5 rounded-md text-foreground-muted hover:text-primary hover:bg-surface-hover transition-colors"
                                         >
                                             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
                                                 <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.862 4.487z" />
                                             </svg>
                                         </button>
+                                        </Tip>
+                                        <Tip content="Delete widget" describedBy={false}>
                                         <button
                                             onClick={() => onDeleteCustom(def)}
                                             aria-label="Delete widget"
-                                            title="Delete widget"
                                             className="p-1.5 rounded-md text-foreground-muted hover:text-negative hover:bg-surface-hover transition-colors"
                                         >
                                             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
                                                 <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
                                             </svg>
                                         </button>
+                                        </Tip>
                                         <AddRemoveButton
                                             added={added}
                                             onAdd={() => onAdd(def.id)}

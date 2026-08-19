@@ -64,6 +64,7 @@ import {
     toggleRowSelection,
     type ReconciliationRowSplit,
 } from '@/lib/reconciliation-selection';
+import { Tip } from '@/components/ui/Tooltip';
 
 export interface AccountTransaction extends Transaction {
     running_balance: string;
@@ -2260,7 +2261,7 @@ export default function AccountLedger({
                 } catch {}
             }}
             className="px-3 py-2 min-h-[44px] text-xs rounded-lg border border-border bg-background-secondary text-foreground hover:text-foreground transition-colors"
-            title="Cost basis method for this account"
+            aria-label="Cost basis method for this account"
         >
             <option value="fifo">FIFO</option>
             <option value="lifo">LIFO</option>
@@ -2338,18 +2339,19 @@ export default function AccountLedger({
                                 </button>
                             )}
                         </FilterBar>
+                        <Tip content={isReadonly ? READONLY_TOOLTIP : 'New Transaction'}>
                         <button
                             onClick={() => {
                                 setEditingTransaction(null);
                                 setIsEditModalOpen(true);
                             }}
                             disabled={isReadonly}
-                            title={isReadonly ? READONLY_TOOLTIP : 'New Transaction'}
                             aria-label="New Transaction"
                             className="flex items-center justify-center w-9 h-9 shrink-0 rounded-lg border border-border bg-surface/50 text-foreground-secondary text-lg hover:text-foreground hover:border-border-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                             +
                         </button>
+                        </Tip>
                         <ActionMenu items={mobileActions} />
                     </div>
                 ) : (
@@ -2367,17 +2369,18 @@ export default function AccountLedger({
 
                 {/* Action buttons - right aligned */}
                 <div className="flex flex-wrap gap-2 items-center md:justify-end">
+                    <Tip content={isReadonly ? READONLY_TOOLTIP : (isEditMode ? 'New Transaction (n)' : 'New Transaction')}>
                     <button
                         onClick={() => {
                             setEditingTransaction(null);
                             setIsEditModalOpen(true);
                         }}
                         disabled={isReadonly}
-                        title={isReadonly ? READONLY_TOOLTIP : (isEditMode ? 'New Transaction (n)' : 'New Transaction')}
                         className="px-3 py-2 min-h-[44px] text-xs rounded-lg border border-border text-foreground-muted hover:text-foreground hover:bg-surface-hover transition-colors font-medium flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-foreground-muted"
                     >
                         New Transaction
                     </button>
+                    </Tip>
                     <ViewMenu
                         showSubaccounts={showSubaccounts}
                         onToggleSubaccounts={() => setShowSubaccounts(prev => !prev)}
@@ -2411,10 +2414,10 @@ export default function AccountLedger({
                             )}
                         </span>
                     )}
+                    <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                     <button
                         onClick={handleToggleEditMode}
                         disabled={isReadonly}
-                        title={isReadonly ? READONLY_TOOLTIP : undefined}
                         className={`hidden md:inline-flex px-3 py-2 min-h-[44px] items-center text-xs rounded-lg border transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
                             isEditMode
                                 ? 'bg-primary/10 border-primary/30 text-primary'
@@ -2423,6 +2426,7 @@ export default function AccountLedger({
                     >
                         {isEditMode ? 'Exit Edit Mode' : 'Edit Mode'}
                     </button>
+                    </Tip>
                     {isEditMode && (
                         <div className="flex items-center gap-2">
                             <button
@@ -2438,51 +2442,57 @@ export default function AccountLedger({
                             >
                                 Clear
                             </button>
+                            <Tip content="Mark Reviewed (Ctrl+R)">
                             <button
                                 onClick={handleBulkReview}
                                 disabled={editSelectedGuids.size === 0}
-                                title="Mark Reviewed (Ctrl+R)"
                                 className="px-3 py-2 min-h-[44px] text-xs rounded-lg border border-border text-foreground-muted hover:text-foreground hover:bg-surface-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center"
                             >
                                 Mark Reviewed ({editSelectedGuids.size})
                             </button>
+                            </Tip>
                             {editSelectedGuids.size > 0 && (
                                 <>
+                                    <Tip content="Move to Account (m)">
                                     <button
                                         onClick={() => setShowMoveDialog(true)}
-                                        title="Move to Account (m)"
                                         className="px-3 py-2 min-h-[44px] text-xs rounded-lg border border-border text-foreground-muted hover:text-secondary hover:border-secondary/30 hover:bg-secondary/10 transition-colors flex items-center"
                                     >
                                         Move to Account ({editSelectedGuids.size})
                                     </button>
+                                    </Tip>
+                                    <Tip content="Delete Selected (x)">
                                     <button
                                         onClick={() => setBulkDeleteConfirmOpen(true)}
-                                        title="Delete Selected (x)"
                                         className="px-3 py-2 min-h-[44px] text-xs rounded-lg border border-border text-foreground-muted hover:text-negative hover:border-negative/30 hover:bg-negative/10 transition-colors flex items-center"
                                     >
                                         Delete Selected ({editSelectedGuids.size})
                                     </button>
+                                    </Tip>
+                                    <Tip content="Edit description of selected transactions">
                                     <button
                                         onClick={() => setBulkDescOpen(true)}
-                                        title="Edit description of selected transactions"
                                         className="px-3 py-2 min-h-[44px] text-xs rounded-lg border border-border text-foreground-muted hover:text-foreground hover:bg-surface-hover transition-colors flex items-center"
                                     >
                                         Edit Description ({editSelectedGuids.size})
                                     </button>
+                                    </Tip>
+                                    <Tip content="Recategorize the counter-split of selected transactions">
                                     <button
                                         onClick={() => setBulkRecatOpen(true)}
-                                        title="Recategorize the counter-split of selected transactions"
                                         className="px-3 py-2 min-h-[44px] text-xs rounded-lg border border-border text-foreground-muted hover:text-positive hover:border-positive/30 hover:bg-positive/10 transition-colors flex items-center"
                                     >
                                         Recategorize ({editSelectedGuids.size})
                                     </button>
+                                    </Tip>
+                                    <Tip content="Add or remove tags on selected transactions">
                                     <button
                                         onClick={() => setBulkTagsOpen(true)}
-                                        title="Add or remove tags on selected transactions"
                                         className="px-3 py-2 min-h-[44px] text-xs rounded-lg border border-border text-foreground-muted hover:text-foreground hover:bg-surface-hover transition-colors flex items-center"
                                     >
                                         Tags ({editSelectedGuids.size})
                                     </button>
+                                    </Tip>
                                 </>
                             )}
                         </div>
@@ -2718,7 +2728,7 @@ export default function AccountLedger({
                                                         else clearSelection();
                                                     }}
                                                     tabIndex={-1}
-                                                    title="Select all unreconciled"
+                                                    aria-label="Select all unreconciled"
                                                     className="w-4 h-4 rounded border-border-hover bg-background-tertiary text-primary cursor-pointer"
                                                 />
                                             )}
@@ -3122,12 +3132,13 @@ export default function AccountLedger({
                                             if (colId === 'reconcile') {
                                                 return (
                                                     <td key={cell.id} className="px-3 py-2 align-middle">
+                                                        <Tip content={reconcileInfo.label}>
                                                         <span
                                                             className={`inline-flex items-center justify-center w-5 h-5 rounded text-[10px] font-bold ${reconcileInfo.color}`}
-                                                            title={reconcileInfo.label}
                                                         >
                                                             {reconcileInfo.icon}
                                                         </span>
+                                                        </Tip>
                                                     </td>
                                                 );
                                             }
@@ -3197,9 +3208,11 @@ export default function AccountLedger({
                                                             )}
                                                         </div>
                                                         {originalPayeeLine(tx) && (
-                                                            <div className="text-[11px] text-foreground-muted truncate" title={originalPayeeLine(tx) ?? undefined}>
+                                                            <Tip content={originalPayeeLine(tx) ?? undefined}>
+                                                            <div className="text-[11px] text-foreground-muted truncate">
                                                                 Imported as &ldquo;{originalPayeeLine(tx)}&rdquo;
                                                             </div>
+                                                            </Tip>
                                                         )}
                                                         {tx.num && <span className="text-[10px] text-foreground-muted font-mono">#{tx.num}</span>}
                                                     </td>
@@ -3365,9 +3378,11 @@ export default function AccountLedger({
                                                                     {formatCurrency(invRow.buyAmount, invRow.currencyMnemonic)}
                                                                 </span>
                                                             ) : gainHere !== null ? (
-                                                                <span className="text-positive" title="Realized gain">
+                                                                <Tip content="Realized gain">
+                                                                <span className="text-positive">
                                                                     {formatCurrency(gainHere, invRow!.currencyMnemonic)}
                                                                 </span>
+                                                                </Tip>
                                                             ) : (
                                                                 <span className="opacity-30">&mdash;</span>
                                                             )}
@@ -3386,9 +3401,11 @@ export default function AccountLedger({
                                                                     {formatCurrency(invRow.sellAmount, invRow.currencyMnemonic)}
                                                                 </span>
                                                             ) : lossHere !== null ? (
-                                                                <span className="text-negative" title="Realized loss">
+                                                                <Tip content="Realized loss">
+                                                                <span className="text-negative">
                                                                     {formatCurrency(lossHere, invRow!.currencyMnemonic)}
                                                                 </span>
+                                                                </Tip>
                                                             ) : (
                                                                 <span className="opacity-30">&mdash;</span>
                                                             )}

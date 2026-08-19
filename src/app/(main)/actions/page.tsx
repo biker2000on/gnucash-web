@@ -15,6 +15,7 @@ import type {
 } from '@/lib/financial-actions/types';
 import { subscribeToActionCenterUpdates } from '@/lib/financial-actions/client-events';
 import { usePopoutHost } from '@/lib/popout/usePopout';
+import { Tip } from '@/components/ui/Tooltip';
 
 const RESOLUTION_POPOUT_PREF = 'gnucash-web:action-center:popout-resolution';
 
@@ -670,11 +671,11 @@ export default function FinancialActionCenterPage() {
           >
             Refresh
           </button>
+          <Tip content="Open action resolution surfaces in a separate window for two-monitor triage">
           <button
             type="button"
             onClick={toggleResolutionPopout}
             aria-pressed={popOutResolution}
-            title="Open action resolution surfaces in a separate window for two-monitor triage"
             className={`hidden rounded-lg border px-3 py-2 text-xs font-medium sm:block ${
               popOutResolution
                 ? 'border-primary/60 text-primary'
@@ -683,6 +684,7 @@ export default function FinancialActionCenterPage() {
           >
             {popOutResolution ? 'Two-window: on' : 'Two-window: off'}
           </button>
+          </Tip>
         </div>
       </header>
 

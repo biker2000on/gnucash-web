@@ -24,6 +24,7 @@ import { BalanceReversal } from '@/lib/format';
 import { calculateCalendarAge } from '@/lib/age';
 import type { BusinessActivity } from '@/lib/services/entity.service';
 import { FILING_STATUSES, FILING_STATUS_LABELS, type FilingStatus } from '@/lib/tax/types';
+import { Tip } from '@/components/ui/Tooltip';
 
 // Group heading style for the settings page — matches the sidebar section labels.
 const SETTINGS_GROUP_HEADING = 'text-[11px] font-semibold uppercase tracking-wider text-foreground-muted px-1';
@@ -1413,10 +1414,10 @@ export default function SettingsPage() {
               )}
               <span>{backfilling ? 'Backfilling...' : 'Backfill Historical Index Data'}</span>
             </button>
+            <Tip content="Audits every commodity held in this book, fills gaps, and backfills history from Yahoo Finance. Runs in the background worker.">
             <button
               onClick={handleRunPriceAudit}
               disabled={auditing}
-              title="Audits every commodity held in this book, fills gaps, and backfills history from Yahoo Finance. Runs in the background worker."
               className="flex-1 bg-surface-elevated hover:bg-surface-hover disabled:opacity-60 text-foreground border border-border font-medium px-4 py-2 rounded-lg transition-colors disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
               {auditing && (
@@ -1424,6 +1425,7 @@ export default function SettingsPage() {
               )}
               <span>{auditing ? 'Queuing…' : 'Run Full Price Audit'}</span>
             </button>
+            </Tip>
           </div>
         </div>
       </CollapsibleConfigSection>

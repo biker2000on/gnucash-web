@@ -15,6 +15,7 @@ import {
 } from '@/lib/timesheet';
 import type { TimeEntryDTO } from '@/lib/business/time-tracking.service';
 import { throwErrorBody } from '@/lib/api-error';
+import { Tip } from '@/components/ui/Tooltip';
 
 const TNUM = { fontFeatureSettings: "'tnum'" } as const;
 const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -101,7 +102,7 @@ function CellInput({
             }}
             placeholder="–"
             aria-invalid={invalid || undefined}
-            title={invalid ? "Unrecognized time — try '2.5', '2:30', '2h 30m', or '150m'" : undefined}
+            aria-label={invalid ? "Unrecognized time — try '2.5', '2:30', '2h 30m', or '150m'" : undefined}
             className={`w-full bg-transparent border rounded-md px-1.5 py-1 text-center font-mono text-sm text-foreground placeholder-foreground-muted focus:outline-none focus:border-primary/50 transition-colors duration-150 ${
                 invalid ? 'border-error/70' : 'border-transparent hover:border-border'
             } ${disabled ? 'cursor-not-allowed opacity-60' : ''}`}
@@ -369,15 +370,16 @@ export function WeekGrid({ projects, canWrite, refreshKey, onDataChanged, onEdit
             {/* Header: week nav + copy + total */}
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-2">
                 <div className="flex items-center gap-1">
+                    <Tip content="Previous week ( [ )">
                     <button
                         type="button"
                         onClick={() => setWeekStart((d) => addDays(d, -7))}
                         className="px-2 py-1 text-sm rounded-md text-foreground-secondary hover:text-foreground hover:bg-surface-hover transition-colors duration-150"
                         aria-label="Previous week"
-                        title="Previous week ( [ )"
                     >
                         ◀
                     </button>
+                    </Tip>
                     <button
                         type="button"
                         onClick={() => setWeekStart(startOfWeek(new Date()))}
@@ -385,30 +387,32 @@ export function WeekGrid({ projects, canWrite, refreshKey, onDataChanged, onEdit
                     >
                         This week
                     </button>
+                    <Tip content="Next week ( ] )">
                     <button
                         type="button"
                         onClick={() => setWeekStart((d) => addDays(d, 7))}
                         className="px-2 py-1 text-sm rounded-md text-foreground-secondary hover:text-foreground hover:bg-surface-hover transition-colors duration-150"
                         aria-label="Next week"
-                        title="Next week ( ] )"
                     >
                         ▶
                     </button>
+                    </Tip>
                     <span className="ml-2 font-mono text-sm text-foreground" style={TNUM}>
                         {weekDays[0]} → {weekDays[6]}
                     </span>
                 </div>
                 <div className="flex items-center gap-3">
                     {canWrite && (
+                        <Tip content="Copy the previous week's project hours into the empty cells of this week">
                         <button
                             type="button"
                             onClick={copyPreviousWeek}
                             disabled={busy}
                             className="px-3 py-1.5 text-xs rounded-md border border-border text-foreground-secondary hover:text-foreground hover:bg-surface-hover transition-colors duration-150 disabled:opacity-50"
-                            title="Copy the previous week's project hours into the empty cells of this week"
                         >
                             Copy previous week
                         </button>
+                        </Tip>
                     )}
                     <span className="font-mono text-sm text-foreground-secondary" style={TNUM}>
                         Week total: <span className="text-foreground">{formatMinutesAsHours(weekTotal)}h</span>
@@ -461,21 +465,25 @@ export function WeekGrid({ projects, canWrite, refreshKey, onDataChanged, onEdit
                                         <tr key={key} className="group">
                                             <td className="px-3 py-1.5">
                                                 <div className="flex items-center gap-1.5">
+                                                    <Tip content={isPinned ? 'Unpin project' : 'Pin project'} describedBy={false}>
                                                     <button
                                                         type="button"
                                                         onClick={() => togglePin(key)}
                                                         className={`shrink-0 transition-colors duration-150 ${
                                                             isPinned ? 'text-warning' : 'text-foreground-muted/40 hover:text-foreground-muted group-hover:opacity-100'
                                                         }`}
-                                                        title={isPinned ? 'Unpin project' : 'Pin project'}
                                                         aria-label={isPinned ? 'Unpin project' : 'Pin project'}
                                                     >
                                                         <svg className="w-3.5 h-3.5" fill={isPinned ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
                                                             <path strokeLinecap="round" strokeLinejoin="round" d="M11.48 3.5c.2-.4.84-.4 1.04 0l2.13 4.35 4.8.7c.45.06.63.62.3.94l-3.47 3.38.82 4.78c.08.44-.39.78-.79.57L12 15.97l-4.3 2.25c-.4.21-.87-.13-.8-.57l.83-4.78-3.48-3.38c-.32-.32-.14-.88.3-.94l4.8-.7 2.13-4.34z" />
                                                         </svg>
                                                     </button>
-                                                    <span className="truncate text-foreground" title={labelFor(key)}>{labelFor(key)}</span>
+                                                    </Tip>
+                                                    <Tip content={labelFor(key)}><span className="truncate text-foreground">{labelFor(key)}</span></Tip>
                                                     {canWrite && (
+                                                        <Tip content={isRowBillable(key)
+                                                                ? 'New entries in this row are billable — click to make non-billable'
+                                                                : 'New entries in this row are non-billable — click to make billable'}>
                                                         <button
                                                             type="button"
                                                             onClick={() => setRowBillable((prev) => ({ ...prev, [key]: !isRowBillable(key) }))}
@@ -484,12 +492,10 @@ export function WeekGrid({ projects, canWrite, refreshKey, onDataChanged, onEdit
                                                                     ? 'bg-primary-light text-primary'
                                                                     : 'bg-surface-hover text-foreground-muted'
                                                             }`}
-                                                            title={isRowBillable(key)
-                                                                ? 'New entries in this row are billable — click to make non-billable'
-                                                                : 'New entries in this row are non-billable — click to make billable'}
                                                         >
                                                             {isRowBillable(key) ? 'billable' : 'non-bill.'}
                                                         </button>
+                                                        </Tip>
                                                     )}
                                                 </div>
                                             </td>
@@ -500,16 +506,17 @@ export function WeekGrid({ projects, canWrite, refreshKey, onDataChanged, onEdit
                                                 if (cell && cell.count > 1) {
                                                     return (
                                                         <td key={iso} className={`px-1 py-1 text-center ${iso === todayIso ? 'bg-primary-light/30' : ''}`}>
+                                                            <Tip content={`${cell.count} entries — open the day to edit them individually`}>
                                                             <button
                                                                 type="button"
                                                                 onClick={() => setDayDetail(iso)}
                                                                 className="w-full rounded-md border border-border bg-background-secondary/60 px-1.5 py-1 font-mono text-sm text-foreground hover:border-border-hover hover:bg-surface-hover transition-colors duration-150"
                                                                 style={TNUM}
-                                                                title={`${cell.count} entries — open the day to edit them individually`}
                                                             >
                                                                 {formatMinutesAsHours(cell.minutes)}
                                                                 <span className="ml-1 rounded bg-secondary-light px-1 text-[10px] text-secondary align-middle">{cell.count}</span>
                                                             </button>
+                                                            </Tip>
                                                         </td>
                                                     );
                                                 }
@@ -522,6 +529,7 @@ export function WeekGrid({ projects, canWrite, refreshKey, onDataChanged, onEdit
                                                                 onCommit={(text) => void commitCell(key, iso, text)}
                                                             />
                                                             {cell && cell.count === 1 && (
+                                                                <Tip content={cell.description || 'Add a note'}>
                                                                 <button
                                                                     type="button"
                                                                     onClick={() => setNotesOpenFor(notesOpenFor === cellKey ? null : cellKey)}
@@ -530,16 +538,16 @@ export function WeekGrid({ projects, canWrite, refreshKey, onDataChanged, onEdit
                                                                             ? 'text-secondary'
                                                                             : 'text-foreground-muted/0 hover:text-foreground-muted group-hover:text-foreground-muted/60'
                                                                     }`}
-                                                                    title={cell.description || 'Add a note'}
                                                                     aria-label="Cell note"
                                                                 >
                                                                     <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
                                                                         <path strokeLinecap="round" strokeLinejoin="round" d="M8 10h8M8 14h5m-9 6V6a2 2 0 012-2h12a2 2 0 012 2v9a2 2 0 01-2 2H8l-4 4z" />
                                                                     </svg>
                                                                 </button>
+                                                                </Tip>
                                                             )}
                                                             {cell?.hasInvoiced && (
-                                                                <span className="absolute -top-0.5 right-0.5 text-[9px] text-positive" title="Invoiced — locked">✓</span>
+                                                                <Tip content="Invoiced — locked"><span className="absolute -top-0.5 right-0.5 text-[9px] text-positive">✓</span></Tip>
                                                             )}
                                                         </div>
                                                         {notesOpenFor === cellKey && cell && cell.count === 1 && (

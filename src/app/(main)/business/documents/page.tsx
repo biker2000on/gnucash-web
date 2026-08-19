@@ -13,6 +13,7 @@ import { groupTaxRecordsByYear, findMissingTaxForms } from '@/lib/tax-records';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { useDocumentPreview } from '@/components/documents/DocumentPreviewModal';
 import { useToast } from '@/contexts/ToastContext';
+import { Tip } from '@/components/ui/Tooltip';
 
 const TNUM = { fontFeatureSettings: "'tnum'" } as const;
 
@@ -810,9 +811,11 @@ export default function EntityDocumentsPage() {
                                             <span className="text-xs text-success">Uploaded</span>
                                         )}
                                         {item.status === 'failed' && (
-                                            <span className="text-xs text-error" title={item.error}>
+                                            <Tip content={item.error}>
+                                            <span className="text-xs text-error">
                                                 {item.error ?? 'Failed'}
                                             </span>
+                                            </Tip>
                                         )}
                                         {(item.status === 'staged' || item.status === 'failed') && !uploading && (
                                             <button

@@ -10,6 +10,7 @@
 import { useState, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import { INPUT } from '@/components/ui/form';
+import { Tip } from '@/components/ui/Tooltip';
 
 type SettlementSource = 'stripe' | 'square' | 'paypal' | 'shopify';
 type SettlementRole = 'income' | 'fees' | 'clearing' | 'bank';
@@ -405,12 +406,13 @@ export default function SettlementImportPage() {
                         </div>
                         <div className="bg-surface/50 border border-border rounded-lg p-3">
                             <div className="text-foreground-muted text-xs">Clearing balance change</div>
+                            <Tip content="Net change to the clearing account from this import. Near zero means payouts fully sweep the settled sales.">
                             <div
                                 className={`font-mono ${Math.abs(preview.clearingProjection) < 0.005 ? 'text-positive' : 'text-foreground'}`}
-                                title="Net change to the clearing account from this import. Near zero means payouts fully sweep the settled sales."
                             >
                                 {fmtAmount(preview.clearingProjection)}
                             </div>
+                            </Tip>
                         </div>
                     </div>
 
@@ -590,14 +592,15 @@ export default function SettlementImportPage() {
                                 `Import ${preview.transactionCount} Transaction${preview.transactionCount === 1 ? '' : 's'}`
                             )}
                         </button>
+                        <Tip content="Re-run the preview with the current mappings">
                         <button
                             onClick={() => void runPreview()}
                             disabled={previewing || importing}
                             className="px-4 py-2 text-sm text-foreground-secondary hover:text-foreground transition-colors"
-                            title="Re-run the preview with the current mappings"
                         >
                             Refresh Preview
                         </button>
+                        </Tip>
                         <button
                             onClick={() => setPreview(null)}
                             disabled={importing}

@@ -28,6 +28,7 @@ import type {
     MembershipTypeDTO,
     MembershipSummaryDTO,
 } from '@/lib/services/membership.service';
+import { Tip } from '@/components/ui/Tooltip';
 
 const inputClass = 'w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder-foreground-muted focus:outline-none focus:border-primary/50 transition-all';
 const labelClass = 'block text-xs font-medium text-foreground-secondary mb-1';
@@ -316,15 +317,16 @@ function RecordPaymentForm({ member, types, onRecorded }: {
                         </div>
                     </>
                 )}
+                <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                 <button
                     type="button"
                     onClick={handleSubmit}
                     disabled={saving || isReadonly || typeId == null || (override && !periodStart)}
-                    title={isReadonly ? READONLY_TOOLTIP : undefined}
                     className="ml-auto px-3 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 disabled:cursor-not-allowed text-primary-foreground rounded-lg transition-colors"
                 >
                     {saving ? 'Recording...' : 'Record payment'}
                 </button>
+                </Tip>
             </div>
         </div>
     );
@@ -457,15 +459,16 @@ function TypesModal({ isOpen, onClose, types, onChanged }: {
                                     >
                                         Edit
                                     </button>
+                                    <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                                     <button
                                         type="button"
                                         onClick={() => setDeleting(t)}
                                         disabled={isReadonly}
-                                        title={isReadonly ? READONLY_TOOLTIP : undefined}
                                         className="px-2 py-0.5 text-xs rounded-md text-negative hover:bg-negative/10 transition-colors disabled:opacity-50"
                                     >
                                         Delete
                                     </button>
+                                    </Tip>
                                 </li>
                             ))}
                         </ul>
@@ -505,15 +508,16 @@ function TypesModal({ isOpen, onClose, types, onChanged }: {
                                     Cancel edit
                                 </button>
                             )}
+                            <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                             <button
                                 type="button"
                                 onClick={handleSave}
                                 disabled={saving || isReadonly || !form.name.trim()}
-                                title={isReadonly ? READONLY_TOOLTIP : undefined}
                                 className="px-4 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 disabled:cursor-not-allowed text-primary-foreground rounded-lg transition-colors"
                             >
                                 {saving ? 'Saving...' : editingId != null ? 'Save type' : 'Add type'}
                             </button>
+                            </Tip>
                         </div>
                     </div>
                 </div>
@@ -764,15 +768,16 @@ export function MembershipManager() {
                         >
                             Membership types
                         </button>
+                        <Tip content={isReadonly ? READONLY_TOOLTIP : 'Add member'}>
                         <button
                             type="button"
                             onClick={openCreate}
                             disabled={isReadonly}
-                            title={isReadonly ? READONLY_TOOLTIP : 'Add member'}
                             className="px-4 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 disabled:cursor-not-allowed text-primary-foreground rounded-lg transition-colors whitespace-nowrap"
                         >
                             + Add member
                         </button>
+                        </Tip>
                     </>
                 }
                 toolbar={
@@ -928,15 +933,16 @@ export function MembershipManager() {
 
                             <div className="flex justify-end gap-3 pt-2 border-t border-border">
                                 {detail && (
+                                    <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                                     <button
                                         type="button"
                                         onClick={() => setDeletingMember(detail)}
                                         disabled={isReadonly}
-                                        title={isReadonly ? READONLY_TOOLTIP : undefined}
                                         className="mr-auto px-3 py-2 text-sm rounded-lg text-negative hover:bg-negative/10 transition-colors disabled:opacity-50"
                                     >
                                         Delete member
                                     </button>
+                                    </Tip>
                                 )}
                                 <button
                                     type="button"
@@ -945,14 +951,15 @@ export function MembershipManager() {
                                 >
                                     Cancel
                                 </button>
+                                <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                                 <button
                                     type="submit"
                                     disabled={saving || isReadonly}
-                                    title={isReadonly ? READONLY_TOOLTIP : undefined}
                                     className="px-4 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 disabled:cursor-not-allowed text-primary-foreground rounded-lg transition-colors"
                                 >
                                     {saving ? 'Saving...' : 'Save'}
                                 </button>
+                                </Tip>
                             </div>
 
                             {detail && (
@@ -979,15 +986,16 @@ export function MembershipManager() {
                                                     <span className="ml-auto font-mono tabular-nums text-xs text-foreground-secondary">
                                                         {p.periodEnd ? `${p.periodStart} → ${p.periodEnd}` : `${p.periodStart} → lifetime`}
                                                     </span>
+                                                    <Tip content={isReadonly ? READONLY_TOOLTIP : 'Delete payment'}>
                                                     <button
                                                         type="button"
                                                         onClick={() => handleDeletePayment(p.id)}
                                                         disabled={isReadonly || deletingPaymentId === p.id}
-                                                        title={isReadonly ? READONLY_TOOLTIP : 'Delete payment'}
                                                         className="px-2 py-0.5 text-xs rounded-md text-negative hover:bg-negative/10 transition-colors disabled:opacity-50"
                                                     >
                                                         {deletingPaymentId === p.id ? 'Deleting...' : 'Delete'}
                                                     </button>
+                                                    </Tip>
                                                 </li>
                                             ))}
                                         </ul>

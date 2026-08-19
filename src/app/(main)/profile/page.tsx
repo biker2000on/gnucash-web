@@ -6,6 +6,7 @@ import { Abbr } from '@/components/ui/Abbr';
 import { usePWAInstall } from '@/contexts/PWAInstallContext';
 import { product } from '@/lib/product';
 import { calculateCalendarAge } from '@/lib/age';
+import { Tip } from '@/components/ui/Tooltip';
 
 interface User {
     id: number;
@@ -353,14 +354,15 @@ export default function ProfilePage() {
                                 </p>
                             </div>
                             {user.oidcLinked ? (
+                                <Tip content={!user.hasPassword ? 'Set a password first so you are not locked out' : undefined}>
                                 <button
                                     onClick={handleUnlink}
                                     disabled={unlinking || !user.hasPassword}
-                                    title={!user.hasPassword ? 'Set a password first so you are not locked out' : undefined}
                                     className="px-3 py-1.5 text-xs bg-error/10 border border-error/30 rounded-lg hover:bg-error/20 transition-colors text-error disabled:opacity-50 disabled:cursor-not-allowed"
                                 >
                                     {unlinking ? 'Unlinking...' : 'Unlink'}
                                 </button>
+                                </Tip>
                             ) : (
                                 <a
                                     href="/api/auth/oidc/login?link=1"

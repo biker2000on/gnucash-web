@@ -9,6 +9,7 @@ import { MobileCard } from '@/components/ui/MobileCard';
 import { useToast } from '@/contexts/ToastContext';
 import { useCurrentUser, READONLY_TOOLTIP } from '@/hooks/useCurrentUser';
 import type { LocationDTO } from '@/components/business/inventory-ui';
+import { Tip } from '@/components/ui/Tooltip';
 
 const inputClass = 'w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder-foreground-muted focus:outline-none focus:border-primary/50 transition-all';
 const labelClass = 'block text-xs font-medium text-foreground-secondary mb-1';
@@ -136,15 +137,16 @@ export default function InventoryLocationsPage() {
                 title="Inventory Locations"
                 subtitle="Warehouses and bins where stock is held."
                 actions={
+                    <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                     <button
                         type="button"
                         onClick={openCreate}
                         disabled={isReadonly}
-                        title={isReadonly ? READONLY_TOOLTIP : undefined}
                         className="px-4 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 disabled:cursor-not-allowed text-primary-foreground rounded-lg transition-colors whitespace-nowrap"
                     >
                         + New Location
                     </button>
+                    </Tip>
                 }
             />
 
@@ -207,25 +209,27 @@ export default function InventoryLocationsPage() {
                                                     Edit
                                                 </button>
                                                 {location.active ? (
+                                                    <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                                                     <button
                                                         type="button"
                                                         onClick={() => setDeactivating(location)}
                                                         disabled={isReadonly}
-                                                        title={isReadonly ? READONLY_TOOLTIP : undefined}
                                                         className="ml-1 px-2 py-1 text-xs rounded-md text-negative hover:bg-negative/10 transition-colors disabled:opacity-50"
                                                     >
                                                         Deactivate
                                                     </button>
+                                                    </Tip>
                                                 ) : (
+                                                    <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                                                     <button
                                                         type="button"
                                                         onClick={() => handleToggleActive(location)}
                                                         disabled={isReadonly}
-                                                        title={isReadonly ? READONLY_TOOLTIP : undefined}
                                                         className="ml-1 px-2 py-1 text-xs rounded-md text-foreground-muted hover:text-foreground hover:bg-surface-hover transition-colors disabled:opacity-50"
                                                     >
                                                         Activate
                                                     </button>
+                                                    </Tip>
                                                 )}
                                             </td>
                                         </tr>
@@ -308,14 +312,15 @@ export default function InventoryLocationsPage() {
                         >
                             Cancel
                         </button>
+                        <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                         <button
                             type="submit"
                             disabled={saving || isReadonly}
-                            title={isReadonly ? READONLY_TOOLTIP : undefined}
                             className="px-4 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 disabled:cursor-not-allowed text-primary-foreground rounded-lg transition-colors"
                         >
                             {saving ? 'Saving...' : 'Save'}
                         </button>
+                        </Tip>
                     </div>
                 </form>
             </Modal>

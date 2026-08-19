@@ -8,6 +8,7 @@ import type {
     DepreciationMethod,
     ScheduleEProperty,
 } from '@/lib/reports/schedule-e';
+import { Tip } from '@/components/ui/Tooltip';
 
 const TNUM = { fontFeatureSettings: "'tnum'" } as const;
 
@@ -292,17 +293,16 @@ export default function ScheduleEPropertyPanel({
                                                                 }}
                                                             />
                                                             {!override && (
+                                                                <Tip content={a.keywordLine
+                                                                            ? `Keyword: ${labelByLine.get(a.keywordLine) ?? ''}`
+                                                                            : 'No keyword match — falls to 19 Other'}>
                                                                 <span
                                                                     className="ml-2 text-[11px] text-foreground-muted font-mono"
                                                                     style={TNUM}
-                                                                    title={
-                                                                        a.keywordLine
-                                                                            ? `Keyword: ${labelByLine.get(a.keywordLine) ?? ''}`
-                                                                            : 'No keyword match — falls to 19 Other'
-                                                                    }
                                                                 >
                                                                     auto → {a.keywordLine ?? '19'}
                                                                 </span>
+                                                                </Tip>
                                                             )}
                                                         </td>
                                                     </tr>

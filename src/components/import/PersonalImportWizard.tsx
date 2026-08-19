@@ -10,6 +10,7 @@
 import { useState, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import { ErrorLiveRegion } from '@/components/a11y/LiveRegion';
+import { Tip } from '@/components/ui/Tooltip';
 
 /* ------------------------------------------------------------------ */
 /* Types (mirror PersonalPreview / PersonalCommitResult)                */
@@ -557,14 +558,15 @@ export default function PersonalImportWizard({ config }: { config: PersonalImpor
                                 `Import ${preview.transactionCount} Transaction${preview.transactionCount === 1 ? '' : 's'}`
                             )}
                         </button>
+                        <Tip content="Re-run the preview with the current mappings (updates duplicate detection)">
                         <button
                             onClick={() => void runPreview()}
                             disabled={previewing || importing}
                             className="px-4 py-2 text-sm text-foreground-secondary hover:text-foreground transition-colors"
-                            title="Re-run the preview with the current mappings (updates duplicate detection)"
                         >
                             Refresh Preview
                         </button>
+                        </Tip>
                         <button
                             onClick={() => setPreview(null)}
                             disabled={importing}

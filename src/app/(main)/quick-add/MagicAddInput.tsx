@@ -13,6 +13,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import type { ParsedNlTransaction } from '@/lib/nl-parse';
+import { Tip } from '@/components/ui/Tooltip';
 
 // Cache the probe result so offline loads can still show the (disabled) input.
 const AI_CONFIGURED_CACHE_KEY = 'quickAdd.aiConfigured';
@@ -102,9 +103,9 @@ export function MagicAddInput({ isOnline, onParsed }: MagicAddInputProps) {
 
     return (
         <div>
+            <Tip content={!isOnline ? 'Natural-language entry needs a connection — you are offline' : undefined}>
             <div
                 className="flex items-center gap-2"
-                title={!isOnline ? 'Natural-language entry needs a connection — you are offline' : undefined}
             >
                 <input
                     type="text"
@@ -145,6 +146,7 @@ export function MagicAddInput({ isOnline, onParsed }: MagicAddInputProps) {
                     )}
                 </button>
             </div>
+            </Tip>
             {!isOnline && (
                 <p className="mt-1 text-xs text-foreground-muted">
                     Natural-language entry needs a connection — offline right now.

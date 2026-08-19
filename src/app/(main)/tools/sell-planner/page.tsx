@@ -20,6 +20,7 @@ import PlanLotTable from './PlanLotTable';
 import { FilingStatusSourceNote } from '@/components/tools/tax/FilingStatusSourceNote';
 import { RelatedLinks } from '@/components/RelatedLinks';
 import { Abbr } from '@/components/ui/Abbr';
+import { Tip } from '@/components/ui/Tooltip';
 
 const MONO = { fontFeatureSettings: "'tnum'" } as const;
 
@@ -273,6 +274,7 @@ export default function SellPlannerPage() {
                         ) : (
                             <div className="grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
                                 {taxableAccounts.map(a => (
+                                    <Tip content={a.path} key={a.guid}>
                                     <label
                                         key={a.guid}
                                         className={`flex items-center gap-2 px-3 py-2 rounded-md border cursor-pointer transition-colors duration-150 ${
@@ -280,7 +282,6 @@ export default function SellPlannerPage() {
                                                 ? 'border-primary/50 bg-primary-light'
                                                 : 'border-border bg-surface hover:border-border-hover'
                                         } ${!a.hasPrice ? 'opacity-50' : ''}`}
-                                        title={a.path}
                                     >
                                         <input
                                             type="checkbox"
@@ -296,6 +297,7 @@ export default function SellPlannerPage() {
                                             {formatCurrency(a.marketValue)}
                                         </span>
                                     </label>
+                                    </Tip>
                                 ))}
                             </div>
                         )}

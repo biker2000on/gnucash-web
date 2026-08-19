@@ -14,6 +14,7 @@ import {
   type JobProgressEventPayload,
 } from '@/contexts/JobProgressContext';
 import type { ReceiptWithTransaction } from '@/lib/receipts';
+import { Tip } from '@/components/ui/Tooltip';
 
 const PAGE_SIZE = 30;
 
@@ -193,16 +194,14 @@ export function ReceiptGallery() {
         </div>
         <div className="flex items-center gap-2">
           {isAdmin && (
-            <button
-              onClick={() => setReextractConfirmOpen(true)}
-              disabled={reextractRunning || !aiConfigured || reextractEligible === 0}
-              title={
-                !aiConfigured
+            <Tip content={!aiConfigured
                   ? 'Configure and enable AI extraction first'
                   : reextractEligible === 0
                     ? 'All OCR receipts already use AI extraction'
-                    : `Re-extract ${reextractEligible} legacy receipt${reextractEligible === 1 ? '' : 's'}`
-              }
+                    : `Re-extract ${reextractEligible} legacy receipt${reextractEligible === 1 ? '' : 's'}`}>
+            <button
+              onClick={() => setReextractConfirmOpen(true)}
+              disabled={reextractRunning || !aiConfigured || reextractEligible === 0}
               className="flex min-h-[44px] items-center gap-2 rounded-lg border border-border bg-surface px-4 py-2 text-sm font-medium text-foreground-secondary transition-colors hover:border-border-hover hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
             >
               {reextractRunning && (
@@ -210,6 +209,7 @@ export function ReceiptGallery() {
               )}
               Re-extract Legacy{reextractEligible > 0 ? ` (${reextractEligible})` : ''}
             </button>
+            </Tip>
           )}
           {isAdmin && (
             <button

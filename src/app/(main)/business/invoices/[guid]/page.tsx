@@ -36,6 +36,7 @@ import {
     cadenceToPattern,
     type Cadence,
 } from '@/components/business/recurring-ui';
+import { Tip } from '@/components/ui/Tooltip';
 
 const TNUM = { fontFeatureSettings: "'tnum'" } as const;
 const inputClass = 'w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder-foreground-muted focus:outline-none focus:border-primary/50 transition-all';
@@ -784,50 +785,54 @@ function InvoiceDetailContent() {
     const draftActions = (
         <>
             {!isNew && (
+                <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                 <button
                     type="button"
                     onClick={() => setConfirmDelete(true)}
                     disabled={isReadonly}
-                    title={isReadonly ? READONLY_TOOLTIP : undefined}
                     className="px-3 py-2 text-sm text-negative hover:bg-negative/10 rounded-lg transition-colors disabled:opacity-50"
                 >
                     Delete
                 </button>
+                </Tip>
             )}
+            <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
             <button
                 type="button"
                 onClick={handleSave}
                 disabled={saving || isReadonly}
-                title={isReadonly ? READONLY_TOOLTIP : undefined}
                 className="px-4 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 disabled:cursor-not-allowed text-primary-foreground rounded-lg transition-colors"
             >
                 {saving ? 'Saving...' : isNew ? `Create ${singular}` : 'Save'}
             </button>
+            </Tip>
             {!isNew && (
+                <Tip content={isReadonly ? READONLY_TOOLTIP : dirty ? 'Save changes before posting' : undefined}>
                 <button
                     type="button"
                     onClick={openPostModal}
                     disabled={isReadonly || dirty}
-                    title={isReadonly ? READONLY_TOOLTIP : dirty ? 'Save changes before posting' : undefined}
                     className="px-4 py-2 text-sm bg-secondary-light text-secondary hover:opacity-80 rounded-lg transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                     Post...
                 </button>
+                </Tip>
             )}
         </>
     );
 
     const postedActions = (
         <>
+            <Tip content={isReadonly ? READONLY_TOOLTIP : 'Generate this document on a schedule'}>
             <button
                 type="button"
                 onClick={openRecurringModal}
                 disabled={isReadonly || !endOwner}
-                title={isReadonly ? READONLY_TOOLTIP : 'Generate this document on a schedule'}
                 className="px-3 py-2 text-sm text-foreground-secondary hover:text-foreground hover:bg-surface-hover rounded-lg transition-colors disabled:opacity-50"
             >
                 Make recurring...
             </button>
+            </Tip>
             <button
                 type="button"
                 onClick={handlePrint}
@@ -836,34 +841,37 @@ function InvoiceDetailContent() {
                 Print
             </button>
             {kind === 'invoice' && (
+                <Tip content="Customer-facing share links">
                 <button
                     type="button"
                     onClick={openShareModal}
-                    title="Customer-facing share links"
                     className="px-3 py-2 text-sm text-foreground-secondary hover:text-foreground hover:bg-surface-hover rounded-lg transition-colors"
                 >
                     Share...
                 </button>
+                </Tip>
             )}
+            <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
             <button
                 type="button"
                 onClick={() => setConfirmUnpost(true)}
                 disabled={isReadonly}
-                title={isReadonly ? READONLY_TOOLTIP : undefined}
                 className="px-3 py-2 text-sm text-foreground-secondary hover:text-foreground hover:bg-surface-hover rounded-lg transition-colors disabled:opacity-50"
             >
                 Unpost
             </button>
+            </Tip>
             {invoice && invoice.amountDue > 0.005 && (
+                <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                 <button
                     type="button"
                     onClick={() => setPaymentOpen(true)}
                     disabled={isReadonly || !endOwner}
-                    title={isReadonly ? READONLY_TOOLTIP : undefined}
                     className="px-4 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 disabled:cursor-not-allowed text-primary-foreground rounded-lg transition-colors"
                 >
                     Record Payment
                 </button>
+                </Tip>
             )}
         </>
     );
@@ -891,9 +899,9 @@ function InvoiceDetailContent() {
                     {statusMeta.label}
                 </span>
                 {!isNew && !isDraft && invoice?.type === 'invoice' && dunningOptedOut !== null && (
+                    <Tip content="Automatic overdue payment reminder emails for this invoice (configured in Business Settings)">
                     <label
                         className="ml-auto flex items-center gap-1.5 text-xs text-foreground-secondary cursor-pointer"
-                        title="Automatic overdue payment reminder emails for this invoice (configured in Business Settings)"
                     >
                         <input
                             type="checkbox"
@@ -904,6 +912,7 @@ function InvoiceDetailContent() {
                         />
                         Payment reminders
                     </label>
+                    </Tip>
                 )}
                 {!isNew && isDraft && (
                     <>
@@ -923,15 +932,16 @@ function InvoiceDetailContent() {
                                 Share...
                             </button>
                         )}
+                        <Tip content={isReadonly ? READONLY_TOOLTIP : 'Generate this document on a schedule'}>
                         <button
                             type="button"
                             onClick={openRecurringModal}
                             disabled={isReadonly || !endOwner}
-                            title={isReadonly ? READONLY_TOOLTIP : 'Generate this document on a schedule'}
                             className="text-foreground-muted hover:text-foreground transition-colors text-xs disabled:opacity-50"
                         >
                             Make recurring...
                         </button>
+                        </Tip>
                     </>
                 )}
             </div>
@@ -956,9 +966,11 @@ function InvoiceDetailContent() {
                                     autoFocus
                                 />
                             ) : (
-                                <p className="px-3 py-2 text-sm text-foreground border border-transparent" title="The owner is fixed once the document is created">
+                                <Tip content="The owner is fixed once the document is created">
+                                <p className="px-3 py-2 text-sm text-foreground border border-transparent">
                                     {invoice?.ownerName}
                                 </p>
+                                </Tip>
                             )}
                         </div>
                         <div>
@@ -1156,7 +1168,7 @@ function InvoiceDetailContent() {
                                                         value={d.discountType}
                                                         onChange={(e) => updateEntry(d.key, { discountType: e.target.value as EntryDraft['discountType'] })}
                                                         className="bg-input-bg border border-border rounded-md px-1 py-1 text-[13px] text-foreground focus:outline-none focus:border-primary/50"
-                                                        title="Discount type"
+                                                        aria-label="Discount type"
                                                     >
                                                         <option value="PERCENT">%</option>
                                                         <option value="VALUE">$</option>
@@ -1171,7 +1183,7 @@ function InvoiceDetailContent() {
                                                     checked={d.taxable}
                                                     onChange={(e) => updateEntry(d.key, { taxable: e.target.checked })}
                                                     className="accent-primary shrink-0"
-                                                    title="Taxable"
+                                                    aria-label="Taxable"
                                                 />
                                                 <select
                                                     value={d.taxTableGuid}
@@ -1196,14 +1208,15 @@ function InvoiceDetailContent() {
                                             {formatCurrency(preview.gross, currency)}
                                         </td>
                                         <td className="px-1 py-1.5 text-center">
+                                            <Tip content="Remove line">
                                             <button
                                                 type="button"
                                                 onClick={() => removeRow(d.key)}
                                                 className="px-1.5 py-0.5 text-xs rounded-md text-foreground-muted hover:text-negative hover:bg-negative/10 transition-colors"
-                                                title="Remove line"
                                             >
                                                 ✕
                                             </button>
+                                            </Tip>
                                         </td>
                                     </tr>
                                 );
@@ -1503,14 +1516,15 @@ function InvoiceDetailContent() {
                         >
                             Cancel
                         </button>
+                        <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                         <button
                             type="submit"
                             disabled={creatingRecurring || isReadonly}
-                            title={isReadonly ? READONLY_TOOLTIP : undefined}
                             className="px-4 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 disabled:cursor-not-allowed text-primary-foreground rounded-lg transition-colors"
                         >
                             {creatingRecurring ? 'Creating...' : 'Create schedule'}
                         </button>
+                        </Tip>
                     </div>
                 </form>
             </Modal>
@@ -1542,15 +1556,16 @@ function InvoiceDetailContent() {
                                 <option value="90">In 90 days</option>
                             </select>
                         </div>
+                        <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                         <button
                             type="button"
                             onClick={handleCreateShare}
                             disabled={creatingShare || isReadonly}
-                            title={isReadonly ? READONLY_TOOLTIP : undefined}
                             className="px-4 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 disabled:cursor-not-allowed text-primary-foreground rounded-lg transition-colors whitespace-nowrap"
                         >
                             {creatingShare ? 'Creating...' : '+ New Link'}
                         </button>
+                        </Tip>
                     </div>
 
                     <div className="border border-border rounded-lg overflow-hidden">
@@ -1608,15 +1623,16 @@ function InvoiceDetailContent() {
                                                         >
                                                             Open
                                                         </a>
+                                                        <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                                                         <button
                                                             type="button"
                                                             onClick={() => handleRevokeShare(s)}
                                                             disabled={isReadonly}
-                                                            title={isReadonly ? READONLY_TOOLTIP : undefined}
                                                             className="ml-1 px-2 py-1 text-xs rounded-md text-negative hover:bg-negative/10 transition-colors disabled:opacity-50"
                                                         >
                                                             Revoke
                                                         </button>
+                                                        </Tip>
                                                     </>
                                                 )}
                                             </td>

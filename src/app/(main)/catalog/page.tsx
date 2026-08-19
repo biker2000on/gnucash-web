@@ -11,6 +11,7 @@ import {
     type Feature,
 } from '@/lib/feature-registry';
 import { isFeatureVisible, useBookGating } from '@/lib/hooks/useBookGating';
+import { Tip } from '@/components/ui/Tooltip';
 
 function matchesQuery(feature: Feature, query: string): boolean {
     if (!query) return true;
@@ -40,12 +41,12 @@ function PinButton({
     title: string;
 }) {
     return (
+        <Tip content={pinned ? 'Unpin from sidebar' : 'Pin to sidebar'}>
         <button
             type="button"
             onClick={onToggle}
             aria-pressed={pinned}
             aria-label={pinned ? `Unpin ${title}` : `Pin ${title}`}
-            title={pinned ? 'Unpin from sidebar' : 'Pin to sidebar'}
             className={`shrink-0 p-1 rounded transition-colors duration-150 ${
                 pinned
                     ? 'text-primary hover:text-primary-hover'
@@ -66,6 +67,7 @@ function PinButton({
                 />
             </svg>
         </button>
+        </Tip>
     );
 }
 

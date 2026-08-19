@@ -25,6 +25,7 @@ import { Abbr } from '@/components/ui/Abbr';
 import { StatCard, StatGrid } from '@/components/ui/StatCard';
 import { CollapsibleConfigSection } from '@/components/ui/CollapsibleConfigSection';
 import BreakevenChart from '@/components/tools/tax/BreakevenChart';
+import { Tip } from '@/components/ui/Tooltip';
 
 /* ------------------------------------------------------------------ */
 /* API payload                                                         */
@@ -625,10 +626,11 @@ export default function FilingComparisonPage() {
             <ul className="space-y-2">
               {comparison.caveats.map(c => (
                 <li key={c.id} className="text-xs flex gap-2">
+                  <Tip content={c.applies ? 'Likely applies to your data' : 'General caveat'}>
                   <span
                     className={`mt-0.5 shrink-0 w-2 h-2 rounded-full ${c.applies ? 'bg-warning' : 'bg-border'}`}
-                    title={c.applies ? 'Likely applies to your data' : 'General caveat'}
                   />
+                  </Tip>
                   <span>
                     <span className={`font-medium ${c.applies ? 'text-warning' : 'text-foreground'}`}>
                       {c.title}

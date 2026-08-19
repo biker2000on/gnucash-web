@@ -11,6 +11,7 @@ import { HouseholdBookBanner } from '@/components/business/HouseholdBookBanner';
 import type { AttendanceStatus } from '@/lib/membership';
 import type { MeetingDTO, MeetingDetailDTO } from '@/lib/services/membership.service';
 import { LinkedDocumentsPanel } from '@/components/documents/LinkedDocumentsPanel';
+import { Tip } from '@/components/ui/Tooltip';
 
 const inputClass = 'w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder-foreground-muted focus:outline-none focus:border-primary/50 transition-all';
 const labelClass = 'block text-xs font-medium text-foreground-secondary mb-1';
@@ -149,15 +150,16 @@ function RollCallModal({ meetingId, onClose, onSaved }: {
                         <div className="flex flex-wrap items-center gap-3">
                             <span className="font-mono tabular-nums text-sm text-foreground-secondary">{detail.meetingDate}</span>
                             {detail.location && <span className="text-sm text-foreground-muted">{detail.location}</span>}
+                            <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                             <button
                                 type="button"
                                 onClick={markAllPresent}
                                 disabled={isReadonly || detail.roster.length === 0}
-                                title={isReadonly ? READONLY_TOOLTIP : undefined}
                                 className="ml-auto px-3 py-1.5 text-xs bg-surface-hover hover:bg-border text-foreground rounded-md transition-colors disabled:opacity-50"
                             >
                                 Mark all present
                             </button>
+                            </Tip>
                         </div>
 
                         <LinkedDocumentsPanel
@@ -186,12 +188,12 @@ function RollCallModal({ meetingId, onClose, onSaved }: {
                                             </span>
                                             <div className="flex gap-1 shrink-0">
                                                 {STATUS_BUTTONS.map(b => (
+                                                    <Tip content={isReadonly ? READONLY_TOOLTIP : undefined} key={b.value}>
                                                     <button
                                                         key={b.value}
                                                         type="button"
                                                         onClick={() => setMark(r.memberId, b.value)}
                                                         disabled={isReadonly}
-                                                        title={isReadonly ? READONLY_TOOLTIP : undefined}
                                                         className={`px-2.5 py-1 text-xs rounded-md border transition-colors disabled:opacity-50 ${
                                                             current === b.value
                                                                 ? b.activeClass
@@ -200,6 +202,7 @@ function RollCallModal({ meetingId, onClose, onSaved }: {
                                                     >
                                                         {b.label}
                                                     </button>
+                                                    </Tip>
                                                 ))}
                                             </div>
                                         </li>
@@ -220,15 +223,16 @@ function RollCallModal({ meetingId, onClose, onSaved }: {
                             >
                                 Cancel
                             </button>
+                            <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                             <button
                                 type="button"
                                 onClick={handleSave}
                                 disabled={saving || isReadonly}
-                                title={isReadonly ? READONLY_TOOLTIP : undefined}
                                 className="px-4 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 disabled:cursor-not-allowed text-primary-foreground rounded-lg transition-colors"
                             >
                                 {saving ? 'Saving...' : 'Save attendance'}
                             </button>
+                            </Tip>
                         </div>
                     </>
                 )}
@@ -346,15 +350,16 @@ export function MeetingsManager() {
                 title="Meetings"
                 subtitle="Meeting log and attendance roll call."
                 actions={
+                    <Tip content={isReadonly ? READONLY_TOOLTIP : 'New meeting'}>
                     <button
                         type="button"
                         onClick={openCreate}
                         disabled={isReadonly}
-                        title={isReadonly ? READONLY_TOOLTIP : 'New meeting'}
                         className="px-4 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 disabled:cursor-not-allowed text-primary-foreground rounded-lg transition-colors whitespace-nowrap"
                     >
                         + New meeting
                     </button>
+                    </Tip>
                 }
             />
 
@@ -417,15 +422,16 @@ export function MeetingsManager() {
                                             >
                                                 Edit
                                             </button>
+                                            <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                                             <button
                                                 type="button"
                                                 onClick={() => setDeleting(m)}
                                                 disabled={isReadonly}
-                                                title={isReadonly ? READONLY_TOOLTIP : undefined}
                                                 className="ml-1 px-2 py-1 text-xs rounded-md text-negative hover:bg-negative/10 transition-colors disabled:opacity-50"
                                             >
                                                 Delete
                                             </button>
+                                            </Tip>
                                         </td>
                                     </tr>
                                 ))}
@@ -472,14 +478,15 @@ export function MeetingsManager() {
                         >
                             Cancel
                         </button>
+                        <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                         <button
                             type="submit"
                             disabled={saving || isReadonly || !form.title.trim() || !form.meetingDate}
-                            title={isReadonly ? READONLY_TOOLTIP : undefined}
                             className="px-4 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 disabled:cursor-not-allowed text-primary-foreground rounded-lg transition-colors"
                         >
                             {saving ? 'Saving...' : 'Save'}
                         </button>
+                        </Tip>
                     </div>
                 </form>
             </Modal>

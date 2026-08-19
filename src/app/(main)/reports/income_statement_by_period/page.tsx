@@ -12,6 +12,7 @@ import { formatCurrency } from '@/lib/format';
 import { TransactionDrilldownModal, DrilldownTarget } from '@/components/reports/TransactionDrilldownModal';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { ActionMenu } from '@/components/ui/ActionMenu';
+import { Tip } from '@/components/ui/Tooltip';
 
 function getDefaultFilters(): ReportFilters {
     const now = new Date();
@@ -221,13 +222,14 @@ export default function IncomeStatementByPeriodPage() {
                                     Account
                                 </th>
                                 {reportData.periods.map(p => (
+                                    <Tip content={`${p.startDate} → ${p.endDate}`} key={p.label}>
                                     <th
                                         key={p.label}
                                         className="text-right px-3 py-3 text-xs uppercase tracking-wider text-foreground-muted font-medium whitespace-nowrap"
-                                        title={`${p.startDate} → ${p.endDate}`}
                                     >
                                         {p.label}
                                     </th>
+                                    </Tip>
                                 ))}
                                 <th className="text-right px-3 py-3 text-xs uppercase tracking-wider text-foreground-muted font-medium whitespace-nowrap border-l border-border">
                                     Total

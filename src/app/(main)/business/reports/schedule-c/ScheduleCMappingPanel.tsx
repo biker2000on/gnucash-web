@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react';
 import { useIsMobile } from '@/lib/hooks/useIsMobile';
 import { MobileCard } from '@/components/ui/MobileCard';
+import { Tip } from '@/components/ui/Tooltip';
 
 const TNUM = { fontFeatureSettings: "'tnum'" } as const;
 
@@ -194,12 +195,13 @@ export default function ScheduleCMappingPanel({
                                         {
                                             label: 'Path',
                                             value: (
+                                                <Tip content={a.fullname}>
                                                 <span
                                                     className="block text-[11px] text-foreground-muted truncate max-w-[220px]"
-                                                    title={a.fullname}
                                                 >
                                                     {a.fullname}
                                                 </span>
+                                                </Tip>
                                             ),
                                         },
                                         {
@@ -273,17 +275,16 @@ export default function ScheduleCMappingPanel({
                                                 className={dirty ? 'border-primary' : ''}
                                             />
                                             {!override && (
+                                                <Tip content={a.keywordLine
+                                                            ? 'Keyword suggestion'
+                                                            : 'No keyword match — falls to 27a'}>
                                                 <span
                                                     className="ml-2 text-[11px] text-foreground-muted font-mono"
                                                     style={TNUM}
-                                                    title={
-                                                        a.keywordLine
-                                                            ? 'Keyword suggestion'
-                                                            : 'No keyword match — falls to 27a'
-                                                    }
                                                 >
                                                     auto → {a.keywordLine ?? '27a'}
                                                 </span>
+                                                </Tip>
                                             )}
                                         </td>
                                     </tr>

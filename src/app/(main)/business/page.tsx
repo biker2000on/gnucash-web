@@ -10,6 +10,7 @@ import { formatCurrency } from '@/lib/format';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { StatCard, StatGrid } from '@/components/ui/StatCard';
 import { Abbr } from '@/components/ui/Abbr';
+import { Tip } from '@/components/ui/Tooltip';
 
 const TNUM = { fontFeatureSettings: "'tnum'" } as const;
 
@@ -54,14 +55,15 @@ function MiniAgingBar({ title, buckets, total, href }: {
                             const amt = Math.max(0, buckets[b]);
                             if (amt <= 0) return null;
                             return (
+                                <Tip content={`${BUCKET_LABELS[b]}: ${formatCurrency(amt)}`} key={b}>
                                 <div
                                     key={b}
-                                    title={`${BUCKET_LABELS[b]}: ${formatCurrency(amt)}`}
                                     style={{
                                         width: `${(amt / positiveTotal) * 100}%`,
                                         backgroundColor: BUCKET_COLORS[b],
                                     }}
                                 />
+                                </Tip>
                             );
                         })}
                     </div>

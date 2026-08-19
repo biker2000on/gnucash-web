@@ -13,6 +13,7 @@ import { formatAccountPath } from '@/lib/account-utils';
 import { formatCurrency } from '@/lib/format';
 import { statusBadge, sourceBadge, isPollingStatus } from './statement-ui';
 import { AssignAccountForm, RECONCILE_ACCOUNT_TYPES } from './AssignAccountForm';
+import { Tip } from '@/components/ui/Tooltip';
 
 // ---------------------------------------------------------------------------
 // Types (subset of GET /api/statements contract)
@@ -257,7 +258,7 @@ export function UploadModal({
                   }`}
                 />
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm text-foreground" title={item.file.name}>{item.file.name}</div>
+                  <Tip content={item.file.name}><div className="truncate text-sm text-foreground">{item.file.name}</div></Tip>
                   {item.error ? (
                     <div className="mt-0.5 text-xs text-[color:var(--error)]">{item.error}</div>
                   ) : (
@@ -538,13 +539,16 @@ export default function StatementsPage() {
                       onClick={() => router.push(`/statements/${b.id}`)}
                       className="border-b border-border/50 last:border-0 cursor-pointer transition-colors hover:bg-surface-hover/50"
                     >
-                      <td className="py-2.5 px-4 text-foreground max-w-[220px] truncate" title={b.originalFilename}>
+                      <Tip content={b.originalFilename}>
+                      <td className="py-2.5 px-4 text-foreground max-w-[220px] truncate">
                         {b.originalFilename}
                       </td>
+                      </Tip>
                       <td className="py-2.5 px-4">
                         <Badge label={src.label} className={src.className} />
                       </td>
-                      <td className="py-2.5 px-4 text-foreground-secondary max-w-[200px] truncate" title={b.accountGuid ? accountNames.get(b.accountGuid) ?? '' : ''}>
+                      <Tip content={b.accountGuid ? accountNames.get(b.accountGuid) ?? '' : ''}>
+                      <td className="py-2.5 px-4 text-foreground-secondary max-w-[200px] truncate">
                         {b.accountGuid ? (
                           accountNames.get(b.accountGuid) ?? '—'
                         ) : isPollingStatus(b.status) ? (
@@ -558,6 +562,7 @@ export default function StatementsPage() {
                           </button>
                         )}
                       </td>
+                      </Tip>
                       <td className="py-2.5 px-4 font-mono tabular-nums text-foreground-secondary whitespace-nowrap">
                         {formatPeriod(b.statementStartDate, b.statementEndDate)}
                       </td>

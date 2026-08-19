@@ -8,6 +8,7 @@ import {
 } from '@/lib/tax/types';
 import { useIsMobile } from '@/lib/hooks/useIsMobile';
 import { MobileCard } from '@/components/ui/MobileCard';
+import { Tip } from '@/components/ui/Tooltip';
 
 export interface MappingAccount {
   guid: string;
@@ -290,9 +291,11 @@ export default function TaxMappingPanel({
                     {
                       label: 'Path',
                       value: (
-                        <span className="block text-[11px] text-foreground-muted truncate max-w-[220px]" title={a.fullname}>
+                        <Tip content={a.fullname}>
+                        <span className="block text-[11px] text-foreground-muted truncate max-w-[220px]">
                           {a.fullname}
                         </span>
+                        </Tip>
                       ),
                     },
                   ]}
@@ -305,21 +308,23 @@ export default function TaxMappingPanel({
                     />
                     {showSuggestion && (
                       <div className="flex items-stretch gap-1.5">
+                        <Tip content={suggestion.reason}>
                         <button
                           onClick={() => acceptSuggestion(suggestion)}
-                          title={suggestion.reason}
                           className="flex-1 text-left text-[11px] text-secondary hover:text-secondary-hover border border-border rounded px-2 py-1 transition-colors"
                         >
                           Suggest: {TAX_CATEGORY_LABELS[suggestion.category]}
                         </button>
+                        </Tip>
+                        <Tip content="Dismiss this suggestion">
                         <button
                           onClick={() => dismissSuggestion(a.guid)}
-                          title="Dismiss this suggestion"
                           aria-label="Dismiss suggestion"
                           className="shrink-0 px-2 text-[11px] text-foreground-muted hover:text-negative border border-border rounded transition-colors"
                         >
                           ✕
                         </button>
+                        </Tip>
                       </div>
                     )}
                   </div>
@@ -365,21 +370,23 @@ export default function TaxMappingPanel({
                   <td className="px-3 py-1.5">
                     {showSuggestion && (
                       <span className="inline-flex items-center gap-1">
+                        <Tip content={suggestion.reason}>
                         <button
                           onClick={() => acceptSuggestion(suggestion)}
-                          title={suggestion.reason}
                           className="text-[11px] text-secondary hover:text-secondary-hover border border-border rounded px-2 py-0.5 transition-colors"
                         >
                           Suggest: {TAX_CATEGORY_LABELS[suggestion.category]}
                         </button>
+                        </Tip>
+                        <Tip content="Dismiss this suggestion">
                         <button
                           onClick={() => dismissSuggestion(a.guid)}
-                          title="Dismiss this suggestion"
                           aria-label="Dismiss suggestion"
                           className="text-[11px] text-foreground-muted hover:text-negative border border-border rounded px-1.5 py-0.5 transition-colors"
                         >
                           ✕
                         </button>
+                        </Tip>
                       </span>
                     )}
                     {dirty && (
