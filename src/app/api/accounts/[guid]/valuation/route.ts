@@ -113,6 +113,12 @@ export async function GET(
                 // is that slice's gain. Dropping it here is what let the
                 // holdings panel print a partial basis as a complete one.
                 costBasisCoverage: holdings.costBasisCoverage,
+                // What that basis IS. A short position's "cost basis" is the
+                // proceeds received for shares sold before they were owned, so
+                // its gain is `costBasis - price x |shares|`; a consumer that
+                // ignores the side renders it with the sign inverted.
+                positionSide: holdings.positionSide,
+                shortProceeds: holdings.shortProceeds,
                 marketValue: holdings.marketValue,
                 gainLoss: holdings.gainLoss,
                 gainLossPercent: holdings.gainLossPercent,

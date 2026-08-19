@@ -135,6 +135,84 @@ describe('HoldingsTable — cost-basis coverage', () => {
     });
 });
 
+describe('HoldingsTable — short positions', () => {
+    /**
+     * An oversold account holds a SHORT position: the basis shown is the
+     * proceeds received for shares sold before they were owned. Rendering it
+     * under a plain "Cost Basis" heading tells the reader the opposite story
+     * from the one the number carries.
+     */
+    const SHORT_COVERAGE: CostBasisCoverage = { status: 'complete', coveredShares: 50 };
+
+    function shortHolding() {
+        return holding({
+            shares: -50,
+            costBasis: 4_000,
+            costBasisCoverage: SHORT_COVERAGE,
+            positionSide: 'short' as const,
+            marketValue: -3_000,
+            gainLoss: 1_000,
+            gainLossPercent: 25,
+        });
+    }
+
+    it('labels the basis as short proceeds in always-visible text', () => {
+        render(<HoldingsTable holdings={[shortHolding()]} />);
+
+        expect(screen.getByText('$4,000.00')).toBeTruthy();
+        // Visible without hovering anything: the number is proceeds, not cost.
+        expect(screen.getByText('short basis (proceeds)')).toBeTruthy();
+    });
+
+    it('carries its own marker, distinct from the coverage one', () => {
+        render(<HoldingsTable holdings={[shortHolding()]} />);
+
+        const mark = screen.getByLabelText('This basis is short-sale proceeds, not a purchase cost');
+        fireEvent.click(mark);
+        expect(screen.getByText(/the proceeds received for them, not a purchase cost/)).toBeTruthy();
+        expect(screen.getByText(/gains when the price falls/)).toBeTruthy();
+        // Short-sale gains are short-term whatever the holding period.
+        expect(screen.getByText(/Pub\. 550/)).toBeTruthy();
+        // Coverage is complete here, so no coverage caveat competes with it.
+        expect(screen.queryByLabelText('Cost basis covers only part of this position')).toBeNull();
+    });
+
+    it('says nothing on a long holding — the normal case is unchanged', () => {
+        render(<HoldingsTable holdings={[holding({ costBasisCoverage: COMPLETE, positionSide: 'long' as const })]} />);
+
+        expect(screen.queryByText('short basis (proceeds)')).toBeNull();
+        expect(screen.queryByLabelText('This basis is short-sale proceeds, not a purchase cost')).toBeNull();
+    });
+
+    it('flags a consolidated row that mixes long and short legs', () => {
+        render(<HoldingsTable holdings={[holding()]} consolidatedHoldings={[{
+            commodityGuid: 'commodity-aapl',
+            symbol: 'AAPL',
+            fullname: 'Apple Inc.',
+            totalShares: 50,
+            totalCostBasis: 5_500,
+            totalCostBasisCoverage: COMPLETE,
+            totalPositionSide: 'mixed' as const,
+            totalMarketValue: 7_000,
+            totalGainLoss: 1_500,
+            totalGainLossPercent: 27.27,
+            latestPrice: 50,
+            priceDate: '2026-08-14',
+            accounts: [{
+                accountGuid: 'acct-a', accountName: 'A', accountPath: 'Assets:A',
+                shares: 100, costBasis: 1_500, costBasisCoverage: COMPLETE,
+                positionSide: 'long' as const,
+                marketValue: 10_000, gainLoss: 8_500, gainLossPercent: 566.7,
+            }],
+        }]} />);
+
+        expect(screen.getByText('includes short legs (proceeds)')).toBeTruthy();
+        const mark = screen.getByLabelText('This total combines long and short legs');
+        fireEvent.click(mark);
+        expect(screen.getByText(/adds money spent on the long shares to money received/)).toBeTruthy();
+    });
+});
+
 describe('coverageCaveat', () => {
     it('says nothing at all under complete coverage', () => {
         expect(coverageCaveat(COMPLETE, BASIS_CONSEQUENCE)).toBeNull();

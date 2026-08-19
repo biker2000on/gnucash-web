@@ -9,9 +9,11 @@ import {
   CostBasisCoverageMark,
   CoveredSliceNote,
   gainHeading,
+  ShortPositionMark,
+  ShortBasisNote,
   BASIS_CONSEQUENCE,
 } from '@/components/investments/CostBasisCoverageMark';
-import type { CostBasisCoverage } from '@/lib/holdings-coverage';
+import type { CostBasisCoverage, PositionSide } from '@/lib/holdings-coverage';
 
 function stripRoot(path: string): string {
   const idx = path.indexOf(':');
@@ -24,12 +26,23 @@ function stripRoot(path: string): string {
  * Every basis in this table goes through here. `costBasisCoverage` is required
  * rather than optional so a new caller cannot omit it and silently print a
  * partial basis as a complete one — the failure this component exists to stop.
+ *
+ * `positionSide` is what the basis IS rather than how much of the position it
+ * covers: on a short row the number is the proceeds received for shares sold
+ * before they were owned, so it is labelled in always-visible text and carries
+ * its own marker beside the coverage one.
  */
-function CostBasis({ value, coverage }: { value: number; coverage: CostBasisCoverage }) {
+function CostBasis({ value, coverage, positionSide }: {
+  value: number;
+  coverage: CostBasisCoverage;
+  positionSide?: PositionSide;
+}) {
   return (
     <>
       {formatCurrency(value)}
       <CostBasisCoverageMark coverage={coverage} consequence={BASIS_CONSEQUENCE} />
+      <ShortPositionMark positionSide={positionSide} />
+      <ShortBasisNote positionSide={positionSide} />
     </>
   );
 }
@@ -71,6 +84,8 @@ interface Holding {
   /** Basis of the shares `costBasisCoverage` describes; `gainLoss` matches it. */
   costBasis: number;
   costBasisCoverage: CostBasisCoverage;
+  /** `short` marks a row whose `costBasis` is proceeds, not a purchase cost. */
+  positionSide?: PositionSide;
   marketValue: number;
   gainLoss: number;
   gainLossPercent: number;
@@ -85,6 +100,7 @@ interface ConsolidatedHolding {
   totalShares: number;
   totalCostBasis: number;
   totalCostBasisCoverage: CostBasisCoverage;
+  totalPositionSide?: PositionSide;
   totalMarketValue: number;
   totalGainLoss: number;
   totalGainLossPercent: number;
@@ -97,6 +113,7 @@ interface ConsolidatedHolding {
     shares: number;
     costBasis: number;
     costBasisCoverage: CostBasisCoverage;
+    positionSide?: PositionSide;
     marketValue: number;
     gainLoss: number;
     gainLossPercent: number;
@@ -243,7 +260,7 @@ export function HoldingsTable({ holdings, consolidatedHoldings }: HoldingsTableP
                       { label: 'Shares', value: holding.totalShares.toLocaleString(undefined, { maximumFractionDigits: 4 }) },
                       { label: 'Price', value: formatCurrency(holding.latestPrice) },
                       { label: 'Market Value', value: formatCurrency(holding.totalMarketValue) },
-                      { label: 'Cost Basis', value: <CostBasis value={holding.totalCostBasis} coverage={holding.totalCostBasisCoverage} /> },
+                      { label: 'Cost Basis', value: <CostBasis value={holding.totalCostBasis} coverage={holding.totalCostBasisCoverage} positionSide={holding.totalPositionSide} /> },
                       {
                         label: gainHeading(holding.totalCostBasisCoverage),
                         value: (
@@ -272,7 +289,7 @@ export function HoldingsTable({ holdings, consolidatedHoldings }: HoldingsTableP
                         { label: 'Account', value: stripRoot(account.accountPath) },
                         { label: 'Shares', value: account.shares.toLocaleString(undefined, { maximumFractionDigits: 4 }) },
                         { label: 'Market Value', value: formatCurrency(account.marketValue) },
-                        { label: 'Cost Basis', value: <CostBasis value={account.costBasis} coverage={account.costBasisCoverage} /> },
+                        { label: 'Cost Basis', value: <CostBasis value={account.costBasis} coverage={account.costBasisCoverage} positionSide={account.positionSide} /> },
                         {
                           label: gainHeading(account.costBasisCoverage),
                           value: (
@@ -373,7 +390,7 @@ export function HoldingsTable({ holdings, consolidatedHoldings }: HoldingsTableP
                 { label: 'Full Name', value: holding.accountName },
                 { label: 'Shares', value: holding.isCash ? 'Cash' : holding.shares.toLocaleString(undefined, { maximumFractionDigits: 4 }) },
                 { label: 'Market Value', value: formatCurrency(holding.marketValue) },
-                { label: 'Cost Basis', value: <CostBasis value={holding.costBasis} coverage={holding.costBasisCoverage} /> },
+                { label: 'Cost Basis', value: <CostBasis value={holding.costBasis} coverage={holding.costBasisCoverage} positionSide={holding.positionSide} /> },
                 {
                   label: gainHeading(holding.costBasisCoverage),
                   value: (
@@ -422,7 +439,7 @@ export function HoldingsTable({ holdings, consolidatedHoldings }: HoldingsTableP
                     {holding.isCash ? '\u2014' : holding.shares.toLocaleString(undefined, { maximumFractionDigits: 4 })}
                   </td>
                   <td className="px-4 py-3 text-foreground-secondary">
-                    <CostBasis value={holding.costBasis} coverage={holding.costBasisCoverage} />
+                    <CostBasis value={holding.costBasis} coverage={holding.costBasisCoverage} positionSide={holding.positionSide} />
                   </td>
                   <td className="px-4 py-3 text-foreground-secondary">{formatCurrency(holding.marketValue)}</td>
                   <td className={`px-4 py-3 ${holding.gainLoss >= 0 ? 'text-positive' : 'text-error'}`}>
@@ -484,7 +501,7 @@ function ConsolidatedRow({
           {holding.totalShares.toLocaleString(undefined, { maximumFractionDigits: 4 })}
         </td>
         <td className="px-4 py-3 text-foreground-secondary">
-          <CostBasis value={holding.totalCostBasis} coverage={holding.totalCostBasisCoverage} />
+          <CostBasis value={holding.totalCostBasis} coverage={holding.totalCostBasisCoverage} positionSide={holding.totalPositionSide} />
         </td>
         <td className="px-4 py-3 text-foreground-secondary">{formatCurrency(holding.totalMarketValue)}</td>
         <td className={`px-4 py-3 ${holding.totalGainLoss >= 0 ? 'text-positive' : 'text-error'}`}>
@@ -510,7 +527,7 @@ function ConsolidatedRow({
             {account.shares.toLocaleString(undefined, { maximumFractionDigits: 4 })}
           </td>
           <td className="px-4 py-2 text-sm text-foreground-muted">
-            <CostBasis value={account.costBasis} coverage={account.costBasisCoverage} />
+            <CostBasis value={account.costBasis} coverage={account.costBasisCoverage} positionSide={account.positionSide} />
           </td>
           <td className="px-4 py-2 text-sm text-foreground-muted">{formatCurrency(account.marketValue)}</td>
           <td className={`px-4 py-2 text-sm ${account.gainLoss >= 0 ? 'text-positive/70' : 'text-error/70'}`}>

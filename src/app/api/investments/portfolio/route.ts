@@ -4,7 +4,9 @@ import {
   getAccountHoldings,
   combineCoverage,
   type CostBasisOptions,
+  combinePositionSide,
   type CostBasisCoverage,
+  type PositionSide,
 } from '@/lib/commodities';
 import { getBookAccountGuids } from '@/lib/book-scope';
 import { getCachedMetadata, getPortfolioSectorExposure } from '@/lib/commodity-metadata';
@@ -40,6 +42,12 @@ interface ConsolidatedHolding {
   totalCostBasis: number;
   /** Coverage of `totalCostBasis`, pooled across the accounts below. */
   totalCostBasisCoverage: CostBasisCoverage;
+  /**
+   * Which way the consolidated position points. `mixed` when this commodity
+   * is held long in one account and short in another — the two basis figures
+   * are a cost and a proceeds and do not add up to either one.
+   */
+  totalPositionSide: PositionSide;
   totalMarketValue: number;
   totalGainLoss: number;
   totalGainLossPercent: number;
@@ -52,6 +60,7 @@ interface ConsolidatedHolding {
     shares: number;
     costBasis: number;
     costBasisCoverage: CostBasisCoverage;
+    positionSide: PositionSide;
     marketValue: number;
     gainLoss: number;
     gainLossPercent: number;
@@ -82,6 +91,8 @@ interface PortfolioResponse {
      * complete figure without first narrowing on it.
      */
     costBasisCoverage: CostBasisCoverage;
+    /** `short` marks a holding whose `costBasis` is proceeds, not cost. */
+    positionSide: PositionSide;
     marketValue: number;
     gainLoss: number;
     gainLossPercent: number;
@@ -206,6 +217,7 @@ export async function GET(request: Request) {
         shares: holdings.shares,
         costBasis: holdings.costBasis,
         costBasisCoverage: holdings.costBasisCoverage,
+        positionSide: holdings.positionSide,
         marketValue: holdings.marketValue,
         gainLoss: holdings.gainLoss,
         gainLossPercent: holdings.gainLossPercent,
@@ -405,6 +417,7 @@ export async function GET(request: Request) {
       const totalCostBasis = group.reduce((s, h) => s + h.costBasis, 0);
       const totalMarketValue = group.reduce((s, h) => s + h.marketValue, 0);
       const totalCostBasisCoverage = combineCoverage(group.map(h => h.costBasisCoverage));
+      const totalPositionSide = combinePositionSide(group.map(h => h.positionSide));
       // Sum the per-account gains rather than recomputing
       // `totalMarketValue - totalCostBasis`: each account's gain is already
       // restricted to the shares its basis covers, and that subtraction would
@@ -424,6 +437,7 @@ export async function GET(request: Request) {
         totalShares: Math.round(totalShares * 10000) / 10000,
         totalCostBasis: Math.round(totalCostBasis * 100) / 100,
         totalCostBasisCoverage,
+        totalPositionSide,
         totalMarketValue: Math.round(totalMarketValue * 100) / 100,
         totalGainLoss: Math.round(totalGainLoss * 100) / 100,
         totalGainLossPercent: Math.round(totalGainLossPercent * 100) / 100,
@@ -436,6 +450,7 @@ export async function GET(request: Request) {
           shares: h.shares,
           costBasis: h.costBasis,
           costBasisCoverage: h.costBasisCoverage,
+          positionSide: h.positionSide,
           marketValue: h.marketValue,
           gainLoss: h.gainLoss,
           gainLossPercent: h.gainLossPercent,

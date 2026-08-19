@@ -14,6 +14,8 @@ import {
     addPurchaseToPool,
     addTracedTransferToPool,
     removeSharesFromPool,
+    poolPositionSide,
+    poolNetShares,
     type CostBasisMethod,
 } from '@/lib/cost-basis';
 import { qtyEpsilonForScu } from '@/lib/lot-scrub';
@@ -41,9 +43,15 @@ import { cacheGet, cacheSet } from '@/lib/cache';
  *    its $0 split value; the basis it reports may be missing real cost. It is
  *    not re-traced here — turning tracing off is the user's choice — but the
  *    result no longer claims completeness.
- *  - The share balance runs short/negative (an oversell). The pool clamps at
- *    zero shares and cannot describe a short position, so it can no longer say
- *    anything true about coverage. The share balance itself stays correct.
+ *  - The share balance and the pool's own signed position disagree, so nothing
+ *    the pool holds can be matched to the balance on screen.
+ *  - The position is SHORT and some of the short-opening sales had no readable
+ *    proceeds, so the reported short basis is incomplete.
+ *
+ * A plain oversell is NOT one of those cases. A negative share balance is a
+ * short position, and `positionSide` says so: `costBasis` then carries the
+ * PROCEEDS received for the shorted shares rather than a purchase cost, and the
+ * unrealized result is `costBasis - price x |shareBalance|`.
  *
  * `null` (never `undefined`) so the field survives the JSON round-trip through
  * Redis instead of being dropped from the cached object.
@@ -52,6 +60,12 @@ type InvestmentRunningTotal = {
     shareBalance: number;
     costBasis: number;
     costBasisUncoveredShares: number | null;
+    /**
+     * `long` for every ordinary row. `short` marks a row whose `costBasis` is
+     * proceeds, not cost — a consumer that ignores it renders a short leg's
+     * gain with the sign inverted.
+     */
+    positionSide: 'long' | 'short' | 'flat';
 };
 
 type InvestmentTotals = Map<string, InvestmentRunningTotal>;
@@ -265,14 +279,14 @@ export async function GET(
         if (isInvestmentAccount && !unreviewedOnly && !includeSubaccounts) {
             const cacheStart = startDate?.toISOString().slice(0, 10) || '0001-01-01';
             const cacheEnd = endDate?.toISOString().slice(0, 10) || '9999-12-31';
-            // `investment-ledger-v2` retires entries written before
-            // costBasisUncoveredShares existed. Those cached payloads report no
-            // uncovered shares at all, which a reader takes as "fully covered"
-            // — the exact false claim this field was added to stop, served for
-            // up to a full TTL after deploy. Bump this metric name whenever the
-            // shape of InvestmentRunningTotal changes.
+            // `investment-ledger-v3` retires entries written before
+            // costBasisUncoveredShares and positionSide existed. A v2 payload
+            // carries no side at all, so an oversold row would deserialize as a
+            // long position holding ~$0 of basis instead of the short leg's
+            // proceeds — served for up to a full TTL after deploy. Bump this
+            // name whenever the shape of InvestmentRunningTotal changes.
             const totalsCacheKey =
-                `cache:${roleResult.bookGuid}:investment-ledger-v2:${accountGuid}:` +
+                `cache:${roleResult.bookGuid}:investment-ledger-v3:${accountGuid}:` +
                 `${costBasisMethod}:${costBasisCarryOver ? 'carry' : 'local'}:` +
                 `${cacheStart}-${cacheEnd}`;
             const accountCommodityGuid = account?.commodity_guid || '';
@@ -408,28 +422,37 @@ export async function GET(
                         // Pro rata across covered and uncovered shares, giving
                         // up basis at the COVERED average — the old
                         // runCostBasis / runShares divided a partial basis by
-                        // the full share count on every sale.
-                        removeSharesFromPool(pool, Math.abs(shares));
+                        // the full share count on every sale. `value` is the
+                        // sale's proceeds, so a sale past zero opens a short leg
+                        // that knows what it was sold for.
+                        removeSharesFromPool(pool, Math.abs(shares), value);
                         runShares += shares;
                     }
-                    // The pool clamps removals at the shares it holds, so an
-                    // oversell (short position) leaves it empty while runShares
-                    // goes negative. runShares is the correct balance and stays
-                    // as-is; coverage becomes unknown rather than a "0
+                    // The pool now carries a SIGNED position, so its net shares
+                    // track runShares through an oversell instead of clamping at
+                    // zero. They can still diverge (a removal the pool declined
+                    // to model), and then coverage is unknown rather than a "0
                     // uncovered" claim that would hand consumers a negative
                     // `shareBalance - uncovered` denominator.
                     //
                     // The tolerance is COMMODITY-AWARE. A flat 0.0001 is only
                     // right for coarse-scu stocks: at crypto's 1e8 precision an
                     // account can legitimately oversell by 1e-8, which a flat
-                    // bound reads as agreement and reports as "0 uncovered" for
-                    // a negative position.
-                    const poolShares = pool.coveredShares + pool.uncoveredShares;
-                    const coverageIsKnowable = Math.abs(runShares - poolShares) < coverageEps;
+                    // bound reads as agreement.
+                    const side = poolPositionSide(pool, coverageEps);
+                    const balancesAgree = Math.abs(runShares - poolNetShares(pool)) < coverageEps;
+                    // A short leg's coverage is about its PROCEEDS: covered when
+                    // every short-opening sale's proceeds were read, unknown
+                    // otherwise. There are no long shares left to be uncovered.
+                    const coverageIsKnowable = balancesAgree
+                        && (side !== 'short' || !pool.shortProceedsIncomplete);
                     totals.set(split.tx_guid, {
                         shareBalance: runShares,
-                        costBasis: pool.basisOfCoveredShares,
-                        costBasisUncoveredShares: coverageIsKnowable ? pool.uncoveredShares : null,
+                        costBasis: side === 'short' ? pool.shortProceeds : pool.basisOfCoveredShares,
+                        costBasisUncoveredShares: coverageIsKnowable
+                            ? (side === 'short' ? 0 : pool.uncoveredShares)
+                            : null,
+                        positionSide: side,
                     });
                 }
                 return totals;
@@ -480,6 +503,11 @@ export async function GET(
                         // the very feature the caller switched off, so instead
                         // the result declines to claim coverage at all.
                         costBasisUncoveredShares: null,
+                        // This path tracks a single unsigned running basis and
+                        // models no short leg, so it states the side it actually
+                        // computed rather than inferring one from the sign of
+                        // the balance and mislabelling `costBasis` as proceeds.
+                        positionSide: 'long' as const,
                     });
                 }
                 return totals;
@@ -757,6 +785,11 @@ export async function GET(
                     // client must not derive a per-share basis from a null.
                     cost_basis: investmentRunningTotals.get(tx.guid)?.costBasis.toString() ?? '0',
                     cost_basis_uncovered_shares: uncoveredShareText(investmentRunningTotals.get(tx.guid)),
+                    // Says what `cost_basis` IS. On a `short` row it is the
+                    // proceeds received for the shorted shares, so the gain is
+                    // `cost_basis - price x |share_balance|`; applying the long
+                    // subtraction to it returns the exact negation.
+                    position_side: investmentRunningTotals.get(tx.guid)?.positionSide ?? 'long',
                 } : {}),
             };
 

@@ -176,16 +176,59 @@ describe('getAccountHoldings — cost-basis coverage', () => {
     expect(h.costBasisCoverage.status).toBe('unknown');
   });
 
-  it('an oversell reports coverage as UNKNOWN rather than "0 uncovered"', async () => {
-    // Buy 100, sell 150. The pool clamps at zero shares and cannot describe a
-    // short position, so it can no longer say anything true about coverage.
+  it('an oversell is reported as a SHORT position, basis = proceeds', async () => {
+    // Buy 100 @ $10, sell 150 @ $80. 100 close the long; 50 are sold short, and
+    // their slice of the $12,000 is $4,000. The old pool clamped at zero shares,
+    // drained the basis to ~0, and could say nothing about coverage.
     mockSplitsFindMany.mockResolvedValue([
       buy({ guid: 'buy-1', postDate: '2020-01-01', shares: 100, value: 1_000 }),
       sell({ guid: 'sell-1', postDate: '2024-01-01', shares: 150, proceeds: 12_000 }),
     ]);
+    mockPricesFindFirst.mockResolvedValue({
+      guid: 'price-1', date: new Date('2024-06-01T12:00:00.000Z'),
+      value_num: 6_000n, value_denom: 100n, source: 'user:price',
+    });
+
     const h = await getAccountHoldings(ACCT, undefined, { enabled: true, method: 'fifo' });
 
     expect(h.shares).toBeCloseTo(-50, 6); // the share balance stays honest
-    expect(h.costBasisCoverage.status).toBe('unknown');
+    expect(h.positionSide).toBe('short');
+    expect(h.costBasis).toBeCloseTo(4_000, 6);
+    expect(h.shortProceeds).toBeCloseTo(4_000, 6);
+    // Every short-opening sale's proceeds were readable, so this IS covered.
+    expect(h.costBasisCoverage).toEqual({ status: 'complete', coveredShares: 50 });
+    // Short gain = proceeds - cover cost at $60 x 50 = 4,000 - 3,000 = +1,000.
+    // The long subtraction would have returned -7,000 here.
+    expect(h.gainLoss).toBeCloseTo(1_000, 6);
+  });
+
+  it('a short position that outruns its price loses money as the price rises', async () => {
+    mockSplitsFindMany.mockResolvedValue([
+      sell({ guid: 'short-1', postDate: '2024-01-01', shares: 100, proceeds: 5_000 }),
+    ]);
+    mockPricesFindFirst.mockResolvedValue({
+      guid: 'price-1', date: new Date('2024-06-01T12:00:00.000Z'),
+      value_num: 7_000n, value_denom: 100n, source: 'user:price',
+    });
+
+    const h = await getAccountHoldings(ACCT, undefined, { enabled: true, method: 'fifo' });
+
+    expect(h.positionSide).toBe('short');
+    expect(h.costBasis).toBeCloseTo(5_000, 6);
+    expect(h.gainLoss).toBeCloseTo(-2_000, 6); // 5,000 - 100 x 70
+  });
+
+  it('a long holding still reports positionSide long and an unchanged basis', async () => {
+    mockSplitsFindMany.mockResolvedValue([
+      buy({ guid: 'buy-1', postDate: '2020-01-01', shares: 100, value: 1_000 }),
+      sell({ guid: 'sell-1', postDate: '2024-01-01', shares: 40, proceeds: 3_200 }),
+    ]);
+    const h = await getAccountHoldings(ACCT, undefined, { enabled: true, method: 'fifo' });
+
+    expect(h.positionSide).toBe('long');
+    expect(h.shortProceeds).toBe(0);
+    expect(h.shares).toBeCloseTo(60, 6);
+    expect(h.costBasis).toBeCloseTo(600, 6);
+    expect(h.costBasisCoverage).toEqual({ status: 'complete', coveredShares: 60 });
   });
 });

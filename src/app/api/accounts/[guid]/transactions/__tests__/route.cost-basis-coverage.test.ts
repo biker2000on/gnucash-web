@@ -105,6 +105,8 @@ type LedgerRow = {
     share_balance: string;
     /** null = coverage unknown; NOT the same as '0'. */
     cost_basis_uncovered_shares: string | null;
+    /** 'short' means cost_basis is PROCEEDS, not a purchase cost. */
+    position_side: 'long' | 'short' | 'flat';
 };
 
 beforeEach(() => {
@@ -242,9 +244,10 @@ describe('investment ledger running cost basis — coverage', () => {
         expect(Number(rows[SELL_TX].cost_basis_uncovered_shares)).toBe(0);
     });
 
-    it('an oversell keeps the share balance negative and reports coverage as UNAVAILABLE', async () => {
-        // Buy 100, sell 150. Shorting is a real position this ledger must
-        // display, but the pool clamps at zero shares and cannot describe one.
+    it('an oversell is reported as a SHORT position whose basis is the proceeds', async () => {
+        // Buy 100 @ $10, sell 150 @ $80. 100 close the long; 50 are sold short
+        // and carry their $4,000 slice of the $12,000. The pool used to clamp at
+        // zero shares, so this row displayed a $0 basis of unknown coverage.
         prismaMock.splits.findMany.mockImplementation((args: { where: Record<string, unknown> }) => {
             const rows = [
                 pair({ guid: 'buy', txGuid: BUY_TX, shares: 100, value: 1_000, counterAccount: CASH, counterShares: -1_000 }),
@@ -263,10 +266,16 @@ describe('investment ledger running cost basis — coverage', () => {
 
         // The share balance is the honest one, negative and all.
         expect(Number(rows[SELL_TX].share_balance)).toBeCloseTo(-50, 6);
-        // Coverage is unknown — NOT "0 uncovered", which would invite a
-        // consumer to compute share_balance - uncovered = -50 covered shares.
-        expect(rows[SELL_TX].cost_basis_uncovered_shares).toBeNull();
-        // The long rows before the oversell still report coverage normally.
+        expect(rows[SELL_TX].position_side).toBe('short');
+        // cost_basis on a short row is the PROCEEDS of the shorted shares.
+        expect(Number(rows[SELL_TX].cost_basis)).toBeCloseTo(4_000, 6);
+        // Every short-opening sale's proceeds were readable, so nothing is
+        // uncovered — and a consumer reading `share_balance - uncovered` gets
+        // the short share count, not a nonsense negative covered count.
+        expect(Number(rows[SELL_TX].cost_basis_uncovered_shares)).toBe(0);
+        // The long rows before the oversell are untouched.
+        expect(rows[BUY_TX].position_side).toBe('long');
+        expect(Number(rows[BUY_TX].cost_basis)).toBeCloseTo(1_000, 6);
         expect(rows[BUY_TX].cost_basis_uncovered_shares).toBe('0');
     });
 
@@ -278,6 +287,8 @@ describe('investment ledger running cost basis — coverage', () => {
         // transfer enters at face value. Claiming 0 uncovered here would assert
         // a completeness the branch never established.
         expect(traceCostBasisMock).not.toHaveBeenCalled();
+        // No signed pool runs here, so the rows state the side they modelled.
+        expect(rows[BUY_TX].position_side).toBe('long');
         expect(rows[BUY_TX].cost_basis_uncovered_shares).toBeNull();
         expect(rows[XFER_TX].cost_basis_uncovered_shares).toBeNull();
         expect(rows[SELL_TX].cost_basis_uncovered_shares).toBeNull();
@@ -318,7 +329,9 @@ describe('investment ledger running cost basis — coverage', () => {
         const rows = await ledger();
         expect(Number(rows[SELL_TX].share_balance)).toBeLessThan(0);
         expect(Number(rows[SELL_TX].share_balance)).toBeCloseTo(-1e-8, 12);
-        expect(rows[SELL_TX].cost_basis_uncovered_shares).toBeNull();
+        // A one-unit oversell IS a (tiny) short leg, and the scu-aware epsilon
+        // is 0.5 / 1e8, so the pool sees it rather than reading it as agreement.
+        expect(rows[SELL_TX].position_side).toBe('short');
     });
 
     it('an ordinary long position at commodity_scu 1e8 still reports a coverage number', async () => {

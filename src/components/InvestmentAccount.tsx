@@ -6,9 +6,11 @@ import {
     CostBasisCoverageMark,
     CoveredSliceNote,
     gainHeading,
+    ShortPositionMark,
+    ShortBasisNote,
     BASIS_CONSEQUENCE,
 } from '@/components/investments/CostBasisCoverageMark';
-import type { CostBasisCoverage } from '@/lib/holdings-coverage';
+import type { CostBasisCoverage, PositionSide } from '@/lib/holdings-coverage';
 import { useToast } from '@/contexts/ToastContext';
 import { InvestmentTransactionForm } from './InvestmentTransactionForm';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceArea, AreaChart, Area, ReferenceLine } from 'recharts';
@@ -45,6 +47,8 @@ interface ValuationData {
         /** Basis of the shares `costBasisCoverage` describes, not always all of them. */
         costBasis: number;
         costBasisCoverage: CostBasisCoverage;
+        /** `short` marks a position whose `costBasis` is proceeds, not cost. */
+        positionSide?: PositionSide;
         marketValue: number;
         /** Gain of the covered shares; see `costBasisCoverage`. */
         gainLoss: number;
@@ -435,11 +439,15 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
                         <div className="text-xs text-foreground-muted uppercase tracking-wider">Cost Basis</div>
                         <div className="text-lg sm:text-xl font-mono font-semibold text-foreground mt-1">
                             {formatCurrency(Math.abs(holdings.costBasis), 'USD')}
+                            {/* Says what this number IS: on a short position it is the
+                                proceeds received for shares sold before they were owned. */}
+                            <ShortPositionMark positionSide={holdings.positionSide} />
                             {/* Names the shares this basis (and the gain beside it) leaves out. */}
                             <CostBasisCoverageMark
                                 coverage={holdings.costBasisCoverage}
                                 consequence={BASIS_CONSEQUENCE}
                             />
+                            <ShortBasisNote positionSide={holdings.positionSide} />
                         </div>
                     </div>
                     <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-4 overflow-hidden">

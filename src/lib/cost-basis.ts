@@ -93,14 +93,91 @@ export interface CostBasisPool {
   /** Basis of `coveredShares` only. */
   basisOfCoveredShares: number;
   warnings: string[];
+  /**
+   * Shares SOLD SHORT and not yet bought back, as a positive count. Non-zero
+   * only once removals have consumed the whole long side; `shortShares` and
+   * (`coveredShares` + `uncoveredShares`) are never both non-zero, because a
+   * purchase covers the short before it opens a long.
+   */
+  shortShares: number;
+  /**
+   * Proceeds received for `shortShares`. This is the short position's "basis":
+   * the money already in hand against the obligation to buy the shares back.
+   * Unrealized result is `shortProceeds - price x shortShares`, and closing the
+   * short realizes `shortProceeds - coverCost`.
+   *
+   * Holding period does NOT make such a gain long-term: gain or loss on a short
+   * sale is short-term unless substantially identical property held MORE than a
+   * year was delivered to close it (IRS Pub. 550, "Short Sales" — Special Rules
+   * / holding period). Nothing here books a realized gain, and nothing here may
+   * be used to characterize one; lot-based realization (lot-scrub.ts) stays the
+   * only path that does, and it refuses an oversell outright.
+   */
+  shortProceeds: number;
+  /**
+   * Some of `shortShares` were opened by a removal whose proceeds the caller
+   * could not supply, so `shortProceeds` understates the position. Coverage
+   * must be reported UNKNOWN while this is true, exactly as an untraceable
+   * transfer-in is never laundered into a covered share.
+   */
+  shortProceedsIncomplete: boolean;
 }
 
 export function createCostBasisPool(): CostBasisPool {
-  return { coveredShares: 0, uncoveredShares: 0, basisOfCoveredShares: 0, warnings: [] };
+  return {
+    coveredShares: 0,
+    uncoveredShares: 0,
+    basisOfCoveredShares: 0,
+    warnings: [],
+    shortShares: 0,
+    shortProceeds: 0,
+    shortProceedsIncomplete: false,
+  };
 }
 
-/** A purchase with a real price: fully covered. */
+/**
+ * Which way the pool points, using the caller's share tolerance.
+ *
+ * `flat` covers both an untouched pool and a position closed back to zero; a
+ * closed short has nothing left to describe, so its proceeds are released.
+ */
+export function poolPositionSide(pool: CostBasisPool, eps: number = QTY_EPS): 'long' | 'short' | 'flat' {
+  if (pool.shortShares > eps) return 'short';
+  if (pool.coveredShares + pool.uncoveredShares > eps) return 'long';
+  return 'flat';
+}
+
+/** Signed position of the pool: long shares minus shares still sold short. */
+export function poolNetShares(pool: CostBasisPool): number {
+  return pool.coveredShares + pool.uncoveredShares - pool.shortShares;
+}
+
+/**
+ * A purchase with a real price: fully covered.
+ *
+ * While the pool is SHORT the purchase buys the shares back first — the money
+ * spent retires the obligation rather than opening a new long — and only the
+ * surplus becomes a long parcel. Buying 150 against a 100-share short leaves a
+ * 50-share long at the purchase price, not a 150-share long beside an
+ * un-retired short.
+ */
 export function addPurchaseToPool(pool: CostBasisPool, shares: number, cost: number): void {
+  if (pool.shortShares > 0 && shares > 0) {
+    const perShare = cost / shares;
+    const coveredBack = Math.min(shares, pool.shortShares);
+    // Retire proceeds in the same proportion as the shares they belong to, so
+    // a partial cover leaves the remaining short leg at its own average.
+    pool.shortProceeds -= pool.shortProceeds * (coveredBack / pool.shortShares);
+    pool.shortShares -= coveredBack;
+    if (pool.shortShares <= 0) {
+      pool.shortShares = 0;
+      pool.shortProceeds = 0;
+      pool.shortProceedsIncomplete = false;
+    }
+    shares -= coveredBack;
+    cost = perShare * shares;
+    if (shares <= 0) return;
+  }
   pool.coveredShares += shares;
   pool.basisOfCoveredShares += cost;
 }
@@ -127,21 +204,53 @@ export function poolPerShareCost(pool: CostBasisPool): number {
  * A sale removes shares from the pool. Shares are fungible here, so the sale
  * consumes covered and uncovered shares PRO RATA; the covered side gives up
  * basis at the covered average.
+ *
+ * Selling PAST zero is not clamped away: the surplus opens (or extends) a short
+ * leg. Clamping was the defect — it drained the basis to ~0 and left the pool
+ * unable to say anything about a position that genuinely exists, so an oversold
+ * row displayed "$0 basis, coverage unknown" instead of the proceeds it was
+ * actually holding.
+ *
+ * @param proceeds - total money received for `shares`. Optional only so the
+ *   long-only callers that never oversell need not thread it; when a short leg
+ *   opens without it the pool records `shortProceedsIncomplete` rather than
+ *   inventing a zero.
  */
-export function removeSharesFromPool(pool: CostBasisPool, shares: number): void {
+export function removeSharesFromPool(pool: CostBasisPool, shares: number, proceeds?: number): void {
   const poolShares = pool.coveredShares + pool.uncoveredShares;
-  if (poolShares <= 0) return;
-  const sold = Math.min(shares, poolShares);
-  const fromCovered = sold * (pool.coveredShares / poolShares);
-  pool.basisOfCoveredShares -= poolPerShareCost(pool) * fromCovered;
-  pool.coveredShares -= fromCovered;
-  pool.uncoveredShares = Math.max(0, pool.uncoveredShares - (sold - fromCovered));
+  const sold = Math.min(shares, Math.max(0, poolShares));
+  if (poolShares > 0) {
+    const fromCovered = sold * (pool.coveredShares / poolShares);
+    pool.basisOfCoveredShares -= poolPerShareCost(pool) * fromCovered;
+    pool.coveredShares -= fromCovered;
+    pool.uncoveredShares = Math.max(0, pool.uncoveredShares - (sold - fromCovered));
+  }
+
+  const shorted = shares - sold;
+  if (shorted <= 0) return;
+
+  pool.shortShares += shorted;
+  if (proceeds === undefined) {
+    pool.shortProceedsIncomplete = true;
+    collectWarnings(pool.warnings, [
+      `${round4(shorted)} share(s) were sold short without readable proceeds: the short position's basis is incomplete.`,
+    ]);
+    return;
+  }
+  // Only the shares beyond the long side were sold short, so only their slice
+  // of the proceeds belongs to the short leg.
+  pool.shortProceeds += shares > 0 ? proceeds * (shorted / shares) : 0;
 }
 
 /**
  * Draw `sharesNeeded` out of the pool as a result. The draw takes covered and
  * uncovered shares pro rata; asking for more shares than the pool holds makes
  * the shortfall uncovered rather than inventing basis for it.
+ *
+ * Only the LONG side is drawable. A short pool holds an obligation, not shares
+ * that can be handed onward with a basis, so a draw against one comes back
+ * fully uncovered and named — the same fail-safe result it produced before the
+ * short leg was modelled at all.
  */
 export function drawFromPool(
   pool: CostBasisPool,
@@ -736,7 +845,9 @@ async function calculateAverageCostBasis(
         addPurchaseToPool(pool, qty, val);
       }
     } else if (qty < 0) {
-      removeSharesFromPool(pool, Math.abs(qty));
+      // `val` is the sale's proceeds; passing it lets a sale past zero record a
+      // real short leg instead of a nameless one.
+      removeSharesFromPool(pool, Math.abs(qty), val);
     }
   }
 
