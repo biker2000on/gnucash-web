@@ -1,6 +1,6 @@
 # Product Roadmap and TODOs
 
-Updated 2026-08-13.
+Updated 2026-08-19.
 
 GnuCash Web has passed the point where desktop parity or raw feature count is the
 right roadmap. The product already has accounting-grade books, household and
@@ -1381,6 +1381,67 @@ Bonus fix: inline saves no longer blank the check number.
    memo/description edits must not reset reconcile state.
 
 **Effort:** S for the modal memo field; M for the double-line edit view.
+
+---
+
+## P2 - Transaction Comments and Change History (Zoho Books-style)
+
+**Status:** Proposed 2026-08-19.
+
+**Why:** Zoho Books shows, on every transaction, a threaded comment stream
+interleaved with the transaction's change history — who changed what, when,
+and the discussion around it. Today a GnuCash Web transaction carries only
+free-text notes/memos (`transaction-notes.ts`, split memos), which are a
+single mutable field with no author, no time, and no thread. The
+`gnucash_web_audit` table already records `old_values`/`new_values` per
+entity mutation with a `user_id`, but nothing surfaces it per transaction and
+there is no place to leave a comment *about* a transaction ("asked vendor for
+corrected invoice", "this is the reimbursement for the May trip") without
+overwriting the bookkeeping note.
+
+**What:**
+
+1. **Per-transaction history panel.** A "History" tab/section on the
+   transaction detail (ledger row expand, edit modal, journal) that renders
+   the `gnucash_web_audit` rows for that transaction guid AND its splits as a
+   human-readable timeline: "Justin changed amount $120.00 → $102.00 and
+   account Expenses:Food → Expenses:Groceries (2026-08-19 14:02)". Diff
+   old/new JSON into field-level lines; resolve account guids to paths and
+   user ids to display names. Include create, edit, reconcile-state change,
+   lot assignment, scheduled-transaction execution, SimpleFIN import/update
+   and undo events. Where an edit came from automation (sync, scrub, rule),
+   attribute it to that actor so the trail reads honestly.
+2. **Threaded comments.** New book-scoped table
+   `gnucash_web_transaction_comments (id, txn_guid, book_root_guid, user_id,
+   parent_id NULL, body TEXT, created_at, edited_at, deleted_at)`. Comments
+   are authored, timestamped, editable by their author, soft-deleted, and
+   support one level of reply (a thread) plus @-mention of other book
+   members. They are NOT the GnuCash note: the note stays the bookkeeping
+   description that round-trips to desktop/XML; comments are app-side
+   discussion that never touches the GnuCash schema.
+3. **One interleaved stream.** History events and comments render in a single
+   chronological feed per transaction, the way Zoho presents it — a comment
+   can sit right under the change it is discussing. Comments can optionally
+   reference a specific audit event (`audit_id`) so "why did this change?"
+   has a direct answer.
+4. **Surfacing.** A small comment-count badge on ledger/journal rows; an
+   "unresolved comments" Action Center source (comment threads can be marked
+   resolved); notifications (existing ntfy/in-app channel) on @-mention or
+   reply. Comments are searchable from the transaction search box.
+5. **Provenance tie-in.** Any report figure that drills to a transaction
+   shows its comment count, so a reviewer can read the discussion from the
+   provenance drawer without leaving the report.
+
+**Scope notes:** Book-scoped and RBAC-gated (viewers read, editors comment,
+only authors edit/delete their own; admins can delete). Comments are exported
+with the book (JSON) and included in the document-evidence model as
+`EvidenceRef { kind: 'comment' }`. Out of scope for v1: comments on
+accounts/invoices/documents (same table shape can extend later via an
+`entity_type` column — design it in from the start, but only wire
+transactions).
+
+**Effort:** M — the audit data already exists; the work is the diff renderer,
+the comments table + API + RBAC, and the UI feed.
 
 ---
 
