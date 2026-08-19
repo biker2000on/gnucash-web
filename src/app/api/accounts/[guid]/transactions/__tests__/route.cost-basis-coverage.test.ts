@@ -345,6 +345,79 @@ describe('investment ledger running cost basis — coverage', () => {
         expect(Number(rows[SELL_TX].cost_basis_uncovered_shares)).toBeCloseTo(0.25, 9);
     });
 
+    /**
+     * A long replay at a large share count.
+     *
+     * `runShares` and the pool's share count are two independent float sums
+     * over the same history, and the pool's pro-rata sell arithmetic
+     * (`sold * covered / poolShares`) injects a fresh relative rounding error
+     * on every sale. After thousands of them on a multi-million-unit position
+     * the two disagree by far more than the scu's absolute epsilon (0.5/1e8),
+     * even though nothing about the account is inconsistent. An absolute-only
+     * comparison reports that healthy ledger's coverage as unknown; the
+     * magnitude-scaled epsilon does not.
+     */
+    it('keeps coverage reportable after a long large-share replay accumulates float residue', async () => {
+        // A partly-traceable transfer-in FIRST, so the pool holds a covered
+        // and an uncovered share count and every later sale splits pro rata —
+        // the arithmetic that actually generates the residue.
+        traceCostBasisMock.mockResolvedValue({
+            coveredShares: 700.13,
+            uncoveredShares: 299.87,
+            basisOfCoveredShares: 21_003.9,
+            perShareCost: 30,
+            method: 'fifo',
+        });
+
+        const SPLIT_COUNT = 6_000;
+        const generated: Array<{ own: RawSplit; counter: RawSplit }> = [];
+        const txGuidAt = (i: number) => `g${String(i).padStart(31, '0')}`;
+        POST_DATE[txGuidAt(0)] = new Date(Date.UTC(2000, 0, 1));
+        generated.push(pair({
+            guid: 'gen0', txGuid: txGuidAt(0), shares: 1_000, value: 0,
+            counterAccount: OTHER_BROKERAGE, counterShares: -1_000, precise: true,
+        }));
+        for (let i = 1; i < SPLIT_COUNT; i++) {
+            const txGuid = txGuidAt(i);
+            POST_DATE[txGuid] = new Date(Date.UTC(2000, 0, 1) + i * 86_400_000);
+            // Buy a large lot, then give a third of it back, thousands of
+            // times over: a plausible high-frequency token account.
+            const shares = i % 3 === 2 ? -4_100.37 : 12_301.11;
+            generated.push(pair({
+                guid: `gen${i}`, txGuid, shares, value: Math.abs(shares) * 2,
+                counterAccount: CASH, counterShares: -Math.abs(shares) * 2, precise: true,
+            }));
+        }
+        const lastTx = generated[generated.length - 1].own.tx_guid;
+
+        highPrecisionAccount(generated);
+        // Page over the final transaction only; the replay still reads the
+        // whole history through splits.findMany above.
+        prismaMock.$queryRaw.mockImplementation((strings: TemplateStringsArray, ...values: unknown[]) => {
+            const query = Prisma.sql(strings, ...values);
+            if (query.text.includes('gnucash_web_transaction_meta') || query.text.includes('gnucash_web_receipts')) return Promise.resolve([]);
+            if (query.text.includes('account_transaction_deltas')) return Promise.resolve([]);
+            return Promise.resolve([{ guid: lastTx }]);
+        });
+        prismaMock.transactions.findMany.mockImplementation(() => Promise.resolve([{
+            guid: lastTx, currency_guid: USD, num: '', description: 'last',
+            post_date: POST_DATE[lastTx], enter_date: POST_DATE[lastTx],
+            splits: [{
+                ...generated[generated.length - 1].own,
+                memo: '', action: '', reconcile_state: 'n', reconcile_date: null,
+                account: { name: 'Wallet', account_type: 'STOCK', commodity: { mnemonic: 'BTC' } },
+            }],
+        }]));
+
+        const rows = await ledger();
+        const balance = Number(rows[lastTx].share_balance);
+        expect(balance).toBeGreaterThan(1_000_000);
+        // The point of the test: still a number, not null. (Under an absolute
+        // epsilon of 0.5/1e8 this reads null — the residue alone is larger.)
+        expect(rows[lastTx].cost_basis_uncovered_shares).not.toBeNull();
+        expect(Number(rows[lastTx].cost_basis_uncovered_shares)).toBeGreaterThanOrEqual(0);
+    });
+
     it('the running totals replay full history, NOT the ledger filter', async () => {
         partiallyCoveredTransfer();
         await ledger('minAmount=9000&reconcileStates=y&limit=100');

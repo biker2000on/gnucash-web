@@ -188,4 +188,44 @@ describe('getAccountHoldings — cost-basis coverage', () => {
     expect(h.shares).toBeCloseTo(-50, 6); // the share balance stays honest
     expect(h.costBasisCoverage.status).toBe('unknown');
   });
+
+  /**
+   * The share balance and the pool's share count are two independent float
+   * sums over the same history, and each pro-rata sale injects a fresh
+   * relative rounding error. After thousands of sales on a multi-million-unit
+   * position at commodity_scu 1e8 the two disagree by far more than that
+   * scu's absolute epsilon (0.5/1e8) with nothing actually wrong. Comparing
+   * them against an absolute bound reports a healthy account's coverage as
+   * unknown; the magnitude-scaled epsilon does not.
+   */
+  it('keeps coverage reportable after a long large-share replay accumulates float residue', async () => {
+    mockAccountsFindUnique.mockResolvedValue({
+      guid: ACCT, commodity_guid: AAPL, commodity_scu: 100_000_000,
+      commodity: { guid: AAPL, mnemonic: 'BTC' },
+    });
+    mockTraceCostBasis.mockResolvedValue({
+      coveredShares: 700.13, uncoveredShares: 299.87,
+      basisOfCoveredShares: 21_003.9, perShareCost: 30, method: 'fifo',
+    });
+
+    const day = (i: number) => new Date(Date.UTC(2000, 0, 1) + i * 86_400_000)
+      .toISOString().slice(0, 10);
+    // A partly-traceable transfer-in first, so every later sale has a
+    // non-trivial covered/uncovered ratio to split pro rata.
+    const history: ReturnType<typeof buy>[] = [
+      transferIn({ guid: 'xfer-0', postDate: day(0), shares: 1_000 }),
+    ];
+    for (let i = 1; i < 6_000; i++) {
+      history.push(i % 3 === 2
+        ? sell({ guid: `s-${i}`, postDate: day(i), shares: 4_100.37, proceeds: 8_200.74 })
+        : buy({ guid: `b-${i}`, postDate: day(i), shares: 12_301.11, value: 24_602.22 }));
+    }
+    mockSplitsFindMany.mockResolvedValue(history);
+
+    const h = await getAccountHoldings(ACCT, undefined, { enabled: true, method: 'fifo' });
+
+    expect(h.shares).toBeGreaterThan(1_000_000);
+    // The point of the test: a coverage statement, not 'unknown'.
+    expect(h.costBasisCoverage.status).toBe('partial');
+  });
 });

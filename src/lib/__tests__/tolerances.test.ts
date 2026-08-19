@@ -74,29 +74,36 @@ describe('quantity tolerances', () => {
          * declares a perfectly consistent account's coverage "unknown".
          */
         it('absorbs the float residue of a long large-share replay that the absolute bound would not', () => {
+            // A token held at commodity_scu 1e8 — where the absolute epsilon
+            // is 0.5/1e8 — with 60,000 lots making up an 8-million-unit
+            // position. Both numbers are ordinary; the residue is not.
+            const scu = 100_000_000;
             const lots = Array.from({ length: 60_000 }, (_, i) => 137.37 + (i % 7) * 0.01);
 
             let balance = 0;
             for (const q of lots) balance += q;
 
-            // Same shares, summed in a different (but equally valid) order —
+            // The same shares summed in a different (but equally valid) order:
             // exactly the situation of a share balance versus a cost-basis
             // pool that accumulates covered and uncovered shares separately.
-            let poolA = 0;
-            let poolB = 0;
+            let poolCovered = 0;
+            let poolUncovered = 0;
             lots.forEach((q, i) => {
-                if (i % 2 === 0) poolA += q;
-                else poolB += q;
+                if (i % 2 === 0) poolCovered += q;
+                else poolUncovered += q;
             });
-            const poolShares = poolA + poolB;
+            const poolShares = poolCovered + poolUncovered;
 
             const drift = Math.abs(balance - poolShares);
-            expect(drift).toBeGreaterThan(0);
+
+            // The regression: an absolute epsilon calls this consistent
+            // account inconsistent, and coverage is reported as unknown.
+            expect(drift).toBeGreaterThan(qtyEpsilonForScu(scu));
+
+            // The fix: the magnitude-scaled epsilon absorbs it.
             expect(drift).toBeLessThan(
-                qtyEpsilonWithMagnitude(100, Math.max(balance, poolShares)),
+                qtyEpsilonWithMagnitude(scu, Math.max(balance, poolShares)),
             );
-            // And it really is the relative term doing the work here.
-            expect(qtyEpsilonWithMagnitude(100, balance)).toBeGreaterThan(DEFAULT_QTY_EPSILON);
         });
 
         it('still flags a real one-unit oversell at crypto precision', () => {
