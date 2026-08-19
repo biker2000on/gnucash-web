@@ -15,8 +15,8 @@ import {
     addPurchaseToPool,
     addTracedTransferToPool,
     removeSharesFromPool,
-    poolPositionSide,
     poolNetShares,
+    reportPool,
     type CostBasisMethod,
     type CostBasisCache,
 } from './cost-basis';
@@ -243,6 +243,11 @@ export async function getAccountHoldings(
 
     const shares = calculateShares(splits);
 
+    // The commodity-aware absolute share tolerance for this account, derived
+    // once: a flat 0.0001 would zero out a real 1e-5 BTC position, and three
+    // separate derivations of the same number are three chances to drift.
+    const qtyEps = qtyEpsilonForScu(account.commodity_scu);
+
     // Calculate cost basis -- with optional carry-over tracing
     let rawCostBasis: number;
     // Coverage travels WITH the basis: `costBasis` below is the basis of the
@@ -320,18 +325,19 @@ export async function getAccountHoldings(
         // residues diverge by more than any absolute epsilon, and an absolute
         // bound would report a perfectly consistent account as "coverage
         // unknown". The absolute floor still governs small positions.
-        const absEps = qtyEpsilonForScu(account.commodity_scu);
         const poolShares = poolNetShares(pool);
         const coverageEps = qtyEpsilonWithMagnitude(
             account.commodity_scu,
             Math.max(Math.abs(shares), Math.abs(poolShares)),
         );
-        rawSide = poolPositionSide(pool, coverageEps);
-        rawShortProceeds = rawSide === 'short' ? pool.shortProceeds : 0;
         // A short position's "basis" is the proceeds received for the shorted
         // shares; a long one's is what was paid. Reporting the long figure for
-        // a short leg hands every consumer a ~$0 basis and an inverted gain.
-        rawCostBasis = rawSide === 'short' ? pool.shortProceeds : pool.basisOfCoveredShares;
+        // a short leg hands every consumer a ~$0 basis and an inverted gain —
+        // so that choice lives in reportPool(), shared with the ledger route.
+        const report = reportPool(pool, coverageEps);
+        rawSide = report.side;
+        rawShortProceeds = report.side === 'short' ? report.costBasis : 0;
+        rawCostBasis = report.costBasis;
 
         if (Math.abs(shares - poolShares) >= coverageEps) {
             // The signed pool no longer matches the share balance, so nothing
@@ -345,13 +351,13 @@ export async function getAccountHoldings(
         } else if (rawSide === 'short') {
             // A short leg has no long shares left to be uncovered: its coverage
             // is whether every short-opening sale's proceeds could be read.
-            rawCoverage = pool.shortProceedsIncomplete
-                ? {
+            rawCoverage = report.coverageKnowable
+                ? { status: 'complete', coveredShares: pool.shortShares }
+                : {
                     status: 'unknown',
                     reason: 'Some shares were sold short without readable proceeds, so the short basis is incomplete.',
-                }
-                : { status: 'complete', coveredShares: pool.shortShares };
-        } else if (pool.uncoveredShares >= absEps) {
+                };
+        } else if (pool.uncoveredShares >= qtyEps) {
             rawCoverage = {
                 status: 'partial',
                 coveredShares: pool.coveredShares,
@@ -374,8 +380,7 @@ export async function getAccountHoldings(
     const pricePerShare = latestPrice?.value || 0;
 
     // Zero-share holdings should have zero cost basis and market value.
-    // Commodity-aware: a flat 0.0001 would zero out a real 1e-5 BTC position.
-    const isZeroShares = Math.abs(shares) < qtyEpsilonForScu(account.commodity_scu);
+    const isZeroShares = Math.abs(shares) < qtyEps;
     const costBasis = isZeroShares ? 0 : rawCostBasis;
     // A closed position holds nothing to cover, so zeroing the basis leaves
     // nothing overstated to caveat.

@@ -7,7 +7,6 @@ import {
     qtyEpsilonForScu,
     qtyEpsilonWithMagnitude,
 } from '../tolerances';
-import { AMOUNT_EPSILON, TIE_OUT_EPSILON } from '../statement-reconcile';
 import { DEFAULT_QTY_EPSILON as LOT_SCRUB_QTY_EPSILON, qtyEpsilonForScu as lotScrubQtyEpsilon } from '../lot-scrub';
 
 describe('money tolerances', () => {
@@ -29,9 +28,14 @@ describe('money tolerances', () => {
         expect(moneyEpsilonForScu(Number.NaN)).toBe(MONEY_DISPLAY_EPSILON);
     });
 
-    it('is the single source the reconcile engine names its own epsilons from', () => {
-        expect(AMOUNT_EPSILON).toBe(MONEY_DISPLAY_EPSILON);
-        expect(TIE_OUT_EPSILON).toBe(MONEY_DISPLAY_EPSILON);
+    it('is imported by the reconcile engine rather than aliased there', async () => {
+        // statement-reconcile.ts used to re-export it twice under local names
+        // (AMOUNT_EPSILON, TIE_OUT_EPSILON). Two extra names for one number is
+        // two more things to keep in step, and a reader has to chase both to
+        // learn they are the same half-cent.
+        const reconcile = await import('../statement-reconcile');
+        expect(reconcile).not.toHaveProperty('AMOUNT_EPSILON');
+        expect(reconcile).not.toHaveProperty('TIE_OUT_EPSILON');
     });
 });
 

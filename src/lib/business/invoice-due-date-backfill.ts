@@ -24,9 +24,13 @@
  */
 
 import { computeDueDate, type BillTermSpec } from './invoice-totals';
+// The slot type the posting path itself writes. Imported rather than restated:
+// the backfill's whole job is to produce a row indistinguishable from one
+// invoice-engine would have written, so a second definition drifting apart is
+// the exact failure it must not have.
+import { SLOT_TIMESPEC } from './invoice-engine';
 
-/** GnuCash KvpValue::Type for a timespec slot (mirrors invoice-engine). */
-export const SLOT_TIMESPEC = 6;
+export { SLOT_TIMESPEC };
 
 /** One posted invoice whose posting transaction is missing the due-date slot. */
 export interface LegacyPostedInvoice {

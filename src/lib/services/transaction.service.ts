@@ -40,6 +40,37 @@ export const CreateTransactionSchema = z.object({
   splits: z.array(SplitInputSchema).min(2, 'Transaction must have at least 2 splits'),
 });
 
+/**
+ * The requested transaction is not visible to this caller.
+ *
+ * Covers two cases that are indistinguishable from outside and must stay that
+ * way: the transaction does not exist, and it exists but not in the caller's
+ * book. Routes map this to 404 — telling an unauthorized caller "it exists but
+ * is not yours" would be an existence oracle.
+ */
+export class TransactionNotFoundError extends Error {
+  constructor(guid: string) {
+    super(`Transaction not found: ${guid}`);
+    this.name = 'TransactionNotFoundError';
+  }
+}
+
+/**
+ * The caller's book scope, refusing an empty one as NOT FOUND.
+ *
+ * A book always has at least its root account, so an empty list means the
+ * active book could not be resolved. The reconciled-split guard rejects an
+ * empty scope outright (it would otherwise degrade to "nothing is protected"),
+ * but it does so with a plain Error, which surfaced as a 500. A caller with no
+ * resolvable book simply cannot see this transaction, which is the same answer
+ * the book-scoped WHERE would have produced — so say that instead.
+ */
+async function requireBookScope(guid: string): Promise<string[]> {
+  const bookAccountGuids = await getBookAccountGuids();
+  if (bookAccountGuids.length === 0) throw new TransactionNotFoundError(guid);
+  return bookAccountGuids;
+}
+
 export const UpdateTransactionSchema = CreateTransactionSchema.extend({
   guid: z.string().length(32, 'Invalid transaction GUID'),
 });
@@ -143,7 +174,7 @@ export class TransactionService {
     });
 
     if (!existing) {
-      throw new Error(`Transaction not found: ${data.guid}`);
+      throw new TransactionNotFoundError(data.guid);
     }
 
     // Reconciled/frozen splits pin this transaction to a bank statement.
@@ -158,7 +189,7 @@ export class TransactionService {
     // Book scope for the reconciled-split guard: the guid comes from the
     // request, so the guard must not lock — or name the accounts of — a
     // transaction outside the caller's book.
-    const bookAccountGuids = await getBookAccountGuids();
+    const bookAccountGuids = await requireBookScope(data.guid);
 
     // Update transaction and replace splits atomically
     const transaction = await prisma.$transaction(async (tx) => {
@@ -242,7 +273,7 @@ export class TransactionService {
     });
 
     if (!existing) {
-      throw new Error(`Transaction not found: ${guid}`);
+      throw new TransactionNotFoundError(guid);
     }
 
     // Reconciled/frozen splits pin this transaction to a bank statement.
@@ -256,7 +287,7 @@ export class TransactionService {
     }
 
     // Book scope for the reconciled-split guard (see update() above).
-    const bookAccountGuids = await getBookAccountGuids();
+    const bookAccountGuids = await requireBookScope(guid);
 
     // Delete transaction and splits atomically
     await prisma.$transaction(async (tx) => {

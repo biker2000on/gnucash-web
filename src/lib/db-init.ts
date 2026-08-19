@@ -3869,15 +3869,54 @@ async function createUniqueConstraintGuards() {
  * Idempotent by construction: both statements match only `unit_cost IS NULL`,
  * which they then fill.
  */
-const inventoryUnitCostSourceColumnDDL = `
+/**
+ * Inventory column upgrades, run at STARTUP rather than on first inventory
+ * request.
+ *
+ * The inventory tables themselves are created lazily (ensureInventoryTables in
+ * src/lib/services/inventory.service.ts), so this is a no-op on a deployment
+ * that has never opened the feature — hence the to_regclass guard. But on a
+ * deployment that HAS, every reader of the item row selects `post_to_ledger`,
+ * and until the lazy ensure had run once after an upgrade those reads failed
+ * with "column does not exist". db-init runs before any request is served, so
+ * adding the columns here closes that window; the lazy ensure keeps its own
+ * copies as belt and braces for a table created after startup.
+ *
+ * The lock key is `gnucash_web_inventory_schema` — the SAME key the lazy
+ * ensure takes. It used to take `gnucash_web_inventory_unit_cost_source`,
+ * which meant the two could ALTER the same table concurrently while each held
+ * a lock the other did not respect.
+ */
+const inventoryLazyColumnUpgradesDDL = `
     DO $$
     BEGIN
         IF to_regclass('public.gnucash_web_inventory_movements') IS NULL THEN
             RETURN;
         END IF;
-        PERFORM pg_advisory_xact_lock(hashtext('gnucash_web_inventory_unit_cost_source'));
+        PERFORM pg_advisory_xact_lock(hashtext('gnucash_web_inventory_schema'));
+
         ALTER TABLE gnucash_web_inventory_movements
             ADD COLUMN IF NOT EXISTS unit_cost_source VARCHAR(20);
+
+        -- Explicit ledger-posting opt-in. Rows that predate the column are
+        -- backfilled to FALSE when they are not fully configured, so an
+        -- existing stock-only item stays saveable rather than being forced to
+        -- invent posting accounts. Guarded by the column's own existence, so
+        -- the backfill runs exactly once. Kept byte-identical to the copy in
+        -- ensureInventoryTables: whichever runs first, the result is the same.
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'gnucash_web_inventory_items'
+              AND column_name = 'post_to_ledger'
+        ) THEN
+            ALTER TABLE gnucash_web_inventory_items
+                ADD COLUMN post_to_ledger BOOLEAN NOT NULL DEFAULT true;
+            UPDATE gnucash_web_inventory_items
+               SET post_to_ledger = false
+             WHERE income_account_guid IS NULL
+                OR cogs_account_guid IS NULL
+                OR asset_account_guid IS NULL;
+        END IF;
     END $$;
 `;
 
@@ -3932,7 +3971,7 @@ export async function backfillLegacyInventoryShipmentCosts() {
         );
         if (!present.rows[0]?.reg) return;
 
-        await query(inventoryUnitCostSourceColumnDDL);
+        await query(inventoryLazyColumnUpgradesDDL);
         await runOneTimeMigration(
             '2026-08-19-inventory-legacy-ship-unit-cost',
             () => query(inventoryLegacyShipUnitCostBackfillSQL),

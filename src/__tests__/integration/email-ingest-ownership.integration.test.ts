@@ -74,11 +74,12 @@ describe('email-ingest ownership snapshot (real Postgres)', () => {
             `SELECT column_name FROM information_schema.columns
              WHERE table_name = 'gnucash_web_ingest_messages'
                AND column_name IN ('owner_user_id','owner_book_guid','owner_sender_id',
-                                   'owner_sender_email','manual_retries')`,
+                                   'owner_sender_email','manual_retries',
+                                   'last_manual_retry_at')`,
         );
         expect(res.rows.map(r => r.column_name).sort()).toEqual([
-            'manual_retries', 'owner_book_guid', 'owner_sender_email',
-            'owner_sender_id', 'owner_user_id',
+            'last_manual_retry_at', 'manual_retries', 'owner_book_guid',
+            'owner_sender_email', 'owner_sender_id', 'owner_user_id',
         ]);
     });
 

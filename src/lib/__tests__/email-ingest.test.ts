@@ -603,6 +603,8 @@ describe('email-ingest', () => {
       owner_sender_id?: number | null;
       owner_sender_email?: string | null;
       manual_retries?: number;
+      /** Last MANUAL re-arm; null/undefined = never, so no cooldown is owed. */
+      last_manual_retry_at?: Date | null;
     }
 
     const minutesAgo = (minutes: number) => new Date(Date.now() - minutes * 60_000);
@@ -644,15 +646,19 @@ describe('email-ingest', () => {
           const cooldown = values[4] as number;
           const row = rows.find(r => r.id === id);
           if (!row) return Promise.resolve(0);
+          // The cooldown is measured against the last MANUAL retry, not
+          // processed_at: NULL means it has never been re-armed by hand.
+          const lastManual = row.last_manual_retry_at ?? null;
           const allowed = row.outcome === failed
             && row.owner_user_id !== null && row.owner_user_id !== undefined
             && !row.message_key.startsWith('fallback:')
             && (row.manual_retries ?? 0) < maxManual
-            && row.processed_at < minutesAgo(cooldown);
+            && (lastManual === null || lastManual < minutesAgo(cooldown));
           if (!allowed) return Promise.resolve(0);
           row.outcome = requeued;
           row.detail = 'Manual retry requested; queued for the next mailbox poll';
           row.manual_retries = (row.manual_retries ?? 0) + 1;
+          row.last_manual_retry_at = new Date();
           row.processed_at = new Date();
           return Promise.resolve(1);
         }
@@ -845,6 +851,7 @@ describe('email-ingest', () => {
             owner_sender_id: row.owner_sender_id ?? null,
             owner_sender_email: row.owner_sender_email ?? null,
             manual_retries: row.manual_retries ?? 0,
+            last_manual_retry_at: row.last_manual_retry_at ?? null,
           }] : []);
         }
 
@@ -1805,6 +1812,7 @@ describe('email-ingest', () => {
           detail: 'unsupported file type — permanent failure, no automatic retry',
           processed_at: minutesAgo(INGEST_MANUAL_RETRY_COOLDOWN_MINUTES + 5),
           attempts: 1,
+          last_manual_retry_at: null,
           owner_user_id: OWNER_ID,
           owner_book_guid: 'book-1',
           owner_sender_id: senderRow.id,
@@ -1936,7 +1944,7 @@ describe('email-ingest', () => {
           primeStatefulDb({
             senders: [senderRow],
             messages: [
-              failedOwnedRow('hot@x', { processed_at: minutesAgo(1) }),
+              failedOwnedRow('hot@x', { last_manual_retry_at: minutesAgo(1) }),
               failedOwnedRow('spent@x', { manual_retries: INGEST_MAX_MANUAL_RETRIES }),
             ],
           });
@@ -1947,6 +1955,60 @@ describe('email-ingest', () => {
           const spent = await requestIngestRetry(2, OWNER_ID);
           expect(spent).toMatchObject({ ok: false, reason: 'not_retriable' });
           expect((spent as { detail: string }).detail).toContain('all of its manual retries');
+        });
+
+        /**
+         * The cooldown rate-limits the PERSON. It used to be measured against
+         * `processed_at`, which is the time of the last automatic attempt or
+         * poll outcome — so a message that had just failed on its own was
+         * reported as being in a cooldown its owner had never used, and could
+         * not be re-armed until the window elapsed for reasons nothing to do
+         * with them.
+         */
+        it('imposes no cooldown on a row that has never been retried by hand', async () => {
+          const { rows } = primeStatefulDb({
+            senders: [senderRow],
+            messages: [failedOwnedRow('justfailed@x', {
+              // Failed seconds ago, automatically. No manual retry, ever.
+              processed_at: minutesAgo(0),
+              last_manual_retry_at: null,
+            })],
+          });
+
+          await expect(requestIngestRetry(1, OWNER_ID)).resolves.toEqual({ ok: true });
+          expect(rows[0].outcome).toBe(INGEST_OUTCOME_RETRY_REQUESTED);
+          // ...and the retry stamps the clock the NEXT cooldown is measured from.
+          expect(rows[0].last_manual_retry_at).toBeInstanceOf(Date);
+        });
+
+        it('starts the cooldown from the manual retry, not from later automatic work', async () => {
+          const { rows } = primeStatefulDb({
+            senders: [senderRow],
+            messages: [failedOwnedRow('reprocessed@x', {
+              // Re-armed well outside the window; processed again since, which
+              // is what moved processed_at forward.
+              last_manual_retry_at: minutesAgo(INGEST_MANUAL_RETRY_COOLDOWN_MINUTES + 5),
+              processed_at: minutesAgo(1),
+              manual_retries: 1,
+            })],
+          });
+
+          await expect(requestIngestRetry(1, OWNER_ID)).resolves.toEqual({ ok: true });
+          expect(rows[0].manual_retries).toBe(2);
+        });
+
+        it('still refuses a second retry inside the window', async () => {
+          const { rows } = primeStatefulDb({
+            senders: [senderRow], messages: [failedOwnedRow('twice@x')],
+          });
+
+          await expect(requestIngestRetry(1, OWNER_ID)).resolves.toEqual({ ok: true });
+          // Put it back into a failed state, as a later poll would.
+          rows[0].outcome = INGEST_OUTCOME_FAILED;
+
+          const second = await requestIngestRetry(1, OWNER_ID);
+          expect(second).toMatchObject({ ok: false, reason: 'cooldown' });
+          expect(rows[0].manual_retries).toBe(1);
         });
 
         it('refuses a message that has no Message-ID to re-find it by', async () => {
@@ -2033,7 +2095,12 @@ describe('email-ingest', () => {
           expect(normalized).toContain('AND owner_user_id IS NOT NULL');
           expect(normalized).toContain("AND message_key NOT LIKE 'fallback:%'");
           expect(normalized).toContain('AND manual_retries < ?');
-          expect(normalized).toContain("AND processed_at < (NOW() - ? * INTERVAL '1 minute')");
+          // The cooldown clock is the last MANUAL retry, and NULL (never
+          // retried by hand) owes nothing.
+          expect(normalized).toContain(
+            "AND (last_manual_retry_at IS NULL OR last_manual_retry_at < NOW() - ? * INTERVAL '1 minute')",
+          )
+          expect(normalized).toContain('last_manual_retry_at = NOW()');
           // `attempts` is deliberately absent: a manual retry buys one more
           // claim, it does not hand back the automatic budget.
           expect(normalized).not.toContain('attempts = 0');

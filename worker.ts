@@ -922,19 +922,19 @@ async function main() {
     workerReady = false;
     healthServer.close();
 
-    // Cancel every armed timer: per-book price refreshes, SimpleFin initial
-    // timeouts AND intervals, the generic daily chains, and the bare
-    // email-ingest/funding-sweep intervals. clearAllTimers() also latches the
-    // registry closed, so a callback that reschedules itself cannot rearm.
-    for (const [bookGuid] of schedules) {
-      clearSchedule(bookGuid);
-    }
-    clearSimpleFinTimers();
-    for (const [name, handle] of genericTimers) {
-      timers.clear(handle);
-      genericTimers.delete(name);
-    }
+    // Cancel every armed timer in one call: per-book price refreshes, SimpleFin
+    // initial timeouts AND intervals, the generic daily chains, and the bare
+    // email-ingest/funding-sweep intervals. Every one of them was armed through
+    // the registry, so walking the three bookkeeping maps by hand only risked
+    // missing whichever kind of timer a future caller forgets to add a loop
+    // for. clearAllTimers() also latches the registry closed, so a callback
+    // that reschedules itself cannot rearm. The maps themselves are process
+    // state we are about to exit with; they are cleared only to keep the
+    // observable counters honest for anything that looks after the drain.
     timers.clearAllTimers();
+    schedules.clear();
+    simplefinTimers.clear();
+    genericTimers.clear();
 
     // Let BullMQ finish/release its current jobs, then wait for the
     // timer-driven work that BullMQ knows nothing about (scheduled SimpleFin

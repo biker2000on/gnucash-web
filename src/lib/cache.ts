@@ -63,12 +63,27 @@ async function extendIndexExpiry(
   ttlSeconds: number,
 ): Promise<void> {
   try {
-    // GT sets the TTL only when it would be longer (and when there is none).
-    await redis.expire(indexKey, ttlSeconds, 'GT');
+    // NX **then** GT, in one round trip.
+    //
+    // GT alone does nothing on a key that has no TTL: Redis treats a
+    // non-volatile key as an infinite TTL, so no finite value is ever
+    // "greater" and EXPIRE ... GT returns 0. That is precisely the case this
+    // function exists for — a freshly ZADDed index has no expiry — so the
+    // index went on living forever. NX sets the TTL when there is none; GT
+    // then pushes an existing one out when this entry outlives it. Exactly one
+    // of the two ever applies.
+    const results = await redis
+      .pipeline()
+      .expire(indexKey, ttlSeconds, 'NX')
+      .expire(indexKey, ttlSeconds, 'GT')
+      .exec();
+    const failure = results?.find(([err]) => err)?.[0];
+    if (failure) throw failure;
   } catch {
-    // Redis < 7.0 has no GT flag. Emulate it; the read-then-write race is
+    // Redis < 7.0 has neither flag. Emulate it; the read-then-write race is
     // harmless here (worst case the index expires early and one stale entry
-    // survives until its own TTL).
+    // survives until its own TTL). `ttl` returns -1 for "no expiry", which is
+    // below any positive ttlSeconds and so sets one.
     const current = await redis.ttl(indexKey);
     if (current < ttlSeconds) {
       await redis.expire(indexKey, ttlSeconds);

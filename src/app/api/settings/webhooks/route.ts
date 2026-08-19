@@ -15,6 +15,7 @@ function serializeWebhook(hook: WebhookRecord) {
     secret: hook.secret,
     events: hook.events,
     enabled: hook.enabled,
+    allowInternal: hook.allowInternal,
     createdAt: hook.createdAt.toISOString(),
     lastStatus: hook.lastStatus,
     lastDeliveredAt: hook.lastDeliveredAt?.toISOString() ?? null,
@@ -74,6 +75,7 @@ export async function POST(request: NextRequest) {
       secret: typeof body.secret === 'string' ? body.secret : undefined,
       events: parseEventsInput(body.events),
       enabled: body.enabled !== false,
+      allowInternal: body.allowInternal === true,
     });
 
     return NextResponse.json({ webhook: serializeWebhook(webhook) }, { status: 201 });

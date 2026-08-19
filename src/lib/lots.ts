@@ -17,11 +17,13 @@
  * NEVER deducted, and anything not confidently classified changes nothing and
  * is reported as a warning.
  *
- * That netting is the DEFAULT for `getAccountLots` — gross money figures are
+ * That netting is the DEFAULT for BOTH entry points — gross money figures are
  * a bug on every surface that shows them, so reaching them takes an explicit
- * `{ includeTradeFees: false }`. The batch entry point `getLotsForAccounts`
- * still defaults to gross, because the 8949 path deliberately runs its own
- * allocation (with tax mappings) over the raw lots.
+ * `{ includeTradeFees: false }`. The two used to disagree (single netted,
+ * batch gross), which meant switching a caller from one to the other for
+ * performance silently changed its numbers. The one caller that genuinely
+ * wants raw lots — the Form 8949 path in @/lib/reports/capital-gains, which
+ * runs its own allocation with tax mappings — now says so explicitly.
  */
 
 import prisma from './prisma';
@@ -316,24 +318,25 @@ export async function getAccountLots(
     accountGuid: string,
     options: LotQueryOptions = {},
 ): Promise<LotSummary[]> {
-    // `?? true` rather than spread order, so an explicit `undefined` from a
-    // caller building options dynamically still gets the netted default.
-    const withFees: LotQueryOptions = {
-        ...options,
-        includeTradeFees: options.includeTradeFees ?? true,
-    };
-    return (await getLotsForAccounts([accountGuid], withFees)).get(accountGuid) ?? [];
+    return (await getLotsForAccounts([accountGuid], options)).get(accountGuid) ?? [];
 }
 
 /**
  * Batch-load lot summaries for multiple investment accounts. The report paths
  * call this once so lots, metadata slots, and account commodities are loaded
  * in set-based queries instead of repeating the same query group per account.
+ *
+ * Fee netting defaults ON here, exactly as in {@link getAccountLots}: the two
+ * entry points must not disagree, or moving a caller onto the batch one for
+ * performance quietly changes the money it reports.
  */
 export async function getLotsForAccounts(
     accountGuids: string[],
     options: LotQueryOptions = {},
 ): Promise<Map<string, LotSummary[]>> {
+    // `?? true` rather than spread order, so an explicit `undefined` from a
+    // caller building options dynamically still gets the netted default.
+    const includeTradeFees = options.includeTradeFees ?? true;
     const uniqueAccountGuids = [...new Set(accountGuids)];
     const result = new Map(uniqueAccountGuids.map(guid => [guid, [] as LotSummary[]]));
     if (uniqueAccountGuids.length === 0) return result;
@@ -430,7 +433,7 @@ export async function getLotsForAccounts(
     // neutralized-mapping warnings the allocator emits and never change an
     // amount, so omitting them cannot move a figure away from the 8949's.
     let fees: TradeFeeBySplit = NO_TRADE_FEES;
-    if (options.includeTradeFees) {
+    if (includeTradeFees) {
         const allocation = await loadTradeFees(
             lots.flatMap(lot => lot.splits.map(split => split.tx_guid)),
             { accountPaths: options.accountPaths },

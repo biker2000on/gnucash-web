@@ -45,7 +45,7 @@ vi.mock('@/lib/book-scope', () => ({
     getBookAccountGuids: getBookAccountGuidsMock,
 }));
 
-import { TransactionService } from '../transaction.service';
+import { TransactionService, TransactionNotFoundError } from '../transaction.service';
 import { ReconciledSplitError } from '../reconciled-split.service';
 
 const TX_GUID = 't'.repeat(32);
@@ -152,5 +152,54 @@ describe('TransactionService.delete', () => {
             success: true, guid: TX_GUID,
         });
         expect(prismaMock.transactions.delete).toHaveBeenCalledWith({ where: { guid: TX_GUID } });
+    });
+});
+
+/**
+ * An unresolvable active book is a 404, not a 500.
+ *
+ * The reconciled-split guard refuses an empty book scope outright — it would
+ * otherwise silently degrade to "nothing is in scope, so nothing is protected"
+ * — but it did so with a plain Error, so a caller whose active book could not
+ * be resolved got a 500 from a route that should simply not have found the
+ * transaction. The service now answers the same way the book-scoped WHERE
+ * would have, and does so BEFORE opening the write transaction.
+ */
+describe('empty book scope', () => {
+    beforeEach(() => {
+        getBookAccountGuidsMock.mockResolvedValue([]);
+        prismaMock.transactions.findUnique.mockResolvedValue(existing('n'));
+    });
+
+    it('reports update as not found, and writes nothing', async () => {
+        await expect(TransactionService.update(updateInput))
+            .rejects.toBeInstanceOf(TransactionNotFoundError);
+        expect(prismaMock.$transaction).not.toHaveBeenCalled();
+        expect(prismaMock.splits.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it('reports delete as not found, and deletes nothing', async () => {
+        await expect(TransactionService.delete(TX_GUID))
+            .rejects.toBeInstanceOf(TransactionNotFoundError);
+        expect(prismaMock.$transaction).not.toHaveBeenCalled();
+        expect(prismaMock.transactions.delete).not.toHaveBeenCalled();
+    });
+
+    it('is indistinguishable from a transaction that does not exist', async () => {
+        // Same error, same message: telling an unauthorized caller "it exists
+        // but is not yours" would be an existence oracle.
+        getBookAccountGuidsMock.mockResolvedValue([ACCOUNT_A, ACCOUNT_B]);
+        prismaMock.transactions.findUnique.mockResolvedValue(null);
+        const missing = await TransactionService.delete(TX_GUID)
+            .then(() => null, (e: Error) => e);
+
+        getBookAccountGuidsMock.mockResolvedValue([]);
+        prismaMock.transactions.findUnique.mockResolvedValue(existing('n'));
+        const unscoped = await TransactionService.delete(TX_GUID)
+            .then(() => null, (e: Error) => e);
+
+        expect(unscoped?.message).toBe(missing?.message);
+        expect(unscoped?.name).toBe(missing?.name);
+        expect(unscoped).toBeInstanceOf(TransactionNotFoundError);
     });
 });

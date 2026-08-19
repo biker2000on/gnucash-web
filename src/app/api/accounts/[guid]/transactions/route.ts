@@ -14,8 +14,8 @@ import {
     addPurchaseToPool,
     addTracedTransferToPool,
     removeSharesFromPool,
-    poolPositionSide,
     poolNetShares,
+    reportPool,
     type CostBasisMethod,
 } from '@/lib/cost-basis';
 import { qtyEpsilonWithMagnitude } from '@/lib/tolerances';
@@ -456,20 +456,18 @@ export async function GET(
                         commodityScu,
                         Math.max(Math.abs(runShares), Math.abs(poolShares)),
                     );
-                    const side = poolPositionSide(pool, coverageEps);
+                    // A short leg's basis is its PROCEEDS, and it has no long
+                    // shares left to be uncovered; reportPool() owns both of
+                    // those calls so this route and the holdings surface in
+                    // commodities.ts cannot disagree about them.
+                    const report = reportPool(pool, coverageEps);
                     const balancesAgree = Math.abs(runShares - poolShares) < coverageEps;
-                    // A short leg's coverage is about its PROCEEDS: covered when
-                    // every short-opening sale's proceeds were read, unknown
-                    // otherwise. There are no long shares left to be uncovered.
-                    const coverageIsKnowable = balancesAgree
-                        && (side !== 'short' || !pool.shortProceedsIncomplete);
+                    const coverageIsKnowable = balancesAgree && report.coverageKnowable;
                     totals.set(split.tx_guid, {
                         shareBalance: runShares,
-                        costBasis: side === 'short' ? pool.shortProceeds : pool.basisOfCoveredShares,
-                        costBasisUncoveredShares: coverageIsKnowable
-                            ? (side === 'short' ? 0 : pool.uncoveredShares)
-                            : null,
-                        positionSide: side,
+                        costBasis: report.costBasis,
+                        costBasisUncoveredShares: coverageIsKnowable ? report.uncoveredShares : null,
+                        positionSide: report.side,
                     });
                 }
                 return totals;

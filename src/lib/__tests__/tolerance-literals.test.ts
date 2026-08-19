@@ -138,7 +138,6 @@ const LEGACY_BUDGET: Record<string, number> = {
     'lib/emergency-info.ts': 1,
     'lib/family-office/service.ts': 1,
     'lib/financial-actions/sources.ts': 2,
-    'lib/format.ts': 1,
     'lib/import/qbo-gl.ts': 3,
     'lib/import/qbo-journal.ts': 1,
     'lib/import/settlements.ts': 2,

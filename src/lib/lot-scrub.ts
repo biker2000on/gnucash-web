@@ -866,6 +866,26 @@ export async function classifyAccountTax(
  * @param qtyEpsilon - Commodity-aware share epsilon (see qtyEpsilonForScu)
  * @returns SplitSellResult with sub-splits created and lots used
  */
+/**
+ * Sum of a transaction's split VALUES, i.e. how far out of balance it is.
+ *
+ * Read once BEFORE a scrub and once after, because the invariant that matters
+ * is "the scrub did not move the balance", not "the transaction balances".
+ * Real books contain historical transactions that were already a cent out
+ * before this engine ever touched them (hand-entered, imported, or written by
+ * an older GnuCash). Asserting absolute balance made those unscrubbable, while
+ * an engine that quietly absorbed the cent would be silently editing the
+ * user's books. Neither is acceptable: the scrub must be transparent to a
+ * pre-existing imbalance and must never introduce one of its own.
+ */
+async function transactionImbalance(tx: PrismaTx, txGuid: string): Promise<number> {
+  const splits = await tx.splits.findMany({ where: { tx_guid: txGuid } });
+  return splits.reduce(
+    (sum, s) => sum + toDecimalNumber(s.value_num, s.value_denom),
+    0,
+  );
+}
+
 export async function splitSellAcrossLots(
   sellSplitGuid: string,
   openLots: OpenLot[],
@@ -932,7 +952,12 @@ export async function splitSellAcrossLots(
     };
   }
 
-  // Multiple lots needed — save original qty/val as slots for revert, then create sub-splits
+  // Multiple lots needed. Snapshot the imbalance the transaction ALREADY had,
+  // before the first write — everything above this point either returns
+  // without touching a value or only stamps a lot_guid.
+  const imbalanceBefore = await transactionImbalance(tx, sellSplit.tx_guid);
+
+  // Save original qty/val as slots for revert, then create sub-splits
   // Save original values
   await tx.slots.create({
     data: {
@@ -1079,21 +1104,25 @@ export async function splitSellAcrossLots(
     await createSubSplit(remainderQty, remainderVal, null);
   }
 
-  // Assert transaction balance == 0
-  const allTxSplits = await tx.splits.findMany({
-    where: { tx_guid: sellSplit.tx_guid },
-  });
-  const totalValue = allTxSplits.reduce(
-    (sum, s) => sum + toDecimalNumber(s.value_num, s.value_denom),
-    0,
-  );
+  // Assert the scrub CONSERVED the transaction's balance.
+  //
+  // Splitting a sell across lots is value-neutral by construction: the
+  // sub-splits (plus any unassigned remainder) sum to the original split's
+  // value. So the only thing this can legitimately catch is drift the engine
+  // itself introduced — a rounding slip in the per-lot apportionment. It is
+  // measured as a DELTA against the pre-scrub imbalance rather than against
+  // zero, because a transaction that arrived a cent out was a cent out before
+  // the engine looked at it: refusing to scrub it punishes the user for old
+  // data, and "fixing" it would be editing their books behind their back.
+  //
   // Half a cent, not a whole one: the splits this engine writes are exact
-  // rational amounts, so anything a cent-rounded sum cannot absorb is a REAL
-  // imbalance. The old whole-cent bound let a one-cent unbalanced transaction
-  // through the invariant that exists to catch exactly that.
-  if (Math.abs(totalValue) > MONEY_DISPLAY_EPSILON) {
+  // rational amounts, so any drift a cent-rounded sum cannot absorb is real.
+  const imbalanceAfter = await transactionImbalance(tx, sellSplit.tx_guid);
+  const drift = imbalanceAfter - imbalanceBefore;
+  if (Math.abs(drift) > MONEY_DISPLAY_EPSILON) {
     throw new Error(
-      `Transaction balance invariant violated after split: ${totalValue.toFixed(4)} (tx: ${sellSplit.tx_guid})`,
+      `Transaction balance invariant violated after split: the scrub moved the balance by ${drift.toFixed(4)}`
+      + ` (before ${imbalanceBefore.toFixed(4)}, after ${imbalanceAfter.toFixed(4)}, tx: ${sellSplit.tx_guid})`,
     );
   }
 
@@ -2099,6 +2128,12 @@ export async function splitTransferAcrossSourceLots(
   // Multi-lot path: calculate allocations proportional to each source split's quantity
   const transferQty = toDecimalNumber(split.quantity_num, split.quantity_denom);
   const transferVal = toDecimalNumber(split.value_num, split.value_denom);
+  // Snapshot the imbalance the transaction ALREADY had, before the first write.
+  // Only needed on the paths that actually check it (transferVal !== 0), and
+  // only after the single-source delegation above has had its chance to return.
+  const imbalanceBefore = transferVal !== 0
+    ? await transactionImbalance(tx, split.tx_guid)
+    : 0;
   const qtyDenom = Number(split.quantity_denom);
   const valDenom = Number(split.value_denom);
 
@@ -2345,17 +2380,17 @@ export async function splitTransferAcrossSourceLots(
   // conservation invariant is enforced.
   await reconcileCarriedBasisForSourceLots(allocations.map(a => a.sourceLotGuid), tx);
 
-  // Assert transaction balance == 0 (skip for $0 transfers where it's trivially satisfied)
+  // Assert the scrub CONSERVED the transaction's balance (skip for $0
+  // transfers, where it is trivially satisfied). As in splitSellAcrossLots,
+  // this is a DELTA against the imbalance the transaction already carried: an
+  // inherited cent must neither block the scrub nor be silently absorbed by it.
   if (transferVal !== 0) {
-    const allTxSplits = await tx.splits.findMany({
-      where: { tx_guid: split.tx_guid },
-    });
-    const totalValue = allTxSplits.reduce(
-      (sum, s) => sum + toDecimalNumber(s.value_num, s.value_denom), 0,
-    );
-    if (Math.abs(totalValue) > MONEY_DISPLAY_EPSILON) {
+    const imbalanceAfter = await transactionImbalance(tx, split.tx_guid);
+    const drift = imbalanceAfter - imbalanceBefore;
+    if (Math.abs(drift) > MONEY_DISPLAY_EPSILON) {
       throw new Error(
-        `Transaction balance invariant violated after transfer split: ${totalValue.toFixed(4)} (tx: ${split.tx_guid})`,
+        `Transaction balance invariant violated after transfer split: the scrub moved the balance by ${drift.toFixed(4)}`
+        + ` (before ${imbalanceBefore.toFixed(4)}, after ${imbalanceAfter.toFixed(4)}, tx: ${split.tx_guid})`,
       );
     }
   }

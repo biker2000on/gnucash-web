@@ -6,7 +6,11 @@ import { AccountSelector } from '@/components/ui/AccountSelector';
 import { Abbr } from '@/components/ui/Abbr';
 import { useToast } from '@/contexts/ToastContext';
 import { useCurrentUser, READONLY_TOOLTIP } from '@/hooks/useCurrentUser';
-import type { ItemDTO, ValuationMethod } from '@/components/business/inventory-ui';
+import {
+    POSTING_ACCOUNT_TYPES,
+    type ItemDTO,
+    type ValuationMethod,
+} from '@/components/business/inventory-ui';
 import { ApiRequestError, extractErrorMessage } from '@/lib/api-error';
 import { Tip } from '@/components/ui/Tooltip';
 
@@ -358,11 +362,13 @@ export function ItemFormModal({ editing, onClose, onSaved }: ItemFormModalProps)
                         Receiving with post also needs an offset account, chosen at receive time.
                     </p>
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        {/* Types come from the shared POSTING_ACCOUNT_TYPES so this
+                            picker and the server-side validation cannot disagree. */}
                         {([
-                            { field: 'incomeAccountGuid', label: 'Income account', types: ['INCOME'] },
-                            { field: 'cogsAccountGuid', label: 'COGS account', types: ['EXPENSE'] },
-                            { field: 'assetAccountGuid', label: 'Asset account', types: ['ASSET'] },
-                        ] as const).map(({ field, label, types }) => (
+                            { field: 'incomeAccountGuid', label: 'Income account' },
+                            { field: 'cogsAccountGuid', label: 'COGS account' },
+                            { field: 'assetAccountGuid', label: 'Asset account' },
+                        ] as const).map(({ field, label }) => (
                             <div key={field}>
                                 <label className={labelClass}>
                                     {label}{form.postToLedger ? ' *' : ''}
@@ -370,7 +376,7 @@ export function ItemFormModal({ editing, onClose, onSaved }: ItemFormModalProps)
                                 <AccountSelector
                                     value={form[field]}
                                     onChange={(guid) => setForm((f) => ({ ...f, [field]: guid }))}
-                                    accountTypes={[...types]}
+                                    accountTypes={[...POSTING_ACCOUNT_TYPES[field]]}
                                     placeholder={form.postToLedger ? 'Required' : 'Optional'}
                                     compact
                                 />

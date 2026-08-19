@@ -127,10 +127,32 @@ describe('validatePostingAccounts', () => {
     expect(error.message).toMatch(/ledger posting/i);
   });
 
+  /*
+   * ASSET is not the only asset-class type GnuCash uses. BANK and CASH are
+   * ordinary currency-denominated asset accounts, and a book that files its
+   * inventory balance under one could not enable ledger posting at all while
+   * the check demanded a literal 'ASSET'. STOCK/MUTUAL stay out: those hold
+   * share quantities rather than dollars, so an inventory posting into one
+   * would be malformed.
+   */
+  it.each(['ASSET', 'BANK', 'CASH'])(
+    'accepts an asset slot of the asset-class type %s',
+    async (accountType) => {
+      accountsByGuid({
+        ...VALID_ACCOUNTS,
+        [ASSET]: accountRow({ guid: ASSET, account_type: accountType }),
+      });
+      await expect(validatePostingAccounts(BOOK, {
+        incomeAccountGuid: INCOME, cogsAccountGuid: COGS, assetAccountGuid: ASSET,
+      })).resolves.toBeUndefined();
+    },
+  );
+
   it.each([
     ['a placeholder', { placeholder: 1 }, /placeholder/i],
     ['another book', { book_guid: 'other'.padEnd(32, '0') }, /belongs to book/i],
-    ['the wrong account type', { account_type: 'BANK' }, /expected ASSET/],
+    ['a share-denominated commodity account', { account_type: 'STOCK' }, /expected ASSET/],
+    ['an income account', { account_type: 'INCOME' }, /expected ASSET/],
   ])('rejects an asset slot pointing at %s', async (_label, overrides, pattern) => {
     accountsByGuid({
       ...VALID_ACCOUNTS,

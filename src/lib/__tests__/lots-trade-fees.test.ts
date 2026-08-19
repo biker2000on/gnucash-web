@@ -421,12 +421,29 @@ describe('getAccountLots nets trade fees by DEFAULT', () => {
     expect(mockSplitsFindMany).not.toHaveBeenCalled();
   });
 
-  it('leaves the BATCH entry point gross unless asked (the 8949 path relies on it)', async () => {
+  it('leaves the BATCH entry point gross when asked (the 8949 path relies on it)', async () => {
     const { getLotsForAccounts } = await import('../lots');
-    const [lot] = (await getLotsForAccounts([ACCT])).get(ACCT) ?? [];
+    const [lot] = (await getLotsForAccounts([ACCT], { includeTradeFees: false }))
+      .get(ACCT) ?? [];
 
     expect(lot.totalCost).toBeCloseTo(1_000, 6);
     expect(lot.tradeFees).toBeCloseTo(0, 6);
     expect(mockSplitsFindMany).not.toHaveBeenCalled();
+  });
+
+  /*
+   * The two entry points used to disagree: getAccountLots netted by default,
+   * getLotsForAccounts did not. Moving a caller onto the batch one for
+   * performance therefore silently changed the money it reported — which is
+   * how the sell planner and rebalancer ended up quoting gross gains.
+   */
+  it('nets fees by DEFAULT on the batch entry point, exactly like the single one', async () => {
+    const { getLotsForAccounts, getAccountLots } = await import('../lots');
+    const [batched] = (await getLotsForAccounts([ACCT])).get(ACCT) ?? [];
+    const [single] = await getAccountLots(ACCT);
+
+    expect(batched.totalCost).toBeCloseTo(single.totalCost, 6);
+    expect(batched.tradeFees).toBeCloseTo(single.tradeFees ?? 0, 6);
+    expect(batched.tradeFees).toBeGreaterThan(0);
   });
 });

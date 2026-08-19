@@ -24,6 +24,30 @@ export type MovementType =
 
 export type ValuationMethod = 'average' | 'fifo';
 
+/**
+ * Account types each of an item's three posting slots may point at.
+ *
+ * Lives in this client-safe leaf so the item form's AccountSelector filters
+ * and the server-side validation in inventory.service.ts read the SAME list —
+ * they were two hand-kept copies, and the copies disagreeing is how a user
+ * ends up unable to save a chart of accounts the API would have accepted (or
+ * the reverse).
+ *
+ * ASSET is not the only asset-class type in GnuCash: BANK and CASH are
+ * ordinary currency-denominated asset accounts and a book may perfectly well
+ * file inventory under one. STOCK/MUTUAL are deliberately excluded — those
+ * hold share quantities, not dollars, so an inventory posting into one would
+ * be malformed — and so is RECEIVABLE, whose business/lot semantics are not
+ * what an inventory balance wants.
+ */
+export const POSTING_ACCOUNT_TYPES = {
+    incomeAccountGuid: ['INCOME'],
+    cogsAccountGuid: ['EXPENSE'],
+    assetAccountGuid: ['ASSET', 'BANK', 'CASH'],
+} as const;
+
+export type PostingAccountField = keyof typeof POSTING_ACCOUNT_TYPES;
+
 export interface ItemDTO {
     id: number;
     sku: string;

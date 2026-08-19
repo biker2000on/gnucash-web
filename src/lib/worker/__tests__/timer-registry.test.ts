@@ -128,6 +128,50 @@ describe('TimerRegistry', () => {
             expect(onError).toHaveBeenCalledTimes(1);
         });
 
+        /**
+         * `track` swallows the rejection so it cannot crash the process, which
+         * meant a `run()` call with no handler lost the error entirely — a
+         * nightly job could fail forever without leaving a single line
+         * anywhere. The default reporter makes forgetting the handler loud.
+         */
+        it('logs an async failure when the caller passes no error handler', async () => {
+            const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+            const registry = new TimerRegistry();
+            const boom = new Error('scheduled job blew up');
+
+            registry.run(async () => { throw boom; });
+            await registry.drain(1000);
+
+            expect(error).toHaveBeenCalledWith('[worker] unhandled timer job error', boom);
+            error.mockRestore();
+        });
+
+        it('logs a SYNCHRONOUS throw from the job factory too', async () => {
+            const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+            const registry = new TimerRegistry();
+            const boom = new Error('threw before returning a promise');
+
+            registry.run(() => { throw boom; });
+
+            expect(error).toHaveBeenCalledWith('[worker] unhandled timer job error', boom);
+            // Nothing was tracked, so there is nothing to drain.
+            expect(registry.inFlightCount).toBe(0);
+            error.mockRestore();
+        });
+
+        it('an explicit handler still replaces the default entirely', async () => {
+            const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+            const registry = new TimerRegistry();
+            const onError = vi.fn();
+
+            registry.run(async () => { throw new Error('handled'); }, onError);
+            await registry.drain(1000);
+
+            expect(onError).toHaveBeenCalledTimes(1);
+            expect(error).not.toHaveBeenCalled();
+            error.mockRestore();
+        });
+
         it('drains work started by a timer that already fired', async () => {
             const registry = new TimerRegistry();
             let ran = false;

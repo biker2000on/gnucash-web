@@ -104,6 +104,10 @@ export async function GET(request: NextRequest) {
         const bandRaw = searchParams.get('band');
 
         const bookAccountGuids = await getBookAccountGuids();
+        // Charges the fee allocator would not capitalize into a lot's basis:
+        // money the annotated gains below do not account for, so it is reported
+        // rather than dropped.
+        const sellFeeWarnings: string[] = [];
 
         // Current holdings via the existing portfolio report lib
         const portfolio = await generateInvestmentPortfolio(
@@ -185,7 +189,10 @@ export async function GET(request: NextRequest) {
                     accountsBySymbol[key] = bySymbol.get(key)?.accounts ?? [];
                 }
                 const lotsByKey: Record<string, SellLotCandidate[]> =
-                    await loadSellCandidatesBySymbol(accountsBySymbol);
+                    await loadSellCandidatesBySymbol(accountsBySymbol, {
+                        bookAccountGuids,
+                        feeWarnings: sellFeeWarnings,
+                    });
                 mapping.netBySymbol = annotateSellSuggestions(mapping.netBySymbol, lotsByKey);
             }
 
@@ -196,6 +203,7 @@ export async function GET(request: NextRequest) {
                 sectorGroups: mapping.bySector,
                 symbolTrades: mapping.netBySymbol,
                 unclassifiedSymbols: exposure.unclassifiedSymbols,
+                feeWarnings: sellFeeWarnings,
                 savedMode: saved.mode,
                 savedTargets,
                 savedTargetsBySymbol: saved.targetsBySymbol,
@@ -217,7 +225,10 @@ export async function GET(request: NextRequest) {
                 accountsBySymbol[key] = bySymbol.get(key)?.accounts ?? [];
             }
             const lotsByKey: Record<string, SellLotCandidate[]> =
-                await loadSellCandidatesBySymbol(accountsBySymbol);
+                await loadSellCandidatesBySymbol(accountsBySymbol, {
+                    bookAccountGuids,
+                    feeWarnings: sellFeeWarnings,
+                });
             result.suggestions = annotateSellSuggestions(result.suggestions, lotsByKey);
         }
 
@@ -225,6 +236,7 @@ export async function GET(request: NextRequest) {
             ...result,
             allocationMode,
             holdings,
+            feeWarnings: sellFeeWarnings,
             savedMode: saved.mode,
             savedTargets,
             savedTargetsBySymbol: saved.targetsBySymbol,
