@@ -1,8 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import { CurrencySelect } from '@/components/CurrencySelect';
 import { ErrorLiveRegion } from '@/components/a11y/LiveRegion';
+import BookCreateForm from '@/components/books/BookCreateForm';
 import {
   BUSINESS_ACTIVITY_OPTIONS,
   ENTITY_TYPE_OPTIONS,
@@ -48,9 +48,12 @@ function AccountPreviewNode({ account, depth }: { account: TemplateAccountDef; d
 }
 
 /**
- * Shared book-creation form: pick an organization type first, name the book,
- * and create it seeded with the recommended account hierarchy via
- * POST /api/books/default.
+ * Book creation seeded with a recommended account hierarchy: pick an
+ * organization type first, then name the book, via POST /api/books/default.
+ *
+ * The name field, its validation and the submit state live in the shared
+ * `BookCreateForm`; this component contributes the entity pickers, the
+ * optional description, and the account preview around it.
  */
 export default function NewBookForm({
   onSuccess,
@@ -65,52 +68,41 @@ export default function NewBookForm({
   const [businessActivity, setBusinessActivity] = useState<BusinessActivity>(
     defaultBusinessActivity
   );
-  const [name, setName] = useState('');
   const [description, setDescription] = useState('');
-  const [currency, setCurrency] = useState('USD');
-  const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
 
   const showActivityPicker = FARM_CAPABLE_ENTITY_TYPES.has(entityType);
   const effectiveActivity = showActivityPicker ? businessActivity : 'general';
   const template = getEntityAccountTemplate(entityType, effectiveActivity);
 
-  const handleCreate = async () => {
-    if (!name.trim()) {
-      setError('Please enter a book name');
-      return;
-    }
-    setCreating(true);
-    setError('');
+  const handleCreate = async ({ name, currency }: { name: string; currency: string }) => {
+    let res: Response;
     try {
-      const res = await fetch('/api/books/default', {
+      res = await fetch('/api/books/default', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          name: name.trim(),
+          name,
           description: showDescription && description.trim() ? description.trim() : undefined,
           currency: showCurrency ? currency : undefined,
           entityType,
-          entityName: entityType !== 'household' ? name.trim() : undefined,
+          entityName: entityType !== 'household' ? name : undefined,
           businessActivity: effectiveActivity,
         }),
       });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        setError(extractErrorMessage(data, 'Failed to create book'));
-        return;
-      }
-      const data = await res.json();
-      onSuccess(data.bookGuid);
     } catch {
-      setError('Failed to create book. Please try again.');
-    } finally {
-      setCreating(false);
+      throw new Error('Failed to create book. Please try again.');
     }
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(extractErrorMessage(data, 'Failed to create book'));
+    }
+    const data = await res.json();
+    onSuccess(data.bookGuid);
   };
 
-  return (
-    <div className="space-y-5">
+  const entityFields = (
+    <>
       <div>
         <label className="block text-sm font-medium text-foreground mb-2">
           Organization Type
@@ -172,46 +164,27 @@ export default function NewBookForm({
           </div>
         </div>
       )}
+    </>
+  );
 
-      <div>
-        <label htmlFor="new-book-name" className="block text-sm font-medium text-foreground mb-1.5">
-          Book Name <span className="text-negative">*</span>
-        </label>
-        <input
-          id="new-book-name"
-          type="text"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          className="w-full px-3 py-2 bg-input-bg border border-border rounded-lg text-foreground placeholder-foreground-muted focus:outline-none focus:ring-2 focus:ring-primary"
-          placeholder={entityType === 'household' ? 'e.g. My Finances' : 'e.g. Acme LLC'}
-        />
-      </div>
+  const descriptionField = showDescription ? (
+    <div>
+      <label htmlFor="new-book-desc" className="block text-sm font-medium text-foreground mb-1.5">
+        Description
+      </label>
+      <textarea
+        id="new-book-desc"
+        value={description}
+        onChange={(e) => setDescription(e.target.value)}
+        rows={2}
+        className="w-full px-3 py-2 bg-input-bg border border-border rounded-lg text-foreground placeholder-foreground-muted focus:outline-none focus:ring-2 focus:ring-primary resize-none"
+        placeholder="Optional description for this book"
+      />
+    </div>
+  ) : null;
 
-      {showDescription && (
-        <div>
-          <label htmlFor="new-book-desc" className="block text-sm font-medium text-foreground mb-1.5">
-            Description
-          </label>
-          <textarea
-            id="new-book-desc"
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            rows={2}
-            className="w-full px-3 py-2 bg-input-bg border border-border rounded-lg text-foreground placeholder-foreground-muted focus:outline-none focus:ring-2 focus:ring-primary resize-none"
-            placeholder="Optional description for this book"
-          />
-        </div>
-      )}
-
-      {showCurrency && (
-        <div>
-          <label htmlFor="new-book-currency" className="block text-sm font-medium text-foreground mb-1.5">
-            Currency
-          </label>
-          <CurrencySelect id="new-book-currency" value={currency} onChange={setCurrency} />
-        </div>
-      )}
-
+  const previewAndError = (
+    <>
       <div>
         <label className="block text-sm font-medium text-foreground mb-1.5">
           Accounts to Create
@@ -229,37 +202,20 @@ export default function NewBookForm({
           {error}
         </div>
       )}
+    </>
+  );
 
-      <div className="flex items-center justify-end gap-3">
-        {onCancel && (
-          <button
-            type="button"
-            onClick={onCancel}
-            disabled={creating}
-            className="px-4 py-2 text-sm font-medium text-foreground-secondary bg-surface-hover rounded-lg hover:bg-surface-hover/80 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            Cancel
-          </button>
-        )}
-        <button
-          type="button"
-          onClick={handleCreate}
-          disabled={creating || !name.trim()}
-          className="px-5 py-2 text-sm font-medium text-primary-foreground bg-primary rounded-lg hover:bg-primary-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-        >
-          {creating ? (
-            <>
-              <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-              </svg>
-              Creating...
-            </>
-          ) : (
-            submitLabel
-          )}
-        </button>
-      </div>
-    </div>
+  return (
+    <BookCreateForm
+      onSubmit={handleCreate}
+      onError={(message) => setError(message ?? '')}
+      namePlaceholder={entityType === 'household' ? 'e.g. My Finances' : 'e.g. Acme LLC'}
+      showCurrency={showCurrency}
+      submitLabel={submitLabel}
+      onCancel={onCancel}
+      beforeNameFields={entityFields}
+      afterNameFields={descriptionField}
+      afterCurrencyFields={previewAndError}
+    />
   );
 }

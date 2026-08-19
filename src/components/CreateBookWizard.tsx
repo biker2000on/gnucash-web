@@ -2,7 +2,7 @@
 
 import { ReactNode, useState } from 'react';
 import { ErrorLiveRegion } from '@/components/a11y/LiveRegion';
-import { CurrencySelect } from '@/components/CurrencySelect';
+import BookCreateForm from '@/components/books/BookCreateForm';
 import NewBookForm from '@/components/books/NewBookForm';
 import { product } from '@/lib/product';
 import { extractErrorMessage } from '@/lib/api-error';
@@ -14,9 +14,6 @@ interface CreateBookWizardProps {
 
 export function CreateBookWizard({ onBookCreated, isOnboarding = false }: CreateBookWizardProps) {
   const [step, setStep] = useState<'choose' | 'create' | 'import' | 'demo'>('choose');
-  const [bookName, setBookName] = useState('');
-  const [currency, setCurrency] = useState('USD');
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [demoCreating, setDemoCreating] = useState<'household' | 'business' | null>(null);
 
@@ -40,37 +37,23 @@ export function CreateBookWizard({ onBookCreated, isOnboarding = false }: Create
     }
   };
 
-  const handleCreateForImport = async () => {
-    if (!bookName.trim()) {
-      setError('Please enter a book name');
-      return;
+  // The import step creates an empty book to import into; the name field, its
+  // validation and the submit state come from the shared BookCreateForm, the
+  // same component the "Start Fresh" step reaches through NewBookForm.
+  const handleCreateForImport = async ({ name, currency }: { name: string; currency: string }) => {
+    const res = await fetch('/api/books/from-template', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, currency }),
+    });
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(extractErrorMessage(data, 'Failed to create book'));
     }
 
-    setLoading(true);
-    setError(null);
-
-    try {
-      const res = await fetch('/api/books/from-template', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: bookName.trim(),
-          currency,
-        }),
-      });
-
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(extractErrorMessage(data, 'Failed to create book'));
-      }
-
-      const data = await res.json();
-      onBookCreated(data.guid);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred');
-    } finally {
-      setLoading(false);
-    }
+    const data = await res.json();
+    onBookCreated(data.guid);
   };
 
   // One live region for the whole wizard, not one per step. `error` survives a
@@ -234,41 +217,15 @@ export function CreateBookWizard({ onBookCreated, isOnboarding = false }: Create
           </div>
         )}
 
-        <div className="space-y-4 max-w-md">
-          <div>
-            <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-2">
-              Book Name
-            </label>
-            <input
-              type="text"
-              value={bookName}
-              onChange={e => setBookName(e.target.value)}
-              className="w-full bg-input-bg border border-input-border rounded-lg px-4 py-3 text-foreground focus:outline-none focus:border-primary/50 transition-colors"
-              placeholder="e.g., My Finances"
-            />
-          </div>
-
-          <div>
-            <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-2">
-              Base Currency
-            </label>
-            <CurrencySelect value={currency} onChange={setCurrency} />
-          </div>
-
-          <button
-            onClick={handleCreateForImport}
-            disabled={loading || !bookName.trim()}
-            className="w-full py-3 bg-primary hover:bg-primary-hover disabled:bg-foreground-muted text-primary-foreground font-medium rounded-lg transition-all"
-          >
-            {loading ? (
-              <span className="flex items-center justify-center gap-2">
-                <div className="w-4 h-4 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
-                Creating...
-              </span>
-            ) : (
-              'Create Book'
-            )}
-          </button>
+        <div className="max-w-md">
+          <BookCreateForm
+            onSubmit={handleCreateForImport}
+            onError={setError}
+            nameInputId="import-book-name"
+            namePlaceholder="e.g. My Finances"
+            submitLabel="Create Book"
+            submitFullWidth
+          />
         </div>
       </div>
     );
