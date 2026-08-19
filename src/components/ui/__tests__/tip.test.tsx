@@ -92,6 +92,60 @@ describe('Tip', () => {
         expect(document.getElementById(describedBy!)?.textContent).toBe('Read-only access');
     });
 
+    it('shows the VISIBLE panel for a disabled child on hover of the wrapper', () => {
+        vi.useFakeTimers();
+        try {
+            render(
+                <Tip content="Read-only access" showDelay={100} hideDelay={0}>
+                    <button type="button" disabled>
+                        Delete
+                    </button>
+                </Tip>,
+            );
+            // A disabled control fires no pointer events, so the hint has to be
+            // driven by the wrapper Tip renders around it — otherwise sighted
+            // users see nothing at all (native `title=` did still render here).
+            const button = screen.getByRole('button', { hidden: true });
+            const wrapper = button.parentElement!;
+            expect(wrapper.tagName).toBe('SPAN');
+
+            fireEvent.mouseEnter(wrapper);
+            act(() => vi.advanceTimersByTime(120));
+            expect(screen.getByRole('tooltip').textContent).toBe('Read-only access');
+
+            fireEvent.mouseLeave(wrapper);
+            act(() => vi.advanceTimersByTime(10));
+            expect(screen.queryByRole('tooltip')).toBeNull();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('shows the visible panel when the disabled child wrapper takes focus', () => {
+        render(
+            <Tip content="Read-only access">
+                <button type="button" disabled>
+                    Save
+                </button>
+            </Tip>,
+        );
+        const button = screen.getByRole('button', { hidden: true });
+        const wrapper = button.parentElement!;
+        expect(wrapper.getAttribute('tabindex')).toBe('0');
+
+        fireEvent.focus(wrapper);
+        const panel = screen.getByRole('tooltip');
+        expect(panel.textContent).toBe('Read-only access');
+        // The aria path survives: the child still points at the same node.
+        expect(button.getAttribute('aria-describedby')).toBe(panel.id);
+
+        fireEvent.blur(wrapper);
+        expect(screen.queryByRole('tooltip')).toBeNull();
+        // ...and falls back to the permanently mounted description.
+        const describedBy = button.getAttribute('aria-describedby')!;
+        expect(document.getElementById(describedBy)?.textContent).toBe('Read-only access');
+    });
+
     it('skips aria-describedby when the text is already the accessible name', () => {
         render(
             <Tip content="Sort" describedBy={false}>
