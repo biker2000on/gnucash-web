@@ -41,6 +41,7 @@ import { useCurrentUser, READONLY_TOOLTIP } from '@/hooks/useCurrentUser';
 import AccountPickerDialog from './AccountPickerDialog';
 import EditableSplitRows, { EditableSplitRowsHandle, hasNonCurrencySplit, isNonCurrencySplit } from '@/components/ledger/EditableSplitRows';
 import { Modal } from '@/components/ui/Modal';
+import { CheckboxChip } from '@/components/ui/CheckboxChip';
 import LotViewer from './ledger/LotViewer';
 import TransactionTypeIcon from './ledger/TransactionTypeIcon';
 import LotBadge from './ledger/LotBadge';
@@ -2262,29 +2263,19 @@ export default function AccountLedger({
                         >
                             {filterControls}
                             {hasChildren && (
-                                <button
-                                    onClick={() => setShowSubaccounts(prev => !prev)}
-                                    className={`flex items-center gap-2 px-3 py-2 min-h-[44px] text-sm rounded-lg border text-left transition-colors ${
-                                        showSubaccounts
-                                            ? 'bg-primary/10 border-primary/30 text-primary'
-                                            : 'border-border text-foreground-secondary'
-                                    }`}
+                                <CheckboxChip
+                                    checked={showSubaccounts}
+                                    onChange={setShowSubaccounts}
                                 >
-                                    <span>{showSubaccounts ? '☑' : '☐'}</span>
                                     Sub-Accounts
-                                </button>
+                                </CheckboxChip>
                             )}
-                            <button
-                                onClick={() => setShowUnreviewedOnly(prev => !prev)}
-                                className={`flex items-center gap-2 px-3 py-2 min-h-[44px] text-sm rounded-lg border text-left transition-colors ${
-                                    showUnreviewedOnly
-                                        ? 'bg-primary/10 border-primary/30 text-primary'
-                                        : 'border-border text-foreground-secondary'
-                                }`}
+                            <CheckboxChip
+                                checked={showUnreviewedOnly}
+                                onChange={setShowUnreviewedOnly}
                             >
-                                <span>{showUnreviewedOnly ? '☑' : '☐'}</span>
                                 Unreviewed Only
-                            </button>
+                            </CheckboxChip>
                             {isInvestmentAccount && (
                                 <div className="[&>select]:w-full">
                                     <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-2">
