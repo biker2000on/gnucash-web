@@ -11,6 +11,10 @@
  */
 
 import { createHmac, randomBytes } from 'node:crypto';
+import { lookup as dnsLookup, type LookupAddress } from 'node:dns';
+import http from 'node:http';
+import https from 'node:https';
+import type { LookupFunction } from 'node:net';
 import prisma from '@/lib/prisma';
 
 export interface WebhookRecord {
@@ -100,7 +104,9 @@ const PRIVATE_HOST_PATTERNS: RegExp[] = [
  * users often target LAN services intentionally).
  *
  * Note: this checks the URL's literal hostname only; it does not resolve DNS,
- * so a public name pointing at a private IP is not caught here.
+ * so a public name pointing at a private IP is not caught here. That check is
+ * enforced at send time instead - see {@link isPrivateAddress} and the pinned
+ * lookup in the delivery section below.
  */
 export function validateWebhookUrl(
     url: string,
@@ -310,21 +316,163 @@ export async function deleteWebhook(userId: number, id: number): Promise<boolean
 
 const DELIVERY_TIMEOUT_MS = 5000;
 
-async function postOnce(url: string, body: string, headers: Record<string, string>): Promise<string> {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), DELIVERY_TIMEOUT_MS);
-    try {
-        const res = await fetch(url, {
-            method: 'POST',
-            headers,
-            body,
-            signal: controller.signal,
-            redirect: 'error',
+/**
+ * Extra deny patterns that only matter once a hostname has been resolved to a
+ * literal address: PRIVATE_HOST_PATTERNS above is written for what a user types
+ * into the URL field, while these cover ranges a resolver can hand back.
+ */
+const PRIVATE_ADDRESS_PATTERNS: RegExp[] = [
+    /^0\./, // "this network" 0.0.0.0/8
+    /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./, // CGNAT 100.64.0.0/10
+    /^::$/, // unspecified
+];
+
+/**
+ * Is a resolved IP address one we refuse to deliver to?
+ *
+ * Reuses the create-time deny list (loopback, RFC1918, link-local/metadata,
+ * IPv6 ULA and link-local) so there is exactly one definition of "internal",
+ * and unwraps IPv4-mapped IPv6 (`::ffff:127.0.0.1`) first - otherwise the
+ * IPv4 patterns would never see it.
+ */
+export function isPrivateAddress(address: string): boolean {
+    const bare = address.replace(/^\[|\]$/g, '').replace(/%.*$/, '');
+    const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(bare);
+    const candidate = mapped ? mapped[1] : bare;
+    return (
+        PRIVATE_HOST_PATTERNS.some(p => p.test(candidate)) ||
+        PRIVATE_ADDRESS_PATTERNS.some(p => p.test(candidate))
+    );
+}
+
+/**
+ * Was this webhook deliberately pointed at an internal host?
+ *
+ * `allowInternal` is a create-time switch and is not persisted on the row, so
+ * it is re-derived from the stored URL: a webhook whose literal hostname is
+ * private could only have been saved with the box ticked. Anything else is a
+ * public-looking name and must resolve to a public address.
+ */
+function targetIsExplicitlyInternal(parsed: URL): boolean {
+    return PRIVATE_HOST_PATTERNS.some(p => p.test(parsed.hostname));
+}
+
+/**
+ * DNS pinning for outbound delivery (SSRF hardening).
+ *
+ * validateWebhookUrl() only inspects the literal hostname at create time, and
+ * the request itself re-resolves the name later - so `hook.attacker.test` can
+ * answer with a public address while the webhook is being saved and with
+ * 127.0.0.1 (or 169.254.169.254) when it is delivered. Re-validating just
+ * before the request does not close that: the resolution the socket performs is
+ * a *second*, unvalidated one.
+ *
+ * The fix is to make the socket use our resolution. Node's http/https request
+ * options take a `lookup` override, which is the address the connection is
+ * actually made to - there is no second resolution to race. This is why
+ * delivery no longer goes through `fetch`: WHATWG fetch has no equivalent hook
+ * (undici's `Agent({ connect: { lookup } })` would work, but undici is not a
+ * dependency here and `node:http` already ships the primitive). `http.request`
+ * also does not follow redirects, which preserves the old `redirect: 'error'`
+ * behaviour, and keeps SNI/certificate validation bound to the real hostname -
+ * something rewriting the URL to an IP literal would have broken.
+ */
+export function createPinnedLookup(allowInternal: boolean): LookupFunction {
+    return ((hostname: string, options: unknown, callback: (...args: never[]) => void) => {
+        const opts = (typeof options === 'object' && options !== null ? options : {}) as {
+            all?: boolean;
+            family?: number;
+        };
+        dnsLookup(hostname, { ...opts, all: true, verbatim: true }, (err, addresses) => {
+            const cb = callback as unknown as (
+                err: NodeJS.ErrnoException | null,
+                address?: string | LookupAddress[],
+                family?: number,
+            ) => void;
+            if (err) {
+                cb(err);
+                return;
+            }
+            const resolved = addresses as LookupAddress[];
+            if (!resolved.length) {
+                cb(Object.assign(new Error(`No address for ${hostname}`), { code: 'ENOTFOUND' }));
+                return;
+            }
+            if (!allowInternal) {
+                const blocked = resolved.find(entry => isPrivateAddress(entry.address));
+                if (blocked) {
+                    cb(
+                        Object.assign(
+                            new Error(
+                                `refusing to deliver: ${hostname} resolves to private address ${blocked.address}`,
+                            ),
+                            { code: 'EWEBHOOKPRIVATE' },
+                        ),
+                    );
+                    return;
+                }
+            }
+            if (opts.all) {
+                cb(null, resolved);
+            } else {
+                cb(null, resolved[0].address, resolved[0].family);
+            }
         });
-        return String(res.status);
-    } finally {
-        clearTimeout(timer);
-    }
+    }) as unknown as LookupFunction;
+}
+
+function postOnce(url: string, body: string, headers: Record<string, string>): Promise<string> {
+    return new Promise<string>((resolve, reject) => {
+        let parsed: URL;
+        try {
+            parsed = new URL(url);
+        } catch {
+            reject(new Error('invalid URL'));
+            return;
+        }
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+            reject(new Error('URL must use http or https'));
+            return;
+        }
+
+        const transport = parsed.protocol === 'https:' ? https : http;
+        let settled = false;
+        const finish = (fn: () => void) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(deadline);
+            fn();
+        };
+
+        const req = transport.request(
+            parsed,
+            {
+                method: 'POST',
+                headers: { ...headers, 'Content-Length': String(Buffer.byteLength(body)) },
+                lookup: createPinnedLookup(targetIsExplicitlyInternal(parsed)),
+            },
+            res => {
+                const status = res.statusCode ?? 0;
+                // Drain so the socket can be reused/closed cleanly.
+                res.resume();
+                if (status >= 300 && status < 400) {
+                    // Matches the old `redirect: 'error'`: a redirect is an
+                    // obvious SSRF pivot, so it is never followed.
+                    req.destroy();
+                    finish(() => reject(new Error('redirect not allowed')));
+                    return;
+                }
+                finish(() => resolve(String(status)));
+            },
+        );
+
+        const deadline = setTimeout(() => {
+            req.destroy(Object.assign(new Error('timeout'), { name: 'TimeoutError' }));
+        }, DELIVERY_TIMEOUT_MS);
+
+        req.on('error', err => finish(() => reject(err)));
+        req.end(body);
+    });
 }
 
 /**
@@ -357,7 +505,7 @@ export async function deliverToWebhook(
         try {
             status = await postOnce(webhook.url, body, headers);
         } catch (e) {
-            status = `error: ${e instanceof Error ? (e.name === 'AbortError' ? 'timeout' : e.message) : 'request failed'}`;
+            status = `error: ${e instanceof Error ? (e.name === 'AbortError' || e.name === 'TimeoutError' ? 'timeout' : e.message) : 'request failed'}`;
         }
     }
 

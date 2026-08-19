@@ -65,6 +65,13 @@ jobs:
       - name: Verify documentation coverage
         run: npm run docs:check
 
+      # Catches a gnucash_web_* table that exists only in raw DDL or only in
+      # the Prisma schema. Both halves are hand-maintained, and bootstrap.sql
+      # is generated from the Prisma side, so drift silently produces fresh
+      # installs that are missing tables.
+      - name: Verify Prisma/db-init schema parity
+        run: npm run schema:check
+
       - name: Run unit tests
         run: npm run test:run
 

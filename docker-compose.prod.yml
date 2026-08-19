@@ -5,6 +5,12 @@
 # Required: Create a .env file with:
 #   NEXTAUTH_SECRET=<generate with: openssl rand -base64 32>
 #   NEXTAUTH_URL=http://<host-ip>:3000
+#   POSTGRES_PASSWORD=<generate with: openssl rand -base64 32>
+#   MINIO_ROOT_USER=<pick a name, not "minioadmin">
+#   MINIO_ROOT_PASSWORD=<generate with: openssl rand -base64 32>
+#
+# Every one of those is enforced with ${VAR:?...}: compose refuses to start
+# rather than fall back to a credential that is published in this repository.
 #
 # Database is auto-configured from POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB.
 #
@@ -39,8 +45,8 @@ services:
       - RECEIPT_S3_ENDPOINT=${RECEIPT_S3_ENDPOINT:-http://minio:9000}
       - RECEIPT_S3_BUCKET=${RECEIPT_S3_BUCKET:-gnucash-receipts}
       - RECEIPT_S3_REGION=${RECEIPT_S3_REGION:-us-east-1}
-      - RECEIPT_S3_ACCESS_KEY=${RECEIPT_S3_ACCESS_KEY:-${MINIO_ROOT_USER:-minioadmin}}
-      - RECEIPT_S3_SECRET_KEY=${RECEIPT_S3_SECRET_KEY:-${MINIO_ROOT_PASSWORD:-minioadmin}}
+      - RECEIPT_S3_ACCESS_KEY=${RECEIPT_S3_ACCESS_KEY:-${MINIO_ROOT_USER}}
+      - RECEIPT_S3_SECRET_KEY=${RECEIPT_S3_SECRET_KEY:-${MINIO_ROOT_PASSWORD}}
       # Optional OIDC login (all empty = OIDC disabled)
       - OIDC_ISSUER=${OIDC_ISSUER:-}
       - OIDC_CLIENT_ID=${OIDC_CLIENT_ID:-}
@@ -54,6 +60,9 @@ services:
       createbuckets:
         condition: service_completed_successfully
     restart: unless-stopped
+    # The web process only serves HTTP; 30s is ample for in-flight requests
+    # to finish before Docker escalates SIGTERM to SIGKILL.
+    stop_grace_period: 30s
     logging:
       driver: json-file
       options:
@@ -95,8 +104,8 @@ services:
       - RECEIPT_S3_ENDPOINT=${RECEIPT_S3_ENDPOINT:-http://minio:9000}
       - RECEIPT_S3_BUCKET=${RECEIPT_S3_BUCKET:-gnucash-receipts}
       - RECEIPT_S3_REGION=${RECEIPT_S3_REGION:-us-east-1}
-      - RECEIPT_S3_ACCESS_KEY=${RECEIPT_S3_ACCESS_KEY:-${MINIO_ROOT_USER:-minioadmin}}
-      - RECEIPT_S3_SECRET_KEY=${RECEIPT_S3_SECRET_KEY:-${MINIO_ROOT_PASSWORD:-minioadmin}}
+      - RECEIPT_S3_ACCESS_KEY=${RECEIPT_S3_ACCESS_KEY:-${MINIO_ROOT_USER}}
+      - RECEIPT_S3_SECRET_KEY=${RECEIPT_S3_SECRET_KEY:-${MINIO_ROOT_PASSWORD}}
     depends_on:
       postgres:
         condition: service_healthy
@@ -105,6 +114,10 @@ services:
       createbuckets:
         condition: service_completed_successfully
     restart: unless-stopped
+    # The worker drains BullMQ jobs AND timer-driven work (SimpleFin syncs,
+    # backups, funding sweeps) on SIGTERM. Its internal drain budget is 4m
+    # (WORKER_SHUTDOWN_DRAIN_MS), so give the container 5m before SIGKILL.
+    stop_grace_period: 5m
     logging:
       driver: json-file
       options:
@@ -162,8 +175,13 @@ services:
       - "127.0.0.1:${MINIO_API_PORT:-9000}:9000"
       - "127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001"
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      # Required, exactly like POSTGRES_PASSWORD. These credentials own every
+      # receipt and statement in the bucket and, on the default deployment, are
+      # also the S3 access/secret pair the app and worker authenticate with.
+      # A `minioadmin` default meant a stack brought up straight from this file
+      # shipped with published credentials on a reachable console.
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?Set MINIO_ROOT_USER in .env}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env}
     volumes:
       - ${MINIO_DATA_DIR:-./minio-data}:/data
     command: server /data --console-address ":9001"
@@ -174,7 +192,7 @@ services:
         max-size: "10m"
         max-file: "3"
     healthcheck:
-      test: ["CMD-SHELL", "mc alias set local http://localhost:9000 ${MINIO_ROOT_USER:-minioadmin} ${MINIO_ROOT_PASSWORD:-minioadmin} >/dev/null 2>&1 && mc ls local >/dev/null 2>&1"]
+      test: ["CMD-SHELL", "mc alias set local http://localhost:9000 ${MINIO_ROOT_USER:?Set MINIO_ROOT_USER in .env} ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env} >/dev/null 2>&1 && mc ls local >/dev/null 2>&1"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -188,7 +206,7 @@ services:
     entrypoint: /bin/sh
     command: >
       -c "
-      mc alias set myminio http://minio:9000 ${MINIO_ROOT_USER:-minioadmin} ${MINIO_ROOT_PASSWORD:-minioadmin};
+      mc alias set myminio http://minio:9000 ${MINIO_ROOT_USER:?Set MINIO_ROOT_USER in .env} ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env};
       mc mb --ignore-existing myminio/${RECEIPT_S3_BUCKET:-gnucash-receipts};
       echo 'Bucket ready';
       "
