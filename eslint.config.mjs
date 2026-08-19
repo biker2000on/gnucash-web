@@ -18,6 +18,9 @@ const eslintConfig = defineConfig([
     ".worktrees/",
     ".claude/",
     ".polly/",
+    // Coverage output (test:coverage runs before lint in CI).
+    "coverage/",
+    "playwright-report/",
   ]),
   {
     rules: {
