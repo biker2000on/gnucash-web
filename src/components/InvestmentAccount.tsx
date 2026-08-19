@@ -683,7 +683,6 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
                         <InvestmentTransactionForm
                             accountGuid={data.account.guid}
                             accountName={data.account.name}
-                            accountCommodityGuid={commodity.guid}
                             commoditySymbol={commodity.mnemonic}
                             commodityFraction={commodity.fraction}
                             onSave={() => {

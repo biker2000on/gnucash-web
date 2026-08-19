@@ -37,7 +37,6 @@ vi.mock('@/contexts/UserPreferencesContext', () => ({
 const formProps = {
     accountGuid: 'investment-guid',
     accountName: 'Brokerage',
-    accountCommodityGuid: 'commodity-guid',
     commoditySymbol: 'ACME',
     onSave: vi.fn(),
     onCancel: vi.fn(),
@@ -129,5 +128,30 @@ describe('InvestmentTransactionForm account pickers', () => {
             String(today.getDate()).padStart(2, '0'),
             today.getFullYear(),
         ].join('/'));
+    });
+
+    // The form never read `accountCommodityGuid` — the prop and the write-only
+    // "Split Ratio (informational)" field were dead weight. The @ts-expect-error
+    // is the real assertion for the prop: it fails to compile if the prop comes back.
+    it('no longer accepts the unused accountCommodityGuid prop', () => {
+        render(
+            <InvestmentTransactionForm
+                {...formProps}
+                // @ts-expect-error accountCommodityGuid was removed — the form never read it
+                accountCommodityGuid="commodity-guid"
+            />,
+        );
+
+        expect(screen.getByText('Investment Transaction')).toBeInTheDocument();
+    });
+
+    it('does not render a write-only split-ratio field for a stock split', () => {
+        render(<InvestmentTransactionForm {...formProps} />);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Stock Split' }));
+
+        expect(screen.getByText('New Shares to Add')).toBeInTheDocument();
+        expect(screen.queryByText(/Split Ratio/i)).not.toBeInTheDocument();
+        expect(screen.queryByPlaceholderText('e.g., 2-for-1')).not.toBeInTheDocument();
     });
 });

@@ -3466,7 +3466,6 @@ export default function AccountLedger({
                         <InvestmentTransactionForm
                             accountGuid={accountGuid}
                             accountName={`${investmentSymbol} investment account`}
-                            accountCommodityGuid={accountCommodityGuid || ''}
                             commoditySymbol={investmentSymbol}
                             commodityFraction={commodityScu}
                             currentShares={investmentCurrentShares}
