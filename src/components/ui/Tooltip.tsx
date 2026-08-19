@@ -5,7 +5,6 @@ import {
     ReactElement,
     ReactNode,
     Ref,
-    RefObject,
     cloneElement,
     useCallback,
     useEffect,
@@ -26,10 +25,12 @@ const PANEL_CLASS =
 interface TooltipPanelController {
     /** Whether the panel is currently rendered. */
     open: boolean;
-    /** Attach to the element the panel is positioned against. */
-    anchorRef: RefObject<HTMLElement | null>;
-    /** Attach to the panel element itself. */
-    panelRef: RefObject<HTMLDivElement | null>;
+    /**
+     * Ref CALLBACK for the element the panel is positioned against. A callback
+     * rather than a ref object so nothing here is a ref the caller could read
+     * during render — `Tip` in particular has to merge it into a cloned child.
+     */
+    setAnchor: (element: HTMLElement | null) => void;
     /** Open immediately (keyboard focus). */
     show: () => void;
     /** Close immediately and unpin (blur, Escape). */
@@ -38,14 +39,18 @@ interface TooltipPanelController {
     scheduleShow: () => void;
     /** Close after `hideDelay` (pointer-out). No-op while pinned. */
     scheduleHide: () => void;
-    /** Cancel any pending open/close (pointer entering the panel itself). */
-    clearTimers: () => void;
     /**
      * Tap/click behaviour: pin open, or unpin and close when already pinned.
      * Touch has no pointer-out, so a tapped tooltip must survive until it is
      * dismissed explicitly (Escape, outside tap, blur).
      */
     togglePinned: () => void;
+    /**
+     * The visible panel, portalled to `document.body` and positioned by this
+     * hook. Returned as a render function rather than a component taking the
+     * panel ref as a prop, so the ref never leaves the hook.
+     */
+    renderPanel: (id: string, maxWidth: number, content: ReactNode) => ReactNode;
 }
 
 /**
@@ -173,40 +178,32 @@ function useTooltipPanel({
         };
     }, [open, hide]);
 
-    return { open, anchorRef, panelRef, show, hide, scheduleShow, scheduleHide, clearTimers, togglePinned };
-}
+    const setAnchor = useCallback((element: HTMLElement | null) => {
+        anchorRef.current = element;
+    }, []);
 
-/**
- * The visible panel, portalled to `document.body` and positioned by the hook.
- * Rendered by both `Tooltip` and `Tip` so the two can never style or wire the
- * panel differently.
- */
-function TooltipPanel({
-    id,
-    controller,
-    maxWidth,
-    children,
-}: {
-    id: string;
-    controller: TooltipPanelController;
-    maxWidth: number;
-    children: ReactNode;
-}) {
-    if (typeof document === 'undefined') return null;
-    return createPortal(
-        <div
-            ref={controller.panelRef}
-            id={id}
-            role="tooltip"
-            style={{ position: 'fixed', top: 0, left: 0, visibility: 'hidden', maxWidth }}
-            className={PANEL_CLASS}
-            onMouseEnter={controller.clearTimers}
-            onMouseLeave={controller.scheduleHide}
-        >
-            {children}
-        </div>,
-        document.body,
+    const renderPanel = useCallback(
+        (id: string, maxWidth: number, content: ReactNode): ReactNode => {
+            if (typeof document === 'undefined') return null;
+            return createPortal(
+                <div
+                    ref={panelRef}
+                    id={id}
+                    role="tooltip"
+                    style={{ position: 'fixed', top: 0, left: 0, visibility: 'hidden', maxWidth }}
+                    className={PANEL_CLASS}
+                    onMouseEnter={clearTimers}
+                    onMouseLeave={scheduleHide}
+                >
+                    {content}
+                </div>,
+                document.body,
+            );
+        },
+        [clearTimers, scheduleHide],
     );
+
+    return { open, setAnchor, show, hide, scheduleShow, scheduleHide, togglePinned, renderPanel };
 }
 
 export interface TooltipProps {
@@ -252,8 +249,8 @@ export function Tooltip({
 }: TooltipProps) {
     const id = useId();
     const tooltipId = `tooltip-${id}`;
-    const tip = useTooltipPanel({ showDelay, hideDelay });
-    const { open, hide } = tip;
+    const { open, setAnchor, show, hide, scheduleShow, scheduleHide, togglePinned, renderPanel } =
+        useTooltipPanel({ showDelay, hideDelay });
 
     const onTriggerKeyDown = (e: ReactKeyboardEvent<HTMLSpanElement>) => {
         if (e.key === 'Escape' && open) {
@@ -264,16 +261,16 @@ export function Tooltip({
 
     return (
         <span
-            ref={tip.anchorRef as RefObject<HTMLSpanElement | null>}
+            ref={setAnchor}
             tabIndex={nested ? undefined : 0}
             role={nested ? undefined : 'button'}
             aria-label={ariaLabel}
             aria-describedby={open ? tooltipId : undefined}
             className={`inline-flex cursor-help items-baseline outline-none focus-visible:rounded-sm focus-visible:ring-2 focus-visible:ring-primary/60 ${className}`}
-            onMouseEnter={tip.scheduleShow}
-            onMouseLeave={tip.scheduleHide}
-            onFocus={tip.show}
-            onBlur={tip.hide}
+            onMouseEnter={scheduleShow}
+            onMouseLeave={scheduleHide}
+            onFocus={show}
+            onBlur={hide}
             onKeyDown={onTriggerKeyDown}
             onClick={(e) => {
                 // Tap/click toggles and pins (touch has no hover-out to dismiss).
@@ -282,15 +279,11 @@ export function Tooltip({
                 // nothing else.
                 e.preventDefault();
                 e.stopPropagation();
-                tip.togglePinned();
+                togglePinned();
             }}
         >
             {children}
-            {open && (
-                <TooltipPanel id={tooltipId} controller={tip} maxWidth={maxWidth}>
-                    {content}
-                </TooltipPanel>
-            )}
+            {open && renderPanel(tooltipId, maxWidth, content)}
         </span>
     );
 }
@@ -373,8 +366,8 @@ export function Tip({
 }) {
     const id = useId();
     const tooltipId = `tip-${id}`;
-    const tip = useTooltipPanel({ showDelay, hideDelay });
-    const { open, anchorRef } = tip;
+    const { open, setAnchor, show, hide, scheduleShow, scheduleHide, togglePinned, renderPanel } =
+        useTooltipPanel({ showDelay, hideDelay });
 
     if (content === null || content === undefined || content === false || content === '') {
         return children;
@@ -401,20 +394,20 @@ export function Tip({
         return (
             <>
                 <span
-                    ref={anchorRef as RefObject<HTMLSpanElement | null>}
+                    ref={setAnchor}
                     className="inline-flex"
                     tabIndex={0}
                     aria-describedby={describedBy ? tooltipId : undefined}
-                    onMouseEnter={tip.scheduleShow}
-                    onMouseLeave={tip.scheduleHide}
-                    onFocus={tip.show}
-                    onBlur={tip.hide}
+                    onMouseEnter={scheduleShow}
+                    onMouseLeave={scheduleHide}
+                    onFocus={show}
+                    onBlur={hide}
                     onClick={(e) => {
                         // Nothing underneath to activate — the child is disabled —
                         // so a tap only pins the hint.
                         e.preventDefault();
                         e.stopPropagation();
-                        tip.togglePinned();
+                        togglePinned();
                     }}
                 >
                     {cloneElement(children, {
@@ -422,9 +415,7 @@ export function Tip({
                     } as Record<string, unknown>)}
                 </span>
                 {open ? (
-                    <TooltipPanel id={tooltipId} controller={tip} maxWidth={maxWidth}>
-                        {content}
-                    </TooltipPanel>
+                    renderPanel(tooltipId, maxWidth, content)
                 ) : (
                     describedBy &&
                     typeof document !== 'undefined' &&
@@ -441,7 +432,7 @@ export function Tip({
 
     const existingRef = childProps.ref ?? (children as { ref?: Ref<HTMLElement> }).ref;
     const setRef = (element: HTMLElement | null) => {
-        anchorRef.current = element;
+        setAnchor(element);
         assignRef(existingRef, element);
     };
 
@@ -456,19 +447,19 @@ export function Tip({
         // The child's own handler still runs — Tip is additive, never a
         // replacement for what the call site already wired up.
         onMouseEnter: (e: unknown) => {
-            tip.scheduleShow();
+            scheduleShow();
             callHandler(childProps.onMouseEnter, e);
         },
         onMouseLeave: (e: unknown) => {
-            tip.scheduleHide();
+            scheduleHide();
             callHandler(childProps.onMouseLeave, e);
         },
         onFocus: (e: unknown) => {
-            tip.show();
+            show();
             callHandler(childProps.onFocus, e);
         },
         onBlur: (e: unknown) => {
-            tip.hide();
+            hide();
             callHandler(childProps.onBlur, e);
         },
         // Tap pins the hint open, exactly as it does on a `Tooltip` trigger —
@@ -476,19 +467,15 @@ export function Tip({
         // is NOT cancelled: the child here is the app's own control and its
         // click is the action the user asked for.
         onClick: (e: unknown) => {
-            tip.togglePinned();
+            togglePinned();
             callHandler(childProps.onClick, e);
         },
     } as Record<string, unknown>);
 
     return (
         <>
-            {cloned}
-            {open && (
-                <TooltipPanel id={tooltipId} controller={tip} maxWidth={maxWidth}>
-                    {content}
-                </TooltipPanel>
-            )}
+                {cloned}
+            {open && renderPanel(tooltipId, maxWidth, content)}
         </>
     );
 }
