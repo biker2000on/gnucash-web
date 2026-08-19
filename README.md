@@ -104,13 +104,18 @@ npm run start
 
 ## 🧪 Testing
 
-The suite is split into two tiers by filename. They do not overlap, and CI runs
-both as separate steps so a failure names the tier that broke.
+The suite is split into tiers by filename. They do not overlap, and CI runs
+each as a separate step so a failure names the tier that broke.
 
 | Command | Runs | Needs a database |
 | --- | --- | --- |
 | `npm run test:run` | everything except `*.integration.test.ts` | no |
+| `npm run test:coverage` | the same unit tier, with v8 coverage + thresholds | no |
 | `npm run test:integration` | only `*.integration.test.ts` | yes |
+| `npm run test:e2e` | `tests/e2e/*.spec.ts` through a real browser | yes |
+
+The first three run on every push to `main` and every pull request
+(`.github/workflows/deploy.yml`). The end-to-end tier does not - see below.
 
 ### Unit tier
 
@@ -173,6 +178,53 @@ service container is new for every job.
 not skip.** A skipped tier reports green while asserting nothing, which reads
 as coverage that does not exist. In CI the `quality` job's `postgres` service
 supplies the variable.
+
+### Coverage
+
+`npm run test:coverage` is the same single run as `test:run` with v8
+instrumentation, and it is what CI executes. `vitest.config.ts` carries
+per-metric thresholds set a few points below the measured numbers: they are a
+**regression floor**, not a target. A build goes red when a body of tests is
+deleted or bypassed, not when one new file lands uncovered. Raise the floors
+when the real numbers move up; never lower them to make a build pass. CI
+archives `coverage/lcov.info` and `coverage/coverage-summary.json` as an
+artifact, including on a failed run.
+
+### End-to-end tier (Playwright)
+
+`tests/e2e/` drives a real Chromium against a built, running app: the install
+surface (manifest, icons, offline shell) and, optionally, a seeded ledger.
+
+```bash
+# 1. A throwaway database with the schema, exactly as for the integration tier.
+echo 'TEST_DATABASE_URL=postgresql://user:password@localhost:5432/gnucash_e2e' > .env.test.local
+npm run test:integration:schema
+
+# 2. Build once - the suite runs `npm run start`, not `next dev`.
+npm run build
+
+# 3. Run. playwright.config.ts starts the server on 127.0.0.1:3010 itself.
+npm run test:e2e
+npm run test:e2e:ui      # the Playwright UI runner, for debugging a failure
+```
+
+`npm run start` needs `DATABASE_URL` and a `SESSION_SECRET` of at least 32
+characters in your environment or `.env.local`.
+
+Two knobs:
+
+- `E2E_BASE_URL` - point the suite at an already-running app (staging, a
+  container) instead of letting Playwright start one.
+- `RUN_LEDGER_E2E=1` plus `E2E_USER` / `E2E_PASS` - include
+  `review-mode.spec.ts`, which needs a seeded private book. It is excluded by
+  default and skips itself when the credentials are absent. **Credentials come
+  from the environment only; never commit them.**
+
+This tier is not on the push/PR workflow: provisioning a database, building,
+downloading a browser and booting a server costs minutes of runner time for a
+suite that changes far less often than the code it covers. It has its own
+`.github/workflows/e2e.yml`, run on demand (**Actions -> End-to-end
+(Playwright) -> Run workflow**) and weekly on Mondays.
 
 ## 🐳 Docker
 

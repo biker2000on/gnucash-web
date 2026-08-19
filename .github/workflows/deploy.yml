@@ -3,6 +3,30 @@ name: Build and Push Docker Image
 on:
   push:
     branches: [main]
+  # Gate pull requests on the same `quality` job that gates main. Only that
+  # job runs here - `build-and-push` is guarded on `github.event_name` below,
+  # so a PR never publishes an image or moves the deploy pointer.
+  #
+  # paths-ignore is deliberately on this trigger ONLY. On `push` it would also
+  # skip `build-and-push`, and a prose-only change still has to be able to
+  # reach production; those pushes are instead skipped with `[skip ci]` in the
+  # commit message when the author wants that. Nothing under `docs/` or any
+  # *.md file is read by the quality job - `docs:check` validates the
+  # TypeScript feature registry, not the markdown - so ignoring them here
+  # costs no coverage and keeps TODOS.md-only PRs free.
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+
+# One in-flight run per pull request: a force-push should cancel the run it
+# supersedes rather than paying for both. Pushes to main are keyed by ref and
+# never cancelled - cancelling one mid-flight could leave the deploy pointer
+# advanced with no image behind it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   REGISTRY: ghcr.io
@@ -62,11 +86,43 @@ jobs:
       - name: Run typecheck
         run: npm run typecheck
 
+      # The Docker stage builds the app too, but only after `quality` has
+      # passed and only on main - so a PR that compiles under `tsc` and still
+      # fails `next build` (a bad "use client" boundary, a server-only import
+      # pulled into a Client Component, a route that will not statically
+      # analyse) was previously invisible until the deploy build. This is the
+      # cheap place to find it.
+      - name: Restore Next.js build cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: .next/cache
+          # Sources in the key, lockfile as the fallback: a source change gets
+          # a fresh entry but still restores the previous build's cache, which
+          # is what makes the incremental compile cheap.
+          key: nextjs-${{ runner.os }}-${{ hashFiles('package-lock.json') }}-${{ hashFiles('src/**', 'next.config.js', 'tsconfig.json') }}
+          restore-keys: |
+            nextjs-${{ runner.os }}-${{ hashFiles('package-lock.json') }}-
+            nextjs-${{ runner.os }}-
+
+      - name: Build the application
+        # Placeholders only. The build must not reach a database - the Docker
+        # builder proves that by running `npm run build` with no environment at
+        # all - so anything that starts connecting during the build fails here
+        # with a bad host rather than silently depending on CI having a DB.
+        env:
+          DATABASE_URL: postgresql://build:build@127.0.0.1:1/build_should_not_connect
+          SESSION_SECRET: ci-build-placeholder-secret-not-used-at-runtime
+          NEXT_TELEMETRY_DISABLED: '1'
+        run: npm run build
+
       - name: Verify documentation coverage
         run: npm run docs:check
 
-      - name: Run unit tests
-        run: npm run test:run
+      # Coverage instead of a bare `vitest run`: it is the same single suite
+      # execution, and it turns "someone deleted a test file" into a red build
+      # via the thresholds in vitest.config.ts.
+      - name: Run unit tests with coverage
+        run: npm run test:coverage
 
       # Split from the run above so a red build says which half broke. The
       # schema step comes first and separately for the same reason: "the
@@ -89,8 +145,24 @@ jobs:
       - name: Run lint
         run: npm run lint
 
+      # Uploaded even when an earlier step failed: on a red run the lcov is
+      # how you see whether the gap is new or pre-existing.
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: coverage-${{ github.sha }}
+          path: |
+            coverage/lcov.info
+            coverage/coverage-summary.json
+          if-no-files-found: warn
+          retention-days: 14
+
   build-and-push:
     needs: quality
+    # Pull requests stop at `quality`. Publishing an image, advancing the
+    # deploy pointer and probing production are all push-to-main actions.
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       # contents: write - the deploy pointer below is a branch push.
