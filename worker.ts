@@ -19,6 +19,24 @@ import {
   resolvePriceRefreshTargets,
 } from './src/lib/worker/refresh-schedule';
 import { listRefreshEnabledUserIdsFromStore } from './src/lib/worker/refresh-schedule-store';
+import { TimerRegistry } from './src/lib/worker/timer-registry';
+
+/**
+ * Every timer this process arms and every promise a timer callback produces is
+ * registered here so `shutdown()` can cancel the timers and then wait for the
+ * work already running. Before this existed, SIGTERM cleared only the per-book
+ * price-refresh timers and called process.exit(0) immediately, killing
+ * in-flight SimpleFin syncs, backups and sweeps at an arbitrary await point.
+ */
+const timers = new TimerRegistry();
+
+/**
+ * How long shutdown waits for timer-driven work to finish. Kept comfortably
+ * below the worker's `stop_grace_period: 5m` in docker-compose so the process
+ * exits on its own terms rather than being SIGKILLed mid-write.
+ */
+const SHUTDOWN_DRAIN_TIMEOUT_MS =
+  Number.parseInt(process.env.WORKER_SHUTDOWN_DRAIN_MS ?? '', 10) || 4 * 60 * 1000;
 
 // Last-resort observability: scheduled callbacks and third-party clients must
 // not fail silently. Individual operations still own their normal retry/error
@@ -147,8 +165,8 @@ async function runScheduledSimpleFinSync(connectionId: number, bookGuid: string,
 
 function clearSimpleFinTimers() {
   for (const entry of simplefinTimers.values()) {
-    if (entry.initial) clearTimeout(entry.initial);
-    if (entry.interval) clearInterval(entry.interval);
+    timers.clear(entry.initial);
+    timers.clear(entry.interval);
   }
   simplefinTimers.clear();
 }
@@ -193,11 +211,11 @@ async function rebuildSimpleFinSchedules() {
         const initialDelay = Math.max(60_000, Math.min(intervalMs, lastSync + intervalMs - Date.now()));
 
         const entry: SimpleFinTimerEntry = { initial: null, interval: null };
-        entry.initial = setTimeout(() => {
+        entry.initial = timers.setTimeout(() => {
           entry.initial = null;
-          void runScheduledSimpleFinSync(conn.id, conn.book_guid, conn.user_id);
-          entry.interval = setInterval(
-            () => void runScheduledSimpleFinSync(conn.id, conn.book_guid, conn.user_id),
+          timers.run(() => runScheduledSimpleFinSync(conn.id, conn.book_guid, conn.user_id));
+          entry.interval = timers.setInterval(
+            () => timers.run(() => runScheduledSimpleFinSync(conn.id, conn.book_guid, conn.user_id)),
             intervalMs,
           );
         }, initialDelay);
@@ -286,11 +304,15 @@ function setSchedule(bookGuid: string, requestedTime: string) {
     const nextRun = new Date(Date.now() + ms);
     console.log(`Next refresh for book ${bookGuid} at ${nextRun.toISOString()} (${refreshTime} UTC)`);
 
-    const timer = setTimeout(async () => {
-      await runRefreshForBook(bookGuid);
-      // Reschedule for the next day
-      scheduleNext();
+    const timer = timers.setTimeout(() => {
+      timers.run(async () => {
+        await runRefreshForBook(bookGuid);
+        // Reschedule for the next day. After shutdown the registry is latched
+        // closed, so this call arms nothing and the chain ends.
+        scheduleNext();
+      });
     }, ms);
+    if (!timer) return; // shutting down
 
     schedules.set(bookGuid, { bookGuid, refreshTime, timer });
   }
@@ -304,7 +326,7 @@ const genericTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 function setScheduleGeneric(name: string, timeUtc: string, callback: () => Promise<void>) {
   const existing = genericTimers.get(name);
-  if (existing) clearTimeout(existing);
+  if (existing) timers.clear(existing);
 
   function scheduleNext() {
     const ms = msUntilNextUtcTime(timeUtc);
@@ -317,16 +339,20 @@ function setScheduleGeneric(name: string, timeUtc: string, callback: () => Promi
     const nextRun = new Date(Date.now() + ms);
     console.log(`[schedule] ${name} next run at ${nextRun.toISOString()} (${timeUtc} UTC)`);
 
-    const timer = setTimeout(async () => {
-      try {
-        await callback();
-      } catch (err) {
-        console.error(`[schedule] ${name} callback failed:`, err);
-      } finally {
-        // A transient callback failure must never end the recurring chain.
-        scheduleNext();
-      }
+    const timer = timers.setTimeout(() => {
+      timers.run(async () => {
+        try {
+          await callback();
+        } catch (err) {
+          console.error(`[schedule] ${name} callback failed:`, err);
+        } finally {
+          // A transient callback failure must never end the recurring chain
+          // (unless we are shutting down, where the registry refuses to rearm).
+          scheduleNext();
+        }
+      });
     }, ms);
+    if (!timer) return; // shutting down
 
     genericTimers.set(name, timer);
   }
@@ -336,7 +362,7 @@ function setScheduleGeneric(name: string, timeUtc: string, callback: () => Promi
 function clearSchedule(bookGuid: string) {
   const existing = schedules.get(bookGuid);
   if (existing?.timer) {
-    clearTimeout(existing.timer);
+    timers.clear(existing.timer);
     schedules.delete(bookGuid);
     console.log(`Schedule cleared: book ${bookGuid}`);
   }
@@ -777,8 +803,8 @@ async function main() {
       console.error('Email ingest poll failed:', err);
     }
   };
-  setInterval(() => { void pollIngest(); }, 15 * 60 * 1000);
-  void pollIngest();
+  timers.setInterval(() => { timers.run(pollIngest); }, 15 * 60 * 1000);
+  timers.run(pollIngest);
 
   // Daily proactive-insights scan at 06:00 UTC
   setScheduleGeneric('daily-insights', '06:00', async () => {
@@ -831,8 +857,8 @@ async function main() {
       console.error('Funding-rules sweep failed:', err);
     }
   };
-  setInterval(() => { void runFundingSweep(); }, 30 * 60 * 1000);
-  void runFundingSweep();
+  timers.setInterval(() => { timers.run(runFundingSweep); }, 30 * 60 * 1000);
+  timers.run(runFundingSweep);
 
   // Daily renewal reminders at 06:45 UTC (deduped per user/renewal/cycle via
   // notification source ids, so re-runs are safe).
@@ -878,24 +904,55 @@ async function main() {
   });
   // Also run once at startup so missing coverage surfaces promptly
   // (deduped against unread notifications, so restarts don't spam).
-  void runLimitCoverage('startup');
+  timers.run(() => runLimitCoverage('startup'));
 
   workerReady = true;
   const healthServer = startHealthServer(healthPort);
 
   // Graceful shutdown
+  let shuttingDown = false;
   const shutdown = async () => {
+    // A second SIGTERM (or SIGINT after SIGTERM) must not restart the drain
+    // and must not race two process.exit() paths.
+    if (shuttingDown) return;
+    shuttingDown = true;
     console.log('Shutting down worker...');
+
+    // Stop serving health checks first so the orchestrator stops routing to us.
+    workerReady = false;
+    healthServer.close();
+
+    // Cancel every armed timer: per-book price refreshes, SimpleFin initial
+    // timeouts AND intervals, the generic daily chains, and the bare
+    // email-ingest/funding-sweep intervals. clearAllTimers() also latches the
+    // registry closed, so a callback that reschedules itself cannot rearm.
     for (const [bookGuid] of schedules) {
       clearSchedule(bookGuid);
     }
-    healthServer.close();
+    clearSimpleFinTimers();
+    for (const [name, handle] of genericTimers) {
+      timers.clear(handle);
+      genericTimers.delete(name);
+    }
+    timers.clearAllTimers();
+
+    // Let BullMQ finish/release its current jobs, then wait for the
+    // timer-driven work that BullMQ knows nothing about (scheduled SimpleFin
+    // syncs, backups, sweeps) before exiting.
     await worker.close();
+    const drain = await timers.drain(SHUTDOWN_DRAIN_TIMEOUT_MS);
+    if (drain.drained) {
+      console.log('All scheduled work drained; exiting.');
+    } else {
+      console.warn(
+        `Shutdown drain timed out after ${SHUTDOWN_DRAIN_TIMEOUT_MS}ms with ${drain.pending} task(s) still running; exiting anyway.`,
+      );
+    }
     process.exit(0);
   };
 
-  process.on('SIGTERM', shutdown);
-  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', () => { void shutdown(); });
+  process.on('SIGINT', () => { void shutdown(); });
 
   console.log('Worker started, waiting for jobs...');
 }

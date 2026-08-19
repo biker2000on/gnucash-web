@@ -54,6 +54,9 @@ services:
       createbuckets:
         condition: service_completed_successfully
     restart: unless-stopped
+    # The web process only serves HTTP; 30s is ample for in-flight requests
+    # to finish before Docker escalates SIGTERM to SIGKILL.
+    stop_grace_period: 30s
     logging:
       driver: json-file
       options:
@@ -105,6 +108,10 @@ services:
       createbuckets:
         condition: service_completed_successfully
     restart: unless-stopped
+    # The worker drains BullMQ jobs AND timer-driven work (SimpleFin syncs,
+    # backups, funding sweeps) on SIGTERM. Its internal drain budget is 4m
+    # (WORKER_SHUTDOWN_DRAIN_MS), so give the container 5m before SIGKILL.
+    stop_grace_period: 5m
     logging:
       driver: json-file
       options:
