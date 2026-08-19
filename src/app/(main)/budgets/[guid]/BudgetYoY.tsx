@@ -53,7 +53,7 @@ function TotalsRow({ label, totals, currency, type }: { label: string; totals: Y
 export function BudgetYoY({ yoy, currency, windowLabel }: BudgetYoYProps) {
     if (!yoy.hasPriorData) {
         return (
-            <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-6">
+            <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-6">
                 <h2 className="text-base font-semibold text-foreground mb-1">Year over Year</h2>
                 <p className="text-sm text-foreground-muted">
                     No activity found in the same period last year — nothing to compare yet.
@@ -65,7 +65,7 @@ export function BudgetYoY({ yoy, currency, windowLabel }: BudgetYoYProps) {
     const rows: YoYAccountDelta[] = yoy.accounts;
 
     return (
-        <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl overflow-hidden">
+        <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg overflow-hidden">
             <div className="px-4 py-3 border-b border-border flex items-baseline justify-between gap-3 flex-wrap">
                 <h2 className="text-base font-semibold text-foreground">Year over Year</h2>
                 {windowLabel && (

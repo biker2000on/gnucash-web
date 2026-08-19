@@ -12,8 +12,36 @@ import type { ReactNode } from 'react';
  * hand-rolled grids and label spans.
  */
 
+/**
+ * The single input recipe. Radius `md` (6px) is the only radius on DESIGN.md's
+ * scale for a control this size — do not hand-roll `rounded-lg`/`rounded-xl`
+ * inputs, and do not invent a second padding/typography pair. `<select>` and
+ * `<textarea>` extend this constant rather than restating it.
+ */
 export const INPUT =
   'w-full rounded-md border border-border bg-background px-3 py-2.5 text-sm text-foreground outline-none transition-colors hover:border-border-hover focus:border-primary';
+
+/** `<select>` recipe: the input recipe plus the pointer affordance. */
+export const SELECT = `${INPUT} cursor-pointer`;
+
+/** `<textarea>` recipe: the input recipe, no drag-resize (it breaks form grids). */
+export const TEXTAREA = `${INPUT} resize-none`;
+
+/**
+ * Invalid-control modifier. Uses `--error` (form validation), never
+ * `--negative` — `--negative` is reserved for money that is below zero.
+ * See the token contract at the top of `src/app/globals.css`.
+ */
+export const INPUT_INVALID = 'border-error ring-1 ring-error/30';
+
+/** Inline, per-field validation message under a control. */
+export const FIELD_ERROR = 'mt-1 text-xs text-error';
+
+/** Build a control's class list from the shared recipe. */
+export function inputClass(opts?: { base?: string; invalid?: boolean; extra?: string }): string {
+  const base = opts?.base ?? INPUT;
+  return [base, opts?.invalid ? INPUT_INVALID : '', opts?.extra ?? ''].filter(Boolean).join(' ');
+}
 
 /**
  * Field label. 12px is the floor of DESIGN.md's type scale — do not go below

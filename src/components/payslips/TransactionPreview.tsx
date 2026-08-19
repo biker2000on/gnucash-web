@@ -41,7 +41,7 @@ export function TransactionPreview({
   });
 
   return (
-    <div className="bg-surface/50 rounded-xl border border-border p-4">
+    <div className="bg-surface/50 rounded-lg border border-border p-4">
       {/* Header */}
       <div className="mb-4">
         <h3 className="text-xs font-semibold text-foreground-secondary uppercase tracking-wider mb-2">

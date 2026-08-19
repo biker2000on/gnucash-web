@@ -419,7 +419,7 @@ export default function StatementReconcilePage() {
 
       {/* Error state */}
       {batch.status === 'error' && (
-        <div className="bg-[color:var(--negative)]/10 border border-[color:var(--negative)]/30 rounded-xl p-5 space-y-3">
+        <div className="bg-[color:var(--negative)]/10 border border-[color:var(--negative)]/30 rounded-lg p-5 space-y-3">
           <div>
             <h2 className="text-sm font-semibold text-[color:var(--negative)]">Parsing failed</h2>
             <p className="text-sm text-foreground-secondary mt-1">
@@ -439,7 +439,7 @@ export default function StatementReconcilePage() {
 
       {/* Parsing state */}
       {parsing && (
-        <div className="bg-surface border border-border rounded-xl p-8 flex flex-col items-center justify-center gap-3">
+        <div className="bg-surface border border-border rounded-lg p-8 flex flex-col items-center justify-center gap-3">
           <span className="w-5 h-5 border-2 border-foreground-muted/30 border-t-foreground-muted rounded-full animate-spin" />
           <span className="text-sm text-foreground-secondary">Extracting transactions from this statement…</span>
         </div>
@@ -447,7 +447,7 @@ export default function StatementReconcilePage() {
 
       {/* Parsed but unassigned — reconcile needs an account */}
       {!parsing && batch.status !== 'error' && !batch.accountGuid && (
-        <div className="bg-surface border border-[color:var(--warning)]/40 rounded-xl p-5 space-y-4">
+        <div className="bg-surface border border-[color:var(--warning)]/40 rounded-lg p-5 space-y-4">
           <div>
             <h2 className="text-sm font-semibold text-foreground">Assign a reconcile account</h2>
             <p className="text-xs text-foreground-muted mt-1 max-w-2xl">
@@ -471,7 +471,7 @@ export default function StatementReconcilePage() {
         <>
           {/* Tie-out banner (sticky) */}
           <div
-            className={`sticky top-2 z-10 rounded-xl border p-4 backdrop-blur-sm ${
+            className={`sticky top-2 z-10 rounded-lg border p-4 backdrop-blur-sm ${
               tieDisplay.tone === 'positive'
                 ? 'border-[color:var(--positive)]/40 bg-[color:var(--positive)]/10'
                 : tieDisplay.tone === 'negative'
@@ -915,7 +915,7 @@ function Section({
   children: React.ReactNode;
 }) {
   return (
-    <section className="bg-surface border border-border rounded-xl overflow-hidden">
+    <section className="bg-surface border border-border rounded-lg overflow-hidden">
       <div className="flex items-start justify-between gap-3 px-4 py-3 border-b border-border">
         <div className="min-w-0">
           <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">

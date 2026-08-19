@@ -171,7 +171,7 @@ export default function LivingPlanPage() {
           <p className="mt-2 max-w-xl text-sm leading-6 text-foreground-secondary">
             Build a deterministic scenario, inspect its cash, tax, net-worth, and <Abbr term="FIRE" /> effects, then adopt it as the baseline this page will reconcile to actual books.
           </p>
-          {error && <p className="mt-4 text-sm text-negative">{error}</p>}
+          {error && <p className="mt-4 text-sm text-error">{error}</p>}
           <Link href="/tools/scenario" className="mt-5 inline-flex rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-background hover:bg-primary-hover">
             Open Scenario Sandbox
           </Link>
@@ -205,7 +205,7 @@ export default function LivingPlanPage() {
         </div>
       </header>
 
-      {error && <div className="rounded-lg border border-negative/40 bg-negative/10 p-3 text-sm text-negative">{error}</div>}
+      {error && <div className="rounded-lg border border-error/40 bg-error/10 p-3 text-sm text-error">{error}</div>}
       {message && <div className="rounded-lg border border-positive/40 bg-positive/10 p-3 text-sm text-positive">{message}</div>}
 
       <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">

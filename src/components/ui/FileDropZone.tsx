@@ -254,7 +254,7 @@ export function FileDropZone(props: FileDropZoneProps) {
                 item.status === 'success'
                   ? 'border-border text-positive'
                   : item.status === 'error'
-                    ? 'border-negative/40 text-negative'
+                    ? 'border-error/40 text-error'
                     : 'border-border text-foreground-secondary'
               }`}
             >

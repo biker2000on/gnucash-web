@@ -153,7 +153,7 @@ export default function PriceAlertsPage() {
             />
 
             {/* Add form */}
-            <div className="bg-surface border border-border rounded-xl p-4">
+            <div className="bg-surface border border-border rounded-lg p-4">
                 <h2 className="text-sm font-semibold text-foreground mb-3">New alert</h2>
                 <div className="flex flex-wrap items-end gap-3">
                     <label className="block space-y-1">
@@ -213,14 +213,14 @@ export default function PriceAlertsPage() {
 
             {/* Alerts table */}
             {alerts.length === 0 ? (
-                <div className="bg-surface border border-border rounded-xl p-8 text-center">
+                <div className="bg-surface border border-border rounded-lg p-8 text-center">
                     <p className="text-foreground-secondary text-lg mb-2">No price alerts yet</p>
                     <p className="text-foreground-muted text-sm">
                         Add an alert above to get a notification when a security crosses your threshold.
                     </p>
                 </div>
             ) : (
-                <div className="bg-surface border border-border rounded-xl overflow-x-auto">
+                <div className="bg-surface border border-border rounded-lg overflow-x-auto">
                     <table className="w-full text-sm">
                         <thead>
                             <tr className="text-left text-xs text-foreground-muted border-b border-border">

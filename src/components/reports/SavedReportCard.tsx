@@ -41,7 +41,7 @@ export default function SavedReportCard({ report, onToggleStar, onEdit, onDelete
         : `/reports/${report.baseReportType}`;
 
     return (
-        <div className="relative bg-background-secondary/30 backdrop-blur-xl border border-border rounded-xl p-5 hover:border-primary/50 transition-all group">
+        <div className="relative bg-background-secondary/30 backdrop-blur-xl border border-border rounded-lg p-5 hover:border-primary/50 transition-all group">
             {/* Star button */}
             <button
                 onClick={() => onToggleStar(report.id)}

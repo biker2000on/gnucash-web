@@ -98,7 +98,7 @@ export default function CustomerSummaryPage() {
             )}
 
             {!loading && error && (
-                <div className="border border-error/30 bg-surface/30 rounded-xl p-4">
+                <div className="border border-error/30 bg-surface/30 rounded-lg p-4">
                     <p className="text-sm text-error">{error}</p>
                 </div>
             )}
@@ -124,14 +124,14 @@ export default function CustomerSummaryPage() {
                     </StatGrid>
 
                     {report.rows.length === 0 ? (
-                        <div className="bg-background-secondary/30 border border-border rounded-xl p-8 text-center">
+                        <div className="bg-background-secondary/30 border border-border rounded-lg p-8 text-center">
                             <p className="text-sm text-foreground-secondary">
                                 No posted customer activity in this range. Post customer invoices and
                                 they will show up here.
                             </p>
                         </div>
                     ) : (
-                        <div className="bg-background-secondary/30 backdrop-blur-xl border border-border rounded-xl overflow-hidden">
+                        <div className="bg-background-secondary/30 backdrop-blur-xl border border-border rounded-lg overflow-hidden">
                             <div className="overflow-x-auto">
                                 <table className="w-full min-w-[640px] text-sm">
                                     <thead>

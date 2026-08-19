@@ -116,7 +116,7 @@ function DonationFlags(props: { donation: GivingPlan['donations'][number] | unde
   const flags: Array<{ label: string; className: string }> = [];
   if (props.donation.needsAcknowledgment) flags.push({ label: 'Needs acknowledgment letter', className: 'text-warning border-warning/40' });
   if (props.donation.needsForm8283) flags.push({ label: 'Form 8283 year', className: 'text-foreground-secondary border-border' });
-  if (props.donation.needsAppraisal) flags.push({ label: 'Qualified appraisal required', className: 'text-negative border-negative/40' });
+  if (props.donation.needsAppraisal) flags.push({ label: 'Qualified appraisal required', className: 'text-error border-error/40' });
   if (flags.length === 0) return null;
   return (
     <div className="flex flex-wrap gap-2">

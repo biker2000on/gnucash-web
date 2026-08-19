@@ -120,7 +120,7 @@ export default function SafeOperatorPage() {
         subtitle="Bounded financial work with typed commands, balanced previews, scoped approval, evidence, audit, and undo."
       />
 
-      <section className="rounded-xl border border-border bg-surface p-5">
+      <section className="rounded-lg border border-border bg-surface p-5">
         <label htmlFor="operator-request" className="text-xs font-semibold uppercase tracking-widest text-foreground-muted">
           What do you want to accomplish?
         </label>
@@ -163,7 +163,7 @@ export default function SafeOperatorPage() {
         <h2 className="text-sm font-semibold uppercase tracking-widest text-foreground-muted">Command catalog</h2>
         <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {INTENTS.map(intent => (
-            <article key={intent.id} className="rounded-xl border border-border bg-surface p-4">
+            <article key={intent.id} className="rounded-lg border border-border bg-surface p-4">
               <h3 className="font-semibold text-foreground">{intent.title}</h3>
               <p className="mt-1 text-sm text-foreground-secondary">{intent.description}</p>
               {intent.id === 'close' ? (
@@ -191,9 +191,9 @@ export default function SafeOperatorPage() {
           <button type="button" onClick={() => void load()} className="text-xs text-primary">Refresh</button>
         </div>
         <div className="mt-3 space-y-3">
-          {loading && <div className="h-32 animate-pulse rounded-xl border border-border bg-surface" />}
+          {loading && <div className="h-32 animate-pulse rounded-lg border border-border bg-surface" />}
           {!loading && commands.length === 0 && (
-            <div className="rounded-xl border border-dashed border-border p-8 text-center text-sm text-foreground-muted">
+            <div className="rounded-lg border border-dashed border-border p-8 text-center text-sm text-foreground-muted">
               No command previews yet.
             </div>
           )}

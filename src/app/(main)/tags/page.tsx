@@ -157,7 +157,7 @@ export default function TagsPage() {
                 </form>
             </header>
 
-            <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl overflow-hidden shadow-2xl">
+            <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg overflow-hidden shadow-2xl">
                 {loading ? (
                     <div className="p-12 flex items-center justify-center gap-3">
                         <div className="w-5 h-5 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />

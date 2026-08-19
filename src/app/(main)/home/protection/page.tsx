@@ -442,7 +442,7 @@ export default function ProtectionPage() {
               <div key={sublimit.id} className="space-y-3 rounded-md border border-border p-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="text-sm font-semibold text-foreground">{sublimit.category || 'New sub-limit'}</span>
-                  <button type="button" onClick={() => updatePolicy(policy.id, { sublimits: policy.sublimits.filter(item => item.id !== sublimit.id) })} className="text-xs text-foreground-muted transition-colors hover:text-negative">Remove sub-limit</button>
+                  <button type="button" onClick={() => updatePolicy(policy.id, { sublimits: policy.sublimits.filter(item => item.id !== sublimit.id) })} className="text-xs text-foreground-muted transition-colors hover:text-error">Remove sub-limit</button>
                 </div>
                 <FieldGrid cols={2}>
                   <Field label="Category"><input className={INPUT} value={sublimit.category} onChange={event => updatePolicy(policy.id, { sublimits: policy.sublimits.map(item => item.id === sublimit.id ? { ...item, category: event.target.value } : item) })} /></Field>
@@ -454,7 +454,7 @@ export default function ProtectionPage() {
         )}
         <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
           <button type="button" onClick={() => updatePolicy(policy.id, { sublimits: [...policy.sublimits, { id: uid(), category: 'Jewelry', limit: 0 }] })} className="text-xs text-primary">Add category sub-limit</button>
-          <button type="button" onClick={() => removePolicy(policy.id)} className="text-xs text-foreground-muted hover:text-negative">Remove policy</button>
+          <button type="button" onClick={() => removePolicy(policy.id)} className="text-xs text-foreground-muted hover:text-error">Remove policy</button>
         </div>
         <div className="mt-5 border-t border-border/60 pt-4">
           <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-foreground-secondary">Policy documents</p>
@@ -562,7 +562,7 @@ export default function ProtectionPage() {
           if (!capital) return;
           setCapital({ ...capital, profile: { assets: capital.profile.assets.filter(item => item.id !== asset.id) } });
           setDirty(current => ({ ...current, capital: true }));
-        }} className="text-xs text-foreground-muted hover:text-negative">Remove asset</button>
+        }} className="text-xs text-foreground-muted hover:text-error">Remove asset</button>
       </div>
     </div>
   );
@@ -650,7 +650,7 @@ export default function ProtectionPage() {
         if (!life) return;
         setLife({ ...life, profile: { people: life.profile.people.filter(item => item.id !== person.id) } });
         setDirty(current => ({ ...current, life: true }));
-      }} className="mt-4 text-xs text-foreground-muted hover:text-negative">Remove person</button>
+      }} className="mt-4 text-xs text-foreground-muted hover:text-error">Remove person</button>
     </div>
   );
 

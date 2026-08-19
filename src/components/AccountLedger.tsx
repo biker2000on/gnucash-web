@@ -2184,7 +2184,7 @@ export default function AccountLedger({
                 ref={searchInputRef}
                 type="text"
                 placeholder="Search or #tag... (press / to focus)"
-                className="w-full bg-input-bg border border-border rounded-xl px-4 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50 transition-all pl-10"
+                className="w-full bg-input-bg border border-border rounded-lg px-4 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50 transition-all pl-10"
                 value={searchText}
                 onChange={(e) => setSearchText(e.target.value)}
             />
@@ -2250,7 +2250,7 @@ export default function AccountLedger({
 
     return (
         <>
-        <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl overflow-clip shadow-2xl">
+        <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg overflow-clip shadow-2xl">
             {/* Top Bar: mobile = search + Filters + overflow menu; desktop = inline toolbar */}
             <div className="p-4 border-b border-border flex flex-col md:flex-row gap-3">
                 {isMobile ? (
@@ -2517,7 +2517,7 @@ export default function AccountLedger({
                                 disabled={!isUnreviewed}
                                 onCommit={() => toggleReviewed(tx.guid)}
                             >
-                                <div className={`bg-surface/30 backdrop-blur p-3 space-y-2 border-b border-border/30 sm:border sm:border-border sm:rounded-xl ${isUnreviewed ? 'border-l-2 border-l-warning' : ''}`} onClick={() => { setSelectedTxGuid(tx.guid); setIsViewModalOpen(true); }}>
+                                <div className={`bg-surface/30 backdrop-blur p-3 space-y-2 border-b border-border/30 sm:border sm:border-border sm:rounded-lg ${isUnreviewed ? 'border-l-2 border-l-warning' : ''}`} onClick={() => { setSelectedTxGuid(tx.guid); setIsViewModalOpen(true); }}>
                                     <div className="flex justify-between items-start">
                                         <div>
                                             <div className="text-xs text-foreground-muted">

@@ -206,7 +206,7 @@ export default function PersonalImportWizard({ config }: { config: PersonalImpor
 
             {/* Step 1: upload */}
             {!result && (
-                <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-6 space-y-6">
+                <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-6 space-y-6">
                     <div>
                         <h2 className="text-xl font-semibold text-foreground">Transactions CSV</h2>
                         <div className="text-sm text-foreground-secondary mt-2">{config.exportHint}</div>
@@ -228,7 +228,7 @@ export default function PersonalImportWizard({ config }: { config: PersonalImpor
                             setDragOver(false);
                         }}
                         onClick={() => inputRef.current?.click()}
-                        className={`relative border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all
+                        className={`relative border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-all
                             ${dragOver
                                 ? 'border-primary bg-primary/10'
                                 : 'border-border hover:border-foreground-secondary hover:bg-surface/50'
@@ -275,7 +275,7 @@ export default function PersonalImportWizard({ config }: { config: PersonalImpor
                         <button
                             onClick={() => void runPreview()}
                             disabled={previewing || !file}
-                            className="flex items-center gap-2 px-5 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-primary-foreground rounded-xl transition-colors"
+                            className="flex items-center gap-2 px-5 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-primary-foreground rounded-lg transition-colors"
                         >
                             {previewing ? (
                                 <>
@@ -297,7 +297,7 @@ export default function PersonalImportWizard({ config }: { config: PersonalImpor
                     </div>
 
                     {error && !preview && (
-                        <div className="bg-negative/10 border border-negative/30 rounded-lg p-4 text-sm text-negative">
+                        <div className="bg-error/10 border border-error/30 rounded-lg p-4 text-sm text-error">
                             {error}
                         </div>
                     )}
@@ -306,7 +306,7 @@ export default function PersonalImportWizard({ config }: { config: PersonalImpor
 
             {/* Step 2: mapping + preview */}
             {preview && !result && (
-                <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-6 space-y-6">
+                <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-6 space-y-6">
                     <h2 className="text-xl font-semibold text-foreground">Preview</h2>
 
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
@@ -537,7 +537,7 @@ export default function PersonalImportWizard({ config }: { config: PersonalImpor
                     )}
 
                     {error && (
-                        <div className="bg-negative/10 border border-negative/30 rounded-lg p-4 text-sm text-negative">
+                        <div className="bg-error/10 border border-error/30 rounded-lg p-4 text-sm text-error">
                             {error}
                         </div>
                     )}
@@ -546,7 +546,7 @@ export default function PersonalImportWizard({ config }: { config: PersonalImpor
                         <button
                             onClick={() => void handleImport()}
                             disabled={importing || preview.transactionCount === 0}
-                            className="flex items-center gap-2 px-5 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-primary-foreground rounded-xl transition-colors"
+                            className="flex items-center gap-2 px-5 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-primary-foreground rounded-lg transition-colors"
                         >
                             {importing ? (
                                 <>
@@ -578,7 +578,7 @@ export default function PersonalImportWizard({ config }: { config: PersonalImpor
 
             {/* Step 3: result */}
             {result && (
-                <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-6 space-y-4">
+                <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-6 space-y-4">
                     <div className="bg-primary/10 border border-primary/30 rounded-lg p-4">
                         <h3 className="text-primary font-semibold mb-2">Import Successful</h3>
                         <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-sm">

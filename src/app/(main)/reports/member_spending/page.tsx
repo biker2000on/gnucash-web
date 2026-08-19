@@ -41,7 +41,7 @@ function MemberSummaryCard({
 }) {
     const share = householdTotal > 0 ? Math.round((bucket.total / householdTotal) * 100) : 0;
     return (
-        <div className="bg-surface/30 border border-border rounded-xl p-4">
+        <div className="bg-surface/30 border border-border rounded-lg p-4">
             <div className="text-xs text-foreground-muted uppercase tracking-wider">{bucket.label}</div>
             <div className="mt-1 text-xl font-bold font-mono text-foreground">
                 {formatCurrency(bucket.total, currency)}

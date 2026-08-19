@@ -46,7 +46,28 @@
     --warning: #d97706;
     --warning-light: #fef3c7;
 
-    /* Financial colors */
+    /*
+     * Financial colors.
+     *
+     * `--positive` / `--negative` and `--success` / `--error` currently resolve
+     * to the same hexes, and that is deliberate, not an accident to be
+     * de-duplicated: they are four distinct ROLES that happen to share a value
+     * today, and either pair may be re-tuned independently (e.g. a
+     * colour-blind-safe money palette) without disturbing the other.
+     *
+     *   --positive / --negative  MONEY ONLY. The sign of an amount, a balance,
+     *                            a gain/loss, a variance. Never a form error,
+     *                            never a destructive-action affordance, never a
+     *                            failed-request banner. A -$40 balance is not
+     *                            an error.
+     *   --success / --error      SYSTEM STATE. Validation failures, request
+     *                            failures, destructive confirmations, required
+     *                            markers, "saved" confirmations.
+     *
+     * If a red thing on screen is not a number that is below zero, it is
+     * `--error` (see `INPUT_INVALID` / `FIELD_ERROR` in
+     * `src/components/ui/form.tsx`).
+     */
     --positive: #16a34a;
     --negative: #dc2626;
 

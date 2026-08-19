@@ -451,7 +451,7 @@ export function CreateScheduledPanel({
           {/* Error message */}
           <ErrorLiveRegion message={error} />
           {error && (
-            <p className="text-negative text-sm">{error}</p>
+            <p className="text-error text-sm">{error}</p>
           )}
 
           {command && (

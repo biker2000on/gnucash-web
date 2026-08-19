@@ -685,7 +685,7 @@ export default function Layout({ children }: { children: ReactNode }) {
             setMobileSidebarState({ open: false, pathname });
         };
 
-        const parentClasses = `relative flex items-center rounded-xl transition-all duration-200 group
+        const parentClasses = `relative flex items-center rounded-lg transition-all duration-200 group
                         ${isCollapsed ? 'justify-center px-0 py-2' : 'px-4 py-2'}
                         ${isActive
                             ? 'bg-sidebar-active-bg text-sidebar-text-active shadow-lg shadow-primary/10'
@@ -931,7 +931,7 @@ export default function Layout({ children }: { children: ReactNode }) {
                             setMobileSidebarState({ open: false, pathname });
                         };
 
-                        const mobileParentClasses = `flex items-center px-4 py-3 rounded-xl transition-all duration-200
+                        const mobileParentClasses = `flex items-center px-4 py-3 rounded-lg transition-all duration-200
                                         ${isActive
                                             ? 'bg-sidebar-active-bg text-sidebar-text-active shadow-lg shadow-primary/10'
                                             : 'text-sidebar-text hover:bg-sidebar-hover hover:text-foreground'

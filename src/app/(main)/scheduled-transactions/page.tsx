@@ -732,7 +732,7 @@ export default function ScheduledTransactionsPage() {
       </header>
 
       {/* Tab toggle */}
-      <div className="flex items-center gap-1 p-1 bg-surface/50 backdrop-blur-xl rounded-xl border border-border w-fit">
+      <div className="flex items-center gap-1 p-1 bg-surface/50 backdrop-blur-xl rounded-lg border border-border w-fit">
         <button
           onClick={() => setViewMode('all')}
           className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
@@ -814,7 +814,7 @@ export default function ScheduledTransactionsPage() {
       </div>
 
       {/* Content */}
-      <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl shadow-2xl overflow-hidden">
+      <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg shadow-2xl overflow-hidden">
         {loading ? (
           <div className="divide-y divide-border">
             <SkeletonRow />
@@ -825,7 +825,7 @@ export default function ScheduledTransactionsPage() {
           </div>
         ) : error ? (
           <div className="p-12 flex flex-col items-center justify-center gap-3">
-            <p className="text-negative">{error}</p>
+            <p className="text-error">{error}</p>
             <button
               onClick={fetchData}
               className="px-4 py-2 text-sm font-medium bg-surface-elevated hover:bg-surface-hover text-foreground rounded-lg transition-colors border border-border"

@@ -163,7 +163,7 @@ function AccountCard({
     : null;
 
   return (
-    <div className="border border-border rounded-xl overflow-hidden">
+    <div className="border border-border rounded-lg overflow-hidden">
       {/* Account header */}
       <button
         onClick={() => setExpanded(!expanded)}
@@ -280,7 +280,7 @@ export function ContributionByTypeTable({
   if (entries.length === 0) return null;
 
   return (
-    <div className="border border-border rounded-xl overflow-hidden">
+    <div className="border border-border rounded-lg overflow-hidden">
       <div className="px-4 py-2.5 bg-background-secondary/50 text-sm font-medium text-foreground">
         Contributions by account type
       </div>

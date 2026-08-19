@@ -651,7 +651,7 @@ export default function PaycheckModelerPage() {
             {saveStatus === 'saving' ? 'Saving…' : saveStatus === 'saved' ? 'Saved' : 'Save scenarios'}
           </button>
           {saveStatus === 'error' && (
-            <span className="text-xs text-negative">Save failed</span>
+            <span className="text-xs text-error">Save failed</span>
           )}
         </div>
       </header>

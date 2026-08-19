@@ -66,13 +66,13 @@ export function CollapsibleConfigSection({
     };
 
     return (
-        <div className={`bg-surface border border-border rounded-xl ${className}`}>
+        <div className={`bg-surface border border-border rounded-lg ${className}`}>
             <button
                 onClick={toggle}
                 disabled={!configured}
                 aria-expanded={open}
                 className={`w-full flex items-center justify-between gap-3 px-4 py-3 text-left ${
-                    configured ? 'cursor-pointer hover:bg-surface-hover transition-colors rounded-xl' : 'cursor-default'
+                    configured ? 'cursor-pointer hover:bg-surface-hover transition-colors rounded-lg' : 'cursor-default'
                 }`}
             >
                 <div className="min-w-0 flex items-baseline gap-3 flex-wrap">

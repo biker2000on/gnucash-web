@@ -172,7 +172,7 @@ export default function AskBooksPage() {
             </header>
 
             {configured === false && (
-                <div className="mb-4 rounded-xl border border-warning/40 bg-surface/30 p-4 text-sm text-foreground-secondary">
+                <div className="mb-4 rounded-lg border border-warning/40 bg-surface/30 p-4 text-sm text-foreground-secondary">
                     No AI provider is configured, so questions can&apos;t be answered yet.{' '}
                     Set up a provider under{' '}
                     <Link href="/settings" className="text-primary hover:text-primary-hover">
@@ -183,7 +183,7 @@ export default function AskBooksPage() {
             )}
 
             {/* Conversation */}
-            <div className="flex-1 overflow-y-auto rounded-xl border border-border bg-surface/30 p-4 space-y-6">
+            <div className="flex-1 overflow-y-auto rounded-lg border border-border bg-surface/30 p-4 space-y-6">
                 {exchanges.length === 0 ? (
                     <div className="h-full flex flex-col items-center justify-center gap-4 text-center py-8">
                         <p className="text-sm text-foreground-muted">

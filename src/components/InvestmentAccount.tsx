@@ -330,7 +330,7 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
 
     if (loading) {
         return (
-            <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-8 flex items-center justify-center">
+            <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-8 flex items-center justify-center">
                 <div className="flex items-center gap-3">
                     <div className="w-5 h-5 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
                     <span className="text-foreground-secondary">Loading investment data...</span>
@@ -341,8 +341,8 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
 
     if (error) {
         return (
-            <div className="bg-surface/30 backdrop-blur-xl border border-error/50 rounded-2xl p-8 text-center">
-                <div className="text-negative">{error}</div>
+            <div className="bg-surface/30 backdrop-blur-xl border border-error/50 rounded-lg p-8 text-center">
+                <div className="text-error">{error}</div>
             </div>
         );
     }
@@ -356,7 +356,7 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
     return (
         <div className="space-y-6">
             {/* Header */}
-            <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-6">
+            <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-6">
                 <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
                     <div>
                         <div className="flex items-center gap-3">
@@ -424,13 +424,13 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
             {/* Holdings Summary */}
             {holdings && (
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-4 overflow-hidden">
+                    <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-4 overflow-hidden">
                         <div className="text-xs text-foreground-muted uppercase tracking-wider">Shares</div>
                         <div className="text-lg sm:text-xl font-mono font-semibold text-foreground mt-1">
                             {holdings.shares.toLocaleString(undefined, { maximumFractionDigits: 4 })}
                         </div>
                     </div>
-                    <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-4 overflow-hidden">
+                    <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-4 overflow-hidden">
                         <div className="text-xs text-foreground-muted uppercase tracking-wider">Cost Basis</div>
                         <div className="text-lg sm:text-xl font-mono font-semibold text-foreground mt-1">
                             {formatCurrency(Math.abs(holdings.costBasis), 'USD')}
@@ -441,13 +441,13 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
                             />
                         </div>
                     </div>
-                    <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-4 overflow-hidden">
+                    <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-4 overflow-hidden">
                         <div className="text-xs text-foreground-muted uppercase tracking-wider">Market Value</div>
                         <div className="text-lg sm:text-xl font-mono font-semibold text-foreground mt-1">
                             {formatCurrency(holdings.marketValue, 'USD')}
                         </div>
                     </div>
-                    <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-4 overflow-hidden">
+                    <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-4 overflow-hidden">
                         {/* The heading names the slice: this is the gain on the shares
                             the basis covers, beside a whole-position share count and
                             market value. */}
@@ -475,7 +475,7 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
 
             {/* Price History Chart */}
             {data?.priceHistory && data.priceHistory.length > 0 && (
-                <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-4 sm:p-6 overflow-hidden">
+                <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-4 sm:p-6 overflow-hidden">
                     <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-4">
                         <h3 className="text-lg font-semibold text-foreground">Price History</h3>
                         <div className="flex flex-wrap items-center gap-2">

@@ -38,7 +38,7 @@ function MiniAgingBar({ title, buckets, total, href }: {
 }) {
     const positiveTotal = BUCKET_ORDER.reduce((s, b) => s + Math.max(0, buckets[b]), 0);
     return (
-        <div className="bg-background-secondary/30 border border-border rounded-xl p-4">
+        <div className="bg-background-secondary/30 border border-border rounded-lg p-4">
             <div className="flex items-baseline justify-between">
                 <h3 className="text-sm font-semibold text-foreground uppercase tracking-wider">{title}</h3>
                 <Link href={href} className="text-xs text-primary hover:text-primary-hover transition-colors">
@@ -148,7 +148,7 @@ export default function BusinessDashboardPage() {
             />
 
             {entityType === 'household' && (
-                <div className="border border-warning/30 bg-warning/5 rounded-xl px-4 py-3 text-sm text-foreground-secondary">
+                <div className="border border-warning/30 bg-warning/5 rounded-lg px-4 py-3 text-sm text-foreground-secondary">
                     This book&apos;s entity profile is set to <span className="font-medium text-foreground">household</span>.
                     Business reports work best on a sole-proprietorship or LLC book — the entity type can be
                     changed in Settings.
@@ -165,7 +165,7 @@ export default function BusinessDashboardPage() {
             )}
 
             {!loading && error && (
-                <div className="border border-error/30 bg-surface/30 rounded-xl p-4">
+                <div className="border border-error/30 bg-surface/30 rounded-lg p-4">
                     <p className="text-sm text-error">{error}</p>
                     <button
                         type="button"
@@ -229,7 +229,7 @@ export default function BusinessDashboardPage() {
 
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
                         {/* Top customers */}
-                        <div className="bg-background-secondary/30 backdrop-blur-xl border border-border rounded-xl overflow-hidden">
+                        <div className="bg-background-secondary/30 backdrop-blur-xl border border-border rounded-lg overflow-hidden">
                             <div className="p-4 border-b border-border">
                                 <h3 className="text-sm font-semibold text-foreground uppercase tracking-wider">
                                     Top Customers (YTD)
@@ -268,7 +268,7 @@ export default function BusinessDashboardPage() {
                         </div>
 
                         {/* Recent invoices */}
-                        <div className="bg-background-secondary/30 backdrop-blur-xl border border-border rounded-xl overflow-hidden">
+                        <div className="bg-background-secondary/30 backdrop-blur-xl border border-border rounded-lg overflow-hidden">
                             <div className="p-4 border-b border-border">
                                 <h3 className="text-sm font-semibold text-foreground uppercase tracking-wider">
                                     Recent Invoices &amp; Bills
@@ -330,7 +330,7 @@ export default function BusinessDashboardPage() {
                     </div>
 
                     {!hasBusinessData && (
-                        <div className="bg-background-secondary/30 border border-border rounded-xl p-8 text-center">
+                        <div className="bg-background-secondary/30 border border-border rounded-lg p-8 text-center">
                             <p className="text-sm text-foreground-secondary">
                                 No business activity yet. Once customers, vendors, and posted invoices exist
                                 in this book, revenue, aging, and payment metrics will appear here.

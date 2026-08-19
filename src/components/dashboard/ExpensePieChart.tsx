@@ -44,7 +44,7 @@ function formatCompactCurrency(value: number): string {
 
 function ChartSkeleton() {
     return (
-        <div className="bg-surface border border-border rounded-xl p-6 animate-pulse">
+        <div className="bg-surface border border-border rounded-lg p-6 animate-pulse">
             <div className="h-5 w-44 bg-background-secondary rounded mb-6" />
             <div className="h-[300px] bg-background-secondary rounded" />
         </div>
@@ -113,7 +113,7 @@ export default function ExpensePieChart({ data, loading }: ExpensePieChartProps)
 
     if (!data || data.length === 0) {
         return (
-            <div className={`bg-surface border border-border rounded-xl p-6 ${expanded ? 'h-full' : ''}`}>
+            <div className={`bg-surface border border-border rounded-lg p-6 ${expanded ? 'h-full' : ''}`}>
                 <h3 className="text-lg font-semibold text-foreground mb-4">Expenses by Category</h3>
                 <div className="h-[300px] flex items-center justify-center">
                     <p className="text-foreground-muted text-sm">No expense data available.</p>
@@ -126,7 +126,7 @@ export default function ExpensePieChart({ data, loading }: ExpensePieChartProps)
     const dataWithTotal = data.map(d => ({ ...d, total }));
 
     return (
-        <div className={`bg-surface border border-border rounded-xl p-6 ${expanded ? 'h-full' : ''}`}>
+        <div className={`bg-surface border border-border rounded-lg p-6 ${expanded ? 'h-full' : ''}`}>
             <h3 className="text-lg font-semibold text-foreground mb-4">Expenses by Category</h3>
             <ResponsiveContainer width="100%" height={expanded ? "100%" : 300}>
                 <PieChart>

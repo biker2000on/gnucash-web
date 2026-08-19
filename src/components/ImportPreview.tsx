@@ -37,7 +37,7 @@ export function ImportPreview({ counts, onConfirm, onCancel, importing }: Import
         {items.map((item) => (
           <div
             key={item.label}
-            className="bg-surface/50 border border-border rounded-xl p-4 text-center"
+            className="bg-surface/50 border border-border rounded-lg p-4 text-center"
           >
             <div className="text-2xl font-bold text-foreground">
               {item.count.toLocaleString()}
@@ -64,7 +64,7 @@ export function ImportPreview({ counts, onConfirm, onCancel, importing }: Import
         <button
           onClick={onConfirm}
           disabled={importing}
-          className="flex items-center gap-2 px-5 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-primary-foreground rounded-xl transition-colors"
+          className="flex items-center gap-2 px-5 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-primary-foreground rounded-lg transition-colors"
         >
           {importing ? (
             <>

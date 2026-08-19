@@ -51,7 +51,7 @@ function formatDate(dateStr: string): string {
 
 function ChartSkeleton() {
     return (
-        <div className="bg-surface border border-border rounded-xl p-6 animate-pulse">
+        <div className="bg-surface border border-border rounded-lg p-6 animate-pulse">
             <div className="h-5 w-40 bg-background-secondary rounded mb-6" />
             <div className="h-[350px] bg-background-secondary rounded" />
         </div>
@@ -107,7 +107,7 @@ export default function NetWorthChart({ data, loading }: NetWorthChartProps) {
 
     if (!data || data.length === 0) {
         return (
-            <div className={`bg-surface border border-border rounded-xl p-6 ${expanded ? 'h-full' : ''}`}>
+            <div className={`bg-surface border border-border rounded-lg p-6 ${expanded ? 'h-full' : ''}`}>
                 <h3 className="text-lg font-semibold text-foreground mb-4">Net Worth Over Time</h3>
                 <div className="h-[350px] flex items-center justify-center">
                     <p className="text-foreground-muted text-sm">No net worth data available for this period.</p>
@@ -117,7 +117,7 @@ export default function NetWorthChart({ data, loading }: NetWorthChartProps) {
     }
 
     return (
-        <div className={`bg-surface border border-border rounded-xl p-6 ${expanded ? 'h-full' : ''}`}>
+        <div className={`bg-surface border border-border rounded-lg p-6 ${expanded ? 'h-full' : ''}`}>
             <h3 className="text-lg font-semibold text-foreground mb-4">Net Worth Over Time</h3>
             <ResponsiveContainer width="100%" height={expanded ? "100%" : 350}>
                 <LineChart data={data} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>

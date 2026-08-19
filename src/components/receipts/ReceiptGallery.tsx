@@ -284,7 +284,7 @@ export function ReceiptGallery() {
             <button
               key={receipt.id}
               onClick={() => setSelectedReceipt(receipt)}
-              className="group relative bg-surface-hover rounded-xl overflow-hidden aspect-square hover:ring-2 hover:ring-primary transition-all"
+              className="group relative bg-surface-hover rounded-lg overflow-hidden aspect-square hover:ring-2 hover:ring-primary transition-all"
             >
               {receipt.thumbnail_key ? (
                 <img

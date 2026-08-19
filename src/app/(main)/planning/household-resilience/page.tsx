@@ -315,7 +315,7 @@ export default function HouseholdResiliencePage() {
                       <label className="flex items-center gap-2 text-sm text-foreground-secondary"><input type="checkbox" checked={plan.hsaEligible} onChange={event => updatePlan(plan.id, { hsaEligible: event.target.checked })} /> HSA eligible</label>
                       <div className="flex gap-3">
                         <label className="flex items-center gap-2 text-xs text-foreground-secondary"><input type="radio" name="current-plan" checked={healthcare.profile.currentPlanId === plan.id} onChange={() => updateProfile({ ...healthcare.profile, currentPlanId: plan.id })} /> Current plan</label>
-                        <button type="button" onClick={() => updateProfile({ ...healthcare.profile, plans: healthcare.profile.plans.filter(item => item.id !== plan.id) })} className="text-xs text-foreground-muted hover:text-negative">Remove</button>
+                        <button type="button" onClick={() => updateProfile({ ...healthcare.profile, plans: healthcare.profile.plans.filter(item => item.id !== plan.id) })} className="text-xs text-foreground-muted hover:text-error">Remove</button>
                       </div>
                     </div>
                   </div>

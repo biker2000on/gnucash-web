@@ -194,7 +194,7 @@ export default function ReimbursementsPage() {
           ['Voucher drafts', summary.approved],
           ['Workflow value', formatCurrency(summary.outstanding)],
         ].map(([label, value]) => (
-          <div key={String(label)} className="rounded-xl border border-border bg-surface p-4">
+          <div key={String(label)} className="rounded-lg border border-border bg-surface p-4">
             <p className="text-xs uppercase tracking-widest text-foreground-muted">{label}</p>
             <p className="mt-2 font-mono text-2xl font-semibold text-foreground">{value}</p>
           </div>
@@ -202,7 +202,7 @@ export default function ReimbursementsPage() {
       </div>
 
       {showForm && (
-        <form onSubmit={submit} className="space-y-4 rounded-xl border border-primary/30 bg-surface p-5">
+        <form onSubmit={submit} className="space-y-4 rounded-lg border border-primary/30 bg-surface p-5">
           <div className="flex items-start justify-between gap-3">
             <div>
               <h2 className="font-semibold text-foreground">Submit reimbursable expense</h2>
@@ -307,15 +307,15 @@ export default function ReimbursementsPage() {
       </div>
 
       <div className="space-y-3">
-        {loading && <div className="h-40 animate-pulse rounded-xl border border-border bg-surface" />}
+        {loading && <div className="h-40 animate-pulse rounded-lg border border-border bg-surface" />}
         {!loading && requests.length === 0 && (
-          <div className="rounded-xl border border-dashed border-border p-10 text-center text-sm text-foreground-muted">
+          <div className="rounded-lg border border-dashed border-border p-10 text-center text-sm text-foreground-muted">
             No reimbursement requests in this view.
           </div>
         )}
         {requests.map(item => (
           <div key={item.id} className="space-y-3">
-            <article className="rounded-xl border border-border bg-surface p-4">
+            <article className="rounded-lg border border-border bg-surface p-4">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <div className="flex items-center gap-2">
@@ -354,7 +354,7 @@ export default function ReimbursementsPage() {
               {rejectingId === item.id && (
                 <div className="mt-3 flex gap-2 border-t border-border pt-3">
                   <input value={rejectReason} onChange={event => setRejectReason(event.target.value)} placeholder="Reason returned to employee" className="min-w-0 flex-1 rounded-lg border border-border bg-input-bg px-3 py-2 text-sm text-foreground" />
-                  <button type="button" onClick={() => void previewDecision(item.id, 'reject')} disabled={!rejectReason.trim()} className="rounded-lg bg-negative px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-50">Preview rejection</button>
+                  <button type="button" onClick={() => void previewDecision(item.id, 'reject')} disabled={!rejectReason.trim()} className="rounded-lg bg-error px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-50">Preview rejection</button>
                 </div>
               )}
             </article>

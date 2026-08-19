@@ -195,7 +195,7 @@ export function BudgetProgress({ data }: BudgetProgressProps) {
 
     if (data.accounts.length === 0) {
         return (
-            <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-12 text-center">
+            <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-12 text-center">
                 <h3 className="text-lg font-medium text-foreground-secondary mb-2">No Budget Allocations</h3>
                 <p className="text-foreground-muted">
                     Add accounts and amounts in the Editor tab to start tracking progress.
@@ -251,7 +251,7 @@ export function BudgetProgress({ data }: BudgetProgressProps) {
             </StatGrid>
 
             {/* Progress table (same treatment as the budget editor table) */}
-            <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl overflow-hidden">
+            <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg overflow-hidden">
                 <div className="px-4 py-2 bg-surface-hover/50 border-b border-border">
                     <FilterBar
                         primary={

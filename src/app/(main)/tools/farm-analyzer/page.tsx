@@ -460,7 +460,7 @@ export default function FarmAnalyzerPage() {
           </button>
         )}
         {pinState === 'error' && (
-          <span className="text-sm text-negative">Save failed — check the selection.</span>
+          <span className="text-sm text-error">Save failed — check the selection.</span>
         )}
       </div>
     </section>

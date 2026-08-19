@@ -28,10 +28,10 @@ const SEVERITY_STYLES: Record<Severity, { text: string; border: string; dot: str
         badge: 'bg-warning/10 text-warning',
     },
     error: {
-        text: 'text-negative',
-        border: 'border-negative/30',
-        dot: 'bg-negative',
-        badge: 'bg-negative/10 text-negative',
+        text: 'text-error',
+        border: 'border-error/30',
+        dot: 'bg-error',
+        badge: 'bg-error/10 text-error',
     },
 };
 
@@ -76,7 +76,7 @@ export default function HealthCheckCard({ check }: { check: HealthCheck }) {
     const clean = check.count === 0;
 
     return (
-        <div className={`rounded-xl border bg-surface/30 backdrop-blur-xl ${styles.border}`}>
+        <div className={`rounded-lg border bg-surface/30 backdrop-blur-xl ${styles.border}`}>
             <button
                 type="button"
                 onClick={() => !clean && setExpanded((v) => !v)}

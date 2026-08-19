@@ -618,7 +618,7 @@ export function InvestmentTransactionForm({
             <ErrorLiveRegion message={errors.join('. ')} />
             {errors.length > 0 && (
                 <div className="bg-negative/10 border border-negative/30 rounded-lg p-4">
-                    <ul className="list-disc list-inside text-sm text-negative space-y-1">
+                    <ul className="list-disc list-inside text-sm text-error space-y-1">
                         {errors.map((error, i) => (
                             <li key={i}>{error}</li>
                         ))}

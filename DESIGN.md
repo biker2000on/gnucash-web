@@ -76,6 +76,20 @@ Restrained. One accent color + navy/slate neutrals. Color is rare and meaningful
 | `--positive` | `#16a34a` | Positive amounts |
 | `--negative` | `#dc2626` | Negative amounts |
 
+### Money vs. system state (`--negative` vs `--error`)
+`--positive`/`--negative` and `--success`/`--error` resolve to the same hexes today. They are still four
+distinct roles and must not be collapsed into two — either pair may be re-tuned independently later
+(e.g. a colour-blind-safe money palette) without dragging the other with it.
+
+| Role | Tokens | Use for | Never for |
+|------|--------|---------|-----------|
+| Money | `--positive` / `--negative` | The sign of an amount, balance, gain/loss, budget variance | Validation errors, failed requests, destructive buttons |
+| System state | `--success` / `--error` | Validation failures, request failures, destructive confirmations, required markers, save confirmations | Amounts |
+
+A −$40 balance is not an error. If a red thing on screen is not a number below zero, it is `--error`.
+The canonical recipes live in `src/components/ui/form.tsx` (`INPUT_INVALID`, `FIELD_ERROR`); the
+contract is restated next to the tokens in `src/app/globals.css`.
+
 ### Gradient Policy
 **No gradients. Ever.** All buttons, headings, backgrounds, and icons use solid colors. The emerald-to-cyan gradient pattern is explicitly banned. If visual hierarchy is needed, use borders, elevation (shadow), or background tint instead.
 
@@ -89,6 +103,13 @@ Restrained. One accent color + navy/slate neutrals. Color is rare and meaningful
 - **Grid:** 12 columns, collapsing to 4 on mobile
 - **Max content width:** 1400px
 - **Border radius:** sm: 4px, md: 6px, lg: 10px, full: 9999px (avatars only)
+  - The scale is closed. `rounded-xl` (12px), `rounded-2xl` (16px) and `rounded-3xl` (24px) are **not**
+    on it and are banned everywhere — including cards, panels and modals, which use `rounded-lg`.
+  - Tailwind mapping: `rounded-sm` → sm, `rounded-md` → md, `rounded-lg` → lg, `rounded-full` → full.
+  - Form controls (`input`/`select`/`textarea`) are radius **md**, via the shared `INPUT`/`SELECT`/
+    `TEXTAREA` recipes in `src/components/ui/form.tsx`. Do not hand-roll a fourth input recipe: a form
+    control's radius, padding, type size, border and focus ring all come from those constants
+    (compose extras through `inputClass({ extra })`).
 
 ## Motion
 - **Approach:** Minimal-functional (only transitions that aid comprehension)

@@ -81,7 +81,7 @@ export function QuickBookSwitcher({ isOpen, onClose }: QuickBookSwitcherProps) {
       <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
 
       {/* Switcher panel */}
-      <div className="relative w-full max-w-md bg-background-secondary border border-border rounded-xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+      <div className="relative w-full max-w-md bg-background-secondary border border-border rounded-lg shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
         {/* Header */}
         <div className="flex items-center gap-3 px-4 py-3 border-b border-border">
           <svg className="w-5 h-5 text-foreground-muted shrink-0" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">

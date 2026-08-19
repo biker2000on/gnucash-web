@@ -706,7 +706,7 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                     </Link>
                     <div className="h-8 w-48 bg-background-tertiary rounded animate-pulse" />
                 </div>
-                <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-12 flex items-center justify-center">
+                <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-12 flex items-center justify-center">
                     <div className="flex items-center gap-3">
                         <div className="w-5 h-5 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
                         <span className="text-foreground-secondary">Loading budget...</span>
@@ -730,8 +730,8 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                     </Link>
                     <h1 className="text-3xl font-bold text-foreground">Budget Not Found</h1>
                 </div>
-                <div className="bg-surface/30 backdrop-blur-xl border border-error/50 rounded-2xl p-12 text-center">
-                    <div className="text-negative">{error || 'Budget not found'}</div>
+                <div className="bg-surface/30 backdrop-blur-xl border border-error/50 rounded-lg p-12 text-center">
+                    <div className="text-error">{error || 'Budget not found'}</div>
                     <Link
                         href="/budgets"
                         className="inline-block mt-4 px-4 py-2 bg-background-tertiary hover:bg-border-hover text-foreground rounded-lg transition-colors"
@@ -855,7 +855,7 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                             </div>
                         </div>
                     ) : actualsError ? (
-                        <div className="bg-surface border border-error/50 rounded-lg p-8 text-center text-negative">
+                        <div className="bg-surface border border-error/50 rounded-lg p-8 text-center text-error">
                             {actualsError}
                         </div>
                     ) : actuals ? (
@@ -881,7 +881,7 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
             {view === 'editor' && (
             <div>
                 {flattenedNodes.length === 0 ? (
-                    <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-12 text-center">
+                    <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-12 text-center">
                         <svg className="w-16 h-16 mx-auto text-border-hover mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
                         </svg>

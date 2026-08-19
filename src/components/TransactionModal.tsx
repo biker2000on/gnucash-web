@@ -135,7 +135,7 @@ export function TransactionDetailContent({
         );
     }
     if (error) {
-        return <div className="p-8 text-center text-negative">{error}</div>;
+        return <div className="p-8 text-center text-error">{error}</div>;
     }
     if (!transaction) return null;
 

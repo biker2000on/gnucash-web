@@ -482,7 +482,7 @@ export default function StatementsPage() {
       </div>
 
       {/* Table / states */}
-      <div className="bg-surface border border-border rounded-xl overflow-hidden">
+      <div className="bg-surface border border-border rounded-lg overflow-hidden">
         {loading ? (
           <div className="flex items-center justify-center py-16 gap-3 text-sm text-foreground-muted">
             <span className="w-4 h-4 border-2 border-foreground-muted/30 border-t-foreground-muted rounded-full animate-spin" />

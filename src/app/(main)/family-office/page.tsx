@@ -156,7 +156,7 @@ export default function FamilyOfficePage() {
         </div>
       </header>
 
-      {error && <div className="rounded-lg border border-negative/40 bg-negative/10 p-3 text-sm text-negative">{error}</div>}
+      {error && <div className="rounded-lg border border-error/40 bg-error/10 p-3 text-sm text-error">{error}</div>}
 
       {data && (
         <>

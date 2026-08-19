@@ -74,7 +74,7 @@ export function PaymentConnectionCard() {
   };
 
   return (
-    <section className="rounded-xl border border-border bg-surface p-5">
+    <section className="rounded-lg border border-border bg-surface p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="text-lg font-semibold text-foreground">Invoice Payments</h2>

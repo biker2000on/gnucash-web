@@ -183,7 +183,7 @@ function PreviewNotice({
     body: string;
 }) {
     return (
-        <div className="m-auto max-w-md rounded-xl border border-border bg-background-secondary/30 p-8 text-center">
+        <div className="m-auto max-w-md rounded-lg border border-border bg-background-secondary/30 p-8 text-center">
             <p className="text-sm font-medium text-foreground">{heading}</p>
             <p className="mt-1 text-sm text-foreground-secondary">{body}</p>
             <a

@@ -345,7 +345,7 @@ export function ResultCard({ label, value, sublabel, color, progress }: ResultCa
   };
 
   return (
-    <div className={`${backgrounds[color]} backdrop-blur-xl border border-border rounded-xl p-5`}>
+    <div className={`${backgrounds[color]} backdrop-blur-xl border border-border rounded-lg p-5`}>
       <p className="text-xs font-medium text-foreground-muted uppercase tracking-wider">{label}</p>
       <p className={`text-2xl font-bold mt-1 font-mono ${accents[color]}`} style={{ fontFeatureSettings: "'tnum'" }}>
         {value}
@@ -376,7 +376,7 @@ interface SavedCardProps {
 
 export function SavedConfigCard({ config, onLoad, onDelete, isDeleting }: SavedCardProps) {
   return (
-    <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-4 flex items-center justify-between gap-4 hover:border-primary/30 transition-colors">
+    <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-4 flex items-center justify-between gap-4 hover:border-primary/30 transition-colors">
       <button
         type="button"
         onClick={() => onLoad(config)}

@@ -270,7 +270,7 @@ export default function TaxSchedulePage() {
       )}
 
       {error && (
-        <div className="bg-negative/10 border border-negative/20 rounded-lg p-4 text-negative text-sm">
+        <div className="bg-error/10 border border-error/20 rounded-lg p-4 text-error text-sm">
           {error}
         </div>
       )}

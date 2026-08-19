@@ -239,7 +239,7 @@ function TreasurerReportContent() {
             )}
 
             {/* Config Section */}
-            <div className="bg-background-secondary/30 backdrop-blur-xl border border-border rounded-xl overflow-hidden">
+            <div className="bg-background-secondary/30 backdrop-blur-xl border border-border rounded-lg overflow-hidden">
                 <div className="flex items-center">
                     <button
                         onClick={() => setConfigOpen(!configOpen)}

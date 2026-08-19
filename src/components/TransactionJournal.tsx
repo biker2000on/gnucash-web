@@ -625,7 +625,7 @@ export default function TransactionJournal({ initialTransactions, startDate, end
                 ref={filterInputRef}
                 type="text"
                 placeholder="Search or #tag... (press / to focus)"
-                className="w-full bg-input-bg border border-border rounded-xl px-4 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50 transition-all pl-10"
+                className="w-full bg-input-bg border border-border rounded-lg px-4 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50 transition-all pl-10"
                 value={filterText}
                 onChange={(e) => setFilterText(e.target.value)}
             />
@@ -646,7 +646,7 @@ export default function TransactionJournal({ initialTransactions, startDate, end
     );
 
     return (
-        <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl overflow-hidden shadow-2xl">
+        <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg overflow-hidden shadow-2xl">
             <div className="p-6 border-b border-border flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                 <div className="flex items-center gap-3">
                     <h2 className="text-xl font-semibold text-foreground flex items-center gap-2">

@@ -254,7 +254,7 @@ export default function ProfilePage() {
     if (loading) {
         return (
             <div className="max-w-2xl mx-auto">
-                <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-8 shadow-2xl">
+                <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-8 shadow-2xl">
                     <div className="flex items-center gap-3">
                         <div className="w-5 h-5 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
                         <span className="text-foreground-secondary">Loading profile...</span>
@@ -267,7 +267,7 @@ export default function ProfilePage() {
     if (!user) {
         return (
             <div className="max-w-2xl mx-auto">
-                <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-8 shadow-2xl text-center">
+                <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-8 shadow-2xl text-center">
                     <p className="text-foreground-secondary">Please sign in to view your profile.</p>
                 </div>
             </div>
@@ -289,7 +289,7 @@ export default function ProfilePage() {
             </header>
 
             {/* User Info Card */}
-            <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-6 shadow-2xl">
+            <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-6 shadow-2xl">
                 <div className="flex items-center gap-4">
                     <div className="w-16 h-16 rounded-full bg-primary flex items-center justify-center text-primary-foreground text-2xl font-bold">
                         {user.username.charAt(0).toUpperCase()}
@@ -305,7 +305,7 @@ export default function ProfilePage() {
             </div>
 
             {/* Account Security */}
-            <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-6 shadow-2xl">
+            <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-6 shadow-2xl">
                 <h3 className="text-lg font-semibold text-foreground mb-2">Account Security</h3>
                 <p className="text-sm text-foreground-muted mb-4">
                     Manage how you sign in to {product.brand}.
@@ -357,7 +357,7 @@ export default function ProfilePage() {
                                     onClick={handleUnlink}
                                     disabled={unlinking || !user.hasPassword}
                                     title={!user.hasPassword ? 'Set a password first so you are not locked out' : undefined}
-                                    className="px-3 py-1.5 text-xs bg-negative/10 border border-error/30 rounded-lg hover:bg-negative/20 transition-colors text-negative disabled:opacity-50 disabled:cursor-not-allowed"
+                                    className="px-3 py-1.5 text-xs bg-error/10 border border-error/30 rounded-lg hover:bg-error/20 transition-colors text-error disabled:opacity-50 disabled:cursor-not-allowed"
                                 >
                                     {unlinking ? 'Unlinking...' : 'Unlink'}
                                 </button>
@@ -408,7 +408,7 @@ export default function ProfilePage() {
             </div>
 
             {/* Birthday */}
-            <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-6 shadow-2xl">
+            <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-6 shadow-2xl">
                 <h3 className="text-lg font-semibold text-foreground mb-2">Birthday</h3>
                 <p className="text-sm text-foreground-muted mb-4">
                     Used to calculate your current age in the <Abbr term="FIRE" /> calculator.
@@ -454,7 +454,7 @@ export default function ProfilePage() {
             </div>
 
             {/* Theme Settings */}
-            <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-6 shadow-2xl">
+            <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-6 shadow-2xl">
                 <h3 className="text-lg font-semibold text-foreground mb-2">Theme</h3>
                 <p className="text-sm text-foreground-muted mb-6">
                     Choose your preferred color scheme. System mode automatically matches your device settings.
@@ -464,7 +464,7 @@ export default function ProfilePage() {
                     {THEME_OPTIONS.map((option) => (
                         <label
                             key={option.value}
-                            className={`block p-4 rounded-xl border cursor-pointer transition-all ${
+                            className={`block p-4 rounded-lg border cursor-pointer transition-all ${
                                 theme === option.value
                                     ? 'bg-primary/10 border-primary/50'
                                     : 'bg-surface/50 border-border hover:border-border-hover'
@@ -492,7 +492,7 @@ export default function ProfilePage() {
                 </div>
             </div>
 
-            <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-6 shadow-2xl">
+            <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-6 shadow-2xl">
                 <h3 className="text-lg font-semibold text-foreground mb-2">Install App</h3>
                 <p className="text-sm text-foreground-muted mb-6">
                     Install {product.brand} on your phone or computer for a faster app-like experience. Updates are applied automatically through the service worker.
@@ -505,7 +505,7 @@ export default function ProfilePage() {
                 )}
 
                 {isInstalled ? (
-                    <div className="rounded-xl border border-primary/30 bg-primary/10 px-4 py-3 text-sm text-primary">
+                    <div className="rounded-lg border border-primary/30 bg-primary/10 px-4 py-3 text-sm text-primary">
                         This app is already installed on this device.
                     </div>
                 ) : (
@@ -524,7 +524,7 @@ export default function ProfilePage() {
                             </button>
                         )}
 
-                        <div className="rounded-xl border border-border bg-background-tertiary/40 px-4 py-4 text-sm text-foreground-secondary space-y-2">
+                        <div className="rounded-lg border border-border bg-background-tertiary/40 px-4 py-4 text-sm text-foreground-secondary space-y-2">
                             {isIos ? (
                                 <>
                                     <p className="text-foreground font-medium">iPhone or iPad</p>
@@ -552,7 +552,7 @@ export default function ProfilePage() {
             </div>
 
             {/* Change Password */}
-            <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-6 shadow-2xl">
+            <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-6 shadow-2xl">
                 <h3 className="text-lg font-semibold text-foreground mb-2">
                     {user.hasPassword ? 'Change Password' : 'Set Password'}
                 </h3>

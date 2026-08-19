@@ -147,7 +147,7 @@ export function DebtPayoffChart({ snowball, avalanche, minimum }: DebtPayoffChar
   if (data.length === 0) return null;
 
   return (
-    <div className="bg-surface/30 border border-border rounded-xl p-4">
+    <div className="bg-surface/30 border border-border rounded-lg p-4">
       <h3 className="text-sm font-semibold text-foreground mb-1">Balance over time</h3>
       <p className="text-xs text-foreground-muted mb-3">
         Total remaining debt under each strategy vs minimum payments only

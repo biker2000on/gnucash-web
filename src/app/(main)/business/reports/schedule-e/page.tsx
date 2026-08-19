@@ -166,7 +166,7 @@ export default function ScheduleEPage() {
         return (
             <div
                 key={prop.id}
-                className="bg-background-secondary/30 backdrop-blur-xl border border-border rounded-xl overflow-hidden"
+                className="bg-background-secondary/30 backdrop-blur-xl border border-border rounded-lg overflow-hidden"
             >
                 <div className="px-4 py-3 border-b border-border flex items-baseline justify-between gap-3">
                     <h2 className="text-sm font-semibold text-foreground truncate">{prop.name}</h2>
@@ -326,7 +326,7 @@ export default function ScheduleEPage() {
             )}
 
             {!loading && error && (
-                <div className="border border-error/30 bg-surface/30 rounded-xl p-4">
+                <div className="border border-error/30 bg-surface/30 rounded-lg p-4">
                     <p className="text-sm text-error">{error}</p>
                 </div>
             )}
@@ -334,7 +334,7 @@ export default function ScheduleEPage() {
             {!loading && !error && report && (
                 <>
                     {propertyCount === 0 ? (
-                        <div className="bg-background-secondary/30 border border-border rounded-xl p-8 text-center">
+                        <div className="bg-background-secondary/30 border border-border rounded-lg p-8 text-center">
                             <p className="text-sm text-foreground-secondary">
                                 No rental properties defined yet. Create one below — give it a
                                 name and pick the income and expense account subtrees that belong
@@ -378,7 +378,7 @@ export default function ScheduleEPage() {
 
                             {/* Combined per-property summary */}
                             {report.properties.length > 1 && (
-                                <div className="bg-background-secondary/30 backdrop-blur-xl border border-border rounded-xl overflow-hidden">
+                                <div className="bg-background-secondary/30 backdrop-blur-xl border border-border rounded-lg overflow-hidden">
                                     <div className="px-4 py-3 border-b border-border">
                                         <h2 className="text-sm font-semibold text-foreground">
                                             All properties
@@ -446,7 +446,7 @@ export default function ScheduleEPage() {
                             )}
 
                             {report.unmappedCount > 0 && (
-                                <div className="border border-warning/30 bg-warning/5 rounded-xl px-4 py-3 text-sm text-foreground-secondary">
+                                <div className="border border-warning/30 bg-warning/5 rounded-lg px-4 py-3 text-sm text-foreground-secondary">
                                     <span className="font-medium text-foreground">
                                         {report.unmappedCount} expense account
                                         {report.unmappedCount === 1 ? '' : 's'}

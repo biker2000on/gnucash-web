@@ -200,7 +200,7 @@ export function ReconciliationPanel({
     return (
         <div
             ref={panelRef}
-            className="fixed z-50 w-[380px] max-w-[calc(100vw-2rem)] bg-surface border border-warning/30 rounded-xl p-4 space-y-3 shadow-2xl"
+            className="fixed z-50 w-[380px] max-w-[calc(100vw-2rem)] bg-surface border border-warning/30 rounded-lg p-4 space-y-3 shadow-2xl"
             style={position ? { left: position.x, top: position.y, bottom: 'auto', right: 'auto' } : { bottom: 16, right: 16 }}
         >
             <div
@@ -226,7 +226,7 @@ export function ReconciliationPanel({
             </div>
 
             {error && (
-                <div role="alert" className="bg-negative/10 border border-negative/30 rounded-lg px-3 py-1.5 text-xs text-negative">
+                <div role="alert" className="bg-error/10 border border-error/30 rounded-lg px-3 py-1.5 text-xs text-error">
                     {error}
                 </div>
             )}

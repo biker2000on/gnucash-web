@@ -187,7 +187,7 @@ export default function UsersPage() {
         return (
             <div className="max-w-3xl mx-auto">
                 <h1 className="text-2xl font-bold text-foreground mb-4">User Management</h1>
-                <div className="bg-surface rounded-xl border border-border p-6">
+                <div className="bg-surface rounded-lg border border-border p-6">
                     <p className="text-foreground-muted">You need admin access to manage users and invitations.</p>
                 </div>
             </div>
@@ -205,7 +205,7 @@ export default function UsersPage() {
             {users.length > 0 && (() => {
                 const adminCount = users.filter(u => u.role === 'admin').length;
                 return (
-                    <div className="bg-surface rounded-xl border border-border p-6">
+                    <div className="bg-surface rounded-lg border border-border p-6">
                         <h2 className="text-lg font-semibold text-foreground mb-4">Current Users</h2>
                         <div className="space-y-2">
                             {users.map((u) => {
@@ -252,7 +252,7 @@ export default function UsersPage() {
             })()}
 
             {/* Create Invitation */}
-            <div className="bg-surface rounded-xl border border-border p-6">
+            <div className="bg-surface rounded-lg border border-border p-6">
                 <h2 className="text-lg font-semibold text-foreground mb-4">Create Invitation</h2>
                 <div className="space-y-4">
                     <p className="text-sm text-foreground-muted">
@@ -317,7 +317,7 @@ export default function UsersPage() {
 
             {/* Active Invitations */}
             {activeInvitations.length > 0 && (
-                <div className="bg-surface rounded-xl border border-border p-6">
+                <div className="bg-surface rounded-lg border border-border p-6">
                     <h2 className="text-lg font-semibold text-foreground mb-4">Active Invitations</h2>
                     <div className="space-y-3">
                         {activeInvitations.map((inv) => (
@@ -349,7 +349,7 @@ export default function UsersPage() {
                                     </button>
                                     <button
                                         onClick={() => handleRevoke(inv.code)}
-                                        className="px-3 py-1.5 text-xs bg-negative/10 border border-error/30 rounded-lg hover:bg-negative/20 transition-colors text-negative"
+                                        className="px-3 py-1.5 text-xs bg-error/10 border border-error/30 rounded-lg hover:bg-error/20 transition-colors text-error"
                                     >
                                         Revoke
                                     </button>
@@ -362,7 +362,7 @@ export default function UsersPage() {
 
             {/* Past Invitations */}
             {pastInvitations.length > 0 && (
-                <div className="bg-surface rounded-xl border border-border p-6">
+                <div className="bg-surface rounded-lg border border-border p-6">
                     <h2 className="text-lg font-semibold text-foreground mb-4">Past Invitations</h2>
                     <div className="space-y-2">
                         {pastInvitations.map((inv) => (

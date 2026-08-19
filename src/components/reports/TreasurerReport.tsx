@@ -230,7 +230,7 @@ export function TreasurerReport({ data }: TreasurerReportProps) {
             {/* Balance Verification — rendered as a table so print CSS can
                 align the dollar amounts on the right (flex utilities don't
                 apply in the print window since Tailwind isn't loaded there). */}
-            <section className="bg-background-tertiary/50 rounded-xl p-4 border border-border">
+            <section className="bg-background-tertiary/50 rounded-lg p-4 border border-border">
                 <h3 className="text-sm font-semibold text-foreground-secondary uppercase tracking-wider mb-3">
                     Balance Verification
                 </h3>

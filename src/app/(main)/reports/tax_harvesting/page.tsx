@@ -79,7 +79,7 @@ export default function TaxHarvestingPage() {
         </div>
       </div>
 
-      <div className="bg-background-secondary/30 backdrop-blur-xl border border-border rounded-xl p-4">
+      <div className="bg-background-secondary/30 backdrop-blur-xl border border-border rounded-lg p-4">
         <h3 className="text-sm font-medium text-foreground-secondary mb-3">Tax Rates</h3>
         <div className="flex items-center gap-6">
           <label className="flex items-center gap-2">
@@ -119,7 +119,7 @@ export default function TaxHarvestingPage() {
       )}
 
       {error && (
-        <div className="bg-negative/10 border border-negative/20 rounded-xl p-4 text-negative">
+        <div className="bg-error/10 border border-error/20 rounded-lg p-4 text-error">
           {error}
         </div>
       )}
@@ -127,23 +127,23 @@ export default function TaxHarvestingPage() {
       {data && !loading && (
         <>
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            <div className="bg-background-secondary/30 border border-border rounded-xl p-4">
+            <div className="bg-background-secondary/30 border border-border rounded-lg p-4">
               <div className="text-[10px] text-foreground-muted uppercase tracking-wider mb-1">Harvestable Loss</div>
               <div className="text-lg font-bold font-mono text-negative">
                 {formatCurrency(data.summary.totalHarvestableLoss, 'USD')}
               </div>
             </div>
-            <div className="bg-background-secondary/30 border border-border rounded-xl p-4">
+            <div className="bg-background-secondary/30 border border-border rounded-lg p-4">
               <div className="text-[10px] text-foreground-muted uppercase tracking-wider mb-1">Projected Savings (<Abbr term="ST" hideIcon>ST</Abbr>)</div>
               <div className="text-lg font-bold font-mono text-positive">
                 {formatCurrency(Math.abs(data.summary.totalHarvestableLoss) * (shortTermRate / 100), 'USD')}
               </div>
             </div>
-            <div className="bg-background-secondary/30 border border-border rounded-xl p-4">
+            <div className="bg-background-secondary/30 border border-border rounded-lg p-4">
               <div className="text-[10px] text-foreground-muted uppercase tracking-wider mb-1">Candidates</div>
               <div className="text-lg font-bold text-foreground">{data.summary.candidateCount}</div>
             </div>
-            <div className="bg-background-secondary/30 border border-border rounded-xl p-4">
+            <div className="bg-background-secondary/30 border border-border rounded-lg p-4">
               <div className="text-[10px] text-foreground-muted uppercase tracking-wider mb-1">Wash Sales</div>
               <div className={`text-lg font-bold ${data.summary.washSaleCount > 0 ? 'text-warning' : 'text-foreground'}`}>
                 {data.summary.washSaleCount}
@@ -151,7 +151,7 @@ export default function TaxHarvestingPage() {
             </div>
           </div>
 
-          <div className="bg-background-secondary/30 backdrop-blur-xl border border-border rounded-xl overflow-hidden">
+          <div className="bg-background-secondary/30 backdrop-blur-xl border border-border rounded-lg overflow-hidden">
             <div className="p-4 border-b border-border">
               <h3 className="text-sm font-semibold text-foreground uppercase tracking-wider">
                 Harvest Candidates
@@ -224,7 +224,7 @@ export default function TaxHarvestingPage() {
           </div>
 
           {data.washSales.length > 0 && (
-            <div className="bg-warning/5 border border-warning/20 rounded-xl overflow-hidden">
+            <div className="bg-warning/5 border border-warning/20 rounded-lg overflow-hidden">
               <div className="p-4 border-b border-warning/20">
                 <h3 className="text-sm font-semibold text-warning uppercase tracking-wider">
                   Wash Sale Warnings

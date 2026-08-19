@@ -94,7 +94,7 @@ function ChangeIndicator({ value, suffix = '' }: { value: number; suffix?: strin
 
 function KPICardSkeleton() {
     return (
-        <div className="bg-surface border border-border rounded-xl p-4 sm:p-6 animate-pulse">
+        <div className="bg-surface border border-border rounded-lg p-4 sm:p-6 animate-pulse">
             <div className="flex items-center gap-3 sm:mb-4">
                 <div className="w-10 h-10 bg-background-secondary rounded-lg flex-shrink-0" />
                 <div className="sm:hidden flex-1">
@@ -143,7 +143,7 @@ function ExplainButton({
 
 function KPICard({ icon, label, value, change, sublabel, caveat, traceId, onExplain }: KPICardProps) {
     return (
-        <div className="bg-surface border border-border rounded-xl p-4 sm:p-6 transition-all hover:border-primary/30">
+        <div className="bg-surface border border-border rounded-lg p-4 sm:p-6 transition-all hover:border-primary/30">
             <div className="flex items-center gap-3 sm:mb-4">
                 <div className="w-10 h-10 rounded-lg bg-background-secondary flex items-center justify-center text-foreground-secondary flex-shrink-0">
                     {icon}
@@ -225,7 +225,7 @@ export default function KPIGrid({ data, loading }: KPIGridProps) {
     if (loading) {
         return (
             <>
-                <div className="sm:hidden bg-surface border border-border rounded-xl divide-y divide-border/40 animate-pulse">
+                <div className="sm:hidden bg-surface border border-border rounded-lg divide-y divide-border/40 animate-pulse">
                     {Array.from({ length: 5 }).map((_, i) => (
                         <div key={i} className="flex items-center gap-3 px-4 py-2.5">
                             <div className="w-8 h-8 bg-background-secondary rounded-lg shrink-0" />
@@ -246,12 +246,12 @@ export default function KPIGrid({ data, loading }: KPIGridProps) {
     if (!data) {
         return (
             <>
-                <div className="sm:hidden bg-surface border border-border rounded-xl p-6">
+                <div className="sm:hidden bg-surface border border-border rounded-lg p-6">
                     <p className="text-foreground-muted text-sm text-center">No data</p>
                 </div>
                 <div className="hidden sm:grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
                     {Array.from({ length: 5 }).map((_, i) => (
-                        <div key={i} className="bg-surface border border-border rounded-xl p-6">
+                        <div key={i} className="bg-surface border border-border rounded-lg p-6">
                             <p className="text-foreground-muted text-sm text-center">No data</p>
                         </div>
                     ))}
@@ -424,7 +424,7 @@ export default function KPIGrid({ data, loading }: KPIGridProps) {
             )}
 
             {/* Phone: one condensed card with a row per KPI */}
-            <div className="sm:hidden bg-surface border border-border rounded-xl divide-y divide-border/40">
+            <div className="sm:hidden bg-surface border border-border rounded-lg divide-y divide-border/40">
                 {cards.map(card => (
                     <div key={card.label} className="flex items-center gap-3 px-4 py-2.5">
                         <div className="w-8 h-8 rounded-lg bg-background-secondary flex items-center justify-center text-foreground-secondary shrink-0">

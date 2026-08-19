@@ -639,21 +639,21 @@ export default function CommodityPriceSettingsPage() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="bg-surface rounded-xl border border-border p-4">
+        <div className="bg-surface rounded-lg border border-border p-4">
           <div className="text-xs uppercase tracking-wider text-foreground-muted">Total Commodities</div>
           <div className="text-2xl font-semibold text-foreground mt-2">{visibleCommodities.length}</div>
         </div>
-        <div className="bg-surface rounded-xl border border-border p-4">
+        <div className="bg-surface rounded-lg border border-border p-4">
           <div className="text-xs uppercase tracking-wider text-foreground-muted">Quote Enabled</div>
           <div className="text-2xl font-semibold text-foreground mt-2">{quoteEnabledCount}</div>
         </div>
-        <div className="bg-surface rounded-xl border border-border p-4">
+        <div className="bg-surface rounded-lg border border-border p-4">
           <div className="text-xs uppercase tracking-wider text-foreground-muted">Unsaved Changes</div>
           <div className="text-2xl font-semibold text-foreground mt-2">{dirtyRows.length}</div>
         </div>
       </div>
 
-      <div className="bg-surface rounded-xl border border-border overflow-hidden">
+      <div className="bg-surface rounded-lg border border-border overflow-hidden">
         <div className="p-4 border-b border-border flex flex-col md:flex-row md:items-center md:justify-between gap-3">
           <div>
             <h2 className="text-lg font-semibold text-foreground">All Commodities</h2>

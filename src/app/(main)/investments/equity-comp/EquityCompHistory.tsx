@@ -45,7 +45,7 @@ export function EquityCompHistory({ version }: { version: number }) {
             </div>
 
             {error ? (
-                <div className="p-6 text-center text-sm text-negative">{error}</div>
+                <div className="p-6 text-center text-sm text-error">{error}</div>
             ) : items === null ? (
                 <div className="p-6 space-y-2">
                     {[1, 2, 3].map(i => (

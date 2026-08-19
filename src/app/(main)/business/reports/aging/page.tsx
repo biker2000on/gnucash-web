@@ -126,7 +126,7 @@ function AgingPageInner() {
             )}
 
             {!loading && error && (
-                <div className="border border-error/30 bg-surface/30 rounded-xl p-4">
+                <div className="border border-error/30 bg-surface/30 rounded-lg p-4">
                     <p className="text-sm text-error">{error}</p>
                 </div>
             )}
@@ -134,14 +134,14 @@ function AgingPageInner() {
             {!loading && !error && report && (
                 <>
                     {report.owners.length === 0 ? (
-                        <div className="bg-background-secondary/30 border border-border rounded-xl p-8 text-center">
+                        <div className="bg-background-secondary/30 border border-border rounded-lg p-8 text-center">
                             <p className="text-sm text-foreground-secondary">
                                 No open {side === 'ar' ? 'customer invoices' : 'vendor bills'} — everything
                                 is paid up (or nothing has been posted yet).
                             </p>
                         </div>
                     ) : (
-                        <div className="bg-background-secondary/30 backdrop-blur-xl border border-border rounded-xl overflow-hidden">
+                        <div className="bg-background-secondary/30 backdrop-blur-xl border border-border rounded-lg overflow-hidden">
                             {hasInferredDueDates && (
                                 <p id="inferred-due-date-note" className="border-b border-border px-4 py-2 text-xs text-foreground-secondary">
                                     † Due date inferred from the posting date because this transaction has no stored due date.
@@ -263,7 +263,7 @@ function AgingPageInner() {
                             </div>
                         </div>
                     )}
-                    <section className="border border-border rounded-xl overflow-hidden" aria-labelledby="aging-reconciliation-heading">
+                    <section className="border border-border rounded-lg overflow-hidden" aria-labelledby="aging-reconciliation-heading">
                         <div className="border-b border-border bg-background-secondary/30 px-4 py-3">
                             <h2 id="aging-reconciliation-heading" className="text-sm font-medium text-foreground">
                                 Control-account reconciliation

@@ -143,7 +143,7 @@ export function SplitRow({
                         placeholder="Select account..."
                     />
                     {error && (
-                        <p role="alert" className="mt-1 text-xs text-negative">
+                        <p role="alert" className="mt-1 text-xs text-error">
                             {error}
                         </p>
                     )}

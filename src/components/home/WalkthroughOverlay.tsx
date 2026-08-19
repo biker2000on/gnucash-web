@@ -496,7 +496,7 @@ export function WalkthroughOverlay({ rooms, onClose }: WalkthroughOverlayProps) 
 
                         {/* Items captured in this room so far */}
                         {roomAdded.length > 0 && (
-                            <div className="mt-6 border border-border rounded-xl bg-background-secondary/30 overflow-hidden">
+                            <div className="mt-6 border border-border rounded-lg bg-background-secondary/30 overflow-hidden">
                                 <div className="border-b border-border px-3 py-2 text-[10px] font-medium uppercase tracking-wider text-foreground-muted">
                                     Added in {room.name}
                                     <span className="ml-2 font-mono" style={TNUM}>{roomAdded.length}</span>
@@ -579,7 +579,7 @@ function RecapScreen({
             )}
 
             {perRoom.length > 0 && (
-                <div className="mt-6 border border-border rounded-xl bg-background-secondary/30 overflow-hidden">
+                <div className="mt-6 border border-border rounded-lg bg-background-secondary/30 overflow-hidden">
                     <ul>
                         {perRoom.map(({ room, count, value }) => (
                             <li

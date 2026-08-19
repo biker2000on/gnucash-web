@@ -103,7 +103,7 @@ function CellInput({
             aria-invalid={invalid || undefined}
             title={invalid ? "Unrecognized time — try '2.5', '2:30', '2h 30m', or '150m'" : undefined}
             className={`w-full bg-transparent border rounded-md px-1.5 py-1 text-center font-mono text-sm text-foreground placeholder-foreground-muted focus:outline-none focus:border-primary/50 transition-colors duration-150 ${
-                invalid ? 'border-negative/70' : 'border-transparent hover:border-border'
+                invalid ? 'border-error/70' : 'border-transparent hover:border-border'
             } ${disabled ? 'cursor-not-allowed opacity-60' : ''}`}
             style={TNUM}
         />

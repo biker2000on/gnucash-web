@@ -74,13 +74,13 @@ export function BulkDetailPanel({ rooms, onBack, onChanged }: BulkDetailPanelPro
 
             <ErrorLiveRegion message={error} />
             {error && (
-                <div className="border border-error/30 bg-surface/30 rounded-xl p-4">
+                <div className="border border-error/30 bg-surface/30 rounded-lg p-4">
                     <p className="text-sm text-error">{error}</p>
                 </div>
             )}
 
             {drafts !== null && drafts.length === 0 && !error && (
-                <div className="bg-background-secondary/30 border border-border rounded-xl p-8 text-center">
+                <div className="bg-background-secondary/30 border border-border rounded-lg p-8 text-center">
                     <p className="text-sm text-foreground-secondary">
                         Nothing left to detail — every captured item has a name. Nice work.
                     </p>
@@ -189,7 +189,7 @@ function DraftCard({
     };
 
     return (
-        <div className="bg-background-secondary/30 border border-border rounded-xl p-4">
+        <div className="bg-background-secondary/30 border border-border rounded-lg p-4">
             <div className="flex flex-col gap-4 sm:flex-row">
                 {/* Photo strip */}
                 <div className="flex shrink-0 flex-wrap gap-2 sm:w-40">

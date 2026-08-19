@@ -148,7 +148,7 @@ export function MortgageCharts({
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
       {/* Balance to zero over time */}
-      <div className="bg-surface/30 border border-border rounded-xl p-4">
+      <div className="bg-surface/30 border border-border rounded-lg p-4">
         <h4 className="text-sm font-semibold text-foreground mb-1">Balance over time</h4>
         <p className="text-xs text-foreground-muted mb-3">Remaining loan balance paid down to zero</p>
         <ResponsiveContainer width="100%" height={280}>
@@ -165,7 +165,7 @@ export function MortgageCharts({
       </div>
 
       {/* Principal vs interest composition */}
-      <div className="bg-surface/30 border border-border rounded-xl p-4">
+      <div className="bg-surface/30 border border-border rounded-lg p-4">
         <h4 className="text-sm font-semibold text-foreground mb-1">Principal vs interest</h4>
         <p className="text-xs text-foreground-muted mb-3">How each year&apos;s payments split — interest shrinks as principal grows</p>
         <ResponsiveContainer width="100%" height={280}>

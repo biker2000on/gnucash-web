@@ -767,7 +767,7 @@ function DashboardContent() {
                     <button
                         onClick={() => setEditing(e => !e)}
                         title={editing ? 'Done customizing' : 'Customize dashboard'}
-                        className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border text-sm transition-colors ${
+                        className={`flex items-center gap-1.5 px-3 py-2 rounded-lg border text-sm transition-colors ${
                             editing
                                 ? 'border-primary/50 bg-primary/10 text-primary'
                                 : 'border-border bg-surface/50 text-foreground-secondary hover:border-primary/50'
@@ -787,7 +787,7 @@ function DashboardContent() {
 
             {/* Edit mode toolbar */}
             {editing && (
-                <div className="flex flex-wrap items-center gap-3 bg-surface border border-border rounded-xl px-4 py-3">
+                <div className="flex flex-wrap items-center gap-3 bg-surface border border-border rounded-lg px-4 py-3">
                     <span className="text-sm text-foreground-secondary">
                         Drag widgets to rearrange. Use the buttons on each widget to resize or remove it.
                     </span>
@@ -815,7 +815,7 @@ function DashboardContent() {
                     <div
                         key={item.id}
                         className={`${WIDTH_CLASSES[item.width]} ${
-                            editing ? 'relative rounded-xl ring-1 ring-primary/30 cursor-grab active:cursor-grabbing' : ''
+                            editing ? 'relative rounded-lg ring-1 ring-primary/30 cursor-grab active:cursor-grabbing' : ''
                         }`}
                         draggable={editing}
                         onDragStart={editing ? () => handleDragStart(index) : undefined}
@@ -848,7 +848,7 @@ function DashboardContent() {
             </div>
 
             {layout.length === 0 && (
-                <div className="bg-surface border border-border rounded-xl p-10 text-center">
+                <div className="bg-surface border border-border rounded-lg p-10 text-center">
                     <p className="text-foreground-secondary text-sm">
                         All widgets are hidden. {editing ? 'Add widgets from the toolbar above.' : 'Click Customize to add widgets.'}
                     </p>
@@ -952,7 +952,7 @@ export default function DashboardPage() {
                     {/* Create New Book Card */}
                     <button
                         onClick={() => setNewBookOpen(true)}
-                        className="bg-surface border border-border rounded-xl p-6 text-left hover:border-primary/50 transition-colors group"
+                        className="bg-surface border border-border rounded-lg p-6 text-left hover:border-primary/50 transition-colors group"
                     >
                         <div className="flex items-center gap-3 mb-3">
                             <div className="flex items-center justify-center w-10 h-10 bg-primary/10 rounded-lg group-hover:bg-primary/20 transition-colors">
@@ -968,7 +968,7 @@ export default function DashboardPage() {
                     </button>
 
                     {/* Import Card */}
-                    <Link href="/import-export" className="bg-surface border border-border rounded-xl p-6 text-left hover:border-primary/50 transition-colors group">
+                    <Link href="/import-export" className="bg-surface border border-border rounded-lg p-6 text-left hover:border-primary/50 transition-colors group">
                         <div className="flex items-center gap-3 mb-3">
                             <div className="flex items-center justify-center w-10 h-10 bg-primary/10 rounded-lg group-hover:bg-primary/20 transition-colors">
                                 <svg className="w-5 h-5 text-primary" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">

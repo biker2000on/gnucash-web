@@ -243,15 +243,15 @@ export default function BudgetsPage() {
             />
 
             {loading ? (
-                <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-12 flex items-center justify-center">
+                <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-12 flex items-center justify-center">
                     <div className="flex items-center gap-3">
                         <div className="w-5 h-5 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
                         <span className="text-foreground-secondary">Loading budgets...</span>
                     </div>
                 </div>
             ) : error ? (
-                <div className="bg-surface/30 backdrop-blur-xl border border-error/50 rounded-2xl p-12 text-center">
-                    <div className="text-negative">{error}</div>
+                <div className="bg-surface/30 backdrop-blur-xl border border-error/50 rounded-lg p-12 text-center">
+                    <div className="text-error">{error}</div>
                 </div>
             ) : (
                 <BudgetList

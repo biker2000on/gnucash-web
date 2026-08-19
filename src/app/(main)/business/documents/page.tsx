@@ -736,7 +736,7 @@ export default function EntityDocumentsPage() {
             )}
 
             {!loading && error && (
-                <div className="border border-error/30 bg-surface/30 rounded-xl p-4">
+                <div className="border border-error/30 bg-surface/30 rounded-lg p-4">
                     <p className="text-sm text-error">{error}</p>
                 </div>
             )}
@@ -744,7 +744,7 @@ export default function EntityDocumentsPage() {
             {!loading && !error && data && (
                 <>
                     {expiring.length > 0 && (
-                        <div className="border border-warning/30 bg-warning/5 rounded-xl px-4 py-3 text-sm text-foreground-secondary">
+                        <div className="border border-warning/30 bg-warning/5 rounded-lg px-4 py-3 text-sm text-foreground-secondary">
                             <span className="font-medium text-foreground">
                                 {expiring.length} document{expiring.length === 1 ? '' : 's'}
                             </span>{' '}
@@ -755,7 +755,7 @@ export default function EntityDocumentsPage() {
                     )}
 
                     {/* Upload panel */}
-                    <div className="bg-background-secondary/30 border border-border rounded-xl p-4 space-y-4">
+                    <div className="bg-background-secondary/30 border border-border rounded-lg p-4 space-y-4">
                         <div
                             onDragOver={(e) => {
                                 e.preventDefault();
@@ -940,7 +940,7 @@ export default function EntityDocumentsPage() {
 
                     {/* Post-upload detailing pass */}
                     {detailing.length > 0 && (
-                        <div className="bg-background-secondary/30 border border-primary/30 rounded-xl p-4 space-y-3">
+                        <div className="bg-background-secondary/30 border border-primary/30 rounded-lg p-4 space-y-3">
                             <div className="flex flex-wrap items-center gap-3">
                                 <h3 className="text-sm font-medium text-foreground">
                                     Set details for the uploaded files
@@ -1099,7 +1099,7 @@ export default function EntityDocumentsPage() {
                     )}
 
                     {documents.length === 0 ? (
-                        <div className="bg-background-secondary/30 border border-border rounded-xl p-8 text-center space-y-2">
+                        <div className="bg-background-secondary/30 border border-border rounded-lg p-8 text-center space-y-2">
                             <p className="text-sm text-foreground-secondary">
                                 {context.starterIntro}
                             </p>
@@ -1117,7 +1117,7 @@ export default function EntityDocumentsPage() {
                         <div className="space-y-4">
                             {/* Tax records grouped by year */}
                             {taxGroups.length > 0 && (
-                                <div className="bg-background-secondary/30 border border-border rounded-xl overflow-hidden">
+                                <div className="bg-background-secondary/30 border border-border rounded-lg overflow-hidden">
                                     <div className="border-b border-border px-4 py-2.5 text-[10px] font-medium uppercase tracking-wider text-foreground-muted">
                                         Tax records
                                         <span className="ml-2 font-mono" style={TNUM}>
@@ -1157,7 +1157,7 @@ export default function EntityDocumentsPage() {
                                 return (
                                     <div
                                         key={group.key}
-                                        className="bg-background-secondary/30 border border-border rounded-xl overflow-hidden"
+                                        className="bg-background-secondary/30 border border-border rounded-lg overflow-hidden"
                                     >
                                         <div className="border-b border-border px-4 py-2.5 text-[10px] font-medium uppercase tracking-wider text-foreground-muted">
                                             {group.label}

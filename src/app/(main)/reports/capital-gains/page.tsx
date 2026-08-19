@@ -151,7 +151,7 @@ export default function CapitalGainsPage() {
       )}
 
       {error && (
-        <div className="bg-negative/10 border border-negative/20 rounded-lg p-4 text-negative">
+        <div className="bg-error/10 border border-error/20 rounded-lg p-4 text-error">
           {error}
         </div>
       )}

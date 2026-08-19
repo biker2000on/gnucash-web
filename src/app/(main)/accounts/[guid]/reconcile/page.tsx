@@ -488,7 +488,7 @@ function ReconcilePageContent() {
                 </div>
             ) : error ? (
                 <div className="border border-border rounded-lg bg-surface p-12 flex items-center justify-center">
-                    <div className="text-negative text-sm">{error}</div>
+                    <div className="text-error text-sm">{error}</div>
                 </div>
             ) : workspace ? (
                 <CandidateTable

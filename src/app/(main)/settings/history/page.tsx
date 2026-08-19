@@ -118,7 +118,7 @@ export default function HistoryPage() {
                 </select>
             </div>
 
-            <div className="border border-border rounded-xl overflow-hidden divide-y divide-border">
+            <div className="border border-border rounded-lg overflow-hidden divide-y divide-border">
                 {!loaded ? (
                     <div className="px-4 py-10 text-center text-sm text-foreground-muted">Loading…</div>
                 ) : entries.length === 0 ? (

@@ -126,7 +126,7 @@ function InboxCard({ receipt, onLinked, onDismissed }: InboxCardProps) {
   const extracted = receipt.extracted_data;
 
   return (
-    <div className="bg-background border border-border rounded-xl overflow-hidden">
+    <div className="bg-background border border-border rounded-lg overflow-hidden">
       <div className="flex gap-3 p-3">
         {/* Thumbnail */}
         <div className="w-16 h-16 shrink-0 rounded-lg overflow-hidden bg-surface-hover flex items-center justify-center">

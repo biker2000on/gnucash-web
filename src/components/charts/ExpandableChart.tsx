@@ -102,7 +102,7 @@ export default function ExpandableChart({
                                             }
                                         />
                                         {controls === 'period-group' && (
-                                            <div className="flex items-center rounded-xl border border-border bg-surface/50 p-0.5">
+                                            <div className="flex items-center rounded-lg border border-border bg-surface/50 p-0.5">
                                                 {GROUP_OPTIONS.map(opt => (
                                                     <button
                                                         key={opt.key}

@@ -1130,7 +1130,7 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
     }, [focusGuid, expanded, accounts]);
 
     return (
-        <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-3 sm:p-6 shadow-2xl">
+        <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-3 sm:p-6 shadow-2xl">
             <div className="flex flex-col gap-4 mb-6 sm:mb-8 pb-4 border-b border-border/50">
                 <div className="flex items-center justify-between gap-3">
                     <h2 className="text-lg sm:text-xl font-semibold text-foreground flex items-center gap-2 min-w-0">
@@ -1141,7 +1141,7 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                         onClick={handleNewAccount}
                         disabled={isReadonly}
                         title={isReadonly ? READONLY_TOOLTIP : undefined}
-                        className="shrink-0 flex items-center justify-center gap-2 px-3 sm:px-4 py-2 text-sm bg-primary hover:bg-primary-hover text-primary-foreground rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="shrink-0 flex items-center justify-center gap-2 px-3 sm:px-4 py-2 text-sm bg-primary hover:bg-primary-hover text-primary-foreground rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
@@ -1158,7 +1158,7 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                                 ref={filterInputRef}
                                 type="text"
                                 placeholder="Filter accounts... (press / to focus)"
-                                className="w-full bg-input-bg border border-border rounded-xl px-4 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50 transition-all"
+                                className="w-full bg-input-bg border border-border rounded-lg px-4 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50 transition-all"
                                 value={filterText}
                                 onChange={(event) => setFilterText(event.target.value)}
                             />
@@ -1238,7 +1238,7 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                     <div className="flex items-center gap-2">
                         <span className="text-xs text-foreground-muted uppercase tracking-widest font-bold">Sort By</span>
                         <select
-                            className="bg-input-bg border border-border rounded-xl px-3 py-2 min-h-[44px] text-sm text-foreground focus:outline-none focus:border-primary/50 transition-all cursor-pointer"
+                            className="bg-input-bg border border-border rounded-lg px-3 py-2 min-h-[44px] text-sm text-foreground focus:outline-none focus:border-primary/50 transition-all cursor-pointer"
                             value={sortKey}
                             onChange={(event) => setSortKey(event.target.value as SortKey)}
                         >
@@ -1253,12 +1253,12 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                         <button
                             type="button"
                             onClick={() => setIsColumnsMenuOpen((prev) => !prev)}
-                            className="list-none bg-input-bg border border-border rounded-xl px-3 py-2 min-h-[44px] text-sm text-foreground-secondary hover:bg-surface-hover transition-all cursor-pointer flex items-center"
+                            className="list-none bg-input-bg border border-border rounded-lg px-3 py-2 min-h-[44px] text-sm text-foreground-secondary hover:bg-surface-hover transition-all cursor-pointer flex items-center"
                         >
                             Columns
                         </button>
                         {isColumnsMenuOpen && (
-                        <div className="absolute right-0 z-20 mt-2 w-64 rounded-xl border border-border bg-surface shadow-2xl p-3 space-y-2">
+                        <div className="absolute right-0 z-20 mt-2 w-64 rounded-lg border border-border bg-surface shadow-2xl p-3 space-y-2">
                             {table.getAllLeafColumns().map((column) => {
                                 const isRequired = ALWAYS_VISIBLE_COLUMNS.includes(column.id as ColumnId);
                                 const label = String(column.columnDef.header);

@@ -1080,7 +1080,7 @@ export default function SettingsPage() {
           {BALANCE_REVERSAL_OPTIONS.map((option) => (
             <label
               key={option.value}
-              className={`block p-4 rounded-xl border cursor-pointer transition-all ${
+              className={`block p-4 rounded-lg border cursor-pointer transition-all ${
                 balanceReversal === option.value
                   ? 'bg-primary/10 border-primary/50'
                   : 'bg-surface border-border hover:border-border-hover'

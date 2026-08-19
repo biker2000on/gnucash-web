@@ -451,13 +451,13 @@ export default function DrawdownPlannerPage() {
 
             {/* Prefill status */}
             {prefillState === 'loading' && (
-                <section className="bg-surface/30 border border-border rounded-xl p-4 flex items-center gap-3">
+                <section className="bg-surface/30 border border-border rounded-lg p-4 flex items-center gap-3">
                     <div className="animate-spin h-4 w-4 border-2 border-primary border-t-transparent rounded-full" />
                     <span className="text-sm text-foreground-muted">Loading balances from your book…</span>
                 </section>
             )}
             {prefillState === 'error' && (
-                <section className="bg-surface/30 border border-warning/30 rounded-xl p-4">
+                <section className="bg-surface/30 border border-warning/30 rounded-lg p-4">
                     <span className="text-sm text-warning">
                         Couldn&apos;t load book data — enter starting balances manually below.
                     </span>
@@ -465,7 +465,7 @@ export default function DrawdownPlannerPage() {
             )}
 
             {/* Balances chart */}
-            <section className="bg-surface/30 border border-border rounded-xl p-4 sm:p-6">
+            <section className="bg-surface/30 border border-border rounded-lg p-4 sm:p-6">
                 <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
                     <div>
                         <h2 className="text-lg font-semibold text-foreground">Balances by Bucket</h2>
@@ -497,7 +497,7 @@ export default function DrawdownPlannerPage() {
             </section>
 
             {/* Conversions on/off comparison */}
-            <section className="bg-surface/30 border border-border rounded-xl p-4 sm:p-6">
+            <section className="bg-surface/30 border border-border rounded-lg p-4 sm:p-6">
                 <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
                     <div>
                         <h2 className="text-lg font-semibold text-foreground">Roth Conversions: On vs Off</h2>
@@ -575,7 +575,7 @@ export default function DrawdownPlannerPage() {
             </section>
 
             {/* Social Security claiming optimizer */}
-            <section className="bg-surface/30 border border-border rounded-xl p-4 sm:p-6">
+            <section className="bg-surface/30 border border-border rounded-lg p-4 sm:p-6">
                 <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
                     <div>
                         <h2 className="text-lg font-semibold text-foreground">Social Security Claiming Optimizer</h2>
@@ -1010,7 +1010,7 @@ export default function DrawdownPlannerPage() {
             </CollapsibleConfigSection>
 
             {/* Per-year table */}
-            <section className="bg-surface/30 border border-border rounded-xl p-4 sm:p-6">
+            <section className="bg-surface/30 border border-border rounded-lg p-4 sm:p-6">
                 <h2 className="text-lg font-semibold text-foreground mb-1">Year-by-Year Projection</h2>
                 <p className="text-xs text-foreground-muted mb-3">
                     Nominal dollars · {params.conversionsEnabled ? 'with' : 'without'} Roth conversions ·

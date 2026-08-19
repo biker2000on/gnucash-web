@@ -369,20 +369,20 @@ export default function RenewalsPage() {
             <PersonalToolNotice />
 
             {loading && (
-                <section className="bg-surface/30 border border-border rounded-xl p-6 animate-pulse">
+                <section className="bg-surface/30 border border-border rounded-lg p-6 animate-pulse">
                     <div className="h-4 bg-foreground-muted/20 rounded w-48 mb-3" />
                     <div className="h-4 bg-foreground-muted/20 rounded w-72" />
                 </section>
             )}
 
             {!loading && error && (
-                <section className="bg-surface/30 border border-error/30 rounded-xl p-6">
+                <section className="bg-surface/30 border border-error/30 rounded-lg p-6">
                     <p className="text-sm text-error">{error}</p>
                 </section>
             )}
 
             {!loading && !error && (
-                <section className="bg-surface/30 border border-border rounded-xl p-6">
+                <section className="bg-surface/30 border border-border rounded-lg p-6">
                     <div className="flex items-center justify-between mb-4">
                         <h2 className="text-sm font-semibold text-foreground">Upcoming</h2>
                         {dueSoonCount > 0 && (

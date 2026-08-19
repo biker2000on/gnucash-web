@@ -327,7 +327,7 @@ export default function ConnectionsPage() {
       <PaymentConnectionCard />
 
       {/* Bank Connections (SimpleFin) */}
-      <div className="bg-surface rounded-xl border border-border p-6">
+      <div className="bg-surface rounded-lg border border-border p-6">
         <h2 className="text-lg font-semibold text-foreground mb-2">Bank Connections</h2>
         <p className="text-sm text-foreground-muted mb-4">
           Connect your bank accounts via <a href="https://beta-bridge.simplefin.org" target="_blank" rel="noopener noreferrer" className="text-primary hover:text-primary-hover">SimpleFin Bridge</a> to automatically import transactions.

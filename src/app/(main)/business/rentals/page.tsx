@@ -235,7 +235,7 @@ export default function RentalsPage() {
               <div key={unit.id} className="rounded-md border border-border bg-background/50 p-4">
                 <div className="mb-3 flex items-center justify-between">
                   <h3 className="text-sm font-semibold text-foreground">{unit.name}</h3>
-                  <button type="button" onClick={() => updateProperty(property.id, { units: property.units.filter(item => item.id !== unit.id) })} className="text-xs text-foreground-muted hover:text-negative">Remove unit</button>
+                  <button type="button" onClick={() => updateProperty(property.id, { units: property.units.filter(item => item.id !== unit.id) })} className="text-xs text-foreground-muted hover:text-error">Remove unit</button>
                 </div>
                 <FieldGrid>
                   <Field label="Unit"><input className={INPUT} value={unit.name} onChange={event => updateUnit(property.id, unit.id, { name: event.target.value })} /></Field>

@@ -183,7 +183,7 @@ function BudgetReportContent() {
     return (
         <div className="space-y-6">
             {/* Budget Selection */}
-            <div className="bg-background-secondary/30 backdrop-blur-xl border border-border rounded-xl overflow-hidden">
+            <div className="bg-background-secondary/30 backdrop-blur-xl border border-border rounded-lg overflow-hidden">
                 <div className="flex items-center justify-between p-4 border-b border-border">
                     <span className="text-sm font-semibold text-foreground-secondary uppercase tracking-wider">
                         Budget

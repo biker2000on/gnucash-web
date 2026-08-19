@@ -225,7 +225,7 @@ export function BudgetList({ budgets, onEdit, onDelete, onScenario }: BudgetList
 
     if (budgets.length === 0) {
         return (
-            <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-12 text-center">
+            <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-12 text-center">
                 <svg className="w-16 h-16 mx-auto text-foreground-muted mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
                 </svg>
@@ -328,7 +328,7 @@ export function BudgetList({ budgets, onEdit, onDelete, onScenario }: BudgetList
 
     if (isMobile) {
         return (
-            <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl">
+            <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg">
                 {toolbar}
                 {visible.length === 0 ? emptyFiltered : (
                     <div className="divide-y divide-border">

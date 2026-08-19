@@ -208,8 +208,8 @@ export function TransactionFormModal({
         >
             <div className="px-6 py-4">
                 {error && (
-                    <div className="mb-4 bg-negative/10 border border-negative/30 rounded-lg p-4">
-                        <p className="text-sm text-negative">{error}</p>
+                    <div className="mb-4 bg-error/10 border border-error/30 rounded-lg p-4">
+                        <p className="text-sm text-error">{error}</p>
                     </div>
                 )}
 
