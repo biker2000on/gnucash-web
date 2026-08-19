@@ -56,6 +56,7 @@ describe('Action Center reimbursement source book scope', () => {
         // The book is bound as a parameter; no employee guid array is shipped.
         expect(queryCalls[0]).toContain(BOOK_A);
         expect(queryCalls[0].some(v => Array.isArray(v))).toBe(false);
+        expect(JSON.stringify(queryCalls[0])).not.toContain(EMP_A);
         expect(JSON.stringify(queryCalls[0])).not.toContain(EMP_B);
     });
 

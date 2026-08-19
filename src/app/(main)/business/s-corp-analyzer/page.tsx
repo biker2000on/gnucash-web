@@ -76,6 +76,11 @@ function kLabel(n: number): string {
   return `$${Math.round(n / 1000)}k`;
 }
 
+// Module scope so the useMemo below can read it without listing every
+// field as a dependency (an object literal in the component body is a new
+// identity on every render, which the exhaustive-deps rule flags).
+const PAD = { left: 56, right: 16, top: 12, bottom: 28 };
+
 /**
  * Lightweight inline SVG line chart of S-corp savings vs annual profit.
  * Zero line, savings polyline, vertical marker at the current annualized
@@ -90,8 +95,6 @@ function BreakevenChart({
 }) {
   const W = 660;
   const H = 240;
-  const PAD = { left: 56, right: 16, top: 12, bottom: 28 };
-
   const chart = useMemo(() => {
     if (curve.length < 2) return null;
     const xs = curve.map(p => p.profit);

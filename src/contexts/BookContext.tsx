@@ -85,6 +85,10 @@ export function BookProvider({ children }: { children: ReactNode }) {
             // since the account GUID belongs to the old book
             const path = window.location.pathname;
             if (/^\/accounts\/[^/]+/.test(path)) {
+                // Deliberate full document load, not a client navigation: the
+                // book cookie just changed, so every cached client query,
+                // context, and RSC payload for the old book has to be dropped.
+                // eslint-disable-next-line @next/next/no-location-assign-relative-destination
                 window.location.href = '/accounts';
             } else {
                 // Full reload ensures all pages re-fetch data for the new book
