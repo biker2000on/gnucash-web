@@ -8,7 +8,7 @@
  * prisma: create/post/unpost/payment flows, GnuCash-native slot+lot layout.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 import {
   roundCurrency,
@@ -587,8 +587,19 @@ describe('invoiceStatus', () => {
 // ===========================================================================
 
 describe('invoice engine (fake prisma)', () => {
+  // Unpost dates its reversal "today". The assertions below recompute today at
+  // expect() time, so a run that crosses midnight compares two different days.
+  // Pin the clock; only Date is faked, so awaited promises still resolve.
+  const NOW = new Date('2026-06-15T12:00:00.000Z');
+
   beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(NOW);
     holder.db = seedDb();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   /** getInvoiceWithStatus is book-scoped and nullable; these cases expect a hit. */

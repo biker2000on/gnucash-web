@@ -594,6 +594,7 @@ export async function POST(request: Request) {
                 description: body.description,
                 post_date: body.post_date,
                 splits_count: totalSplitsCount,
+                multi_currency: isMultiCurrency,
             });
 
         // Invalidate caches from the transaction date forward

@@ -7,7 +7,13 @@
  * the tax-harvesting and rebalancing screens that decide which lots to sell.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+
+// Open lots are classified against "today", so the real clock decides the
+// outcome of these cases. Pin it: without this, "opened today is short_term"
+// races midnight, and a far-future run would eventually reclassify the
+// decades-old fixture. Only Date is faked - nothing here waits on a timer.
+const NOW = new Date('2026-06-15T12:00:00.000Z');
 
 const mockLotsFindMany = vi.fn();
 const mockSlotsFindMany = vi.fn();
@@ -50,11 +56,17 @@ function lot(guid: string, isClosed: 0 | 1, splits: ReturnType<typeof split>[]) 
 }
 
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(NOW);
   mockLotsFindMany.mockReset();
   mockSlotsFindMany.mockReset().mockResolvedValue([]);
   mockAccountsFindMany.mockReset().mockResolvedValue([
     { guid: ACCT, commodity_guid: 'commodity-aapl' },
   ]);
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe('closed lots are classified against their CLOSE date', () => {

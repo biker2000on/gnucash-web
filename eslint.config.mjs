@@ -19,6 +19,26 @@ const eslintConfig = defineConfig([
     ".claude/",
     ".polly/",
   ]),
+  {
+    rules: {
+      // A leading underscore is this repo's marker for "declared to satisfy a
+      // signature, deliberately unused" - test doubles that must match a real
+      // callback shape, destructured rest patterns, ignored catch bindings.
+      // Without this the marker means nothing and the warning count never
+      // reaches zero, which is what `--max-warnings 0` in `npm run lint`
+      // requires.
+      "@typescript-eslint/no-unused-vars": [
+        "warn",
+        {
+          argsIgnorePattern: "^_",
+          varsIgnorePattern: "^_",
+          caughtErrorsIgnorePattern: "^_",
+          destructuredArrayIgnorePattern: "^_",
+          ignoreRestSiblings: true,
+        },
+      ],
+    },
+  },
 ]);
 
 export default eslintConfig;

@@ -467,7 +467,6 @@ export async function GET(request: Request) {
     consolidatedHoldings.sort((a, b) => b.totalMarketValue - a.totalMarketValue);
 
     // Strip parentGuid from holdings response (internal field)
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const holdingsResponse = holdings.map(({ parentGuid: _pg, ...rest }) => rest);
 
     const response: PortfolioResponse = {

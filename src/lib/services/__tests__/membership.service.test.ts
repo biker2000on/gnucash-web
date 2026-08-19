@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { addDays } from '@/lib/membership';
 
 const { members, types, payments, meetings, attendance } = vi.hoisted(() => {
@@ -46,7 +46,20 @@ function resetAll() {
     }
 }
 
-beforeEach(resetAll);
+// The dues-derivation cases build their fixtures from "today" and then assert
+// on grace-period boundaries, so the real clock decides the outcome. Pin it -
+// only Date is faked, nothing in this file waits on a timer.
+const NOW = new Date('2026-06-15T12:00:00.000Z');
+
+beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(NOW);
+    resetAll();
+});
+
+afterEach(() => {
+    vi.useRealTimers();
+});
 
 // ============================================
 // Pure helpers

@@ -1,0 +1,116 @@
+name: End-to-end (Playwright)
+
+# Deliberately NOT on push or pull_request. A full e2e run provisions a
+# database, builds the app, downloads a browser and boots a server - minutes
+# of billed runner time for a suite that changes far less often than the code
+# it covers. It runs on demand, and once a week so that a regression in the
+# install/boot path (manifest, icons, offline shell, login) is found within
+# seven days rather than at the next release.
+on:
+  workflow_dispatch:
+    inputs:
+      run_ledger_suite:
+        description: >-
+          Also run tests/e2e/review-mode.spec.ts. Needs the E2E_USER and
+          E2E_PASS repository secrets and a seeded book; the suite skips
+          itself when they are absent.
+        type: boolean
+        default: false
+  schedule:
+    # Mondays 06:17 UTC. Off the hour on purpose - the top of the hour is the
+    # busiest slot on hosted runners and scheduled jobs queue behind it.
+    - cron: '17 6 * * 1'
+
+# A dispatch while the weekly run is still going should replace it, not queue
+# behind it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: gnucash
+          # Throwaway credentials for a container that lives for one job and is
+          # reachable only from it. Nothing here is a secret.
+          POSTGRES_PASSWORD: gnucash
+          POSTGRES_DB: gnucash_e2e
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://gnucash:gnucash@localhost:5432/gnucash_e2e
+      # setup-schema.ts reads TEST_DATABASE_URL and refuses to touch anything
+      # else, which is the guard that keeps it off a real database.
+      TEST_DATABASE_URL: postgresql://gnucash:gnucash@localhost:5432/gnucash_e2e
+      # Not a secret: this database exists for the length of this job. It only
+      # has to clear the >=32 character check in src/lib/startup-env.ts.
+      SESSION_SECRET: e2e-ephemeral-session-secret-000000000000
+      NEXT_TELEMETRY_DISABLED: '1'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      # Chromium only - playwright.config.ts declares exactly one project, so
+      # pulling firefox and webkit would be several hundred megabytes of
+      # download for browsers nothing runs on.
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      # Prisma push + initializeDatabase(), the same two steps the integration
+      # tier uses. It is the whole seed: the specs that run by default exercise
+      # the unauthenticated install surface (manifest, icons, offline shell),
+      # which needs a reachable schema rather than rows. review-mode.spec.ts is
+      # the one that wants a seeded book, and it skips itself without
+      # credentials.
+      - name: Create the end-to-end database schema
+        run: npm run test:integration:schema
+
+      - name: Build the application
+        run: npm run build
+
+      # playwright.config.ts owns the server: it starts `npm run start` on
+      # 127.0.0.1:3010 and waits for /favicon.svg before the first test.
+      - name: Run Playwright
+        env:
+          RUN_LEDGER_E2E: ${{ inputs.run_ledger_suite && '1' || '' }}
+          E2E_USER: ${{ secrets.E2E_USER }}
+          E2E_PASS: ${{ secrets.E2E_PASS }}
+        run: npm run test:e2e
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: playwright-report-${{ github.run_id }}
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: ignore
+          retention-days: 14

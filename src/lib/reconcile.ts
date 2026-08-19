@@ -26,7 +26,6 @@ import prisma, { type ExtendedPrismaClient } from '@/lib/prisma';
 import { generateGuid, findOrCreateAccount, toDecimalNumber } from '@/lib/gnucash';
 import { acquireNamedXactLock } from '@/lib/book-lock';
 import {
-    toCents,
     type ReconcileWorkspace,
     type FinalizeReconcileResult,
 } from '@/lib/reconcile-shared';

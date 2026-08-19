@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { InvestmentTransactionForm } from '../InvestmentTransactionForm';
 
 const { accountSelectorMock } = vi.hoisted(() => ({
@@ -43,11 +43,23 @@ const formProps = {
 };
 
 describe('InvestmentTransactionForm account pickers', () => {
+    // The date-shortcut case reads the field's default (today) and then
+    // recomputes the expected value from a fresh `new Date()`; across midnight
+    // those are different days. Pin the clock - only Date is faked, and these
+    // cases are synchronous fireEvent, so no timer-driven helper is affected.
+    const NOW = new Date(2026, 5, 15, 12, 0, 0);
+
     beforeEach(() => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(NOW);
         accountSelectorMock.mockClear();
         vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
             json: () => Promise.resolve([{ guid: 'usd-guid', mnemonic: 'USD' }]),
         }));
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
     });
 
     it('uses AccountSelector with the right account types in every transaction context', () => {
