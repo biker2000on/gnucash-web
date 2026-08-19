@@ -29,7 +29,21 @@ import {
     poolNetShares,
     poolPerShareCost,
     drawFromPool,
+    addTracedTransferToPool,
+    reportPool,
+    type CostBasisResult,
 } from '../cost-basis';
+
+/** A fully-traced transfer-in of `shares` carrying `basis`. */
+function tracedIn(shares: number, basis: number, uncovered = 0): CostBasisResult {
+    return {
+        coveredShares: shares - uncovered,
+        uncoveredShares: uncovered,
+        basisOfCoveredShares: basis,
+        perShareCost: shares - uncovered > 0 ? basis / (shares - uncovered) : 0,
+        method: 'fifo',
+    };
+}
 
 describe('CostBasisPool — long positions are untouched', () => {
     it('a buy and a partial sale behave exactly as before', () => {
@@ -161,5 +175,131 @@ describe('CostBasisPool — drawing from a short pool', () => {
         expect(drawn.uncoveredShares).toBeCloseTo(10, 9);
         expect(drawn.basisOfCoveredShares).toBeCloseTo(0, 9);
         expect(drawn.warnings?.join(' ')).toContain('exceed the traced history');
+    });
+});
+
+describe('CostBasisPool — a traced transfer-in lands on a short leg', () => {
+    /**
+     * The defect: only addPurchaseToPool retired a short. Shares arriving by
+     * in-kind transfer were added straight to the long side, leaving the pool
+     * simultaneously 150 long and 100 short — net 50 by arithmetic, but
+     * reporting a 150-share basis against a 50-share position and a phantom
+     * short leg with proceeds still attached.
+     */
+    it('retires the short first, keeping only the surplus as a long parcel', () => {
+        const pool = createCostBasisPool();
+        // Short 100 for $5,000.
+        removeSharesFromPool(pool, 100, 5_000);
+        expect(poolPositionSide(pool)).toBe('short');
+
+        // Transfer in 150 shares carrying $6,000 of traced basis.
+        addTracedTransferToPool(pool, tracedIn(150, 6_000));
+
+        expect(poolPositionSide(pool)).toBe('long');
+        expect(poolNetShares(pool)).toBeCloseTo(50, 9);
+        expect(pool.coveredShares).toBeCloseTo(50, 9);
+        // 50 of the 150 shares survived, so 50/150 of the basis came with them.
+        expect(pool.basisOfCoveredShares).toBeCloseTo(2_000, 9);
+        expect(poolPerShareCost(pool)).toBeCloseTo(40, 9);
+        // The short leg is gone, proceeds and all.
+        expect(pool.shortShares).toBe(0);
+        expect(pool.shortProceeds).toBe(0);
+        expect(pool.shortProceedsIncomplete).toBe(false);
+    });
+
+    it('a smaller transfer covers part of the short and opens no long', () => {
+        const pool = createCostBasisPool();
+        removeSharesFromPool(pool, 100, 5_000);
+
+        addTracedTransferToPool(pool, tracedIn(40, 1_200));
+
+        expect(poolPositionSide(pool)).toBe('short');
+        expect(pool.shortShares).toBeCloseTo(60, 9);
+        // 60/100 of the proceeds stay with the surviving short leg.
+        expect(pool.shortProceeds).toBeCloseTo(3_000, 9);
+        expect(pool.coveredShares).toBeCloseTo(0, 9);
+        expect(pool.uncoveredShares).toBeCloseTo(0, 9);
+        expect(pool.basisOfCoveredShares).toBeCloseTo(0, 9);
+    });
+
+    it('an exact cover leaves the pool flat', () => {
+        const pool = createCostBasisPool();
+        removeSharesFromPool(pool, 100, 5_000);
+
+        addTracedTransferToPool(pool, tracedIn(100, 4_000));
+
+        expect(poolPositionSide(pool)).toBe('flat');
+        expect(pool.shortShares).toBe(0);
+        expect(pool.coveredShares).toBeCloseTo(0, 9);
+        expect(pool.basisOfCoveredShares).toBeCloseTo(0, 9);
+    });
+
+    it("prorates the surviving parcel COVERAGE split, not just its basis", () => {
+        const pool = createCostBasisPool();
+        removeSharesFromPool(pool, 60, 3_000);
+
+        // 120 shares in, of which 40 have no traceable basis (2/3 covered).
+        addTracedTransferToPool(pool, tracedIn(120, 4_000, 40));
+
+        // 60 shares survive; they stay 2/3 covered rather than being laundered.
+        expect(pool.coveredShares).toBeCloseTo(40, 9);
+        expect(pool.uncoveredShares).toBeCloseTo(20, 9);
+        expect(pool.basisOfCoveredShares).toBeCloseTo(2_000, 9);
+        expect(pool.shortShares).toBe(0);
+    });
+
+    it('leaves a long pool completely alone', () => {
+        const pool = createCostBasisPool();
+        addPurchaseToPool(pool, 100, 1_000);
+        addTracedTransferToPool(pool, tracedIn(50, 900, 10));
+
+        expect(pool.coveredShares).toBeCloseTo(140, 9);
+        expect(pool.uncoveredShares).toBeCloseTo(10, 9);
+        expect(pool.basisOfCoveredShares).toBeCloseTo(1_900, 9);
+    });
+});
+
+describe('reportPool', () => {
+    it('reports a long pool as paid basis with its uncovered shares', () => {
+        const pool = createCostBasisPool();
+        addPurchaseToPool(pool, 100, 1_000);
+        addTracedTransferToPool(pool, tracedIn(20, 0, 20));
+
+        expect(reportPool(pool)).toEqual({
+            side: 'long',
+            costBasis: 1_000,
+            uncoveredShares: 20,
+            coverageKnowable: true,
+        });
+    });
+
+    it("reports a short pool's PROCEEDS as its basis, with no uncovered shares", () => {
+        const pool = createCostBasisPool();
+        removeSharesFromPool(pool, 100, 5_000);
+
+        expect(reportPool(pool)).toEqual({
+            side: 'short',
+            costBasis: 5_000,
+            uncoveredShares: 0,
+            coverageKnowable: true,
+        });
+    });
+
+    it('marks coverage unknowable when a short opened without readable proceeds', () => {
+        const pool = createCostBasisPool();
+        removeSharesFromPool(pool, 100);
+
+        const report = reportPool(pool);
+        expect(report.side).toBe('short');
+        expect(report.coverageKnowable).toBe(false);
+    });
+
+    it('honours the caller share tolerance when deciding the side', () => {
+        const pool = createCostBasisPool();
+        removeSharesFromPool(pool, 1e-6, 0.01);
+
+        // A dust short under the tolerance is flat, not short.
+        expect(reportPool(pool, 1e-4).side).toBe('flat');
+        expect(reportPool(pool, 1e-9).side).toBe('short');
     });
 });

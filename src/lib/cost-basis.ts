@@ -189,10 +189,76 @@ export function addPurchaseToPool(pool: CostBasisPool, shares: number, cost: num
  * laundered into a fully-covered parent one hop up the chain.
  */
 export function addTracedTransferToPool(pool: CostBasisPool, traced: CostBasisResult): void {
-  pool.coveredShares += traced.coveredShares;
-  pool.uncoveredShares += traced.uncoveredShares;
-  pool.basisOfCoveredShares += traced.basisOfCoveredShares;
   collectWarnings(pool.warnings, traced.warnings);
+
+  let { coveredShares, uncoveredShares, basisOfCoveredShares } = traced;
+  const incoming = coveredShares + uncoveredShares;
+
+  if (pool.shortShares > 0 && incoming > 0) {
+    // Shares arriving into a short pool retire the obligation first, exactly as
+    // a purchase does — the difference is only where the shares came from, and
+    // an in-kind transfer that lands on a short leg settles it just the same.
+    // Skipping this left a 150-share "long" sitting beside an un-retired
+    // 100-share short: net 50 by arithmetic, but reported as both.
+    const coveredBack = Math.min(incoming, pool.shortShares);
+    // Retire proceeds in the same proportion as the shares they belong to, so a
+    // partial cover leaves the remaining short leg at its own average.
+    pool.shortProceeds -= pool.shortProceeds * (coveredBack / pool.shortShares);
+    pool.shortShares -= coveredBack;
+    if (pool.shortShares <= 0) {
+      pool.shortShares = 0;
+      pool.shortProceeds = 0;
+      pool.shortProceedsIncomplete = false;
+    }
+    // Whatever is left over opens the long parcel, and its basis AND its
+    // covered/uncovered split are prorated by the same fraction: a transfer
+    // that was 2/3 covered stays 2/3 covered after covering the short.
+    const surviving = (incoming - coveredBack) / incoming;
+    if (surviving <= 0) return;
+    coveredShares *= surviving;
+    uncoveredShares *= surviving;
+    basisOfCoveredShares *= surviving;
+  }
+
+  pool.coveredShares += coveredShares;
+  pool.uncoveredShares += uncoveredShares;
+  pool.basisOfCoveredShares += basisOfCoveredShares;
+}
+
+/**
+ * What the pool reports to a consumer, once its side is known.
+ *
+ * The three facts below were being re-derived by the same ternaries in every
+ * caller (`src/lib/commodities.ts`, the account-transactions route), and the
+ * short-leg cases are exactly the ones that read plausibly when got wrong: a
+ * short's basis is its PROCEEDS, and a short has no long shares left to be
+ * uncovered. One place decides, so the two surfaces cannot drift apart.
+ */
+export interface CostBasisPoolReport {
+  side: 'long' | 'short' | 'flat';
+  /** Proceeds received when short, money paid when long/flat. */
+  costBasis: number;
+  /** Long shares with no establishable basis; always 0 on a short leg. */
+  uncoveredShares: number;
+  /**
+   * Can coverage be stated at all from the pool alone? False only when a short
+   * leg was opened by a sale whose proceeds could not be read. Callers with an
+   * external cross-check (a share balance to reconcile against) must AND their
+   * own condition in — this speaks only for the pool.
+   */
+  coverageKnowable: boolean;
+}
+
+/** Read a pool's side, basis, and coverage in one place. See {@link CostBasisPoolReport}. */
+export function reportPool(pool: CostBasisPool, eps: number = QTY_EPS): CostBasisPoolReport {
+  const side = poolPositionSide(pool, eps);
+  const isShort = side === 'short';
+  return {
+    side,
+    costBasis: isShort ? pool.shortProceeds : pool.basisOfCoveredShares,
+    uncoveredShares: isShort ? 0 : pool.uncoveredShares,
+    coverageKnowable: !isShort || !pool.shortProceedsIncomplete,
+  };
 }
 
 /** Basis per covered share — the only per-share figure the pool can honestly state. */
@@ -250,7 +316,12 @@ export function removeSharesFromPool(pool: CostBasisPool, shares: number, procee
  * Only the LONG side is drawable. A short pool holds an obligation, not shares
  * that can be handed onward with a basis, so a draw against one comes back
  * fully uncovered and named — the same fail-safe result it produced before the
- * short leg was modelled at all.
+ * short leg was modelled at all. Concretely: a short pool has an empty long
+ * side (a removal past zero empties it, and shares arriving in — bought or
+ * transferred — retire the short before opening a long), so `poolShares` is 0
+ * and the whole request falls through to the shortfall branch. The short's
+ * proceeds are deliberately NOT offered as a basis: they belong to the
+ * obligation, not to shares leaving the account.
  */
 export function drawFromPool(
   pool: CostBasisPool,
