@@ -2938,7 +2938,7 @@ deployment risk than the nit is worth.
 - [ ] Dashboard SQL GROUP BY + invalidation debounce + idx TTLs (ASI-6-007). `dashboard/income-expense` and `sankey` still `findMany` + JS reduce; no debounce in `data-events-subscriber.ts`; `cache.ts` `zadd` without EXPIRE.
 - [x] Worker `stop_grace_period` + timer drain (ASI-7-005). No `stop_grace_period` in any compose file; `worker.ts` `shutdown()` clears book schedules only, not `simplefinTimers`, and does not await in-flight jobs. — Done 2026-08-19: stop_grace_period added for app+worker in both compose files; every worker timer now goes through src/lib/worker/timer-registry.ts so shutdown() cancels all timers (incl. simplefinTimers/genericTimers) and drains in-flight timer work with a bounded wait.
 - [ ] Prisma ↔ db-init drift check in CI (ASI-7-006). No script/CI step; `sql/001-performance-indexes.sql` still present.
-- [ ] Bootstrap race lock (ASI-7-007). `scripts/db-init-entrypoint.ts` `bootstrapIfEmpty` still runs outside the advisory lock.
+- [x] Bootstrap race lock (ASI-7-007). `scripts/db-init-entrypoint.ts` `bootstrapIfEmpty` still runs outside the advisory lock. — Done 2026-08-19: extracted bootstrapIfEmpty into src/lib/db-bootstrap.ts and wrapped it in withDatabaseAdvisoryLock('gnucash-web:database-initialization') with the emptiness check repeated inside the lock; unit-tested in src/lib/__tests__/db-bootstrap.test.ts.
 - [ ] ESLint ignore + triage unused-var warnings (ASI-8-002). **Partial 2026-08-19:** `eslint.config.mjs` now ignores `.worktrees/`, `.claude/`, `.polly/` (full lint 20 min → 43 s). Remaining: 7 warnings — unused `isMultiCurrency` (`api/transactions/route.ts`), `toCents` (`lib/reconcile.ts`), `EMP_A`, `_input`/`_init`, s-corp-analyzer `useMemo` deps.
 
 ---
