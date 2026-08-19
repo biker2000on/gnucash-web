@@ -19,6 +19,7 @@
  * European exports (1.234,56 + DD/MM/YYYY) import correctly too.
  */
 
+import { round2 } from '@/lib/format';
 import {
     parseLocaleNumber,
     parseLocaleDate,
@@ -171,9 +172,8 @@ export function parseQboDate(raw: string, locale: ImportLocale = DEFAULT_LOCALE)
     return parseLocaleDate(raw, { dayFirst: locale.dayFirst });
 }
 
-export function round2(n: number): number {
-    return Math.round(n * 100) / 100;
-}
+/** Re-exported so this module's existing importers keep their entry point. */
+export { round2 };
 
 /**
  * Canonicalize a QBO colon path: trim each segment and drop empty ones, so

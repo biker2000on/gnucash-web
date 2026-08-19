@@ -67,3 +67,13 @@ export function applyBalanceReversal(
 
     return balance;
 }
+
+/**
+ * Round to cents. The one shared copy — several modules had grown a private
+ * `Math.round(n * 100) / 100`. Use it only at a display/response boundary:
+ * money math itself goes through GnuCash fractions (`toDecimal`/`fromDecimal`
+ * in lib/gnucash.ts), never float rounding.
+ */
+export function round2(value: number): number {
+    return Math.round(value * 100) / 100;
+}
