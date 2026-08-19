@@ -43,6 +43,11 @@ import {
   INGEST_RETRY_BACKOFF_MINUTES,
   INGEST_OUTCOME_FAILED,
   listIngestAttention,
+  listRetryRequestedKeys,
+  requestIngestRetry,
+  INGEST_OUTCOME_RETRY_REQUESTED,
+  INGEST_MAX_MANUAL_RETRIES,
+  INGEST_MANUAL_RETRY_COOLDOWN_MINUTES,
   INGEST_OUTCOME_RETRYING,
   classifyIngestFailure,
   describeIngestError,
@@ -462,34 +467,63 @@ describe('email-ingest', () => {
       return db.$executeRawUnsafe.mock.calls.map((c: unknown[]) => c[0] as string).join('\n');
     }
 
-    it('converts legacy retry_requested rows into terminal failures', async () => {
+    it('adds the immutable owner snapshot columns idempotently', async () => {
       const ddl = await captureSchemaDdl();
+      const normalized = ddl.replace(/\s+/g, ' ');
 
-      // An earlier build of this branch had a user-initiated 'retry_requested'
-      // state. Under the current code such a row is treated as finished, is
-      // absent from the attention list, and nothing can re-arm it — an
-      // invisible tombstone, the exact bug this module exists to kill. The
-      // lazy DDL migrates it to the terminal state so it surfaces instead.
-      expect(ddl).toContain('UPDATE gnucash_web_ingest_messages');
-      expect(ddl).toMatch(/SET outcome = 'failed_permanent'/);
-      expect(ddl).toMatch(/WHERE outcome = 'retry_requested'/);
-      // The reason survives the migration rather than being overwritten.
-      expect(ddl).toContain('COALESCE(NULLIF(detail');
-      expect(ddl).toContain('manual retry is no longer supported');
+      // Ownership has to live on the message row: routing comes from the
+      // MUTABLE sender allowlist, so without a frozen copy a manual retry
+      // could re-file the message into whoever owns that sender address now.
+      for (const column of [
+        'owner_user_id', 'owner_book_guid', 'owner_sender_id',
+        'owner_sender_email', 'manual_retries',
+      ]) {
+        expect(normalized).toContain(`ADD COLUMN IF NOT EXISTS ${column}`);
+      }
+      // A deleted user must not leave a dangling owner id behind.
+      expect(normalized).toContain('REFERENCES gnucash_web_users(id) ON DELETE SET NULL');
       // Runs under the same advisory lock as the rest of the schema block, so
       // concurrent workers serialize instead of racing.
       expect(ddl).toContain("pg_advisory_xact_lock(hashtext('gnucash_web_email_ingest_schema'))");
     });
 
-    it('is idempotent — the migration matches nothing once applied', async () => {
-      const ddl = await captureSchemaDdl();
-      // Self-healing by construction: the predicate is the state it removes, so
-      // a second run (or an install that never had the state) is a no-op.
-      const setsOutcome = /SET outcome = '(\w+)'/.exec(ddl)?.[1];
-      const wherePredicate = /WHERE outcome = '(\w+)'/.exec(ddl)?.[1];
-      expect(setsOutcome).toBe('failed_permanent');
-      expect(wherePredicate).toBe('retry_requested');
-      expect(setsOutcome).not.toBe(wherePredicate);
+    it('backfills ownership only where the routing sender can be proven', async () => {
+      const normalized = (await captureSchemaDdl()).replace(/\s+/g, ' ');
+
+      // Two conditions, both required: the allowlist entry must already have
+      // existed when the message was processed (so it is necessarily the rule
+      // that routed it), and it must be the ONLY entry that matches. Anything
+      // else is a guess, and a guess here files someone's mail into the wrong
+      // user's book.
+      expect(normalized).toContain('s.created_at <= m.processed_at');
+      expect(normalized).toContain('c.matches = 1');
+      expect(normalized).toContain('WHERE m.owner_user_id IS NULL');
+      // Unproven rows stay NULL rather than being attributed by fallback.
+      expect(normalized).not.toContain('COALESCE(s.user_id');
+    });
+
+    it('sweeps legacy retry_requested rows exactly once, on the upgrade', async () => {
+      const normalized = (await captureSchemaDdl()).replace(/\s+/g, ' ');
+
+      // An intermediate build removed manual retry and stranded any row in
+      // 'retry_requested'. Such a row also predates the owner snapshot, so it
+      // cannot be re-armed safely even now — it is converted to the terminal
+      // state so it surfaces in the attention list.
+      expect(normalized).toMatch(
+        /IF NOT owner_columns_existed THEN UPDATE gnucash_web_ingest_messages SET outcome = 'failed_permanent'/,
+      );
+      expect(normalized).toContain("WHERE outcome = 'retry_requested'");
+      // The reason survives rather than being overwritten.
+      expect(normalized).toContain('COALESCE(NULLIF(detail');
+      // CRITICAL: the sweep is gated on the pre-ALTER column check, so it can
+      // never run again and clobber a row the current code legitimately
+      // re-armed. The flag is captured BEFORE the ALTER that creates it.
+      const flagIndex = normalized.indexOf('INTO owner_columns_existed');
+      const alterIndex = normalized.indexOf('ADD COLUMN IF NOT EXISTS owner_user_id');
+      const sweepIndex = normalized.indexOf('IF NOT owner_columns_existed THEN');
+      expect(flagIndex).toBeGreaterThan(-1);
+      expect(flagIndex).toBeLessThan(alterIndex);
+      expect(alterIndex).toBeLessThan(sweepIndex);
     });
   });
 
@@ -501,10 +535,16 @@ describe('email-ingest', () => {
     function makeFakeClient(
       envelopes: IngestEnvelope[],
       attachments: Record<number, IngestAttachment[]>,
+      /** Already-seen messages the poller can only reach by Message-ID. */
+      seenInMailbox: IngestEnvelope[] = [],
     ) {
       const seen: number[] = [];
       const client: IngestMailClient = {
         listUnseen: vi.fn(async () => envelopes),
+        findByMessageIds: vi.fn(async (ids: string[]) =>
+          [...envelopes, ...seenInMailbox].filter(
+            e => e.messageId && ids.includes(e.messageId.replace(/^</, '').replace(/>$/, '').toLowerCase()),
+          )),
         fetchAttachments: vi.fn(async (uid: number) => attachments[uid] ?? []),
         markSeen: vi.fn(async (uid: number) => { seen.push(uid); }),
         close: vi.fn(async () => {}),
@@ -516,10 +556,20 @@ describe('email-ingest', () => {
     function primeDb(options: { senders?: unknown[]; processedKeys?: string[] }) {
       db.$executeRawUnsafe.mockResolvedValue(0); // ensure tables
       db.$executeRaw.mockResolvedValue(1); // recordProcessedMessage inserts
-      db.$queryRaw.mockImplementation((strings: TemplateStringsArray) => {
+      db.$queryRaw.mockImplementation((strings: TemplateStringsArray, ...values: unknown[]) => {
         const sql = strings.join('?');
         if (sql.includes('INSERT INTO gnucash_web_ingest_messages')) {
-          return Promise.resolve([{ message_key: 'claimed', attempts: 1 }]);
+          // The claim RETURNS the row's owner snapshot; the poller routes by
+          // it, so the fake echoes back whatever the module just bound.
+          return Promise.resolve([{
+            message_key: 'claimed',
+            attempts: 1,
+            owner_user_id: values[3] ?? null,
+            owner_book_guid: values[4] ?? null,
+            owner_sender_id: values[5] ?? null,
+            owner_sender_email: values[6] ?? null,
+            was_manual: false,
+          }]);
         }
         if (sql.includes('FROM gnucash_web_ingest_senders')) {
           return Promise.resolve(options.senders ?? []);
@@ -547,6 +597,12 @@ describe('email-ingest', () => {
       detail?: string | null;
       processed_at: Date;
       attempts: number;
+      /** Immutable routing snapshot, written by the FIRST claim only. */
+      owner_user_id?: number | null;
+      owner_book_guid?: string | null;
+      owner_sender_id?: number | null;
+      owner_sender_email?: string | null;
+      manual_retries?: number;
     }
 
     const minutesAgo = (minutes: number) => new Date(Date.now() - minutes * 60_000);
@@ -576,6 +632,30 @@ describe('email-ingest', () => {
       db.$executeRaw.mockImplementation((strings: TemplateStringsArray, ...values: unknown[]) => {
         const sql = strings.join('?');
         queries.push(sql);
+
+        // requestIngestRetry: the atomic re-check. Every precondition is
+        // re-evaluated under the row lock, so a duplicate request writes
+        // nothing.
+        if (sql.includes('SET outcome = ?') && sql.includes('manual_retries = manual_retries + 1')) {
+          const requeued = values[0] as string;
+          const id = values[1] as number;
+          const failed = values[2] as string;
+          const maxManual = values[3] as number;
+          const cooldown = values[4] as number;
+          const row = rows.find(r => r.id === id);
+          if (!row) return Promise.resolve(0);
+          const allowed = row.outcome === failed
+            && row.owner_user_id !== null && row.owner_user_id !== undefined
+            && !row.message_key.startsWith('fallback:')
+            && (row.manual_retries ?? 0) < maxManual
+            && row.processed_at < minutesAgo(cooldown);
+          if (!allowed) return Promise.resolve(0);
+          row.outcome = requeued;
+          row.detail = 'Manual retry requested; queued for the next mailbox poll';
+          row.manual_retries = (row.manual_retries ?? 0) + 1;
+          row.processed_at = new Date();
+          return Promise.resolve(1);
+        }
 
         // recordFailureOutcome: guarded upsert that must never overwrite a
         // persisted `ingested` row.
@@ -631,48 +711,84 @@ describe('email-ingest', () => {
         // AND backoff elapsed).
         if (sql.includes('INSERT INTO gnucash_web_ingest_messages')) {
           const key = values[0] as string;
-          const staleMaxAttempts = values[3] as number;
-          const staleMinutes = values[4] as number;
-          const maxAttempts = values[5] as number;
-          const backoffBase = values[6] as number;
+          const ownerUserId = values[3] as number | null;
+          const ownerBookGuid = values[4] as string | null;
+          const ownerSenderId = values[5] as number | null;
+          const ownerSenderEmail = values[6] as string | null;
+          const retryRequested = values[7] as string;
+          const staleMaxAttempts = values[8] as number;
+          const staleMinutes = values[9] as number;
+          const maxAttempts = values[10] as number;
+          const backoffBase = values[11] as number;
+          const snapshotOf = (r: FakeMessageRow) => ({
+            owner_user_id: r.owner_user_id ?? null,
+            owner_book_guid: r.owner_book_guid ?? null,
+            owner_sender_id: r.owner_sender_id ?? null,
+            owner_sender_email: r.owner_sender_email ?? null,
+          });
           const existing = rows.find(r => r.message_key === key);
           if (!existing) {
-            rows.push({
+            const inserted: FakeMessageRow = {
               id: nextId++, message_key: key, outcome: 'processing',
-              processed_at: new Date(), attempts: 1,
-            });
-            return Promise.resolve([{ message_key: key, attempts: 1 }]);
+              processed_at: new Date(), attempts: 1, manual_retries: 0,
+              owner_user_id: ownerUserId, owner_book_guid: ownerBookGuid,
+              owner_sender_id: ownerSenderId, owner_sender_email: ownerSenderEmail,
+            };
+            rows.push(inserted);
+            return Promise.resolve([{
+              message_key: key, attempts: 1, ...snapshotOf(inserted), was_manual: false,
+            }]);
           }
           // Mirrors the SQL: base * 2^(attempts - 1), floored at attempts = 1.
           const backoffFor = (attempts: number) =>
             backoffBase * Math.pow(2, Math.max(attempts - 1, 0));
+          const wasManual = existing.outcome === retryRequested;
           const reclaimable =
-            (existing.outcome === 'processing'
+            wasManual
+            || (existing.outcome === 'processing'
               && existing.attempts < staleMaxAttempts
               && existing.processed_at < minutesAgo(staleMinutes))
             || (existing.outcome === 'error'
               && existing.attempts < maxAttempts
               && existing.processed_at < minutesAgo(backoffFor(existing.attempts)));
           if (!reclaimable) return Promise.resolve([]); // live claim / backing off
+          // WRITE-ONCE: COALESCE in the SQL keeps the first claim's owner, so
+          // a later attempt under a changed allowlist cannot re-attribute it.
+          if (existing.owner_user_id === null || existing.owner_user_id === undefined) {
+            existing.owner_user_id = ownerUserId;
+            existing.owner_book_guid = ownerBookGuid;
+            existing.owner_sender_id = ownerSenderId;
+            existing.owner_sender_email = ownerSenderEmail;
+          }
           existing.outcome = 'processing';
           existing.processed_at = new Date();
           existing.attempts += 1;
-          return Promise.resolve([{ message_key: key, attempts: existing.attempts }]);
+          return Promise.resolve([{
+            message_key: key, attempts: existing.attempts,
+            ...snapshotOf(existing), was_manual: wasManual,
+          }]);
         }
 
         // listIngestAttention: scoped CTE + per-category window count.
         if (sql.includes('WITH scoped AS')) {
           const failed = values[0] as string;
-          const owned = values[2] as string[];
-          const maxAttempts = values[4] as number;
-          const staleMinutes = values[5] as number;
-          const limit = values[6] as number;
+          const requeued = values[1] as string;
+          const requesterId = values[2] as number;
+          const owned = values[4] as string[];
+          const maxAttempts = values[7] as number;
+          const staleMinutes = values[8] as number;
+          const limit = values[9] as number;
           const normalize = (email: string) =>
             email.toLowerCase().replace(/\+[^@]*@/, '@');
           const matching = rows.filter(r => {
-            if (!r.from_email) return false;
-            if (!owned.includes(normalize(r.from_email))) return false;
+            // Owner snapshot first; the allowlist derivation covers only rows
+            // that have none (recorded before the columns existed).
+            const owns = r.owner_user_id !== null && r.owner_user_id !== undefined
+              ? r.owner_user_id === requesterId
+              : !!r.from_email && owned.includes(normalize(r.from_email));
+            if (!owns) return false;
             return r.outcome === failed
+              || r.outcome === requeued
               || (r.outcome === 'processing'
                 && r.attempts >= maxAttempts
                 && r.processed_at < minutesAgo(staleMinutes));
@@ -683,18 +799,30 @@ describe('email-ingest', () => {
             subject: r.subject ?? null,
             detail: r.detail ?? null,
             ingested_count: 0,
-            category: r.outcome === failed ? 'failed' : 'stalled',
+            owner_user_id: r.owner_user_id ?? null,
+            owner_book_guid: r.owner_book_guid ?? null,
+            owner_sender_id: r.owner_sender_id ?? null,
+            owner_sender_email: r.owner_sender_email ?? null,
+            manual_retries: r.manual_retries ?? 0,
+            category: r.outcome === failed ? 'failed'
+              : r.outcome === requeued ? 'requeued' : 'stalled',
           }));
           // COUNT(*) FILTER (...) OVER () — unpartitioned, computed over the
           // WHOLE scoped set BEFORE the LIMIT, so each total is carried on
           // every returned row regardless of which categories survive the page.
           const failedTotal = withCategory.filter(r => r.category === 'failed').length;
           const stalledTotal = withCategory.filter(r => r.category === 'stalled').length;
+          const requeuedTotal = withCategory.filter(r => r.category === 'requeued').length;
           return Promise.resolve(
             withCategory
               .sort((a, b) => b.processed_at.getTime() - a.processed_at.getTime())
               .slice(0, limit)
-              .map(r => ({ ...r, failed_total: failedTotal, stalled_total: stalledTotal })),
+              .map(r => ({
+                ...r,
+                failed_total: failedTotal,
+                stalled_total: stalledTotal,
+                requeued_total: requeuedTotal,
+              })),
           );
         }
 
@@ -702,11 +830,41 @@ describe('email-ingest', () => {
           return Promise.resolve(options.senders ?? []);
         }
 
+        // requestIngestRetry: fetch the candidate row by id.
+        if (sql.includes('FROM gnucash_web_ingest_messages') && sql.includes('WHERE id = ?')) {
+          const id = values[0] as number;
+          const row = rows.find(r => r.id === id);
+          return Promise.resolve(row ? [{
+            ...row,
+            from_email: row.from_email ?? null,
+            subject: row.subject ?? null,
+            detail: row.detail ?? null,
+            ingested_count: 0,
+            owner_user_id: row.owner_user_id ?? null,
+            owner_book_guid: row.owner_book_guid ?? null,
+            owner_sender_id: row.owner_sender_id ?? null,
+            owner_sender_email: row.owner_sender_email ?? null,
+            manual_retries: row.manual_retries ?? 0,
+          }] : []);
+        }
+
+        // listRetryRequestedKeys: re-armed rows the poller must re-find.
+        if (sql.includes('SELECT message_key FROM gnucash_web_ingest_messages')) {
+          const requeued = values[0] as string;
+          return Promise.resolve(
+            rows
+              .filter(r => r.outcome === requeued && !r.message_key.startsWith('fallback:'))
+              .sort((a, b) => a.processed_at.getTime() - b.processed_at.getTime())
+              .map(r => ({ message_key: r.message_key })),
+          );
+        }
+
         // getIngestMessageStates: settled rows — finished OR stalled claims.
         if (sql.includes('SELECT message_key, outcome, attempts')) {
           const keys = values[0] as string[];
-          const maxAttempts = values[1] as number;
-          const staleMinutes = values[2] as number;
+          const retryRequested = values[1] as string;
+          const maxAttempts = values[2] as number;
+          const staleMinutes = values[3] as number;
           return Promise.resolve(
             rows
               .filter(r => {
@@ -715,6 +873,8 @@ describe('email-ingest', () => {
                   return r.attempts >= maxAttempts
                     && r.processed_at < minutesAgo(staleMinutes);
                 }
+                // A re-armed row is live work, so it is NOT settled.
+                if (r.outcome === retryRequested) return false;
                 return !(r.outcome === 'error' && r.attempts < maxAttempts);
               })
               .map(r => ({
@@ -770,6 +930,7 @@ describe('email-ingest', () => {
       const listGate = new Promise<void>(resolve => { releaseList = resolve; });
       const firstClient: IngestMailClient = {
         listUnseen: vi.fn(async () => { await listGate; return []; }),
+        findByMessageIds: vi.fn(async () => []),
         fetchAttachments: vi.fn(async () => []),
         markSeen: vi.fn(async () => {}),
         close: vi.fn(async () => {}),
@@ -1621,6 +1782,296 @@ describe('email-ingest', () => {
           // The whole point: the caller learns there are 7, not 3.
           expect(attention.failedTotal).toBe(7);
           expect(attention.truncated).toBe(true);
+        });
+      });
+
+      // ---------------------------------------------------------------
+      // Ownership snapshot + manual retry
+      // ---------------------------------------------------------------
+      describe('ownership snapshot and manual retry', () => {
+        const OWNER_ID = 42;
+        const OTHER_USER_ID = 99;
+
+        /** The allowlist, re-pointed at a DIFFERENT user and book. */
+        const reassignedSenderRow = {
+          ...senderRow, id: 7, user_id: OTHER_USER_ID, book_guid: 'book-2',
+        };
+
+        const failedOwnedRow = (key: string, overrides: Record<string, unknown> = {}) => ({
+          message_key: key,
+          from_email: 'alice@example.com',
+          subject: `Subject ${key}`,
+          outcome: INGEST_OUTCOME_FAILED,
+          detail: 'unsupported file type — permanent failure, no automatic retry',
+          processed_at: minutesAgo(INGEST_MANUAL_RETRY_COOLDOWN_MINUTES + 5),
+          attempts: 1,
+          owner_user_id: OWNER_ID,
+          owner_book_guid: 'book-1',
+          owner_sender_id: senderRow.id,
+          owner_sender_email: senderRow.email,
+          manual_retries: 0,
+          ...overrides,
+        });
+
+        it('writes the owner snapshot on the first claim', async () => {
+          const { rows } = primeStatefulDb({ senders: [senderRow] });
+          intakeReceiptMock.mockResolvedValue({ ok: true, id: 1, filename: 'receipt.pdf' });
+
+          const { client } = makeFakeClient([envelopeFor(80, 'first@x')], attachmentsFor(80));
+          await pollEmailIngest(async () => client);
+
+          expect(rows[0]).toMatchObject({
+            owner_user_id: OWNER_ID,
+            owner_book_guid: 'book-1',
+            owner_sender_id: senderRow.id,
+            owner_sender_email: senderRow.email,
+          });
+        });
+
+        it('does NOT re-attribute a message when the allowlist changes under it', async () => {
+          // A transient failure leaves the row reclaimable, which is the only
+          // way a second attempt can happen at all — and the only window in
+          // which a mutable allowlist could have silently re-routed the mail.
+          const { rows } = primeStatefulDb({ senders: [senderRow] });
+          intakeReceiptMock.mockResolvedValue({ ok: false, error: 'ECONNRESET talking to storage' });
+
+          const first = makeFakeClient([envelopeFor(81, 'moved@x')], attachmentsFor(81));
+          await pollEmailIngest(async () => first.client);
+          expect(rows[0]).toMatchObject({
+            outcome: INGEST_OUTCOME_RETRYING, owner_user_id: OWNER_ID, owner_book_guid: 'book-1',
+          });
+
+          // Now the address is handed to somebody else entirely.
+          primeStatefulDb({ senders: [reassignedSenderRow], messages: [{
+            ...rows[0],
+            processed_at: minutesAgo(INGEST_RETRY_BACKOFF_MINUTES + 5),
+          }] });
+          intakeReceiptMock.mockResolvedValue({ ok: true, id: 2, filename: 'receipt.pdf' });
+
+          const second = makeFakeClient([envelopeFor(81, 'moved@x')], attachmentsFor(81));
+          await pollEmailIngest(async () => second.client);
+
+          // The document lands in the ORIGINAL user's book, not the new one.
+          expect(intakeReceiptMock).toHaveBeenLastCalledWith(
+            expect.objectContaining({ userId: OWNER_ID, bookGuid: 'book-1' }),
+          );
+          expect(createNotificationMock).toHaveBeenLastCalledWith(
+            expect.objectContaining({ userId: OWNER_ID, bookGuid: 'book-1' }),
+          );
+        });
+
+        it('re-arms a terminal failure for its snapshotted owner', async () => {
+          const { rows } = primeStatefulDb({
+            senders: [senderRow], messages: [failedOwnedRow('rearm@x')],
+          });
+
+          await expect(requestIngestRetry(1, OWNER_ID)).resolves.toEqual({ ok: true });
+          expect(rows[0]).toMatchObject({
+            outcome: INGEST_OUTCOME_RETRY_REQUESTED, manual_retries: 1,
+          });
+          // The automatic budget is NOT handed back: a manual retry buys one
+          // more claim, and `attempts` keeps counting from where it was.
+          expect(rows[0].attempts).toBe(1);
+        });
+
+        it('refuses a row with no owner snapshot, and says why', async () => {
+          primeStatefulDb({
+            senders: [senderRow],
+            messages: [failedOwnedRow('legacy@x', {
+              owner_user_id: null, owner_book_guid: null,
+              owner_sender_id: null, owner_sender_email: null,
+            })],
+          });
+
+          // The caller CAN see this row (the allowlist still matches the
+          // sender), so an honest reason leaks nothing — but it is not
+          // retriable at any price, because nothing proves where it belongs.
+          const outcome = await requestIngestRetry(1, OWNER_ID);
+          expect(outcome.ok).toBe(false);
+          expect(outcome).toMatchObject({ reason: 'not_retriable' });
+          expect((outcome as { detail: string }).detail).toContain('No owner was recorded');
+        });
+
+        it('refuses a non-owner as not_found rather than confirming the row exists', async () => {
+          const { rows } = primeStatefulDb({
+            senders: [senderRow], messages: [failedOwnedRow('mine@x')],
+          });
+
+          // OTHER_USER_ID owns neither the snapshot nor a matching allowlist
+          // entry: answering 'forbidden' would confirm the message exists and
+          // turn the endpoint into an oracle for other users' inbound mail.
+          await expect(requestIngestRetry(1, OTHER_USER_ID))
+            .resolves.toEqual({ ok: false, reason: 'not_found' });
+          expect(rows[0].outcome).toBe(INGEST_OUTCOME_FAILED);
+        });
+
+        it('does not let the CURRENT allowlist owner re-arm somebody else\'s message', async () => {
+          // The snapshot says user 42; the allowlist now says user 99. The
+          // snapshot wins — this is the whole reason it exists.
+          const { rows } = primeStatefulDb({
+            senders: [reassignedSenderRow], messages: [failedOwnedRow('contested@x')],
+          });
+
+          const outcome = await requestIngestRetry(1, OTHER_USER_ID);
+          expect(outcome.ok).toBe(false);
+          expect(outcome).toMatchObject({ reason: 'not_retriable' });
+          expect((outcome as { detail: string }).detail).toContain('belongs to another user');
+          expect(rows[0].outcome).toBe(INGEST_OUTCOME_FAILED);
+        });
+
+        it('lets an admin of the SNAPSHOTTED book re-arm it', async () => {
+          const { rows } = primeStatefulDb({
+            senders: [senderRow], messages: [failedOwnedRow('admin@x')],
+          });
+          const canAdministerBook = vi.fn(async () => true);
+
+          await expect(requestIngestRetry(1, OTHER_USER_ID, { canAdministerBook }))
+            .resolves.toEqual({ ok: true });
+          // Checked against the frozen book guid, never one re-derived now.
+          expect(canAdministerBook).toHaveBeenCalledWith('book-1');
+          expect(rows[0].outcome).toBe(INGEST_OUTCOME_RETRY_REQUESTED);
+        });
+
+        it('rate-limits and caps manual retries', async () => {
+          primeStatefulDb({
+            senders: [senderRow],
+            messages: [
+              failedOwnedRow('hot@x', { processed_at: minutesAgo(1) }),
+              failedOwnedRow('spent@x', { manual_retries: INGEST_MAX_MANUAL_RETRIES }),
+            ],
+          });
+
+          const cooling = await requestIngestRetry(1, OWNER_ID);
+          expect(cooling).toMatchObject({ ok: false, reason: 'cooldown' });
+
+          const spent = await requestIngestRetry(2, OWNER_ID);
+          expect(spent).toMatchObject({ ok: false, reason: 'not_retriable' });
+          expect((spent as { detail: string }).detail).toContain('all of its manual retries');
+        });
+
+        it('refuses a message that has no Message-ID to re-find it by', async () => {
+          primeStatefulDb({
+            senders: [senderRow], messages: [failedOwnedRow('fallback:deadbeef')],
+          });
+
+          const outcome = await requestIngestRetry(1, OWNER_ID);
+          expect(outcome).toMatchObject({ ok: false, reason: 'not_retriable' });
+          expect((outcome as { detail: string }).detail).toContain('no Message-ID');
+          // And it is never offered to the poller either.
+          await expect(listRetryRequestedKeys()).resolves.toEqual([]);
+        });
+
+        it('reprocesses a re-armed message under the SNAPSHOTTED book', async () => {
+          // Terminal failures are flagged seen, so the message is no longer in
+          // the UNSEEN set — the poller has to re-find it by Message-ID. The
+          // allowlist has since been re-pointed at another user and book.
+          primeStatefulDb({
+            senders: [reassignedSenderRow],
+            messages: [failedOwnedRow('requeued@x', { outcome: INGEST_OUTCOME_RETRY_REQUESTED })],
+          });
+          intakeReceiptMock.mockResolvedValue({ ok: true, id: 3, filename: 'receipt.pdf' });
+
+          const { client } = makeFakeClient(
+            [], attachmentsFor(90), [envelopeFor(90, 'requeued@x')],
+          );
+          const result = await pollEmailIngest(async () => client);
+
+          expect(client.findByMessageIds).toHaveBeenCalledWith(['requeued@x']);
+          expect(result.ingested).toBe(1);
+          expect(intakeReceiptMock).toHaveBeenLastCalledWith(
+            expect.objectContaining({ userId: OWNER_ID, bookGuid: 'book-1' }),
+          );
+        });
+
+        /**
+         * The stateful fake MIRRORS the write-once ownership rule and the
+         * retry branches rather than executing them, so the behavioural tests
+         * above cannot prove the production SQL still carries them. These
+         * assertions pin the emitted statements.
+         */
+        it('emits a claim whose ownership write is COALESCEd, never overwritten', async () => {
+          const { queries } = primeStatefulDb({ senders: [senderRow] });
+          intakeReceiptMock.mockResolvedValue({ ok: true, id: 1, filename: 'a.jpg' });
+          const { client } = makeFakeClient([envelopeFor(95, 'pin@x')], attachmentsFor(95));
+          await pollEmailIngest(async () => client);
+
+          const claimSql = queries.find(q => q.includes('ON CONFLICT (message_key) DO UPDATE'));
+          const normalized = claimSql!.replace(/\s+/g, ' ');
+
+          // The whole safety property in one line: on a conflict the stored
+          // owner wins. Replace this with a plain assignment and a retry after
+          // an allowlist edit silently re-files somebody's mail.
+          expect(normalized).toContain(
+            'owner_user_id = COALESCE(gnucash_web_ingest_messages.owner_user_id, EXCLUDED.owner_user_id)',
+          );
+          // The other three columns move as ONE unit with owner_user_id, so a
+          // row can never end up with user A's id and user B's book.
+          for (const column of ['owner_book_guid', 'owner_sender_id', 'owner_sender_email']) {
+            expect(normalized).toContain(
+              `${column} = CASE WHEN gnucash_web_ingest_messages.owner_user_id IS NULL `
+              + `THEN EXCLUDED.${column} ELSE gnucash_web_ingest_messages.${column} END`,
+            );
+          }
+          // The snapshot is returned so the poller can route by it.
+          expect(normalized).toContain('RETURNING message_key, attempts, owner_user_id');
+          // Third reclaim branch: an explicitly re-armed row.
+          expect(normalized).toMatch(/OR \( gnucash_web_ingest_messages\.outcome = \? \)/);
+        });
+
+        it('emits a re-arm whose preconditions are all re-checked in the WHERE', async () => {
+          const { queries } = primeStatefulDb({
+            senders: [senderRow], messages: [failedOwnedRow('pin-retry@x')],
+          });
+          await requestIngestRetry(1, OWNER_ID);
+
+          const updateSql = queries.find(q => q.includes('manual_retries = manual_retries + 1'));
+          expect(updateSql).toBeDefined();
+          const normalized = updateSql!.replace(/\s+/g, ' ');
+
+          // Re-checked under the row lock, so two concurrent requests cannot
+          // both succeed and cannot both consume the same retry.
+          expect(normalized).toContain('AND owner_user_id IS NOT NULL');
+          expect(normalized).toContain("AND message_key NOT LIKE 'fallback:%'");
+          expect(normalized).toContain('AND manual_retries < ?');
+          expect(normalized).toContain("AND processed_at < (NOW() - ? * INTERVAL '1 minute')");
+          // `attempts` is deliberately absent: a manual retry buys one more
+          // claim, it does not hand back the automatic budget.
+          expect(normalized).not.toContain('attempts = 0');
+
+          const call = db.$executeRaw.mock.calls.find(
+            (c: unknown[]) => (c[0] as TemplateStringsArray).join('?')
+              .includes('manual_retries = manual_retries + 1'));
+          expect(call?.slice(1)).toContain(INGEST_MAX_MANUAL_RETRIES);
+          expect(call?.slice(1)).toContain(INGEST_MANUAL_RETRY_COOLDOWN_MINUTES);
+        });
+
+        it('reports a re-armed message as requeued in the attention list', async () => {
+          primeStatefulDb({
+            senders: [senderRow],
+            messages: [failedOwnedRow('waiting@x', { outcome: INGEST_OUTCOME_RETRY_REQUESTED })],
+          });
+
+          const attention = await listIngestAttention(OWNER_ID);
+          // It must not vanish the moment Retry is pressed — that would look
+          // exactly like the silent drop this module exists to prevent.
+          expect(attention.requeuedTotal).toBe(1);
+          expect(attention.items[0]).toMatchObject({
+            category: 'requeued', retriable: false,
+          });
+        });
+
+        it('marks an unattributed row non-retriable in the list it is shown in', async () => {
+          primeStatefulDb({
+            senders: [senderRow],
+            messages: [failedOwnedRow('legacy@x', {
+              owner_user_id: null, owner_book_guid: null,
+              owner_sender_id: null, owner_sender_email: null,
+            })],
+          });
+
+          const attention = await listIngestAttention(OWNER_ID);
+          expect(attention.items[0].retriable).toBe(false);
+          expect(attention.items[0].retryBlockedReason).toContain('No owner was recorded');
         });
       });
 

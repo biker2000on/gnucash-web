@@ -39,6 +39,12 @@ function serializeLogEntry(entry: IngestLogEntry) {
     detail: entry.detail,
     ingestedCount: entry.ingestedCount,
     attempts: entry.attempts,
+    // Retriability is computed server-side from the row's immutable owner
+    // snapshot, so the UI can disable the control WITH a reason instead of
+    // offering one the server will refuse.
+    retriable: entry.retriable,
+    retryBlockedReason: entry.retryBlockedReason,
+    manualRetries: entry.manualRetries,
     processedAt: entry.processedAt.toISOString(),
   };
 }
@@ -62,7 +68,7 @@ export async function GET() {
     // failure by pushing it off the end — and they carry TRUE totals so a
     // truncated list still reports the real size of the backlog.
     const emptyAttention: IngestAttentionList =
-      { items: [], failedTotal: 0, stalledTotal: 0, truncated: false };
+      { items: [], failedTotal: 0, stalledTotal: 0, requeuedTotal: 0, truncated: false };
     const [senders, log, attention] = config
       ? await Promise.all([
           listIngestSenders(),
@@ -82,6 +88,7 @@ export async function GET() {
         items: attention.items.map(serializeAttentionEntry),
         failedTotal: attention.failedTotal,
         stalledTotal: attention.stalledTotal,
+        requeuedTotal: attention.requeuedTotal,
         shown: attention.items.length,
         truncated: attention.truncated,
         limit: ATTENTION_LIMIT,

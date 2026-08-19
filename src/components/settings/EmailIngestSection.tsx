@@ -22,11 +22,16 @@ interface IngestLogEntry {
     detail: string | null;
     ingestedCount: number;
     attempts: number;
+    /** Server's verdict on whether Retry would be accepted for this row. */
+    retriable: boolean;
+    /** Why not, when it would be refused. */
+    retryBlockedReason: string | null;
+    manualRetries: number;
     processedAt: string;
 }
 
 interface AttentionEntry extends IngestLogEntry {
-    category: 'failed' | 'stalled';
+    category: 'failed' | 'stalled' | 'requeued';
 }
 
 interface AttentionList {
@@ -34,6 +39,7 @@ interface AttentionList {
     /** True totals, independent of how many `items` were returned. */
     failedTotal: number;
     stalledTotal: number;
+    requeuedTotal: number;
     shown: number;
     truncated: boolean;
     limit: number;
@@ -62,6 +68,9 @@ function attentionSummary(attention: AttentionList): string {
     if (attention.stalledTotal > 0) {
         parts.push(`${attention.stalledTotal} stalled`);
     }
+    if (attention.requeuedTotal > 0) {
+        parts.push(`${attention.requeuedTotal} queued for retry`);
+    }
     return parts.join(', ');
 }
 
@@ -87,6 +96,8 @@ function outcomeBadge(outcome: string): { color: string; label: string } {
             return { color: 'bg-warning', label: 'Retrying' };
         case 'failed_permanent':
             return { color: 'bg-error', label: 'Failed' };
+        case 'retry_requested':
+            return { color: 'bg-warning', label: 'Queued for retry' };
         default:
             return { color: 'bg-error', label: 'Error' };
     }
@@ -95,9 +106,15 @@ function outcomeBadge(outcome: string): { color: string; label: string } {
 interface LogRowProps {
     entry: IngestLogEntry;
     badge: { color: string; label: string };
+    /** Present only where a retry is offered (the attention list). */
+    onRetry?: () => void;
+    retrying?: boolean;
 }
 
-function LogRow({ entry, badge }: LogRowProps) {
+function LogRow({ entry, badge, onRetry, retrying }: LogRowProps) {
+    // The reason is never swallowed: a non-retriable message keeps the control
+    // visible but disabled and states why, rather than quietly omitting it.
+    const blocked = onRetry && !entry.retriable ? entry.retryBlockedReason : null;
     return (
         <li className="flex items-start gap-3 text-sm border border-border rounded-lg px-3 py-2">
             <span
@@ -112,11 +129,26 @@ function LogRow({ entry, badge }: LogRowProps) {
                 <div className="text-xs text-foreground-muted truncate" title={entry.detail ?? undefined}>
                     {badge.label}
                     {entry.attempts > 0 && ` · attempt ${entry.attempts}`}
+                    {entry.manualRetries > 0 && ` · ${entry.manualRetries} manual retr${entry.manualRetries === 1 ? 'y' : 'ies'}`}
                     {entry.ingestedCount > 0 && ` · ${entry.ingestedCount} document${entry.ingestedCount === 1 ? '' : 's'}`}
                     {' · '}{new Date(entry.processedAt).toLocaleString()}
                     {entry.detail && ` · ${entry.detail}`}
                 </div>
+                {blocked && (
+                    <div className="text-xs text-foreground-secondary mt-1">{blocked}</div>
+                )}
             </div>
+            {onRetry && (
+                <button
+                    type="button"
+                    onClick={onRetry}
+                    disabled={!entry.retriable || retrying}
+                    title={blocked ?? 'Re-fetch this email and process it again'}
+                    className="px-2 py-1 text-xs rounded-lg border border-border text-foreground hover:bg-surface-hover disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+                >
+                    {retrying ? 'Retrying…' : 'Retry'}
+                </button>
+            )}
         </li>
     );
 }
@@ -127,6 +159,7 @@ export function EmailIngestSection() {
     const [books, setBooks] = useState<BookOption[]>([]);
     const [busy, setBusy] = useState(false);
     const [polling, setPolling] = useState(false);
+    const [retryingId, setRetryingId] = useState<number | null>(null);
     const [newEmail, setNewEmail] = useState('');
     const [newKind, setNewKind] = useState<IngestSender['defaultKind']>('auto');
     const [newBookGuid, setNewBookGuid] = useState('');
@@ -200,6 +233,27 @@ export function EmailIngestSection() {
             error('Failed to remove sender');
         } finally {
             setBusy(false);
+        }
+    };
+
+    const retryMessage = async (entry: AttentionEntry) => {
+        setRetryingId(entry.id);
+        try {
+            const res = await fetch(`/api/settings/email-ingest/messages/${entry.id}/retry`, {
+                method: 'POST',
+            });
+            const data = await res.json().catch(() => null);
+            // The server's refusal reason is shown verbatim — it is the only
+            // place that knows the owner snapshot and the cooldown.
+            if (!res.ok) throw new Error(data?.error || 'Retry failed');
+            success(data?.enqueued
+                ? 'Retry queued — the mailbox is being polled now'
+                : 'Retry queued — it runs on the next mailbox poll');
+            void load();
+        } catch (e) {
+            error(e instanceof Error ? e.message : 'Retry failed');
+        } finally {
+            setRetryingId(null);
         }
     };
 
@@ -287,14 +341,15 @@ export function EmailIngestSection() {
                         </h4>
                         <p className="text-xs text-foreground-secondary">
                             No document was created for these emails. Fix the cause — sender
-                            allowlist, book configuration, or the attachment itself — and forward
-                            the email again. Outstanding items stay listed here regardless of how
-                            much newer activity there is.
+                            allowlist, book configuration, or the attachment itself — then press
+                            Retry, which reprocesses the message under the user and book it was
+                            originally routed to. Outstanding items stay listed here regardless of
+                            how much newer activity there is.
                         </p>
                         {attention.truncated && (
                             <p className="text-xs text-error">
                                 Showing the {attention.shown} most recent of{' '}
-                                {attention.failedTotal + attention.stalledTotal} — the rest are not
+                                {attention.failedTotal + attention.stalledTotal + attention.requeuedTotal} — the rest are not
                                 listed here.
                             </p>
                         )}
@@ -306,6 +361,8 @@ export function EmailIngestSection() {
                                     badge={entry.category === 'stalled'
                                         ? { color: 'bg-warning', label: 'Stalled' }
                                         : outcomeBadge(entry.outcome)}
+                                    onRetry={() => void retryMessage(entry)}
+                                    retrying={retryingId === entry.id}
                                 />
                             ))}
                         </ul>
