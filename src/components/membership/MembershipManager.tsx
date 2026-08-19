@@ -10,6 +10,7 @@ import { useToast } from '@/contexts/ToastContext';
 import { useCurrentUser, READONLY_TOOLTIP } from '@/hooks/useCurrentUser';
 import { HouseholdBookBanner } from '@/components/business/HouseholdBookBanner';
 import { formatCurrency } from '@/lib/format';
+import { extractErrorMessage } from '@/lib/api-error';
 import {
     computeMembershipPeriod,
     RENEWAL_MODES,
@@ -241,7 +242,7 @@ function RecordPaymentForm({ member, types, onRecorded }: {
             });
             if (!res.ok) {
                 const data = await res.json().catch(() => null);
-                throw new Error(data?.error || 'Failed to record payment');
+                throw new Error(extractErrorMessage(data, 'Failed to record payment'));
             }
             success('Payment recorded');
             setReference('');
@@ -397,7 +398,7 @@ function TypesModal({ isOpen, onClose, types, onChanged }: {
             });
             if (!res.ok) {
                 const data = await res.json().catch(() => null);
-                throw new Error(data?.error || 'Failed to save membership type');
+                throw new Error(extractErrorMessage(data, 'Failed to save membership type'));
             }
             success(editingId != null ? 'Membership type updated' : 'Membership type created');
             resetForm();
@@ -416,7 +417,7 @@ function TypesModal({ isOpen, onClose, types, onChanged }: {
             const res = await fetch(`/api/membership/types/${deleting.id}`, { method: 'DELETE' });
             if (!res.ok) {
                 const data = await res.json().catch(() => null);
-                throw new Error(data?.error || 'Failed to delete membership type');
+                throw new Error(extractErrorMessage(data, 'Failed to delete membership type'));
             }
             success(`Deleted "${deleting.name}"`);
             if (editingId === deleting.id) resetForm();
@@ -672,7 +673,7 @@ export function MembershipManager() {
             });
             if (!res.ok) {
                 const data = await res.json().catch(() => null);
-                throw new Error(data?.error || 'Failed to save member');
+                throw new Error(extractErrorMessage(data, 'Failed to save member'));
             }
             success(isNew ? 'Member added' : 'Member updated');
             if (isNew) setEditing(null);
@@ -693,7 +694,7 @@ export function MembershipManager() {
             const res = await fetch(`/api/membership/members/${deletingMember.id}`, { method: 'DELETE' });
             if (!res.ok) {
                 const data = await res.json().catch(() => null);
-                throw new Error(data?.error || 'Failed to delete member');
+                throw new Error(extractErrorMessage(data, 'Failed to delete member'));
             }
             success(`Deleted ${deletingMember.name}`);
             setDeletingMember(null);
@@ -712,7 +713,7 @@ export function MembershipManager() {
             const res = await fetch(`/api/membership/payments/${paymentId}`, { method: 'DELETE' });
             if (!res.ok) {
                 const data = await res.json().catch(() => null);
-                throw new Error(data?.error || 'Failed to delete payment');
+                throw new Error(extractErrorMessage(data, 'Failed to delete payment'));
             }
             success('Payment deleted');
             await refreshDetail();

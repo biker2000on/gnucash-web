@@ -7,6 +7,7 @@ import { formatCurrency, applyBalanceReversal, BalanceReversal } from '@/lib/for
 // Type-only: keep the server-side estimate lib (prisma) out of the client bundle.
 import type { EstimateMethod, BudgetEstimateResult } from '@/lib/budget-estimate';
 import { useToast } from '@/contexts/ToastContext';
+import { extractErrorMessage } from '@/lib/api-error';
 
 interface EstimateAccount {
     guid: string;
@@ -123,7 +124,7 @@ export function EstimateModal({
             });
             if (!res.ok) {
                 const data = await res.json().catch(() => ({}));
-                throw new Error(data.error || 'Failed to apply estimate');
+                throw new Error(extractErrorMessage(data, 'Failed to apply estimate'));
             }
             toast.success(`Estimate applied to ${account.name}`);
             await onApplied();

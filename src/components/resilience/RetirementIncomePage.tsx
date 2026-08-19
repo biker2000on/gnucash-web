@@ -17,6 +17,7 @@ import type {
 } from '@/lib/resilience/types';
 import { Empty, Field, FieldGrid, INPUT, Metric, Panel, RecordCard, SaveBar, TNUM } from './ui';
 import { Abbr } from '@/components/ui/Abbr';
+import { extractErrorMessage } from '@/lib/api-error';
 
 const uid = () => crypto.randomUUID();
 const numberValue = (value: string) => Number(value) || 0;
@@ -76,7 +77,7 @@ function useSection<P, R extends { profile: P }>(section: string, initial: P) {
   const load = async () => {
     const result = await fetch(`/api/resilience/${section}`, { cache: 'no-store' });
     const json = await result.json();
-    if (!result.ok) throw new Error(json.error || 'Request failed');
+    if (!result.ok) throw new Error(extractErrorMessage(json, 'Request failed'));
     setResponse(json as R);
     setProfile((json as R).profile);
     setDirty(false);
@@ -101,7 +102,7 @@ function useSection<P, R extends { profile: P }>(section: string, initial: P) {
         body: JSON.stringify({ profile }),
       });
       const json = await result.json();
-      if (!result.ok) throw new Error(json.error || 'Save failed');
+      if (!result.ok) throw new Error(extractErrorMessage(json, 'Save failed'));
       setResponse(json as R);
       setProfile((json as R).profile);
       setDirty(false);

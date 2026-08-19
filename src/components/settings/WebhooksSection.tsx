@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { CollapsibleConfigSection } from '@/components/ui/CollapsibleConfigSection';
 import { useToast } from '@/contexts/ToastContext';
+import { extractErrorMessage } from '@/lib/api-error';
 
 interface Webhook {
     id: number;
@@ -113,7 +114,7 @@ export function WebhooksSection() {
                     body: JSON.stringify(payload),
                 });
             const data = await res.json().catch(() => null);
-            if (!res.ok) throw new Error(data?.error || 'Failed to save webhook');
+            if (!res.ok) throw new Error(extractErrorMessage(data, 'Failed to save webhook'));
             success(form.id === null ? 'Webhook created' : 'Webhook updated');
             setForm(null);
             void load();
@@ -144,7 +145,7 @@ export function WebhooksSection() {
         try {
             const res = await fetch(`/api/settings/webhooks/${hook.id}/test`, { method: 'POST' });
             const data = await res.json().catch(() => null);
-            if (!res.ok) throw new Error(data?.error || 'Test failed');
+            if (!res.ok) throw new Error(extractErrorMessage(data, 'Test failed'));
             if (data.ok) {
                 success(`Test delivered (HTTP ${data.status})`);
             } else {

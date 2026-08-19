@@ -15,6 +15,7 @@ import { AccountSelector } from '@/components/ui/AccountSelector';
 import { useDateShortcuts } from '@/lib/hooks/useDateShortcuts';
 import { useIsMobile } from '@/lib/hooks/useIsMobile';
 import { MobileCard } from '@/components/ui/MobileCard';
+import { extractErrorMessage } from '@/lib/api-error';
 
 interface Transaction {
   guid: string;
@@ -193,7 +194,7 @@ export function AssetDetailView({ accountGuid }: AssetDetailViewProps) {
         setAdjustNotes('');
         fetchData();
       } else {
-        showError(data.error || 'Failed to adjust value');
+        showError(extractErrorMessage(data, 'Failed to adjust value'));
       }
     } catch {
       showError('Failed to adjust value');

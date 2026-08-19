@@ -9,6 +9,7 @@ import { Abbr } from '@/components/ui/Abbr';
 import { TagPicker, type SelectedTag } from '@/components/tags/TagPicker';
 import type { Tag } from '@/lib/tags';
 import { ErrorLiveRegion } from '@/components/a11y/LiveRegion';
+import { extractErrorMessage } from '@/lib/api-error';
 
 const ACCOUNT_TYPES = [
     { value: 'ASSET', label: 'Asset', group: 'Assets' },
@@ -311,7 +312,7 @@ export function AccountForm({ mode, accountGuid, initialData, parentGuid, onSave
                 });
                 if (!res.ok) {
                     const data = await res.json().catch(() => null);
-                    throw new Error(data?.error || 'Account saved, but updating tags failed');
+                    throw new Error(extractErrorMessage(data, 'Account saved, but updating tags failed'));
                 }
                 queryClient.invalidateQueries({ queryKey: ['tags'] });
             }

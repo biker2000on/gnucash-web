@@ -11,6 +11,7 @@ import { toLocalDateString } from '@/lib/datePresets';
 import { AccountSelector } from '@/components/ui/AccountSelector';
 import { FieldGrid } from '@/components/ui/form';
 import { ErrorLiveRegion } from '@/components/a11y/LiveRegion';
+import { extractErrorMessage } from '@/lib/api-error';
 
 export type InvestmentAction = 'Buy' | 'Sell' | 'Dividend' | 'ReturnOfCapital' | 'Split';
 
@@ -576,7 +577,7 @@ export function InvestmentTransactionForm({
 
             if (!res.ok) {
                 const err = await res.json();
-                throw new Error(err.error || err.errors?.[0]?.message || 'Failed to create transaction');
+                throw new Error(extractErrorMessage(err, 'Failed to create transaction'));
             }
 
             onSave();

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { CollapsibleConfigSection } from '@/components/ui/CollapsibleConfigSection';
 import { useToast } from '@/contexts/ToastContext';
+import { extractErrorMessage } from '@/lib/api-error';
 
 interface ApiToken {
     id: number;
@@ -74,7 +75,7 @@ export function ApiTokensSection() {
                 body: JSON.stringify({ name: name.trim(), role, expiresAt }),
             });
             const data = await res.json().catch(() => null);
-            if (!res.ok) throw new Error(data?.error || 'Failed to create token');
+            if (!res.ok) throw new Error(extractErrorMessage(data, 'Failed to create token'));
             setNewSecret(data.secret);
             setCopied(false);
             setName('');

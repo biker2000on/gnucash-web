@@ -25,6 +25,7 @@ import type {
   VehicleTcoProfile,
 } from '@/lib/resilience/types';
 import { Empty, Field, FieldGrid, INPUT, Metric, Panel, SaveBar, TNUM } from './ui';
+import { extractErrorMessage } from '@/lib/api-error';
 
 export const uid = () => crypto.randomUUID();
 export const today = () => new Date().toISOString().slice(0, 10);
@@ -46,7 +47,7 @@ export function useSection<P, R extends { profile: P }>(section: string, initial
   const load = async (keepProfile = false): Promise<R> => {
     const result = await fetch(`/api/resilience/${section}`, { cache: 'no-store' });
     const json = await result.json();
-    if (!result.ok) throw new Error(json.error || 'Request failed');
+    if (!result.ok) throw new Error(extractErrorMessage(json, 'Request failed'));
     setResponse(json as R);
     if (!keepProfile) {
       setProfile((json as R).profile);
@@ -75,7 +76,7 @@ export function useSection<P, R extends { profile: P }>(section: string, initial
         body: JSON.stringify({ profile }),
       });
       const json = await result.json();
-      if (!result.ok) throw new Error(json.error || 'Save failed');
+      if (!result.ok) throw new Error(extractErrorMessage(json, 'Save failed'));
       setResponse(json as R);
       setProfile((json as R).profile);
       setDirty(false);

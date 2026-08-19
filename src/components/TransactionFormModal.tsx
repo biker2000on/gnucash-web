@@ -6,6 +6,7 @@ import { ConfirmationDialog } from './ui/ConfirmationDialog';
 import { TransactionForm, type TransactionFormHandle } from './TransactionForm';
 import { Transaction, CreateTransactionRequest } from '@/lib/types';
 import { useToast } from '@/contexts/ToastContext';
+import { extractErrorMessage } from '@/lib/api-error';
 
 interface TransactionFormModalProps {
     isOpen: boolean;
@@ -114,7 +115,7 @@ export function TransactionFormModal({
 
             if (!response.ok) {
                 const errorData = await response.json().catch(() => ({}));
-                throw new Error(errorData.error || `Failed to ${isEditMode ? 'update' : 'create'} transaction`);
+                throw new Error(extractErrorMessage(errorData, `Failed to ${isEditMode ? 'update' : 'create'} transaction`));
             }
 
             success(isEditMode ? 'Transaction updated successfully' : 'Transaction created successfully');
@@ -142,7 +143,7 @@ export function TransactionFormModal({
 
             if (!response.ok) {
                 const errorData = await response.json().catch(() => ({}));
-                throw new Error(errorData.error || 'Failed to create transaction');
+                throw new Error(extractErrorMessage(errorData, 'Failed to create transaction'));
             }
 
             // Refresh the list without closing the modal

@@ -12,6 +12,7 @@ import {
     type TimeProject,
 } from '@/lib/timesheet';
 import type { TimeEntryDTO } from '@/lib/business/time-tracking.service';
+import { extractErrorMessage } from '@/lib/api-error';
 
 const TNUM = { fontFeatureSettings: "'tnum'" } as const;
 const inputClass = 'w-full bg-input-bg border border-border rounded-md px-3 py-2 text-sm text-foreground placeholder-foreground-muted focus:outline-none focus:border-primary/50 transition-colors duration-150';
@@ -152,7 +153,7 @@ export function TimeEntryModal({ open, seed, projects, canSeeRates, onClose, onS
             );
             if (!res.ok) {
                 const data = await res.json().catch(() => null);
-                throw new Error(data?.error || 'Failed to save the entry');
+                throw new Error(extractErrorMessage(data, 'Failed to save the entry'));
             }
             if (projectKey) {
                 try { localStorage.setItem(LAST_PROJECT_KEY, projectKey); } catch { /* ignore */ }
@@ -174,7 +175,7 @@ export function TimeEntryModal({ open, seed, projects, canSeeRates, onClose, onS
             const res = await fetch(`/api/business/time/${editing.id}`, { method: 'DELETE' });
             if (!res.ok) {
                 const data = await res.json().catch(() => null);
-                throw new Error(data?.error || 'Failed to delete the entry');
+                throw new Error(extractErrorMessage(data, 'Failed to delete the entry'));
             }
             success('Entry deleted');
             onSaved();

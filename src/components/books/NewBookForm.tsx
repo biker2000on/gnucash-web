@@ -11,6 +11,7 @@ import {
   type TemplateAccountDef,
 } from '@/lib/book-templates';
 import type { BusinessActivity, EntityType } from '@/lib/services/entity.service';
+import { extractErrorMessage } from '@/lib/api-error';
 
 interface NewBookFormProps {
   onSuccess: (bookGuid: string) => void;
@@ -96,7 +97,7 @@ export default function NewBookForm({
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        setError(data.error || 'Failed to create book');
+        setError(extractErrorMessage(data, 'Failed to create book'));
         return;
       }
       const data = await res.json();

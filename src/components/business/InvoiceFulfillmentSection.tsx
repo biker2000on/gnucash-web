@@ -5,6 +5,7 @@ import { Modal } from '@/components/ui/Modal';
 import { ItemSelector } from '@/components/business/ItemSelector';
 import { useToast } from '@/contexts/ToastContext';
 import { useCurrentUser, READONLY_TOOLTIP } from '@/hooks/useCurrentUser';
+import { extractErrorMessage } from '@/lib/api-error';
 import {
     type FulfillmentDTO,
     type FulfillmentEntryDTO,
@@ -151,7 +152,7 @@ function AllocationModal({
                 body: JSON.stringify({ mode, allocations, date, post }),
             });
             const data = await res.json().catch(() => null);
-            if (!res.ok) throw new Error(data?.error || `Failed to ${mode === 'fulfill' ? 'fulfill' : 'return'}`);
+            if (!res.ok) throw new Error(extractErrorMessage(data, `Failed to ${mode === 'fulfill' ? 'fulfill' : 'return'}`));
             success(mode === 'fulfill' ? 'Stock shipped against invoice' : 'Stock returned');
             onClose();
             onDone();
@@ -301,7 +302,7 @@ export function InvoiceFulfillmentSection({ invoiceGuid, entries }: InvoiceFulfi
         try {
             const res = await fetch(`/api/inventory/invoices/${invoiceGuid}/fulfillment`);
             const data = await res.json().catch(() => null);
-            if (!res.ok) throw new Error(data?.error || 'Failed to load fulfillment');
+            if (!res.ok) throw new Error(extractErrorMessage(data, 'Failed to load fulfillment'));
             setFulfillment(data.fulfillment);
             setLoadError(null);
         } catch (err) {

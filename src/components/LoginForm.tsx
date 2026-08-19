@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { BrandLockup } from '@/components/brand/BrandLockup';
 import { ErrorLiveRegion } from '@/components/a11y/LiveRegion';
+import { extractErrorMessage } from '@/lib/api-error';
 
 interface LoginFormProps {
     mode: 'login' | 'register';
@@ -61,7 +62,7 @@ export function LoginForm({ mode, onToggleMode, redirectTo = '/dashboard', oidcP
             const data = await res.json();
 
             if (!res.ok) {
-                throw new Error(data.error || 'Authentication failed');
+                throw new Error(extractErrorMessage(data, 'Authentication failed'));
             }
 
             // Users with two-factor authentication enabled get a code prompt
@@ -103,7 +104,7 @@ export function LoginForm({ mode, onToggleMode, redirectTo = '/dashboard', oidcP
                     setUseRecoveryCode(false);
                     setPassword('');
                 }
-                throw new Error(data.error || 'Verification failed');
+                throw new Error(extractErrorMessage(data, 'Verification failed'));
             }
 
             completeLogin();

@@ -13,6 +13,7 @@ import { useToast } from '@/contexts/ToastContext';
 import { CollapsibleConfigSection } from '@/components/ui/CollapsibleConfigSection';
 import { ErrorLiveRegion } from '@/components/a11y/LiveRegion';
 import { product } from '@/lib/product';
+import { extractErrorMessage } from '@/lib/api-error';
 
 interface TotpStatus {
     enabled: boolean;
@@ -92,7 +93,7 @@ export function TwoFactorSection() {
         try {
             const res = await fetch('/api/auth/totp/begin', { method: 'POST' });
             const data = await res.json();
-            if (!res.ok) throw new Error(data.error || 'Failed to start enrollment');
+            if (!res.ok) throw new Error(extractErrorMessage(data, 'Failed to start enrollment'));
             setSecret(data.secret);
             setUri(data.otpauthUri);
             setConfirmCode('');
@@ -115,7 +116,7 @@ export function TwoFactorSection() {
                 body: JSON.stringify({ code: confirmCode.trim() }),
             });
             const data = await res.json();
-            if (!res.ok) throw new Error(data.error || 'Confirmation failed');
+            if (!res.ok) throw new Error(extractErrorMessage(data, 'Confirmation failed'));
             setRecoveryCodes(data.recoveryCodes);
             setSecret(null);
             setUri(null);
@@ -159,7 +160,7 @@ export function TwoFactorSection() {
                 body: JSON.stringify({ code: actionCode.trim() }),
             });
             const data = await res.json();
-            if (!res.ok) throw new Error(data.error || 'Failed to disable');
+            if (!res.ok) throw new Error(extractErrorMessage(data, 'Failed to disable'));
             setActionCode('');
             setView('idle');
             setRecoveryCodes(null);
@@ -183,7 +184,7 @@ export function TwoFactorSection() {
                 body: JSON.stringify({ code: actionCode.trim() }),
             });
             const data = await res.json();
-            if (!res.ok) throw new Error(data.error || 'Failed to regenerate codes');
+            if (!res.ok) throw new Error(extractErrorMessage(data, 'Failed to regenerate codes'));
             setActionCode('');
             setView('idle');
             setRecoveryCodes(data.recoveryCodes);

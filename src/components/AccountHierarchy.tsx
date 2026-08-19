@@ -31,6 +31,7 @@ import { TransactionContextMenu, type TransactionContextMenuItem } from '@/compo
 import TagChip from './tags/TagChip';
 import type { Tag } from '@/lib/tags';
 import { useCurrentUser, READONLY_TOOLTIP } from '@/hooks/useCurrentUser';
+import { extractErrorMessage } from '@/lib/api-error';
 
 interface TagWithAccounts extends Tag {
     account_guids?: string[];
@@ -639,7 +640,7 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
 
             if (!res.ok) {
                 const data = await res.json();
-                throw new Error(data.error || 'Failed to delete account');
+                throw new Error(extractErrorMessage(data, 'Failed to delete account'));
             }
 
             const deletedName = deleteConfirm.name;
@@ -683,7 +684,7 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
 
             if (!res.ok) {
                 const errorData = await res.json();
-                throw new Error(errorData.error || errorData.errors?.[0]?.message || 'Failed to save account');
+                throw new Error(extractErrorMessage(errorData, 'Failed to save account'));
             }
 
             setModalOpen(false);

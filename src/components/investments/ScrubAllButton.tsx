@@ -4,6 +4,7 @@ import { useState, type ReactNode } from 'react';
 import { Abbr } from '@/components/ui/Abbr';
 import { ErrorLiveRegion } from '@/components/a11y/LiveRegion';
 import { formatCurrency } from '@/lib/format';
+import { extractErrorMessage } from '@/lib/api-error';
 
 type ScrubMethod = 'fifo' | 'lifo' | 'average';
 
@@ -50,7 +51,7 @@ export function ScrubAllButton() {
       });
       const data = await res.json();
       if (!res.ok) {
-        setError(data.error ?? 'Unknown error occurred');
+        setError(extractErrorMessage(data, 'Unknown error occurred'));
       } else {
         // API returns { results: AutoAssignResult[], order: string[] }
         // Aggregate into a single summary

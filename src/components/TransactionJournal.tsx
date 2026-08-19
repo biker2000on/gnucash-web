@@ -21,6 +21,7 @@ import TagChip from '@/components/tags/TagChip';
 import type { Tag } from '@/lib/tags';
 import { useCurrentUser, READONLY_TOOLTIP } from '@/hooks/useCurrentUser';
 import { suppressNextDataEvent } from './DataEventsProvider';
+import { extractErrorMessage } from '@/lib/api-error';
 
 function getReconcileStatus(splits: Split[] | undefined): {
     hasReconciled: boolean;
@@ -400,7 +401,7 @@ export default function TransactionJournal({ initialTransactions, startDate, end
             });
             if (!res.ok) {
                 const errData = await res.json().catch(() => null);
-                const msg = errData?.errors?.map((e: { message: string }) => e.message).join(', ') || errData?.error || 'Failed to duplicate';
+                const msg = errData?.errors?.map((e: { message: string }) => e.message).join(', ') || extractErrorMessage(errData, 'Failed to duplicate');
                 throw new Error(msg);
             }
             success('Transaction duplicated');

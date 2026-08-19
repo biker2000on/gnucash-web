@@ -5,6 +5,7 @@ import { formatCurrency } from '@/lib/format';
 import { formatDateForDisplay, parseDateInput } from '@/lib/date-format';
 import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 import { toLocalDateString } from '@/lib/datePresets';
+import { extractErrorMessage } from '@/lib/api-error';
 
 interface ReconciliationPanelProps {
     accountGuid: string;
@@ -134,7 +135,7 @@ export function ReconciliationPanel({
 
             if (!res.ok) {
                 const body = await res.json().catch(() => null) as { error?: string } | null;
-                throw new Error(body?.error || 'Failed to reconcile transactions');
+                throw new Error(extractErrorMessage(body, 'Failed to reconcile transactions'));
             }
 
             onReconcileComplete?.();

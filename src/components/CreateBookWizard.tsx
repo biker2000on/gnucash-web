@@ -5,6 +5,7 @@ import { ErrorLiveRegion } from '@/components/a11y/LiveRegion';
 import { CurrencySelect } from '@/components/CurrencySelect';
 import NewBookForm from '@/components/books/NewBookForm';
 import { product } from '@/lib/product';
+import { extractErrorMessage } from '@/lib/api-error';
 
 interface CreateBookWizardProps {
   onBookCreated: (bookGuid: string) => void;
@@ -30,7 +31,7 @@ export function CreateBookWizard({ onBookCreated, isOnboarding = false }: Create
         body: JSON.stringify({ kind }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || 'Failed to create demo book');
+      if (!res.ok) throw new Error(extractErrorMessage(data, 'Failed to create demo book'));
       onBookCreated(data.bookGuid);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred');
@@ -60,7 +61,7 @@ export function CreateBookWizard({ onBookCreated, isOnboarding = false }: Create
 
       if (!res.ok) {
         const data = await res.json();
-        throw new Error(data.error || 'Failed to create book');
+        throw new Error(extractErrorMessage(data, 'Failed to create book'));
       }
 
       const data = await res.json();

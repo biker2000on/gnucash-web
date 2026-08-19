@@ -10,6 +10,7 @@ import { ActionMenu } from '@/components/ui/ActionMenu';
 import { useToast } from '@/contexts/ToastContext';
 import { useCurrentUser, READONLY_TOOLTIP } from '@/hooks/useCurrentUser';
 import { HouseholdBookBanner } from '@/components/business/HouseholdBookBanner';
+import { extractErrorMessage } from '@/lib/api-error';
 import type {
     ContactKind,
     CustomerDTO,
@@ -230,7 +231,7 @@ function JobsSection({ ownerGuid, kind }: { ownerGuid: string; kind: ContactKind
             });
             if (!res.ok) {
                 const data = await res.json().catch(() => null);
-                throw new Error(data?.error || 'Failed to create job');
+                throw new Error(extractErrorMessage(data, 'Failed to create job'));
             }
             setNewName('');
             setNewReference('');
@@ -259,7 +260,7 @@ function JobsSection({ ownerGuid, kind }: { ownerGuid: string; kind: ContactKind
             });
             if (!res.ok) {
                 const data = await res.json().catch(() => null);
-                throw new Error(data?.error || 'Failed to update job');
+                throw new Error(extractErrorMessage(data, 'Failed to update job'));
             }
             await fetchJobs();
         } catch (err) {
@@ -275,7 +276,7 @@ function JobsSection({ ownerGuid, kind }: { ownerGuid: string; kind: ContactKind
             const res = await fetch(`/api/business/jobs/${job.guid}`, { method: 'DELETE' });
             if (!res.ok) {
                 const data = await res.json().catch(() => null);
-                throw new Error(data?.error || 'Failed to delete job');
+                throw new Error(extractErrorMessage(data, 'Failed to delete job'));
             }
             const result = await res.json();
             success(result.deleted ? `Deleted job "${job.name}"` : `Job "${job.name}" is referenced by invoices — deactivated instead`);
@@ -488,7 +489,7 @@ export function ContactManager({ kind, enableStatements = false }: ContactManage
             });
             if (!res.ok) {
                 const data = await res.json().catch(() => null);
-                throw new Error(data?.error || `Failed to save ${singular.toLowerCase()}`);
+                throw new Error(extractErrorMessage(data, `Failed to save ${singular.toLowerCase()}`));
             }
             success(isNew ? `${singular} created` : `${singular} updated`);
             setEditing(null);
@@ -509,7 +510,7 @@ export function ContactManager({ kind, enableStatements = false }: ContactManage
             });
             if (!res.ok) {
                 const data = await res.json().catch(() => null);
-                throw new Error(data?.error || `Failed to update ${singular.toLowerCase()}`);
+                throw new Error(extractErrorMessage(data, `Failed to update ${singular.toLowerCase()}`));
             }
             success(contact.active ? `Deactivated ${contact.name}` : `Activated ${contact.name}`);
             await fetchContacts();
@@ -525,7 +526,7 @@ export function ContactManager({ kind, enableStatements = false }: ContactManage
             const res = await fetch(`${apiBase}/${deleting.guid}`, { method: 'DELETE' });
             if (!res.ok) {
                 const data = await res.json().catch(() => null);
-                throw new Error(data?.error || `Failed to delete ${singular.toLowerCase()}`);
+                throw new Error(extractErrorMessage(data, `Failed to delete ${singular.toLowerCase()}`));
             }
             const result = await res.json();
             success(result.deleted

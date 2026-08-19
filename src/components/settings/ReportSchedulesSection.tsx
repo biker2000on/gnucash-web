@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { CollapsibleConfigSection } from '@/components/ui/CollapsibleConfigSection';
 import { useToast } from '@/contexts/ToastContext';
+import { extractErrorMessage } from '@/lib/api-error';
 
 /**
  * Settings → Report Schedules.
@@ -168,7 +169,7 @@ export function ReportSchedulesSection() {
                 });
             if (!res.ok) {
                 const body = await res.json().catch(() => null);
-                throw new Error(body?.error || 'Request failed');
+                throw new Error(extractErrorMessage(body, 'Request failed'));
             }
             success(editingId != null ? 'Schedule updated' : 'Schedule created');
             setFormOpen(false);
@@ -200,7 +201,7 @@ export function ReportSchedulesSection() {
         try {
             const res = await fetch(`/api/settings/report-schedules/${item.id}`, { method: 'POST' });
             const body = await res.json().catch(() => null);
-            if (!res.ok) throw new Error(body?.error || 'Run failed');
+            if (!res.ok) throw new Error(extractErrorMessage(body, 'Run failed'));
             const result = body?.result;
             if (result?.status === 'sent') {
                 success(`Report sent to ${result.recipients?.join(', ') || 'recipients'}`);

@@ -5,6 +5,7 @@ import { Modal } from '@/components/ui/Modal';
 import { useYahooSymbolVerify, type VerifyStatus } from '@/lib/hooks/useYahooSymbolVerify';
 import { useToast } from '@/contexts/ToastContext';
 import { NamespaceSelector } from './NamespaceSelector';
+import { extractErrorMessage } from '@/lib/api-error';
 
 export interface CommodityFormValues {
     guid?: string;
@@ -166,10 +167,10 @@ export function CommodityEditorModal({
             if (!res.ok) {
                 const data = await res.json().catch(() => ({}));
                 if (res.status === 409) {
-                    setFieldError(data.error || 'A commodity with this namespace + symbol already exists');
+                    setFieldError(extractErrorMessage(data, 'A commodity with this namespace + symbol already exists'));
                     return;
                 }
-                throw new Error(data.error || 'Failed to save commodity');
+                throw new Error(extractErrorMessage(data, 'Failed to save commodity'));
             }
             success(mode === 'create' ? `Added ${form.mnemonic.trim()}` : `Saved ${form.mnemonic.trim()}`);
             onSaved();

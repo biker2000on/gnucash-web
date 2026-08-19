@@ -5,6 +5,7 @@ import type { HomeRoom, HomeItem } from '@/lib/services/home.service';
 import { formatCurrency } from '@/lib/format';
 import { useToast } from '@/contexts/ToastContext';
 import { CATEGORY_OPTIONS, inputClass, labelClass, TNUM } from './home-shared';
+import { extractErrorMessage } from '@/lib/api-error';
 
 /** Capture mode: fill in details now, or snap photos now and detail later. */
 type WalkMode = 'detail' | 'photos';
@@ -91,7 +92,7 @@ export function WalkthroughOverlay({ rooms, onClose }: WalkthroughOverlayProps) 
             });
             if (!photoRes.ok) {
                 const json = await photoRes.json().catch(() => null);
-                toast.error(json?.error ?? `Item saved, but "${file.name}" failed to upload`);
+                toast.error(extractErrorMessage(json, `Item saved, but "${file.name}" failed to upload`));
             }
         }
     };
@@ -134,7 +135,7 @@ export function WalkthroughOverlay({ rooms, onClose }: WalkthroughOverlayProps) 
             });
             if (!res.ok) {
                 const json = await res.json().catch(() => null);
-                throw new Error(json?.error ?? 'Failed to add item');
+                throw new Error(extractErrorMessage(json, 'Failed to add item'));
             }
             const { item } = (await res.json()) as { item: HomeItem };
             await uploadPending(item.id);
@@ -166,7 +167,7 @@ export function WalkthroughOverlay({ rooms, onClose }: WalkthroughOverlayProps) 
             });
             if (!res.ok) {
                 const json = await res.json().catch(() => null);
-                throw new Error(json?.error ?? 'Failed to add item');
+                throw new Error(extractErrorMessage(json, 'Failed to add item'));
             }
             const { item } = (await res.json()) as { item: HomeItem };
             await uploadPending(item.id);

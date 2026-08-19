@@ -10,6 +10,7 @@
 import { useState, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import { ErrorLiveRegion } from '@/components/a11y/LiveRegion';
+import { extractErrorMessage } from '@/lib/api-error';
 
 /* ------------------------------------------------------------------ */
 /* Types (mirror PersonalPreview / PersonalCommitResult)                */
@@ -145,7 +146,7 @@ export default function PersonalImportWizard({ config }: { config: PersonalImpor
         try {
             const res = await fetch(`${apiBase}/preview`, { method: 'POST', body: buildFormData() });
             const data = await res.json();
-            if (!res.ok) throw new Error(data.error || 'Preview failed');
+            if (!res.ok) throw new Error(extractErrorMessage(data, 'Preview failed'));
             setPreview(data);
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Preview failed');
@@ -161,7 +162,7 @@ export default function PersonalImportWizard({ config }: { config: PersonalImpor
         try {
             const res = await fetch(`${apiBase}/commit`, { method: 'POST', body: buildFormData() });
             const data = await res.json();
-            if (!res.ok) throw new Error(data.error || 'Import failed');
+            if (!res.ok) throw new Error(extractErrorMessage(data, 'Import failed'));
             setResult(data);
             setPreview(null);
         } catch (err) {

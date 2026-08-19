@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Modal } from '@/components/ui/Modal';
 import { ErrorLiveRegion } from '@/components/a11y/LiveRegion';
 import { applyBalanceReversal, BalanceReversal } from '@/lib/format';
+import { extractErrorMessage } from '@/lib/api-error';
 
 interface BatchEditModalProps {
     isOpen: boolean;
@@ -59,7 +60,7 @@ export function BatchEditModal({
 
             if (!response.ok) {
                 const data = await response.json();
-                throw new Error(data.error || 'Failed to update');
+                throw new Error(extractErrorMessage(data, 'Failed to update'));
             }
 
             onUpdate();

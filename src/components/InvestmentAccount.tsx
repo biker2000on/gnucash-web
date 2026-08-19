@@ -17,6 +17,7 @@ import { computeZeroOffset, CHART_COLORS, GRADIENT_FILL_OPACITY } from '@/lib/ch
 import { formatDateForDisplay, parseDateInput } from '@/lib/date-format';
 import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 import { toLocalDateString } from '@/lib/datePresets';
+import { extractErrorMessage } from '@/lib/api-error';
 
 interface PriceData {
     guid: string;
@@ -256,7 +257,7 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
             const responseData = await response.json();
 
             if (!response.ok) {
-                showError(responseData.error || 'Failed to fetch price');
+                showError(extractErrorMessage(responseData, 'Failed to fetch price'));
                 return;
             }
 
@@ -315,7 +316,7 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
 
             if (!res.ok) {
                 const err = await res.json();
-                throw new Error(err.error || 'Failed to add price');
+                throw new Error(extractErrorMessage(err, 'Failed to add price'));
             }
 
             setShowPriceModal(false);

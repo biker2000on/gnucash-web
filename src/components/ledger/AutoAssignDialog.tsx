@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
+import { extractErrorMessage } from '@/lib/api-error';
 
 interface AutoAssignResult {
   lotsCreated: number;
@@ -100,7 +101,7 @@ export default function AutoAssignDialog({
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || 'Revert failed');
+        throw new Error(extractErrorMessage(data, 'Revert failed'));
       }
       setResult(null);
       onClose();

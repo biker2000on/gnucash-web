@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { CollapsibleConfigSection } from '@/components/ui/CollapsibleConfigSection';
 import { Abbr } from '@/components/ui/Abbr';
 import { useToast } from '@/contexts/ToastContext';
+import { extractErrorMessage } from '@/lib/api-error';
 
 interface CalendarFeed {
     id: number;
@@ -81,7 +82,7 @@ export function CalendarFeedSection() {
                 body: JSON.stringify({ eventTypes: selectedTypes }),
             });
             const data = await res.json().catch(() => null);
-            if (!res.ok) throw new Error(data?.error || 'Failed to create feed');
+            if (!res.ok) throw new Error(extractErrorMessage(data, 'Failed to create feed'));
             setNewUrl(`${window.location.origin}/api/calendar/${data.secret}`);
             setCopied(false);
             success('Calendar feed created');

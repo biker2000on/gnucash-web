@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { CollapsibleConfigSection } from '@/components/ui/CollapsibleConfigSection';
 import { useToast } from '@/contexts/ToastContext';
+import { extractErrorMessage } from '@/lib/api-error';
 
 // Mirrors SHARE_SECTIONS in @/lib/share-links (server-only module — it pulls
 // in node:crypto and prisma, so the client keeps its own copy of the list).
@@ -86,7 +87,7 @@ export function ShareLinksSection() {
                 body: JSON.stringify({ label: label.trim(), expiryDays, sections }),
             });
             const data = await res.json().catch(() => null);
-            if (!res.ok) throw new Error(data?.error || 'Failed to create share link');
+            if (!res.ok) throw new Error(extractErrorMessage(data, 'Failed to create share link'));
             setNewUrl(`${window.location.origin}${data.url}`);
             setCopied(false);
             setLabel('');

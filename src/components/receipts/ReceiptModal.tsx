@@ -8,6 +8,7 @@ import { ConfirmationDialog } from '@/components/ui/ConfirmationDialog';
 import { ReceiptUploadZone } from './ReceiptUploadZone';
 import { useToast } from '@/contexts/ToastContext';
 import type { Receipt } from '@/lib/receipts';
+import { extractErrorMessage } from '@/lib/api-error';
 
 interface ReceiptModalProps {
   isOpen: boolean;
@@ -62,7 +63,7 @@ export function ReceiptModal({ isOpen, onClose, transactionGuid, transactionDesc
         fetchReceipts();
       } else {
         const err = await res.json();
-        toast.error(err.error || 'Failed to delete');
+        toast.error(extractErrorMessage(err, 'Failed to delete'));
       }
     } catch {
       toast.error('Failed to delete receipt');

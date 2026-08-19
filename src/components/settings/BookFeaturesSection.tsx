@@ -5,6 +5,7 @@ import { useToast } from '@/contexts/ToastContext';
 import { useBooks } from '@/contexts/BookContext';
 import { CollapsibleConfigSection } from '@/components/ui/CollapsibleConfigSection';
 import type { BookFeatureKey } from '@/lib/book-features';
+import { extractErrorMessage } from '@/lib/api-error';
 
 interface ModuleState {
   key: BookFeatureKey;
@@ -64,7 +65,7 @@ export function BookFeaturesSection() {
       });
       if (!res.ok) {
         const data = await res.json().catch(() => null);
-        throw new Error(data?.error || 'Failed to save feature modules');
+        throw new Error(extractErrorMessage(data, 'Failed to save feature modules'));
       }
       const data: BookFeaturesPayload = await res.json();
       setPayload(data);

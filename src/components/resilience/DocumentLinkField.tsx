@@ -4,6 +4,7 @@ import { useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { INPUT } from './ui';
 import { DocumentPreviewModal } from '@/components/documents/DocumentPreviewModal';
+import { extractErrorMessage } from '@/lib/api-error';
 
 /** Minimal shape of a document-vault row as returned by GET /api/business/documents. */
 export interface VaultDocument {
@@ -95,7 +96,7 @@ export function DocumentLinkField(props: {
       formData.append('doc_type', props.docType);
       const response = await fetch('/api/business/documents', { method: 'POST', body: formData });
       const json = await response.json();
-      if (!response.ok) throw new Error(json.error || 'Upload failed');
+      if (!response.ok) throw new Error(extractErrorMessage(json, 'Upload failed'));
       const doc = json.document as VaultDocument;
       props.onUploaded?.({ id: doc.id, title: doc.title, fileName: doc.fileName, docType: doc.docType, mimeType: doc.mimeType });
       // Replace rather than append when the record only holds one document.

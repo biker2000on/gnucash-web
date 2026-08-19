@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useCallback } from 'react';
+import { extractErrorMessage } from '@/lib/api-error';
 
 interface PayslipUploadZoneProps {
   onUploadComplete?: (results: Array<{ id: number; filename: string; status: string }>) => void;
@@ -39,7 +40,7 @@ export default function PayslipUploadZone({ onUploadComplete }: PayslipUploadZon
         setUploads(fileArray.map(f => ({
           filename: f.name,
           status: 'error' as const,
-          message: err.error || 'Upload failed',
+          message: extractErrorMessage(err, 'Upload failed'),
         })));
         return;
       }

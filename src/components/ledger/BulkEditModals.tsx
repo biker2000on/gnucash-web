@@ -10,6 +10,7 @@ import { useEffect, useState } from 'react';
 import { Modal } from '@/components/ui/Modal';
 import { TagPicker, type SelectedTag } from '@/components/tags/TagPicker';
 import type { Tag } from '@/lib/tags';
+import { extractErrorMessage } from '@/lib/api-error';
 
 export interface BulkDescriptionPayload {
     description?: string;
@@ -187,7 +188,7 @@ export function BulkTagsModal({ isOpen, count, onClose, onSubmit }: BulkTagsModa
             });
             if (!createRes.ok) {
                 const data = await createRes.json().catch(() => ({}));
-                throw new Error(data.error || `Failed to create tag "${tag.name}"`);
+                throw new Error(extractErrorMessage(data, `Failed to create tag "${tag.name}"`));
             }
             const created: Tag = await createRes.json();
             addIds.push(created.id);
