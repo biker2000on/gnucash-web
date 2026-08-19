@@ -349,32 +349,77 @@ describe('splitSellAcrossLots', () => {
     expect(result.subSplitsCreated).toEqual([]);
   });
 
-  it('A6: Transaction balance invariant — throws on imbalance', async () => {
-    const sellSplit = makeSplit({
+  /*
+   * A6: the invariant is about CONSERVATION, not absolute balance.
+   *
+   * Real books hold transactions that were already a cent out before this
+   * engine existed (hand-entered, imported, or written by an older GnuCash).
+   * Asserting `total === 0` made those unscrubbable; an engine that quietly
+   * absorbed the cent would be editing the user's books without saying so.
+   * So the check is: did the scrub MOVE the balance?
+   */
+  describe('A6: transaction balance invariant', () => {
+    const sellSplit = () => makeSplit({
       quantity_num: -300n,
       quantity_denom: 100n,
       value_num: -30000n,
       value_denom: 100n,
     });
-    mockSplitsFindUnique.mockResolvedValue(sellSplit);
-    mockSplitsCreate.mockResolvedValue({});
-    mockSlotsCreate.mockResolvedValue({});
-    mockSplitsUpdate.mockResolvedValue({});
-    // Return imbalanced transaction
-    mockSplitsFindMany.mockResolvedValue([
-      { value_num: -15000n, value_denom: 100n },
-      { value_num: -15000n, value_denom: 100n },
-      { value_num: 20000n, value_denom: 100n }, // $100 imbalance
-    ]);
-
-    const lots = [
+    const lots = () => [
       makeOpenLot('lot-a-guid-00000000000000000', 1.0),
       makeOpenLot('lot-b-guid-00000000000000000', 2.0),
     ];
 
-    await expect(
-      splitSellAcrossLots(sellSplit.guid, lots, runId, tx),
-    ).rejects.toThrow('Transaction balance invariant violated');
+    /** Balance readings: first call = before the scrub, second = after. */
+    function primeBalances(before: bigint[], after: bigint[]) {
+      const split = sellSplit();
+      mockSplitsFindUnique.mockResolvedValue(split);
+      mockSplitsCreate.mockResolvedValue({});
+      mockSlotsCreate.mockResolvedValue({});
+      mockSplitsUpdate.mockResolvedValue({});
+      mockSplitsFindMany
+        .mockResolvedValueOnce(before.map(v => ({ value_num: v, value_denom: 100n })))
+        .mockResolvedValueOnce(after.map(v => ({ value_num: v, value_denom: 100n })));
+      return split;
+    }
+
+    it('scrubs a transaction that was ALREADY a cent out, leaving the cent alone', async () => {
+      // -$150.00 + -$150.00 + $300.01 = +$0.01, before and after. The engine
+      // changed nothing about the balance, so it must not refuse.
+      const split = primeBalances(
+        [-15000n, -15000n, 30001n],
+        [-15000n, -15000n, 30001n],
+      );
+
+      const result = await splitSellAcrossLots(split.guid, lots(), runId, tx);
+      expect(result.subSplitsCreated).toHaveLength(1);
+    });
+
+    it('throws when the scrub itself introduces drift, even under a cent', async () => {
+      // Balanced going in; $0.006 out coming back. Sub-cent, but the engine
+      // put it there — which is the only thing this invariant can catch.
+      mockSplitsFindUnique.mockResolvedValue(sellSplit());
+      mockSplitsCreate.mockResolvedValue({});
+      mockSlotsCreate.mockResolvedValue({});
+      mockSplitsUpdate.mockResolvedValue({});
+      mockSplitsFindMany
+        .mockResolvedValueOnce([{ value_num: 0n, value_denom: 100n }])
+        .mockResolvedValueOnce([{ value_num: 6n, value_denom: 1000n }]);
+
+      await expect(
+        splitSellAcrossLots(sellSplit().guid, lots(), runId, tx),
+      ).rejects.toThrow(/moved the balance by 0\.0060/);
+    });
+
+    it('throws when a pre-imbalanced transaction is silently "fixed" by the scrub', async () => {
+      // Arrived a cent out, came back balanced: the engine absorbed the cent,
+      // which is an unrequested edit to the user's book.
+      const split = primeBalances([1n], []);
+
+      await expect(
+        splitSellAcrossLots(split.guid, lots(), runId, tx),
+      ).rejects.toThrow('Transaction balance invariant violated');
+    });
   });
 });
 
