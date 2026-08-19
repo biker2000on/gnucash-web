@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { AccountSelector } from '@/components/ui/AccountSelector';
 import { ErrorLiveRegion } from '@/components/a11y/LiveRegion';
+import { extractErrorMessage } from '@/lib/api-error';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -118,7 +119,7 @@ export function CreateScheduledPanel({
     fetch(`/api/transactions/${sourceTransactionGuid}`)
       .then(async res => {
         const data = await res.json();
-        if (!res.ok) throw new Error(data?.error || 'Failed to load transaction');
+        if (!res.ok) throw new Error(extractErrorMessage(data, 'Failed to load transaction'));
         return data as {
           description?: string;
           splits?: Array<{ account_guid: string; value_decimal: string }>;
@@ -226,7 +227,7 @@ export function CreateScheduledPanel({
       });
       const data = await res.json().catch(() => null);
       if (!res.ok) {
-        throw new Error(data?.error || `Failed to preview (${res.status})`);
+        throw new Error(extractErrorMessage(data, `Failed to preview (${res.status})`));
       }
       setCommand(data.command);
     } catch (err) {
@@ -243,7 +244,7 @@ export function CreateScheduledPanel({
     try {
       const res = await fetch(`/api/domain-commands/${command.id}/execute`, { method: 'POST' });
       const data = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(data?.error || `Failed to execute (${res.status})`);
+      if (!res.ok) throw new Error(extractErrorMessage(data, `Failed to execute (${res.status})`));
       onCreated();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Execution failed.');

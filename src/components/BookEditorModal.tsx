@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { Modal } from '@/components/ui/Modal';
 import { ErrorLiveRegion } from '@/components/a11y/LiveRegion';
+import { extractErrorMessage } from '@/lib/api-error';
 
 interface Book {
     guid: string;
@@ -54,7 +55,7 @@ export default function BookEditorModal({ book, isOpen, onClose, onSaved, onDele
 
             if (!res.ok) {
                 const data = await res.json();
-                setError(data.error || 'Failed to update book');
+                setError(extractErrorMessage(data, 'Failed to update book'));
                 return;
             }
 
@@ -78,7 +79,7 @@ export default function BookEditorModal({ book, isOpen, onClose, onSaved, onDele
 
             if (!res.ok) {
                 const data = await res.json();
-                setError(data.error || 'Failed to delete book');
+                setError(extractErrorMessage(data, 'Failed to delete book'));
                 return;
             }
 

@@ -11,6 +11,7 @@ import { Modal } from '@/components/ui/Modal';
 import { TagPicker, type SelectedTag } from './TagPicker';
 import { useToast } from '@/contexts/ToastContext';
 import type { Tag } from '@/lib/tags';
+import { extractErrorMessage } from '@/lib/api-error';
 
 interface TransactionTagEditorProps {
     transactionGuid: string | null;
@@ -51,7 +52,7 @@ export function TransactionTagEditor({ transactionGuid, isOpen, onClose, onSaved
             });
             if (!res.ok) {
                 const data = await res.json().catch(() => null);
-                throw new Error(data?.error || 'Failed to save tags');
+                throw new Error(extractErrorMessage(data, 'Failed to save tags'));
             }
             const saved: Tag[] = await res.json();
             success('Tags updated');

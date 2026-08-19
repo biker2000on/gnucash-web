@@ -3,6 +3,7 @@ import prisma from '@/lib/prisma';
 import { serializeBigInts, generateGuid } from '@/lib/gnucash';
 import { requireRole } from '@/lib/auth';
 import { z } from 'zod';
+import { validationErrorResponse } from '@/lib/api-validation';
 
 const UpdateCommoditySchema = z.object({
     guid: z.string().length(32, 'Invalid commodity GUID'),
@@ -87,10 +88,7 @@ export async function PATCH(request: NextRequest) {
         const parseResult = UpdateCommoditySchema.safeParse(body);
 
         if (!parseResult.success) {
-            return NextResponse.json(
-                { error: 'Validation failed', errors: parseResult.error.issues },
-                { status: 400 }
-            );
+            return validationErrorResponse(parseResult);
         }
 
         const { guid, quote_flag, ...rest } = parseResult.data;
@@ -129,10 +127,7 @@ export async function POST(request: NextRequest) {
         const parseResult = CreateCommoditySchema.safeParse(body);
 
         if (!parseResult.success) {
-            return NextResponse.json(
-                { error: 'Validation failed', errors: parseResult.error.issues },
-                { status: 400 }
-            );
+            return validationErrorResponse(parseResult);
         }
 
         const data = parseResult.data;

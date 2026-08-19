@@ -6,6 +6,7 @@ import { PayslipLineItemTable } from './PayslipLineItemTable';
 import { TransactionPreview } from './TransactionPreview';
 import type { PayslipLineItem } from '@/lib/types';
 import { ConfirmationDialog } from '@/components/ui/ConfirmationDialog';
+import { extractErrorMessage } from '@/lib/api-error';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -216,7 +217,7 @@ export function PayslipDetailPanel({ payslipId, onClose, onUpdated }: PayslipDet
 
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
-      throw new Error(data.error ?? 'Failed to save line items');
+      throw new Error(extractErrorMessage(data, 'Failed to save line items'));
     }
 
     const updated: PayslipData = await res.json();
@@ -242,7 +243,7 @@ export function PayslipDetailPanel({ payslipId, onClose, onUpdated }: PayslipDet
       const res = await fetch(`/api/payslips/${payslipId}`, { method: 'DELETE' });
       if (!res.ok) {
         const data = await res.json();
-        setPostError(data.error || 'Delete failed');
+        setPostError(extractErrorMessage(data, 'Delete failed'));
         return;
       }
       onUpdated?.();
@@ -329,7 +330,7 @@ export function PayslipDetailPanel({ payslipId, onClose, onUpdated }: PayslipDet
 
       if (!res.ok) {
         const data = await res.json();
-        throw new Error(data.error ?? 'Failed to post payslip');
+        throw new Error(extractErrorMessage(data, 'Failed to post payslip'));
       }
 
       // Update local status to posted

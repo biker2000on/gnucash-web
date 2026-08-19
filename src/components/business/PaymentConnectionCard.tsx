@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { AccountSelector } from '@/components/ui/AccountSelector';
 import { useToast } from '@/contexts/ToastContext';
+import { extractErrorMessage } from '@/lib/api-error';
 
 interface ConnectionView {
   enabled: boolean;
@@ -31,7 +32,7 @@ export function PaymentConnectionCard() {
           return null;
         }
         const data = await res.json();
-        if (!res.ok) throw new Error(data?.error || 'Failed to load payment connection');
+        if (!res.ok) throw new Error(extractErrorMessage(data, 'Failed to load payment connection'));
         return data.connection as ConnectionView;
       })
       .then(value => {
@@ -61,7 +62,7 @@ export function PaymentConnectionCard() {
         }),
       });
       const data = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(data?.error || 'Failed to save payment connection');
+      if (!res.ok) throw new Error(extractErrorMessage(data, 'Failed to save payment connection'));
       setConnection(data.connection);
       setSecretKey('');
       setWebhookSecret('');

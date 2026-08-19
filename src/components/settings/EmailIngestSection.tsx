@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { CollapsibleConfigSection } from '@/components/ui/CollapsibleConfigSection';
 import { useToast } from '@/contexts/ToastContext';
+import { extractErrorMessage } from '@/lib/api-error';
 
 interface IngestSender {
     id: number;
@@ -173,7 +174,7 @@ export function EmailIngestSection() {
                 }),
             });
             const data = await res.json().catch(() => null);
-            if (!res.ok) throw new Error(data?.error || 'Failed to add sender');
+            if (!res.ok) throw new Error(extractErrorMessage(data, 'Failed to add sender'));
             success('Sender added to allowlist');
             setNewEmail('');
             setNewKind('auto');
@@ -211,7 +212,7 @@ export function EmailIngestSection() {
                 body: JSON.stringify({ action: 'poll' }),
             });
             const data = await res.json().catch(() => null);
-            if (!res.ok) throw new Error(data?.error || 'Poll failed');
+            if (!res.ok) throw new Error(extractErrorMessage(data, 'Poll failed'));
             if (data.enqueued) {
                 success('Mailbox poll started in the background');
             } else if (data.result) {

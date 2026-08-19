@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from 'react';
 import { useBooks } from '@/contexts/BookContext';
 import BookEditorModal from '@/components/BookEditorModal';
 import NewBookWizard from '@/components/NewBookWizard';
+import { extractErrorMessage } from '@/lib/api-error';
 
 function IconBook({ className = "w-4 h-4" }: { className?: string }) {
     return (
@@ -93,7 +94,7 @@ export default function BookSwitcher({ collapsed = false }: BookSwitcherProps) {
                 body: JSON.stringify({ kind }),
             });
             const data = await res.json().catch(() => ({}));
-            if (!res.ok) throw new Error(data.error || 'Failed to create demo book');
+            if (!res.ok) throw new Error(extractErrorMessage(data, 'Failed to create demo book'));
             setOpen(false);
             setDemoPickerOpen(false);
             await refreshBooks();

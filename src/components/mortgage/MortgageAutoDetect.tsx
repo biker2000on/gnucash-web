@@ -3,6 +3,7 @@
 import { useState, useCallback } from 'react';
 import { AccountSelector } from '@/components/ui/AccountSelector';
 import { ErrorLiveRegion } from '@/components/a11y/LiveRegion';
+import { extractErrorMessage } from '@/lib/api-error';
 
 /* ------------------------------------------------------------------ */
 /* Types                                                               */
@@ -205,7 +206,7 @@ export function MortgageAutoDetect({ onDetectionComplete }: MortgageAutoDetectPr
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || 'Failed to detect mortgage details');
+        throw new Error(extractErrorMessage(data, 'Failed to detect mortgage details'));
       }
 
       const data: DetectionResult = await res.json();
@@ -233,7 +234,7 @@ export function MortgageAutoDetect({ onDetectionComplete }: MortgageAutoDetectPr
             .then(async res => {
               if (!res.ok) {
                 const data = await res.json().catch(() => ({}));
-                throw new Error(data.error || 'Failed to detect mortgage details');
+                throw new Error(extractErrorMessage(data, 'Failed to detect mortgage details'));
               }
               return res.json();
             })

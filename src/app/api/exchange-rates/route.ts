@@ -8,6 +8,7 @@ import { z } from 'zod';
 import { requireRole } from '@/lib/auth';
 import { cacheInvalidateFrom } from '@/lib/cache';
 import { publishDataChange } from '@/lib/data-events';
+import { validationErrorResponse } from '@/lib/api-validation';
 
 // Schema for creating a new exchange rate
 const CreateExchangeRateSchema = z.object({
@@ -73,10 +74,7 @@ export async function POST(request: NextRequest) {
         const parseResult = CreateExchangeRateSchema.safeParse(body);
 
         if (!parseResult.success) {
-            return NextResponse.json(
-                { error: 'Validation failed', errors: parseResult.error.issues },
-                { status: 400 }
-            );
+            return validationErrorResponse(parseResult);
         }
 
         const data = parseResult.data;

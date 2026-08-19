@@ -18,7 +18,7 @@ import { EditableRow, EditableRowHandle } from './ledger/EditableRow';
 import { InvestmentEditRow, InvestmentEditRowHandle, InvestmentSaveData } from './ledger/InvestmentEditRow';
 import { useToast } from '@/contexts/ToastContext';
 import { toNumDenom } from '@/lib/validation';
-import { throwErrorBody } from '@/lib/api-error';
+import { throwErrorBody, extractErrorMessage } from '@/lib/api-error';
 import {
     useReactTable,
     getCoreRowModel,
@@ -1418,7 +1418,7 @@ export default function AccountLedger({
                 body: JSON.stringify({ transactionGuids, anchorAccountGuid: accountGuid, set }),
             });
             const data = await res.json();
-            if (!res.ok) throw new Error(data.error || `${label} failed`);
+            if (!res.ok) throw new Error(extractErrorMessage(data, `${label} failed`));
             setEditSelectedGuids(new Set());
             suppressNextDataEvent('transactions');
             await fetchTransactions();
@@ -3466,7 +3466,6 @@ export default function AccountLedger({
                         <InvestmentTransactionForm
                             accountGuid={accountGuid}
                             accountName={`${investmentSymbol} investment account`}
-                            accountCommodityGuid={accountCommodityGuid || ''}
                             commoditySymbol={investmentSymbol}
                             commodityFraction={commodityScu}
                             currentShares={investmentCurrentShares}

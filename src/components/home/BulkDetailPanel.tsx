@@ -5,6 +5,7 @@ import type { HomeRoom, HomeItem } from '@/lib/services/home.service';
 import { useToast } from '@/contexts/ToastContext';
 import { ErrorLiveRegion } from '@/components/a11y/LiveRegion';
 import { CATEGORY_OPTIONS, inputClass, labelClass, TNUM } from './home-shared';
+import { extractErrorMessage } from '@/lib/api-error';
 
 interface BulkDetailPanelProps {
     rooms: HomeRoom[];
@@ -164,7 +165,7 @@ function DraftCard({
             });
             if (!res.ok) {
                 const json = await res.json().catch(() => null);
-                throw new Error(json?.error ?? 'Save failed');
+                throw new Error(extractErrorMessage(json, 'Save failed'));
             }
             toast.success('Item filed');
             onResolved();

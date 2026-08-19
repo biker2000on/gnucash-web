@@ -7,6 +7,7 @@ import { AccountSelector } from '@/components/ui/AccountSelector';
 import { useToast } from '@/contexts/ToastContext';
 import { formatCurrency } from '@/lib/format';
 import type { InvoiceView, PaymentResult } from '@/lib/business/invoice-engine';
+import { extractErrorMessage } from '@/lib/api-error';
 import {
     allocationsToPayload,
     allocationsTotal,
@@ -199,7 +200,7 @@ export function PaymentModal({
             });
             const data = await res.json().catch(() => null);
             if (!res.ok) {
-                throw new Error(data?.error || 'Failed to record payment');
+                throw new Error(extractErrorMessage(data, 'Failed to record payment'));
             }
             // This key is now spent; anything recorded next is a new payment.
             transactionGuidRef.current = generateGuid();

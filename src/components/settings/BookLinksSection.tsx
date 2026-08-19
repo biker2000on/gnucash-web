@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useToast } from '@/contexts/ToastContext';
 import { useBooks } from '@/contexts/BookContext';
 import { CollapsibleConfigSection } from '@/components/ui/CollapsibleConfigSection';
+import { extractErrorMessage } from '@/lib/api-error';
 
 interface BookLinkWithNames {
   businessBookGuid: string;
@@ -189,7 +190,7 @@ export function BookLinksSection() {
       });
       if (!res.ok) {
         const data = await res.json().catch(() => null);
-        throw new Error(data?.error || 'Failed to save book links');
+        throw new Error(extractErrorMessage(data, 'Failed to save book links'));
       }
       const data: { outgoing: BookLinkWithNames[] } = await res.json();
       setPayload((prev) => (prev ? { ...prev, outgoing: data.outgoing } : prev));

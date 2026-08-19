@@ -14,6 +14,7 @@ import {
   type JobProgressEventPayload,
 } from '@/contexts/JobProgressContext';
 import type { ReceiptWithTransaction } from '@/lib/receipts';
+import { extractErrorMessage } from '@/lib/api-error';
 
 const PAGE_SIZE = 30;
 
@@ -84,7 +85,7 @@ export function ReceiptGallery() {
         body: JSON.stringify({ force: false }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || 'Failed to start receipt re-extraction');
+      if (!res.ok) throw new Error(extractErrorMessage(data, 'Failed to start receipt re-extraction'));
       if (data.jobId) {
         trackJob(String(data.jobId), 'Receipt AI re-extraction');
         toast.success(`Queued ${data.eligible} receipt${data.eligible === 1 ? '' : 's'} for AI re-extraction`);

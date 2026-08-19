@@ -6,6 +6,7 @@ import { ItemSelector } from '@/components/business/ItemSelector';
 import { useToast } from '@/contexts/ToastContext';
 import { useCurrentUser, READONLY_TOOLTIP } from '@/hooks/useCurrentUser';
 import { formatCurrency } from '@/lib/format';
+import { extractErrorMessage } from '@/lib/api-error';
 import {
     type BillReceivingDTO,
     type BillReceivingEntryDTO,
@@ -136,7 +137,7 @@ function ReceiveModal({
                 body: JSON.stringify({ allocations, date }),
             });
             const data = await res.json().catch(() => null);
-            if (!res.ok) throw new Error(data?.error || 'Failed to receive');
+            if (!res.ok) throw new Error(extractErrorMessage(data, 'Failed to receive'));
             success('Stock received against bill');
             onClose();
             onDone();
@@ -284,7 +285,7 @@ export function BillReceivingSection({ billGuid, entries }: BillReceivingSection
         try {
             const res = await fetch(`/api/inventory/bills/${billGuid}/receiving`);
             const data = await res.json().catch(() => null);
-            if (!res.ok) throw new Error(data?.error || 'Failed to load receiving');
+            if (!res.ok) throw new Error(extractErrorMessage(data, 'Failed to load receiving'));
             setReceiving(data.receiving);
             setLoadError(null);
         } catch (err) {

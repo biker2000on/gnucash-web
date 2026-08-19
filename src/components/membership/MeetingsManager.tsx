@@ -11,6 +11,7 @@ import { HouseholdBookBanner } from '@/components/business/HouseholdBookBanner';
 import type { AttendanceStatus } from '@/lib/membership';
 import type { MeetingDTO, MeetingDetailDTO } from '@/lib/services/membership.service';
 import { LinkedDocumentsPanel } from '@/components/documents/LinkedDocumentsPanel';
+import { extractErrorMessage } from '@/lib/api-error';
 
 const inputClass = 'w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder-foreground-muted focus:outline-none focus:border-primary/50 transition-all';
 const labelClass = 'block text-xs font-medium text-foreground-secondary mb-1';
@@ -119,7 +120,7 @@ function RollCallModal({ meetingId, onClose, onSaved }: {
             });
             if (!res.ok) {
                 const data = await res.json().catch(() => null);
-                throw new Error(data?.error || 'Failed to save attendance');
+                throw new Error(extractErrorMessage(data, 'Failed to save attendance'));
             }
             success('Attendance saved');
             onSaved();
@@ -306,7 +307,7 @@ export function MeetingsManager() {
             });
             if (!res.ok) {
                 const data = await res.json().catch(() => null);
-                throw new Error(data?.error || 'Failed to save meeting');
+                throw new Error(extractErrorMessage(data, 'Failed to save meeting'));
             }
             const saved: MeetingDTO = await res.json();
             success(isNew ? 'Meeting created' : 'Meeting updated');
@@ -328,7 +329,7 @@ export function MeetingsManager() {
             const res = await fetch(`/api/membership/meetings/${deleting.id}`, { method: 'DELETE' });
             if (!res.ok) {
                 const data = await res.json().catch(() => null);
-                throw new Error(data?.error || 'Failed to delete meeting');
+                throw new Error(extractErrorMessage(data, 'Failed to delete meeting'));
             }
             success(`Deleted "${deleting.title}"`);
             setDeleting(null);

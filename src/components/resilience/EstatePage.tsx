@@ -18,6 +18,7 @@ import type {
 import { DocumentChip, DocumentLinkField, type VaultDocument } from './DocumentLinkField';
 import { Empty, Field, FieldGrid, INPUT, Metric, Panel, SaveBar, TNUM } from './ui';
 import { Abbr } from '@/components/ui/Abbr';
+import { extractErrorMessage } from '@/lib/api-error';
 
 const uid = () => crypto.randomUUID();
 const today = () => new Date().toISOString().slice(0, 10);
@@ -95,7 +96,7 @@ function useSection<P, R extends { profile: P }>(section: string, initial: P) {
   const load = async () => {
     const result = await fetch(`/api/resilience/${section}`, { cache: 'no-store' });
     const json = await result.json();
-    if (!result.ok) throw new Error(json.error || 'Request failed');
+    if (!result.ok) throw new Error(extractErrorMessage(json, 'Request failed'));
     setResponse(json as R);
     setProfile((json as R).profile);
     setDirty(false);
@@ -120,7 +121,7 @@ function useSection<P, R extends { profile: P }>(section: string, initial: P) {
         body: JSON.stringify({ profile }),
       });
       const json = await result.json();
-      if (!result.ok) throw new Error(json.error || 'Save failed');
+      if (!result.ok) throw new Error(extractErrorMessage(json, 'Save failed'));
       setResponse(json as R);
       setProfile((json as R).profile);
       setDirty(false);
@@ -294,7 +295,7 @@ export function EstatePage() {
         body: JSON.stringify({ documentId: document.documentId }),
       });
       const json = await response.json();
-      if (!response.ok) throw new Error(json.error || 'Parse failed');
+      if (!response.ok) throw new Error(extractErrorMessage(json, 'Parse failed'));
       const suggestion = json.suggestion as EstateDocumentSuggestion;
       // Nothing is saved here: the form is prefilled for the user to review.
       const patch: Partial<EstateDocument> = {};

@@ -5,6 +5,7 @@ import { useToast } from '@/contexts/ToastContext';
 import { formatDateForDisplay, parseDateInput } from '@/lib/date-format';
 import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 import { toLocalDateString } from '@/lib/datePresets';
+import { extractErrorMessage } from '@/lib/api-error';
 
 interface AccountOption {
   guid: string;
@@ -102,7 +103,7 @@ export function DepreciationScheduleForm({
         success('Depreciation schedule saved');
         onSaved?.();
       } else {
-        showError(data.error || 'Failed to save schedule');
+        showError(extractErrorMessage(data, 'Failed to save schedule'));
       }
     } catch {
       showError('Failed to save schedule');
@@ -129,7 +130,7 @@ export function DepreciationScheduleForm({
         success(`Generated ${data.transactionsCreated} transactions. New balance: ${data.newBalance.toFixed(2)}`);
         onProcessed?.();
       } else {
-        showError(data.error || 'Failed to process schedule');
+        showError(extractErrorMessage(data, 'Failed to process schedule'));
       }
     } catch {
       showError('Failed to process schedule');

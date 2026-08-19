@@ -11,6 +11,7 @@ import { toLocalDateString } from '@/lib/datePresets';
 import { AccountSelector } from '@/components/ui/AccountSelector';
 import { FieldGrid } from '@/components/ui/form';
 import { ErrorLiveRegion } from '@/components/a11y/LiveRegion';
+import { extractErrorMessage } from '@/lib/api-error';
 
 export type InvestmentAction = 'Buy' | 'Sell' | 'Dividend' | 'ReturnOfCapital' | 'Split';
 
@@ -32,7 +33,6 @@ export interface InvestmentSplitInput {
 interface InvestmentTransactionFormProps {
     accountGuid: string;
     accountName: string;
-    accountCommodityGuid: string;
     commoditySymbol: string;
     commodityFraction?: number;
     currentShares?: number;
@@ -49,13 +49,9 @@ interface FormState {
     amount: string;
     commission: string;
     cashAccountGuid: string;
-    cashAccountName: string;
     incomeAccountGuid: string;
-    incomeAccountName: string;
     expenseAccountGuid: string;
-    expenseAccountName: string;
     memo: string;
-    splitRatio: string;
 }
 
 const INITIAL_FORM_STATE: FormState = {
@@ -67,13 +63,9 @@ const INITIAL_FORM_STATE: FormState = {
     amount: '',
     commission: '',
     cashAccountGuid: '',
-    cashAccountName: '',
     incomeAccountGuid: '',
-    incomeAccountName: '',
     expenseAccountGuid: '',
-    expenseAccountName: '',
     memo: '',
-    splitRatio: '',
 };
 
 const ACTION_OPTIONS: { value: InvestmentAction; label: string; description: string }[] = [
@@ -316,11 +308,7 @@ export function InvestmentTransactionForm({
                 (a.fullname?.toLowerCase().includes('dividend') || a.name.toLowerCase().includes('dividend'))
             );
             if (dividendIncome && !form.incomeAccountGuid) {
-                setForm(f => ({
-                    ...f,
-                    incomeAccountGuid: dividendIncome.guid,
-                    incomeAccountName: dividendIncome.fullname || dividendIncome.name,
-                }));
+                setForm(f => ({ ...f, incomeAccountGuid: dividendIncome.guid }));
             }
 
             // Find default expense account for commissions
@@ -332,11 +320,7 @@ export function InvestmentTransactionForm({
                  a.name.toLowerCase().includes('fee'))
             );
             if (commissionExpense && !form.expenseAccountGuid) {
-                setForm(f => ({
-                    ...f,
-                    expenseAccountGuid: commissionExpense.guid,
-                    expenseAccountName: commissionExpense.fullname || commissionExpense.name,
-                }));
+                setForm(f => ({ ...f, expenseAccountGuid: commissionExpense.guid }));
             }
         }
     }, [accounts, form.incomeAccountGuid, form.expenseAccountGuid]);
@@ -428,15 +412,9 @@ export function InvestmentTransactionForm({
 
     const handleAccountSelect = (
         field: 'cashAccountGuid' | 'incomeAccountGuid' | 'expenseAccountGuid',
-        nameField: 'cashAccountName' | 'incomeAccountName' | 'expenseAccountName',
-        accountGuid: string,
-        accountName: string,
+        selectedGuid: string,
     ) => {
-        setForm(prev => ({
-            ...prev,
-            [field]: accountGuid,
-            [nameField]: accountName,
-        }));
+        setForm(prev => ({ ...prev, [field]: selectedGuid }));
     };
 
     const validateForm = (): string[] => {
@@ -576,7 +554,7 @@ export function InvestmentTransactionForm({
 
             if (!res.ok) {
                 const err = await res.json();
-                throw new Error(err.error || err.errors?.[0]?.message || 'Failed to create transaction');
+                throw new Error(extractErrorMessage(err, 'Failed to create transaction'));
             }
 
             onSave();
@@ -783,7 +761,7 @@ export function InvestmentTransactionForm({
                             </label>
                             <AccountSelector
                                 value={form.expenseAccountGuid}
-                                onChange={(guid, name) => handleAccountSelect('expenseAccountGuid', 'expenseAccountName', guid, name)}
+                                onChange={(guid) => handleAccountSelect('expenseAccountGuid', guid)}
                                 placeholder="Select expense account..."
                                 accountTypes={['EXPENSE']}
                             />
@@ -796,7 +774,7 @@ export function InvestmentTransactionForm({
                         </label>
                         <AccountSelector
                             value={form.cashAccountGuid}
-                            onChange={(guid, name) => handleAccountSelect('cashAccountGuid', 'cashAccountName', guid, name)}
+                            onChange={(guid) => handleAccountSelect('cashAccountGuid', guid)}
                             placeholder="Select cash/bank account..."
                             accountTypes={['BANK', 'ASSET', 'CASH']}
                         />
@@ -829,7 +807,7 @@ export function InvestmentTransactionForm({
                             </label>
                             <AccountSelector
                                 value={form.cashAccountGuid}
-                                onChange={(guid, name) => handleAccountSelect('cashAccountGuid', 'cashAccountName', guid, name)}
+                                onChange={(guid) => handleAccountSelect('cashAccountGuid', guid)}
                                 placeholder="Select cash/bank account..."
                                 accountTypes={['BANK', 'ASSET', 'CASH']}
                             />
@@ -840,7 +818,7 @@ export function InvestmentTransactionForm({
                             </label>
                             <AccountSelector
                                 value={form.incomeAccountGuid}
-                                onChange={(guid, name) => handleAccountSelect('incomeAccountGuid', 'incomeAccountName', guid, name)}
+                                onChange={(guid) => handleAccountSelect('incomeAccountGuid', guid)}
                                 placeholder="Select income account..."
                                 accountTypes={['INCOME']}
                             />
@@ -873,7 +851,7 @@ export function InvestmentTransactionForm({
                         </label>
                         <AccountSelector
                             value={form.cashAccountGuid}
-                            onChange={(guid, name) => handleAccountSelect('cashAccountGuid', 'cashAccountName', guid, name)}
+                            onChange={(guid) => handleAccountSelect('cashAccountGuid', guid)}
                             placeholder="Select cash/bank account..."
                             accountTypes={['BANK', 'ASSET', 'CASH']}
                         />
@@ -883,39 +861,24 @@ export function InvestmentTransactionForm({
 
             {/* Stock Split Fields */}
             {form.action === 'Split' && (
-                <>
-                    <div>
-                        <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-1">
-                            New Shares to Add
-                        </label>
-                        <input
-                            type="number"
-                            step="any"
-                            min="0"
-                            value={form.shares}
-                            onChange={(e) => handleChange('shares', e.target.value)}
-                            placeholder="0"
-                            className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
-                        />
-                        <p className="text-xs text-foreground-muted mt-1">
-                            Enter the number of additional shares you receive from the split.
-                            For example, in a 2-for-1 split where you had 100 shares, enter 100 (you receive 100 new shares).
-                        </p>
-                    </div>
-
-                    <div>
-                        <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-1">
-                            Split Ratio (informational)
-                        </label>
-                        <input
-                            type="text"
-                            value={form.splitRatio}
-                            onChange={(e) => handleChange('splitRatio', e.target.value)}
-                            placeholder="e.g., 2-for-1"
-                            className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
-                        />
-                    </div>
-                </>
+                <div>
+                    <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-1">
+                        New Shares to Add
+                    </label>
+                    <input
+                        type="number"
+                        step="any"
+                        min="0"
+                        value={form.shares}
+                        onChange={(e) => handleChange('shares', e.target.value)}
+                        placeholder="0"
+                        className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
+                    />
+                    <p className="text-xs text-foreground-muted mt-1">
+                        Enter the number of additional shares you receive from the split.
+                        For example, in a 2-for-1 split where you had 100 shares, enter 100 (you receive 100 new shares).
+                    </p>
+                </div>
             )}
 
             {/* Memo (always shown) */}

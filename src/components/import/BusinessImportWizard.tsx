@@ -12,6 +12,7 @@ import { useState, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import { ErrorLiveRegion } from '@/components/a11y/LiveRegion';
 import { useBooks } from '@/contexts/BookContext';
+import { extractErrorMessage } from '@/lib/api-error';
 
 interface PreviewAccount {
     path: string;
@@ -206,7 +207,7 @@ export default function BusinessImportWizard({ config }: { config: BusinessImpor
         try {
             const res = await fetch(`${apiBase}/preview`, { method: 'POST', body: buildFormData() });
             const data = await res.json();
-            if (!res.ok) throw new Error(data.error || 'Preview failed');
+            if (!res.ok) throw new Error(extractErrorMessage(data, 'Preview failed'));
             setPreview(data);
             if (!bookNameTouched && !bookName.trim() && data.companyName) {
                 setBookName(data.companyName);
@@ -228,7 +229,7 @@ export default function BusinessImportWizard({ config }: { config: BusinessImpor
                 body: buildFormData({ entityType, currency: 'USD' }),
             });
             const data = await res.json();
-            if (!res.ok) throw new Error(data.error || 'Import failed');
+            if (!res.ok) throw new Error(extractErrorMessage(data, 'Import failed'));
             setResult(data);
             setPreview(null);
             await refreshBooks();

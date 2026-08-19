@@ -6,6 +6,7 @@ import { formatCurrency } from '@/lib/format';
 import { useToast } from '@/contexts/ToastContext';
 import { LinkedDocumentsPanel } from '@/components/documents/LinkedDocumentsPanel';
 import { ErrorLiveRegion } from '@/components/a11y/LiveRegion';
+import { extractErrorMessage } from '@/lib/api-error';
 import {
     CATEGORY_OPTIONS,
     categoryLabel,
@@ -172,7 +173,7 @@ export function RoomDetailPanel({
             });
             if (!res.ok) {
                 const json = await res.json().catch(() => null);
-                toast.error(json?.error ?? `"${file.name}" failed to upload`);
+                toast.error(extractErrorMessage(json, `"${file.name}" failed to upload`));
             }
         }
     };
@@ -192,7 +193,7 @@ export function RoomDetailPanel({
             });
             if (!res.ok) {
                 const json = await res.json().catch(() => null);
-                throw new Error(json?.error ?? 'Rename failed');
+                throw new Error(extractErrorMessage(json, 'Rename failed'));
             }
             setRenaming(false);
             onChanged();
@@ -226,7 +227,7 @@ export function RoomDetailPanel({
             });
             if (!res.ok) {
                 const json = await res.json().catch(() => null);
-                throw new Error(json?.error ?? 'Failed to add item');
+                throw new Error(extractErrorMessage(json, 'Failed to add item'));
             }
             const { item } = (await res.json()) as { item: HomeItem };
             if (addPhotos.length > 0) await uploadPhotos(item.id, addPhotos);
@@ -257,7 +258,7 @@ export function RoomDetailPanel({
             });
             if (!res.ok) {
                 const json = await res.json().catch(() => null);
-                throw new Error(json?.error ?? 'Save failed');
+                throw new Error(extractErrorMessage(json, 'Save failed'));
             }
             if (editPhotos.length > 0) await uploadPhotos(item.id, editPhotos);
             const moved = editForm.roomId !== room.id;

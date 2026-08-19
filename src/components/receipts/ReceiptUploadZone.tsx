@@ -3,6 +3,7 @@
 import { useCallback, useRef } from 'react';
 import { FileDropZone, type FileUploadOutcome } from '@/components/ui/FileDropZone';
 import { useIsMobile } from '@/lib/hooks/useIsMobile';
+import { extractErrorMessage } from '@/lib/api-error';
 import {
   RECEIPT_ACCEPT_ATTRIBUTE,
   RECEIPT_MAX_FILE_SIZE,
@@ -40,7 +41,7 @@ export async function uploadReceiptFile(
     | null;
 
   if (!response.ok) {
-    throw new Error(payload?.error || `Upload failed (${response.status})`);
+    throw new Error(extractErrorMessage(payload, `Upload failed (${response.status})`));
   }
   const result = payload?.results?.[0];
   if (!result) throw new Error('Upload failed');

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireAuth } from '@/lib/auth';
 import prisma from '@/lib/prisma';
 import { z } from 'zod';
+import { validationErrorResponse } from '@/lib/api-validation';
 
 const ProfileSchema = z.object({
     email: z.union([z.email().max(255), z.literal('')]).optional(),
@@ -21,10 +22,7 @@ export async function PATCH(request: NextRequest) {
     const body = await request.json().catch(() => null);
     const parsed = ProfileSchema.safeParse(body);
     if (!parsed.success) {
-        return NextResponse.json(
-            { error: 'Validation failed', errors: parsed.error.issues },
-            { status: 400 }
-        );
+        return validationErrorResponse(parsed);
     }
 
     const { email } = parsed.data;

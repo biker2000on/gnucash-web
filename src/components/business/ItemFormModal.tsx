@@ -7,6 +7,7 @@ import { Abbr } from '@/components/ui/Abbr';
 import { useToast } from '@/contexts/ToastContext';
 import { useCurrentUser, READONLY_TOOLTIP } from '@/hooks/useCurrentUser';
 import type { ItemDTO, ValuationMethod } from '@/components/business/inventory-ui';
+import { extractErrorMessage } from '@/lib/api-error';
 
 const inputClass = 'w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder-foreground-muted focus:outline-none focus:border-primary/50 transition-all';
 const labelClass = 'block text-xs font-medium text-foreground-secondary mb-1';
@@ -92,7 +93,7 @@ export function ItemFormModal({ editing, onClose, onSaved }: ItemFormModalProps)
         try {
             const res = await fetch('/api/inventory/bootstrap-accounts', { method: 'POST' });
             const data = await res.json().catch(() => null);
-            if (!res.ok) throw new Error(data?.error || 'Failed to create default accounts');
+            if (!res.ok) throw new Error(extractErrorMessage(data, 'Failed to create default accounts'));
             setForm((f) => ({
                 ...f,
                 cogsAccountGuid: data.cogsAccountGuid ?? f.cogsAccountGuid,
@@ -153,7 +154,7 @@ export function ItemFormModal({ editing, onClose, onSaved }: ItemFormModalProps)
                 body: JSON.stringify(payload),
             });
             const data = await res.json().catch(() => null);
-            if (!res.ok) throw new Error(data?.error || 'Failed to save item');
+            if (!res.ok) throw new Error(extractErrorMessage(data, 'Failed to save item'));
             success(isNew ? `Item ${payload.sku} created` : 'Item updated');
             onSaved(data.item);
             onClose();

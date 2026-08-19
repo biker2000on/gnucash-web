@@ -6,6 +6,7 @@ import { enqueueJob } from '@/lib/queue/queues';
 import { cacheInvalidateFrom } from '@/lib/cache';
 import { publishDataChange } from '@/lib/data-events';
 import { earliestBackfilledDate } from '@/lib/yahoo-price-service';
+import { validationErrorResponse } from '@/lib/api-validation';
 
 /**
  * POST /api/prices/fetch
@@ -52,10 +53,7 @@ export async function POST(request: NextRequest) {
       const parseResult = FetchPricesSchema.safeParse(body);
 
       if (!parseResult.success) {
-        return NextResponse.json(
-          { error: 'Validation failed', errors: parseResult.error.issues },
-          { status: 400 }
-        );
+        return validationErrorResponse(parseResult);
       }
 
       symbols = parseResult.data.symbols;
