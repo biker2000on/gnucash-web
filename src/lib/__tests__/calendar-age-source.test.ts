@@ -25,14 +25,14 @@ function sourceFiles(directory: string): string[] {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
     const path = resolve(directory, entry.name);
     if (entry.isDirectory()) return sourceFiles(path);
-    return entry.isFile() && /\.tsx?$/.test(path) && !path.includes('/__tests__/') ? [path] : [];
+    return entry.isFile() && /\.tsx?$/.test(path) && !path.replaceAll('\\', '/').includes('/__tests__/') ? [path] : [];
   });
 }
 
 function fractionalYearSites(): Array<Pick<DurationException, 'path' | 'count'>> {
   return sourceFiles(SOURCE_ROOT).flatMap((file) => {
     const count = [...readFileSync(file, 'utf8').matchAll(/\b365\.25\b/g)].length;
-    return count > 0 ? [{ path: relative(SOURCE_ROOT, file), count }] : [];
+    return count > 0 ? [{ path: relative(SOURCE_ROOT, file).replaceAll('\\', '/'), count }] : [];
   }).sort((a, b) => a.path.localeCompare(b.path));
 }
 
@@ -54,7 +54,7 @@ describe('calendar-age source guard', () => {
     const violations = sourceFiles(SOURCE_ROOT).flatMap((file) => {
       const source = readFileSync(file, 'utf8');
       return [...source.matchAll(ageByMilliseconds)].map((match) => ({
-        path: relative(SOURCE_ROOT, file),
+        path: relative(SOURCE_ROOT, file).replaceAll('\\', '/'),
         expression: match[0],
       }));
     });

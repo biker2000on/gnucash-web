@@ -48,7 +48,7 @@ function sourceFiles(directory: string): string[] {
     return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
         const path = resolve(directory, entry.name);
         if (entry.isDirectory()) return sourceFiles(path);
-        return entry.isFile() && /\.tsx?$/.test(path) && !path.includes('/__tests__/')
+        return entry.isFile() && /\.tsx?$/.test(path) && !path.replaceAll('\\', '/').includes('/__tests__/')
             ? [path]
             : [];
     });
@@ -69,7 +69,7 @@ function countMatches(source: string, pattern: RegExp, promptGuidance: boolean):
 
 function actualDivisionSites(): DivisionException[] {
     return sourceFiles(SOURCE_ROOT).flatMap((file) => {
-        const path = relative(SOURCE_ROOT, file);
+        const path = relative(SOURCE_ROOT, file).replaceAll('\\', '/');
         const exception = DEFERRED_SPLIT_DIVISIONS.find((entry) => entry.path === path);
         const source = readFileSync(file, 'utf8');
         const promptGuidance = exception?.kind === 'prompt-guidance';

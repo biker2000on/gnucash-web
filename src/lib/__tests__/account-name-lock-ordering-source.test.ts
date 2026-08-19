@@ -115,7 +115,7 @@ function sourceFiles(directory: string): string[] {
     return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
         const path = resolve(directory, entry.name);
         if (entry.isDirectory()) return sourceFiles(path);
-        return entry.isFile() && /\.tsx?$/.test(path) && !path.includes('/__tests__/')
+        return entry.isFile() && /\.tsx?$/.test(path) && !path.replaceAll('\\', '/').includes('/__tests__/')
             ? [path]
             : [];
     });
@@ -129,7 +129,7 @@ function accountRowWriters(): Array<{ path: string; count: number }> {
             const count =
                 [...source.matchAll(PRISMA_ACCOUNT_WRITE)].length +
                 [...source.matchAll(RAW_ACCOUNT_ROW_LOCK)].length;
-            return count > 0 ? [{ path: relative(SOURCE_ROOT, file), count }] : [];
+            return count > 0 ? [{ path: relative(SOURCE_ROOT, file).replaceAll('\\', '/'), count }] : [];
         })
         .sort((a, b) => a.path.localeCompare(b.path));
 }
