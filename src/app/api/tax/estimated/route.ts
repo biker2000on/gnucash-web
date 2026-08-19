@@ -12,7 +12,12 @@ import { computeFederalTax, computeSafeHarbor } from '@/lib/tax/federal';
 import { summarizeTaxPayments } from '@/lib/tax/payments';
 import { applyHouseholdTaxDetails, buildFederalInputsFromBookData } from '@/lib/tax/estimator-inputs';
 import { getContributionLimit } from '@/lib/reports/irs-limits';
-import { computeQuarterStatuses, quarterForPaymentDate, type EstimatedPayment } from '@/lib/tax/estimated-quarters';
+import {
+  computeQuarterStatuses,
+  quarterForPaymentDate,
+  sumPaymentsForTaxYear,
+  type EstimatedPayment,
+} from '@/lib/tax/estimated-quarters';
 import {
   ANNUALIZATION_FACTORS,
   ANNUALIZATION_PERIOD_ENDS,
@@ -209,6 +214,10 @@ export async function GET(request: NextRequest) {
     const federal = computeFederalTax(inputs);
 
     /* --- Withholding (annualized for the target, YTD for display) ------ */
+    // NOTE: only the WITHHOLDING figures are read off these summaries. The
+    // estimated-payment total is bucketed by installment window instead
+    // (sumPaymentsForTaxYear below) so the headline agrees with the quarter
+    // table on Jan 1–15 vouchers.
     const annualized = summarizeTaxPayments(bookData, factor);
     const ytd = summarizeTaxPayments(bookData, 1);
 
@@ -290,6 +299,7 @@ export async function GET(request: NextRequest) {
 
     /* --- Quarterly progress --------------------------------------------- */
     const payments = await loadEstimatedPayments(bookAccountGuids, year);
+    const estimatedPaymentsTotal = sumPaymentsForTaxYear(payments, year);
     const quarters = computeQuarterStatuses({
       year,
       annualTarget: safeHarbor.requiredAnnualPayment,
@@ -328,7 +338,7 @@ export async function GET(request: NextRequest) {
         annualized: annualized.withholding,
       },
       estimatedPayments: {
-        totalYtd: ytd.estimatedPayments,
+        totalYtd: estimatedPaymentsTotal,
         list: payments.map(p => ({
           ...p,
           quarter: quarterForPaymentDate(p.date, year),
@@ -395,7 +405,7 @@ export async function GET(request: NextRequest) {
           label: 'Subtract withholding and estimated payments',
           inputs: {
             annualizedWithholding: annualized.withholding,
-            estimatedPaymentsYtd: ytd.estimatedPayments,
+            estimatedPaymentsYtd: estimatedPaymentsTotal,
           },
           result: quarters.reduce((sum, quarter) => sum + quarter.shortfall, 0),
         },
