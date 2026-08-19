@@ -39,9 +39,11 @@ const dockerProbe = spawnSync('docker', ['--context', 'default', 'version', '--f
 });
 const hasDefaultDocker = dockerProbe.status === 0;
 const dockerSkipReason = dockerProbe.error?.message
-    ?? dockerProbe.stderr.trim()
-    ?? 'docker --context default did not return a server version';
+    ?? (dockerProbe.stderr.trim() || 'docker --context default did not return a server version');
 if (!hasDefaultDocker) {
+    if (process.env.CI) {
+        throw new Error(`Prisma deadlock oracle requires Docker on CI but it is unavailable: ${dockerSkipReason}`);
+    }
     console.warn(`[SKIPPED] Prisma deadlock oracle: docker --context default is unavailable (${dockerSkipReason}).`);
 }
 

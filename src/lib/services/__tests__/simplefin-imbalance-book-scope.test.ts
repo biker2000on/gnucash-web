@@ -21,7 +21,8 @@ vi.mock('@/lib/prisma', () => ({
   generateGuid: () => `new-${++mocks.guid}`.padEnd(32, '0'),
 }));
 
-vi.mock('@/lib/book-lock', () => ({
+vi.mock('@/lib/book-lock', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/book-lock')>()),
   acquireNamedXactLock: mocks.acquireNamedXactLock,
   // The account-key funnel in account-lock-order.ts locks through this.
   acquireAccountKeyLockUnchecked: mocks.acquireNamedXactLock,

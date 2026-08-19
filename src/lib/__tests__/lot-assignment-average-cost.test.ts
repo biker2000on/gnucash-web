@@ -30,8 +30,8 @@ vi.mock('../prisma', async () => ({
   default: (await import('./helpers/avg-cost-book')).fakePrisma,
 }));
 vi.mock('../db', () => ({ tryWithDatabaseAdvisoryLock: vi.fn() }));
-vi.mock('../book-lock', () => ({
-  BookBusyError: class BookBusyError extends Error {},
+vi.mock('../book-lock', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../book-lock')>()),
   bookLockKey: vi.fn(() => 'lock'),
   tryAcquireBookLock: vi.fn(async () => true),
   // findOrCreateAccount (reached when generateCapitalGains has to create the
