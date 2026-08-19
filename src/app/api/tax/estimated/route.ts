@@ -252,7 +252,8 @@ export async function GET(request: NextRequest) {
           : await aggregateBookTaxData(bookAccountGuids, year, birthday, periodEnd);
         // Linked-business profit is an annual figure with no period ledger;
         // treat it as accruing evenly (months elapsed / 12), matching the
-        // even-accrual treatment of withholding and contributions.
+        // even-accrual treatment of withholding. (Retirement contributions,
+        // by contrast, come from periodData as period-to-date actuals.)
         if (i !== 3 && linkedBusinesses.length > 0) {
           const monthsElapsed = [3, 5, 8][i];
           applyLinkedBusinessIncome(
@@ -352,7 +353,7 @@ export async function GET(request: NextRequest) {
         columns: annualizedMethod.columns,
         assumptions: [
           'Book income through each period end (Mar 31, May 31, Aug 31, Dec 31), annualized by 4 / 2.4 / 1.5 / 1; installments at 22.5% / 45% / 67.5% / 90%.',
-          'Withholding, retirement contributions, and linked-business profit are treated as accruing evenly through the year.',
+          'Withholding and linked-business profit are treated as accruing evenly through the year; retirement contributions use the actual amounts recorded through each period end.',
           'Self-employment tax uses the full-year Social Security wage base rather than the Schedule AI Part II prorated base (identical below the cap).',
         ],
       },
