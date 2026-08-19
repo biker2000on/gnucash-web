@@ -3027,6 +3027,49 @@ async function migrateDuplicatePrices() {
 }
 
 /**
+ * One-shot repair for invoices posted BEFORE postInvoice persisted the due
+ * date as a `trans-date-due` slot. Without the slot every reader falls back to
+ * the post date and flags the due date "inferred", and the dunning job refuses
+ * to escalate on an inferred due date — so those invoices were never dunned,
+ * however overdue. Recomputes the due date from the invoice's bill terms the
+ * way posting would have and writes the missing slot.
+ *
+ * Book-agnostic (db-init has no active book), idempotent (a second run selects
+ * nothing, and the step is recorded in gnucash_web_schema_meta anyway), and
+ * NON-FATAL: a failure here leaves those invoices exactly as they are today,
+ * which must not stop the app from starting.
+ *
+ * Prisma is imported lazily so db-init's module graph — which the db-init
+ * entrypoint bundles — does not gain a top-level PrismaClient just for this.
+ */
+async function backfillInvoiceDueDates() {
+    try {
+        await runOneTimeMigration('2026-08-19-invoice-trans-date-due-backfill', async () => {
+            const [{ default: prisma }, { backfillInvoiceDueDateSlots }] = await Promise.all([
+                import('./prisma'),
+                import('./business/invoice-due-date-backfill'),
+            ]);
+            const result = await backfillInvoiceDueDateSlots(prisma);
+            console.log(
+                `  trans-date-due backfill: ${result.written} slot(s) written for `
+                + `${result.candidates} legacy posted invoice(s)`
+                + (result.skippedNoPostDate > 0
+                    ? `; ${result.skippedNoPostDate} skipped (no post date)` : '')
+                + (result.wrongSlotType > 0
+                    ? `; ${result.wrongSlotType} left alone (trans-date-due slot of a `
+                      + 'non-timespec type — inspect these by hand)' : ''),
+            );
+        });
+    } catch (error) {
+        console.error(
+            'ERROR: trans-date-due backfill failed — invoices posted before the due-date slot '
+            + 'existed keep an inferred due date and stay out of dunning. Startup continues.',
+            error,
+        );
+    }
+}
+
+/**
  * Tunes autovacuum for the hot, high-churn core tables. The default
  * autovacuum_vacuum_scale_factor of 0.2 lets dead tuples pile up on large
  * tables; 0.05 keeps splits/transactions statistics and visibility maps
@@ -3805,6 +3848,7 @@ export async function initializeDatabase() {
             await createAccountHierarchyView();
             await createExtensionTables();
             await migrateDuplicatePrices();
+            await backfillInvoiceDueDates();
             await createUniqueConstraintGuards();
             await createPerformanceIndexes();
             // After the superseding indexes exist, retire the redundant ones
