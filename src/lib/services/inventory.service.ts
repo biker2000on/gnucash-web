@@ -30,6 +30,10 @@
  */
 
 import prisma from '@/lib/prisma';
+import {
+  POSTING_ACCOUNT_TYPES,
+  type PostingAccountField,
+} from '@/components/business/inventory-ui';
 import { ancestorCte } from '@/lib/sql/ancestor-cte';
 import { createNotification, ensureNotificationsTable } from '@/lib/notifications';
 
@@ -599,15 +603,16 @@ function validateValuationMethod(value: string | undefined): void {
 type PostableAccountClient = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
 
 /**
- * The account types each posting slot may point at. Mirrors the
- * `accountTypes` filters the item form's AccountSelector already applies, so
- * a hand-rolled API call cannot configure what the UI would not let you pick.
+ * The account types each posting slot may point at — the SAME constant the
+ * item form's AccountSelector filters on, imported rather than restated, so a
+ * hand-rolled API call cannot configure what the UI would not let you pick and
+ * the UI cannot forbid what the API would accept.
+ *
+ * It previously read `assetAccountGuid: ['ASSET']`, which rejected the
+ * asset-class subtypes GnuCash also uses for ordinary currency accounts (BANK,
+ * CASH) — a book keeping inventory under one could not enable posting at all.
  */
-export const POSTING_ACCOUNT_TYPES = {
-  incomeAccountGuid: ['INCOME'],
-  cogsAccountGuid: ['EXPENSE'],
-  assetAccountGuid: ['ASSET'],
-} as const;
+export { POSTING_ACCOUNT_TYPES };
 
 const POSTING_ACCOUNT_LABELS = {
   incomeAccountGuid: 'Income',
@@ -615,7 +620,7 @@ const POSTING_ACCOUNT_LABELS = {
   assetAccountGuid: 'Asset',
 } as const;
 
-export type PostingAccountField = keyof typeof POSTING_ACCOUNT_TYPES;
+export type { PostingAccountField };
 
 /**
  * Verify that a ledger posting target belongs to the book being mutated.

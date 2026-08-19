@@ -443,7 +443,7 @@ describe('getAccountLots nets trade fees by DEFAULT', () => {
     const [single] = await getAccountLots(ACCT);
 
     expect(batched.totalCost).toBeCloseTo(single.totalCost, 6);
-    expect(batched.tradeFees).toBeCloseTo(single.tradeFees, 6);
+    expect(batched.tradeFees).toBeCloseTo(single.tradeFees ?? 0, 6);
     expect(batched.tradeFees).toBeGreaterThan(0);
   });
 });
