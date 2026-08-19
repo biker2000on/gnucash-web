@@ -8,7 +8,7 @@
  * Form 8949 reported gains for the SAME sale that differed by the commission.
  *
  * These tests drive BOTH production paths from ONE mocked book:
- *   - Investment Lots:  getAccountLots(..., { includeTradeFees: true })
+ *   - Investment Lots:  getAccountLots(...)  [fee netting is the DEFAULT]
  *   - Form 8949:        lotToRealizedSales(lot, ticker, loadTradeFees(...))
  * and assert the figures match. They also pin the pre-fix numbers, so the
  * disagreement itself is a documented assertion rather than a memory.
@@ -178,9 +178,10 @@ describe('a sale with commissions on both sides', () => {
   });
 
   it('BEFORE: the gross lot figures disagree with Form 8949 by the commissions', async () => {
-    // Exactly what the lot engine returns when it is not fee-aware — the state
-    // that shipped, and what every caller that does not opt in still gets.
-    const [gross] = await getAccountLots(ACCT);
+    // Exactly what the lot engine returns when it is not fee-aware. Reaching
+    // it now takes the explicit `includeTradeFees: false` escape hatch — this
+    // pins the disagreement the default netting exists to remove.
+    const [gross] = await getAccountLots(ACCT, { includeTradeFees: false });
     const tax = await form8949(gross);
 
     // Investment Lots (gross):     basis $1,000.00   gain $500.00
@@ -196,10 +197,7 @@ describe('a sale with commissions on both sides', () => {
   });
 
   it('AFTER: the fee-aware lot figures MATCH Form 8949 exactly', async () => {
-    const [net] = await getAccountLots(ACCT, {
-      includeTradeFees: true,
-      accountPaths: ACCOUNT_PATHS,
-    });
+    const [net] = await getAccountLots(ACCT, { accountPaths: ACCOUNT_PATHS });
     const tax = await form8949(net);
 
     // Investment Lots: basis $1,010.00, realized gain $478.00
@@ -382,15 +380,50 @@ describe('conservatism: an unclassified charge changes nothing', () => {
   });
 });
 
-describe('callers that do not opt in are unchanged', () => {
-  it('never queries the trade-fee splits and reports gross figures', async () => {
+describe('getAccountLots nets trade fees by DEFAULT', () => {
+  beforeEach(() => {
     book = [
       { guid: 'buy', txGuid: 'tx-buy', postDate: '2023-01-10', description: 'Buy 10 AAPL', accountGuid: ACCT, accountType: 'STOCK', shares: 10, value: 1_000, lotGuid: 'lot-1' },
       { guid: 'buy-fee', txGuid: 'tx-buy', postDate: '2023-01-10', description: 'Buy 10 AAPL', accountGuid: COMMISSIONS, accountType: 'EXPENSE', shares: 0, value: 10 },
     ];
     installBook([{ guid: 'lot-1', isClosed: 0 }]);
+  });
 
+  it('capitalizes the commission with no options at all', async () => {
     const [lot] = await getAccountLots(ACCT);
+
+    expect(lot.totalCost).toBeCloseTo(1_010, 6);
+    expect(lot.tradeFees).toBeCloseTo(10, 6);
+    expect(mockSplitsFindMany).toHaveBeenCalled();
+  });
+
+  it('still nets when options are passed WITHOUT includeTradeFees', async () => {
+    // The account-lots route passes accountPaths/feeWarnings and nothing else.
+    const feeWarnings: string[] = [];
+    const [lot] = await getAccountLots(ACCT, { accountPaths: ACCOUNT_PATHS, feeWarnings });
+
+    expect(lot.totalCost).toBeCloseTo(1_010, 6);
+    expect(lot.tradeFees).toBeCloseTo(10, 6);
+  });
+
+  it('honours an explicitly undefined includeTradeFees as the default', async () => {
+    const options = { includeTradeFees: undefined } as { includeTradeFees?: boolean };
+    const [lot] = await getAccountLots(ACCT, options);
+
+    expect(lot.tradeFees).toBeCloseTo(10, 6);
+  });
+
+  it('keeps { includeTradeFees: false } as a gross escape hatch', async () => {
+    const [lot] = await getAccountLots(ACCT, { includeTradeFees: false });
+
+    expect(lot.totalCost).toBeCloseTo(1_000, 6);
+    expect(lot.tradeFees).toBeCloseTo(0, 6);
+    expect(mockSplitsFindMany).not.toHaveBeenCalled();
+  });
+
+  it('leaves the BATCH entry point gross unless asked (the 8949 path relies on it)', async () => {
+    const { getLotsForAccounts } = await import('../lots');
+    const [lot] = (await getLotsForAccounts([ACCT])).get(ACCT) ?? [];
 
     expect(lot.totalCost).toBeCloseTo(1_000, 6);
     expect(lot.tradeFees).toBeCloseTo(0, 6);

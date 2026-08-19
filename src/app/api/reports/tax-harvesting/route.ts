@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { requireRole } from '@/lib/auth';
 import { getBookAccountGuids } from '@/lib/book-scope';
-import { getAccountLots } from '@/lib/lots';
+import { getLotsForAccounts } from '@/lib/lots';
+import { buildAccountPathMap } from '@/lib/reports/utils';
 import { detectWashSales, WashSaleResult } from '@/lib/lot-assignment';
 import { getRetirementAccountGuids } from '@/lib/reports/contribution-classifier';
 
@@ -34,6 +35,8 @@ interface TaxHarvestingData {
     washSaleCount: number;
     candidateCount: number;
   };
+  /** Charges the fee allocator refused to capitalize — see @/lib/trade-fees. */
+  warnings: string[];
   generatedAt: string;
 }
 
@@ -66,13 +69,28 @@ export async function GET(request: NextRequest) {
 
     const candidates: HarvestCandidate[] = [];
 
-    for (const account of investmentAccounts) {
-      // Losses inside tax-advantaged accounts are not deductible — never
-      // offer them as harvest candidates. (Wash-sale detection below still
-      // spans ALL accounts on purpose: an IRA repurchase can wash a taxable
-      // loss, Rev. Rul. 2008-5.)
-      if (retirementGuids.has(account.guid)) continue;
-      const lots = await getAccountLots(account.guid);
+    // Losses inside tax-advantaged accounts are not deductible — never offer
+    // them as harvest candidates. (Wash-sale detection below still spans ALL
+    // accounts on purpose: an IRA repurchase can wash a taxable loss,
+    // Rev. Rul. 2008-5.)
+    const harvestableAccounts = investmentAccounts.filter(a => !retirementGuids.has(a.guid));
+
+    // Cost basis and unrealized gain are NET of classified brokerage
+    // commissions, the same treatment Form 8949 and the Investment Lots report
+    // apply — a harvestable loss quoted gross of the commission that produced
+    // it disagrees with the loss the 8949 will actually report. Batched so the
+    // fee allocation runs once for the whole book rather than per account, and
+    // classified against the full account paths (the allocator's bare-name
+    // fallback can classify a charge differently than the 8949 path does).
+    const feeWarnings: string[] = [];
+    const lotsByAccount = await getLotsForAccounts(harvestableAccounts.map(a => a.guid), {
+      includeTradeFees: true,
+      accountPaths: await buildAccountPathMap(bookAccountGuids),
+      feeWarnings,
+    });
+
+    for (const account of harvestableAccounts) {
+      const lots = lotsByAccount.get(account.guid) ?? [];
 
       for (const lot of lots) {
         if (lot.isClosed || lot.unrealizedGain === null || lot.unrealizedGain >= 0) continue;
@@ -119,6 +137,7 @@ export async function GET(request: NextRequest) {
         washSaleCount: washSales.length,
         candidateCount: candidates.length,
       },
+      warnings: feeWarnings,
       generatedAt: new Date().toISOString(),
     };
 

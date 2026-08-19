@@ -16,6 +16,12 @@
  * a classified fee is ALWAYS capitalized into basis / netted off proceeds and
  * NEVER deducted, and anything not confidently classified changes nothing and
  * is reported as a warning.
+ *
+ * That netting is the DEFAULT for `getAccountLots` — gross money figures are
+ * a bug on every surface that shows them, so reaching them takes an explicit
+ * `{ includeTradeFees: false }`. The batch entry point `getLotsForAccounts`
+ * still defaults to gross, because the 8949 path deliberately runs its own
+ * allocation (with tax mappings) over the raw lots.
  */
 
 import prisma from './prisma';
@@ -102,10 +108,17 @@ export interface LotQueryOptions {
     /**
      * Fold classified brokerage commissions/fees into `totalCost`,
      * `realizedGain` and `unrealizedGain`, matching Form 8949 (see
-     * @/lib/reports/capital-gains). Costs one extra batched query over the
-     * trade transactions' sibling splits, so it is opt-in: callers that only
-     * need share counts or dates keep their current query count, and callers
-     * that report money can ask for figures that agree with the tax forms.
+     * @/lib/reports/capital-gains).
+     *
+     * DEFAULTS TO TRUE in `getAccountLots`: a gain reported gross of the
+     * commission that produced it disagrees with Form 8949, the Investment
+     * Lots report and the ledger, and every caller of `getAccountLots`
+     * reports money. It costs one extra batched query over the trade
+     * transactions' sibling splits.
+     *
+     * Pass `false` only when the caller genuinely wants GROSS figures — the
+     * batch entry point `getLotsForAccounts` still defaults to false because
+     * the 8949 path runs its own allocation over the raw lots.
      */
     includeTradeFees?: boolean;
     /**
@@ -286,12 +299,29 @@ export function remainingCostBasis(
 /**
  * Get all lots for an account with computed summaries.
  * Lots are sorted with open lots first, then by open date descending.
+ *
+ * Basis, realized gain and unrealized gain are NET of classified brokerage
+ * commissions by default (`includeTradeFees` defaults to true here), which is
+ * the treatment Form 8949, the Investment Lots report and the ledger all use.
+ * Pass `{ includeTradeFees: false }` for deliberately gross figures.
+ *
+ * Callers that display money should also pass `accountPaths` (fee
+ * classification reads the FULL account path; without it the allocator falls
+ * back to the bare account name and can classify a charge differently than
+ * the 8949 path does) and a `feeWarnings` sink to surface charges the
+ * allocator refused to capitalize.
  */
 export async function getAccountLots(
     accountGuid: string,
     options: LotQueryOptions = {},
 ): Promise<LotSummary[]> {
-    return (await getLotsForAccounts([accountGuid], options)).get(accountGuid) ?? [];
+    // `?? true` rather than spread order, so an explicit `undefined` from a
+    // caller building options dynamically still gets the netted default.
+    const withFees: LotQueryOptions = {
+        ...options,
+        includeTradeFees: options.includeTradeFees ?? true,
+    };
+    return (await getLotsForAccounts([accountGuid], withFees)).get(accountGuid) ?? [];
 }
 
 /**
