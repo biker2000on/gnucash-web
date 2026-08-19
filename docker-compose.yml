@@ -132,6 +132,10 @@ services:
   minio:
     image: minio/minio
     profiles: ["storage"]
+    # Dev only: the minioadmin/minioadmin defaults are deliberate here so a
+    # local `--profile storage` stack needs no .env. The production file
+    # (docker-compose.prod.yml) requires MINIO_ROOT_USER/MINIO_ROOT_PASSWORD
+    # with ${VAR:?...} instead - never copy these defaults into it.
     ports:
       # Compose services use the internal network; use SSH port-forwarding for
       # remote administration of the API or console.

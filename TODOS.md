@@ -2884,7 +2884,7 @@ Tests:
 - [ ] Fake timers in "today"-relative tests (ASI-2-005). Still no `setSystemTime`/`useFakeTimers` (e.g. `lots-holding-period.test.ts`, `membership.service.test.ts`); only the TZ pin mitigates.
 - [x] Webhook DNS re-resolution (ASI-3-007). `src/lib/webhooks.ts` still does not resolve before `fetch`. — Done 2026-08-19: delivery moved off fetch to node:http/https with a pinned dns.lookup that validates every resolved address against the module's private/loopback/link-local deny list, so the socket connects to the address we checked; covered by src/lib/__tests__/webhook-ssrf.test.ts.
 - [x] Security headers (ASI-3-008) — done 2026-08-19: `next.config.js` `headers()` (X-Frame-Options, HSTS, …).
-- [ ] Remove weak compose credential fallbacks (ASI-3-009). **Partial 2026-08-19:** `POSTGRES_PASSWORD:?` is required and postgres binds 127.0.0.1. Remaining: `minioadmin` fallbacks in `docker-compose.prod.yml` (app/worker/minio/createbuckets env).
+- [x] Remove weak compose credential fallbacks (ASI-3-009). **Partial 2026-08-19:** `POSTGRES_PASSWORD:?` is required and postgres binds 127.0.0.1. Remaining: `minioadmin` fallbacks in `docker-compose.prod.yml` (app/worker/minio/createbuckets env). — Done 2026-08-19: docker-compose.prod.yml now requires MINIO_ROOT_USER/MINIO_ROOT_PASSWORD via ${VAR:?} in the minio service, its healthcheck and createbuckets, and the app/worker RECEIPT_S3_* fallbacks no longer carry a minioadmin default; dev compose keeps its defaults with a comment, and .env.example documents the requirement.
 - [x] Backup precondition enforced in `fix-lot-scrub-sign-corruption.ts`
   (ASI-4-005) — Resolved 2026-08-05: script already run and retired from
   tracking (commit f4facea).
