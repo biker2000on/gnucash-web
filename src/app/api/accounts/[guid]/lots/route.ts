@@ -1,9 +1,10 @@
 import { NextResponse } from 'next/server';
-import { isAccountInActiveBook } from '@/lib/book-scope';
+import { getBookAccountGuids, isAccountInActiveBook } from '@/lib/book-scope';
 import { requireRole } from '@/lib/auth';
 import { getAccountLots, getFreeSplits } from '@/lib/lots';
 import prisma from '@/lib/prisma';
 import { generateGuid } from '@/lib/gnucash';
+import { buildAccountPathMap } from '@/lib/reports/utils';
 
 export async function GET(
     request: Request,
@@ -23,9 +24,25 @@ export async function GET(
         const { searchParams } = new URL(request.url);
         const includeFreeSplits = searchParams.get('includeFreeSplits') === 'true';
 
-        const lots = await getAccountLots(accountGuid);
+        // Basis and gains come back NET of classified brokerage commissions
+        // (the getAccountLots default), so this endpoint agrees with the
+        // Investment Lots report, Form 8949 and the ledger. Fee classification
+        // reads the FULL account path, so pass the same book-scoped path map
+        // those reports build — the bare-account-name fallback can classify a
+        // charge differently and reintroduce the disagreement.
+        const feeWarnings: string[] = [];
+        const bookAccountGuids = await getBookAccountGuids();
+        const lots = await getAccountLots(accountGuid, {
+            accountPaths: await buildAccountPathMap(bookAccountGuids),
+            feeWarnings,
+        });
 
-        const response: { lots: typeof lots; freeSplits?: Awaited<ReturnType<typeof getFreeSplits>> } = { lots };
+        const response: {
+            lots: typeof lots;
+            warnings?: string[];
+            freeSplits?: Awaited<ReturnType<typeof getFreeSplits>>;
+        } = { lots };
+        if (feeWarnings.length > 0) response.warnings = feeWarnings;
 
         if (includeFreeSplits) {
             response.freeSplits = await getFreeSplits(accountGuid);

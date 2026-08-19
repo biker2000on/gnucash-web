@@ -9,6 +9,7 @@ import {
   computeQuarterStatuses,
   quarterForPaymentDate,
   quarterWindows,
+  sumPaymentsForTaxYear,
 } from '../estimated-quarters';
 
 describe('quarterWindows', () => {
@@ -171,5 +172,46 @@ describe('computeQuarterStatuses', () => {
     expect(quarters.map(q => q.requiredCumulative)).toEqual([250, 500.01, 750.01, 1000.01]);
     expect(quarters[0].withholdingCreditCumulative).toBe(0);
     expect(quarters[1].estimatedPaidCumulative).toBeCloseTo(66.67, 2);
+  });
+});
+
+describe('sumPaymentsForTaxYear', () => {
+  // The tracker's headline "paid so far" figure must be bucketed the same way
+  // the quarter table is, or Jan 1-15 vouchers show up in one and not the
+  // other. Both January boundaries are exercised here.
+  const payments = [
+    { date: '2026-01-10', amount: 500 },  // prior year's Q4 voucher
+    { date: '2026-04-10', amount: 1000 }, // 2026 Q1
+    { date: '2026-06-01', amount: 1000 }, // 2026 Q2
+    { date: '2026-09-01', amount: 1000 }, // 2026 Q3
+    { date: '2027-01-12', amount: 1000 }, // 2026 Q4, paid in January 2027
+  ];
+
+  it('excludes a Jan 1-15 payment of the tax year (prior year Q4 voucher)', () => {
+    expect(quarterForPaymentDate('2026-01-10', 2026)).toBeNull();
+    expect(sumPaymentsForTaxYear(payments, 2026)).toBe(4000);
+  });
+
+  it('includes a Jan 1-15 payment of year+1 (this year Q4 voucher)', () => {
+    expect(quarterForPaymentDate('2027-01-12', 2026)).toBe(4);
+    // Sum equals the quarter buckets exactly - that is the whole point.
+    const buckets = bucketPaymentsByQuarter(payments, 2026);
+    expect(sumPaymentsForTaxYear(payments, 2026)).toBe(
+      buckets.reduce((a, b) => a + b, 0),
+    );
+  });
+
+  it('attributes the same Jan 1-15 payment to the PRIOR tax year', () => {
+    // (only the January payment is in range; later 2026 dates would count as
+    // *late* 2025-Q4, which is the documented behaviour of the bucketer.)
+    expect(sumPaymentsForTaxYear([payments[0]], 2025)).toBe(500);
+    expect(quarterForPaymentDate('2026-01-10', 2025)).toBe(4);
+  });
+
+  it('rounds to cents', () => {
+    expect(sumPaymentsForTaxYear(
+      [{ date: '2026-03-01', amount: 33.33 }, { date: '2026-05-01', amount: 33.34 }],
+      2026,
+    )).toBe(66.67);
   });
 });

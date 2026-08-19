@@ -36,9 +36,19 @@
  *   II's prorated per-period base — identical below the cap.
  * - Withholding stays credited evenly across installments (the Form 2210
  *   default the tracker already uses); the actual-date withholding election
- *   is not modeled.
- * - Retirement contributions and linked-business profit are treated as
- *   accruing evenly through the year.
+ *   is not modeled. This is the ONE evenly-accrued input — see below.
+ * - Retirement contributions (401k/IRA/HSA/SEP/SIMPLE) are PERIOD-TO-DATE
+ *   ACTUALS, not even accruals: the caller re-aggregates the book through
+ *   each period end and feeds those actuals in unscaled, because the shared
+ *   input builder deliberately never annualizes limit-bound contributions
+ *   (src/lib/tax/estimator-inputs.ts). A filer who front-loads a 401k gets
+ *   the full deduction in column 1; one who back-loads it gets none there,
+ *   which raises that column's annualized tax.
+ * - Linked-business profit IS accrued evenly: it is an annual figure with no
+ *   period ledger, so the caller prorates each share by months elapsed
+ *   (3/12, 5/12, 8/12, 1) before annualizing.
+ * - Realized capital gains are annualized here even though the full-year
+ *   projection never annualizes them — Schedule AI annualizes all income.
  *
  * A qualifying farmer (IRC 6654(i)) has a single Jan 15 installment;
  * Schedule AI does not apply — `compute` returns applicable: false.

@@ -22,6 +22,10 @@ vi.mock('../prisma', () => ({
     lots: { findMany: (...a: unknown[]) => mockLotsFindMany(...a) },
     slots: { findMany: (...a: unknown[]) => mockSlotsFindMany(...a) },
     accounts: { findMany: (...a: unknown[]) => mockAccountsFindMany(...a) },
+    // getAccountLots nets trade fees by default, which queries the trade
+    // transactions' sibling splits. These fixtures have no fee splits, so an
+    // empty result keeps the figures identical to the gross ones.
+    splits: { findMany: async () => [] },
   },
 }));
 

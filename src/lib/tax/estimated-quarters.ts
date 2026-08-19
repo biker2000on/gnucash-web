@@ -119,6 +119,22 @@ export function bucketPaymentsByQuarter(
   return buckets.map(round2) as [number, number, number, number];
 }
 
+/**
+ * Total estimated payments ATTRIBUTED to tax year `year` — the sum of the
+ * four quarter buckets.
+ *
+ * This is the number every "paid so far" display must use. It is NOT the
+ * calendar-year category total: a voucher paid Jan 1–15 of `year` belongs to
+ * the PRIOR year's Q4 and is excluded, while a voucher paid Jan 1–15 of
+ * `year + 1` is this year's Q4 and IS included. Summing the raw calendar
+ * year instead makes the headline figure disagree with the quarter table.
+ */
+export function sumPaymentsForTaxYear(payments: EstimatedPayment[], year: number): number {
+  return round2(
+    bucketPaymentsByQuarter(payments, year).reduce((sum, amount) => sum + amount, 0),
+  );
+}
+
 export interface ComputeQuarterStatusesInput {
   year: number;
   /** Safe-harbor required annual payment (withholding + estimates). */

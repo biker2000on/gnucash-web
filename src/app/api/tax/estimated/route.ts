@@ -12,7 +12,12 @@ import { computeFederalTax, computeSafeHarbor } from '@/lib/tax/federal';
 import { summarizeTaxPayments } from '@/lib/tax/payments';
 import { applyHouseholdTaxDetails, buildFederalInputsFromBookData } from '@/lib/tax/estimator-inputs';
 import { getContributionLimit } from '@/lib/reports/irs-limits';
-import { computeQuarterStatuses, quarterForPaymentDate, type EstimatedPayment } from '@/lib/tax/estimated-quarters';
+import {
+  computeQuarterStatuses,
+  quarterForPaymentDate,
+  sumPaymentsForTaxYear,
+  type EstimatedPayment,
+} from '@/lib/tax/estimated-quarters';
 import {
   ANNUALIZATION_FACTORS,
   ANNUALIZATION_PERIOD_ENDS,
@@ -209,6 +214,10 @@ export async function GET(request: NextRequest) {
     const federal = computeFederalTax(inputs);
 
     /* --- Withholding (annualized for the target, YTD for display) ------ */
+    // NOTE: only the WITHHOLDING figures are read off these summaries. The
+    // estimated-payment total is bucketed by installment window instead
+    // (sumPaymentsForTaxYear below) so the headline agrees with the quarter
+    // table on Jan 1–15 vouchers.
     const annualized = summarizeTaxPayments(bookData, factor);
     const ytd = summarizeTaxPayments(bookData, 1);
 
@@ -243,7 +252,8 @@ export async function GET(request: NextRequest) {
           : await aggregateBookTaxData(bookAccountGuids, year, birthday, periodEnd);
         // Linked-business profit is an annual figure with no period ledger;
         // treat it as accruing evenly (months elapsed / 12), matching the
-        // even-accrual treatment of withholding and contributions.
+        // even-accrual treatment of withholding. (Retirement contributions,
+        // by contrast, come from periodData as period-to-date actuals.)
         if (i !== 3 && linkedBusinesses.length > 0) {
           const monthsElapsed = [3, 5, 8][i];
           applyLinkedBusinessIncome(
@@ -290,6 +300,7 @@ export async function GET(request: NextRequest) {
 
     /* --- Quarterly progress --------------------------------------------- */
     const payments = await loadEstimatedPayments(bookAccountGuids, year);
+    const estimatedPaymentsTotal = sumPaymentsForTaxYear(payments, year);
     const quarters = computeQuarterStatuses({
       year,
       annualTarget: safeHarbor.requiredAnnualPayment,
@@ -328,7 +339,7 @@ export async function GET(request: NextRequest) {
         annualized: annualized.withholding,
       },
       estimatedPayments: {
-        totalYtd: ytd.estimatedPayments,
+        totalYtd: estimatedPaymentsTotal,
         list: payments.map(p => ({
           ...p,
           quarter: quarterForPaymentDate(p.date, year),
@@ -342,7 +353,7 @@ export async function GET(request: NextRequest) {
         columns: annualizedMethod.columns,
         assumptions: [
           'Book income through each period end (Mar 31, May 31, Aug 31, Dec 31), annualized by 4 / 2.4 / 1.5 / 1; installments at 22.5% / 45% / 67.5% / 90%.',
-          'Withholding, retirement contributions, and linked-business profit are treated as accruing evenly through the year.',
+          'Withholding and linked-business profit are treated as accruing evenly through the year; retirement contributions use the actual amounts recorded through each period end.',
           'Self-employment tax uses the full-year Social Security wage base rather than the Schedule AI Part II prorated base (identical below the cap).',
         ],
       },
@@ -395,7 +406,7 @@ export async function GET(request: NextRequest) {
           label: 'Subtract withholding and estimated payments',
           inputs: {
             annualizedWithholding: annualized.withholding,
-            estimatedPaymentsYtd: ytd.estimatedPayments,
+            estimatedPaymentsYtd: estimatedPaymentsTotal,
           },
           result: quarters.reduce((sum, quarter) => sum + quarter.shortfall, 0),
         },
