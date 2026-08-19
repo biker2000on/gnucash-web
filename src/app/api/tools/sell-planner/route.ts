@@ -44,6 +44,7 @@ export async function GET() {
       candidateLotCount: book.candidates.length,
       recentBuysByTicker: book.recentBuysByTicker,
       missingPriceTickers: book.missingPriceTickers,
+      feeWarnings: book.feeWarnings,
       context: tax.meta,
     });
   } catch (error) {
@@ -131,6 +132,7 @@ export async function POST(request: NextRequest) {
       plans,
       retirement: book.retirement,
       missingPriceTickers: book.missingPriceTickers,
+      feeWarnings: book.feeWarnings,
       context: tax.meta,
     });
   } catch (error) {

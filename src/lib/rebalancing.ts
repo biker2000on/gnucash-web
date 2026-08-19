@@ -469,23 +469,54 @@ export function annotateSellSuggestions(
 // pure engine above stays importable in tests and client components)
 // ---------------------------------------------------------------------------
 
+export interface SellCandidateLoadOptions {
+    /**
+     * The whole book's account guids, used to build the path map the fee
+     * allocator classifies against. The charge sits on an EXPENSE account, not
+     * on the investment account, so a map of just the holdings would not see
+     * it. Omitted = every account in the database.
+     */
+    bookAccountGuids?: string[];
+    /** Sink for charges the allocator refused to capitalize. */
+    feeWarnings?: string[];
+}
+
 /**
  * Load open-lot sell candidates for a set of symbols, keyed by symbol.
+ *
+ * Unrealized gains here are NET of classified brokerage commissions, matching
+ * Form 8949 and the Investment Lots report — a rebalance that quotes a gross
+ * gain is telling the user a tax number they will not actually owe. Lots for
+ * every account load in ONE batched call so the fee allocation runs once over
+ * the whole set rather than per account (it apportions a transaction's fee
+ * across that transaction's splits, so per-account runs see less of the trade
+ * and repeat the work).
  *
  * @param accountsBySymbol - map of symbol -> stock/mutual account GUIDs
  *   (and optional names) holding that commodity.
  */
 export async function loadSellCandidatesBySymbol(
-    accountsBySymbol: Record<string, Array<{ guid: string; name?: string }>>
+    accountsBySymbol: Record<string, Array<{ guid: string; name?: string }>>,
+    options: SellCandidateLoadOptions = {},
 ): Promise<Record<string, SellLotCandidate[]>> {
-    const { getAccountLots } = await import('./lots');
+    const { getLotsForAccounts } = await import('./lots');
+    const { buildAccountPathMap } = await import('./reports/utils');
 
     const result: Record<string, SellLotCandidate[]> = {};
+
+    const allGuids = [...new Set(
+        Object.values(accountsBySymbol).flatMap(accounts => accounts.map(a => a.guid)),
+    )];
+    const lotsByAccount = await getLotsForAccounts(allGuids, {
+        includeTradeFees: true,
+        accountPaths: await buildAccountPathMap(options.bookAccountGuids),
+        feeWarnings: options.feeWarnings,
+    });
 
     for (const [symbol, accounts] of Object.entries(accountsBySymbol)) {
         const candidates: SellLotCandidate[] = [];
         for (const account of accounts) {
-            const lots = await getAccountLots(account.guid);
+            const lots = lotsByAccount.get(account.guid) ?? [];
             for (const lot of lots) {
                 if (lot.isClosed) continue;
                 if (Math.abs(lot.totalShares) < DEFAULT_QTY_EPSILON) continue;

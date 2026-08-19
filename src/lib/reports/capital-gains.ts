@@ -662,7 +662,13 @@ export async function loadRealizedSales(
   const taxableAccounts = investmentAccounts.filter(account =>
     !retirementGuids.has(account.guid) && effectiveMappings.get(account.guid) !== 'exclude'
   );
-  const lotsByAccount = await getLotsForAccounts(taxableAccounts.map(account => account.guid));
+  // RAW lots, deliberately: this path runs its own fee allocation below, with
+  // the tax mappings, and netting them here first would apply the commissions
+  // twice. Every other caller wants the netted default.
+  const lotsByAccount = await getLotsForAccounts(
+    taxableAccounts.map(account => account.guid),
+    { includeTradeFees: false },
+  );
 
   // Brokerage commissions live on sibling EXPENSE splits of the trade
   // transactions, which the lot engine never loads; recover them once for

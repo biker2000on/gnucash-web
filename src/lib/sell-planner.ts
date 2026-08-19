@@ -618,6 +618,13 @@ export interface SellPlannerBookData {
   recentBuysByTicker: Record<string, string>;
   /** Tickers whose lots were dropped for lack of a current price. */
   missingPriceTickers: string[];
+  /**
+   * Brokerage charges the fee allocator refused to capitalize into basis.
+   * Every candidate's basis below is NET of the classified commissions, so an
+   * unclassified charge is money the plan's gain figure does not know about
+   * and must be said out loud rather than silently omitted.
+   */
+  feeWarnings: string[];
 }
 
 /**
@@ -632,7 +639,8 @@ export async function loadSellCandidates(
   scopeAccountGuids?: string[],
 ): Promise<SellPlannerBookData> {
   const prisma = (await import('@/lib/prisma')).default;
-  const { getAccountLots, remainingCostBasis } = await import('@/lib/lots');
+  const { getLotsForAccounts, remainingCostBasis } = await import('@/lib/lots');
+  const { buildAccountPathMap } = await import('@/lib/reports/utils');
   const { getRetirementAccountGuids } = await import('@/lib/reports/contribution-classifier');
 
   const investmentAccounts = await prisma.accounts.findMany({
@@ -669,10 +677,31 @@ export async function loadSellCandidates(
   let retirementValue = 0;
   let retirementCount = 0;
 
+  /*
+   * Lots for every investment account in ONE batched call, netted of
+   * classified brokerage commissions.
+   *
+   * Per-account getAccountLots() calls were wrong twice over: the fee
+   * allocation re-ran per account (it apportions a transaction's fee across
+   * the splits of that transaction, so running it on a slice of the book is
+   * both slower and less able to see the whole trade), and no `accountPaths`
+   * were passed — the allocator then falls back to the bare account name and
+   * can classify the same charge differently from Form 8949. A sell plan is a
+   * money surface; its basis has to agree with the 8949's split for split.
+   * Paths cover the WHOLE book because the charge sits on an EXPENSE account,
+   * not on the investment account.
+   */
+  const feeWarnings: string[] = [];
+  const lotsByAccount = await getLotsForAccounts(guids, {
+    includeTradeFees: true,
+    accountPaths: await buildAccountPathMap(bookAccountGuids),
+    feeWarnings,
+  });
+
   for (const acct of investmentAccounts) {
     const ticker = acct.commodity?.mnemonic || 'Unknown';
     const isRetirement = retirementGuids.has(acct.guid);
-    const lots = await getAccountLots(acct.guid);
+    const lots = lotsByAccount.get(acct.guid) ?? [];
 
     let acctValue = 0;
     let acctGain = 0;
@@ -772,6 +801,7 @@ export async function loadSellCandidates(
     },
     recentBuysByTicker,
     missingPriceTickers: [...missingPrice].sort(),
+    feeWarnings,
   };
 }
 
