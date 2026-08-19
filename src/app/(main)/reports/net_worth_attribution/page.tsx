@@ -26,6 +26,7 @@ import {
     ReferenceLine,
     ResponsiveContainer,
 } from 'recharts';
+import { Tip } from '@/components/ui/Tooltip';
 
 /* Solid series colors — no gradients (DESIGN.md) */
 const COMPONENT_COLORS: Record<ComponentKey, string> = {
@@ -154,15 +155,16 @@ function WaterfallSummary({ data }: { data: NetWorthAttributionData }) {
                         {components
                             .filter(c => Math.abs(c.amount) > 0)
                             .map(c => (
+                                <Tip content={`${c.label}: ${formatSignedCurrency(c.amount)}`} key={c.key}>
                                 <div
                                     key={c.key}
-                                    title={`${c.label}: ${formatSignedCurrency(c.amount)}`}
                                     style={{
                                         width: `${(Math.abs(c.amount) / totalMagnitude) * 100}%`,
                                         backgroundColor: c.color,
                                         opacity: c.amount < 0 ? 0.45 : 1,
                                     }}
                                 />
+                                </Tip>
                             ))}
                     </div>
                     <p className="mt-1 text-[11px] text-foreground-muted">

@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { ReceiptModal } from './ReceiptModal';
+import { Tip } from '@/components/ui/Tooltip';
 
 interface ReceiptIndicatorProps {
   transactionGuid: string;
@@ -14,11 +15,11 @@ export function ReceiptIndicator({ transactionGuid, transactionDescription, rece
 
   return (
     <>
+      <Tip content={receiptCount > 0 ? `${receiptCount} receipt${receiptCount !== 1 ? 's' : ''}` : 'Attach receipt'}>
       <button
         onClick={() => setIsModalOpen(true)}
         className="p-1 rounded hover:bg-surface-hover transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center"
         aria-label={receiptCount > 0 ? `${receiptCount} receipt${receiptCount !== 1 ? 's' : ''} attached` : 'No receipts'}
-        title={receiptCount > 0 ? `${receiptCount} receipt${receiptCount !== 1 ? 's' : ''}` : 'Attach receipt'}
       >
         {receiptCount > 0 ? (
           <svg className="w-4 h-4 text-primary" fill="currentColor" viewBox="0 0 24 24">
@@ -30,6 +31,7 @@ export function ReceiptIndicator({ transactionGuid, transactionDescription, rece
           </svg>
         )}
       </button>
+      </Tip>
 
       <ReceiptModal
         isOpen={isModalOpen}

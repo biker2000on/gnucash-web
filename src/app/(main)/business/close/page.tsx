@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { useToast } from '@/contexts/ToastContext';
+import { Tip } from '@/components/ui/Tooltip';
 
 const TNUM = { fontFeatureSettings: "'tnum'" } as const;
 
@@ -230,14 +231,15 @@ export default function MonthEndClosePage() {
                         </p>
                         {isAdmin && (
                             <div className="flex flex-wrap items-center gap-3">
+                                <Tip content={allDone ? undefined : 'Checklist items are still pending'}>
                                 <button
                                     onClick={() => lockThrough(state.monthEnd)}
                                     disabled={saving || state.monthLocked}
-                                    title={allDone ? undefined : 'Checklist items are still pending'}
                                     className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary-hover disabled:opacity-50 transition-colors duration-150"
                                 >
                                     Lock period through {state.monthEnd}
                                 </button>
+                                </Tip>
                                 {!allDone && !state.monthLocked && (
                                     <span className="text-xs text-warning">
                                         {state.items.length - doneCount} checklist item

@@ -5,6 +5,7 @@ import { Abbr } from '@/components/ui/Abbr';
 import { useToast } from '@/contexts/ToastContext';
 import { useIsMobile } from '@/lib/hooks/useIsMobile';
 import { MobileCard } from '@/components/ui/MobileCard';
+import { Tip } from '@/components/ui/Tooltip';
 
 const EARLIEST_YEAR = 2024;
 
@@ -380,14 +381,15 @@ export default function ContributionLimitsPage() {
         </button>
       )}
       {row.source === 'override' && !isDirty(row) && (
+        <Tip content="Remove the DB override; the code default (if any) applies again">
         <button
           onClick={() => void removeOverride(row)}
           disabled={row.saving}
           className="px-2 py-1 text-xs text-foreground-secondary hover:text-foreground hover:bg-surface-hover rounded transition-colors disabled:opacity-50"
-          title="Remove the DB override; the code default (if any) applies again"
         >
           Remove override
         </button>
+        </Tip>
       )}
     </div>
   );
@@ -444,14 +446,15 @@ export default function ContributionLimitsPage() {
           </button>
         )}
 
+        <Tip content={aiConfigured ? 'Ask the configured AI provider for published IRS limits (preview before saving)' : 'Configure an AI provider under Settings → AI to enable'}>
         <button
           onClick={() => void fetchWithAi()}
           disabled={!aiConfigured || aiLoading}
-          title={aiConfigured ? 'Ask the configured AI provider for published IRS limits (preview before saving)' : 'Configure an AI provider under Settings → AI to enable'}
           className="px-3 py-1.5 text-sm border border-border rounded text-foreground-secondary hover:text-foreground hover:bg-surface-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {aiLoading ? 'Fetching…' : 'Fetch with AI'}
         </button>
+        </Tip>
       </div>
 
       {draftYear && (

@@ -20,6 +20,7 @@ import {
 } from '@/components/business/invoice-ui';
 import type { VoucherView, VoucherDetailView } from '@/lib/business/vouchers';
 import type { EmployeeDTO } from '@/lib/business/employees.service';
+import { Tip } from '@/components/ui/Tooltip';
 
 const TNUM = { fontFeatureSettings: "'tnum'" } as const;
 const inputClass = 'w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder-foreground-muted focus:outline-none focus:border-primary/50 transition-all';
@@ -351,15 +352,16 @@ export default function VouchersPage() {
                 title="Expense Vouchers"
                 subtitle="Employee expenses posted to Accounts Payable and reimbursed like bills."
                 actions={
+                    <Tip content={isReadonly ? READONLY_TOOLTIP : 'New Voucher (n)'}>
                     <button
                         type="button"
                         onClick={openCreate}
                         disabled={isReadonly}
-                        title={isReadonly ? READONLY_TOOLTIP : 'New Voucher (n)'}
                         className="px-4 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 disabled:cursor-not-allowed text-primary-foreground rounded-lg transition-colors whitespace-nowrap"
                     >
                         + New Voucher
                     </button>
+                    </Tip>
                 }
                 toolbar={
                     <FilterBar activeCount={status !== 'all' ? 1 : 0}>
@@ -423,6 +425,7 @@ export default function VouchersPage() {
                                                     >
                                                         Edit
                                                     </button>
+                                                    <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                                                     <button
                                                         type="button"
                                                         onClick={() => {
@@ -430,43 +433,46 @@ export default function VouchersPage() {
                                                             setPostDate(todayIso());
                                                         }}
                                                         disabled={isReadonly}
-                                                        title={isReadonly ? READONLY_TOOLTIP : undefined}
                                                         className="ml-1 px-2 py-1 text-xs rounded-md text-primary hover:bg-primary-light transition-colors disabled:opacity-50"
                                                     >
                                                         Post
                                                     </button>
+                                                    </Tip>
+                                                    <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                                                     <button
                                                         type="button"
                                                         onClick={() => setDeleting(v)}
                                                         disabled={isReadonly}
-                                                        title={isReadonly ? READONLY_TOOLTIP : undefined}
                                                         className="ml-1 px-2 py-1 text-xs rounded-md text-negative hover:bg-negative/10 transition-colors disabled:opacity-50"
                                                     >
                                                         Delete
                                                     </button>
+                                                    </Tip>
                                                 </>
                                             ) : (
                                                 <>
                                                     {v.amountDue > 0.005 && (
+                                                        <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                                                         <button
                                                             type="button"
                                                             onClick={() => openPay(v)}
                                                             disabled={isReadonly}
-                                                            title={isReadonly ? READONLY_TOOLTIP : undefined}
                                                             className="px-2 py-1 text-xs rounded-md text-primary hover:bg-primary-light transition-colors disabled:opacity-50"
                                                         >
                                                             Reimburse
                                                         </button>
+                                                        </Tip>
                                                     )}
+                                                    <Tip content={isReadonly ? READONLY_TOOLTIP : 'Rejected when reimbursements exist'}>
                                                     <button
                                                         type="button"
                                                         onClick={() => handleUnpost(v)}
                                                         disabled={isReadonly}
-                                                        title={isReadonly ? READONLY_TOOLTIP : 'Rejected when reimbursements exist'}
                                                         className="ml-1 px-2 py-1 text-xs rounded-md text-foreground-muted hover:text-foreground hover:bg-surface-hover transition-colors disabled:opacity-50"
                                                     >
                                                         Unpost
                                                     </button>
+                                                    </Tip>
                                                 </>
                                             )}
                                         </td>
@@ -593,15 +599,16 @@ export default function VouchersPage() {
                                             {formatCurrency(rowTotal(row))}
                                         </td>
                                         <td className="px-2 py-1.5">
+                                            <Tip content="Remove line">
                                             <button
                                                 type="button"
                                                 onClick={() => removeRow(row.key)}
                                                 disabled={rows.length === 1}
                                                 className="px-1.5 py-0.5 text-xs rounded text-foreground-muted hover:text-negative transition-colors disabled:opacity-30"
-                                                title="Remove line"
                                             >
                                                 ✕
                                             </button>
+                                            </Tip>
                                         </td>
                                     </tr>
                                 ))}
@@ -634,14 +641,15 @@ export default function VouchersPage() {
                         >
                             Cancel
                         </button>
+                        <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                         <button
                             type="submit"
                             disabled={saving || isReadonly}
-                            title={isReadonly ? READONLY_TOOLTIP : undefined}
                             className="px-4 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 disabled:cursor-not-allowed text-primary-foreground rounded-lg transition-colors"
                         >
                             {saving ? 'Saving...' : editingGuid ? 'Save Draft' : 'Create Draft'}
                         </button>
+                        </Tip>
                     </div>
                 </form>
             </Modal>

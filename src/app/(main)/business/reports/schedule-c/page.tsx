@@ -164,7 +164,7 @@ export default function ScheduleCPage() {
             />
 
             {entityType === 'household' && (
-                <div className="border border-warning/30 bg-warning/5 rounded-xl px-4 py-3 text-sm text-foreground-secondary">
+                <div className="border border-warning/30 bg-warning/5 rounded-lg px-4 py-3 text-sm text-foreground-secondary">
                     This book&apos;s entity profile is set to{' '}
                     <span className="font-medium text-foreground">household</span>. Schedule C applies to
                     sole-proprietorship and single-member LLC books — for a household book this report
@@ -182,7 +182,7 @@ export default function ScheduleCPage() {
             )}
 
             {!loading && error && (
-                <div className="border border-error/30 bg-surface/30 rounded-xl p-4">
+                <div className="border border-error/30 bg-surface/30 rounded-lg p-4">
                     <p className="text-sm text-error">{error}</p>
                 </div>
             )}
@@ -210,14 +210,14 @@ export default function ScheduleCPage() {
                     </StatGrid>
 
                     {report.grossReceipts === 0 && report.totalExpenses === 0 ? (
-                        <div className="bg-background-secondary/30 border border-border rounded-xl p-8 text-center">
+                        <div className="bg-background-secondary/30 border border-border rounded-lg p-8 text-center">
                             <p className="text-sm text-foreground-secondary">
                                 No income or expense activity in {report.year}. Pick another year
                                 ([ and ] step years) or post some transactions first.
                             </p>
                         </div>
                     ) : (
-                        <div className="bg-background-secondary/30 backdrop-blur-xl border border-border rounded-xl overflow-hidden">
+                        <div className="bg-background-secondary/30 backdrop-blur-xl border border-border rounded-lg overflow-hidden">
                             <div className="overflow-x-auto">
                                 <table className="w-full min-w-[560px] text-sm">
                                     <thead>
@@ -332,7 +332,7 @@ export default function ScheduleCPage() {
                     )}
 
                     {report.unmappedCount > 0 && otherLine && (
-                        <div className="border border-warning/30 bg-warning/5 rounded-xl px-4 py-3 text-sm text-foreground-secondary">
+                        <div className="border border-warning/30 bg-warning/5 rounded-lg px-4 py-3 text-sm text-foreground-secondary">
                             <span className="font-medium text-foreground">
                                 {report.unmappedCount} expense account
                                 {report.unmappedCount === 1 ? '' : 's'}

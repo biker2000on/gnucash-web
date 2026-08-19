@@ -39,7 +39,7 @@ function Amount({ value, currency }: { value: number; currency: string }) {
 
 function OwnerSummaryCard({ bucket, currency }: { bucket: OwnerBucket; currency: string }) {
     return (
-        <div className="bg-surface/30 border border-border rounded-xl p-4">
+        <div className="bg-surface/30 border border-border rounded-lg p-4">
             <div className="text-xs text-foreground-muted uppercase tracking-wider">{bucket.label}</div>
             <div className={`mt-1 text-xl font-bold font-mono ${bucket.netWorth < 0 ? 'text-negative' : 'text-positive'}`}>
                 {formatCurrency(bucket.netWorth, currency)}

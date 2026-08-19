@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { WidgetShell } from './WidgetShell';
 import type { StoredInsight } from '@/lib/insights';
+import { Tip } from '@/components/ui/Tooltip';
 
 const SEVERITY_DOT: Record<string, string> = {
     info: 'bg-primary',
@@ -75,38 +76,43 @@ export default function InsightsWidget() {
                 <ul className="space-y-2">
                     {visible.map(insight => (
                         <li key={insight.id} className="flex items-start gap-2 text-sm">
+                            <Tip content={insight.severity}>
                             <span
                                 className={`mt-1.5 w-2 h-2 rounded-full shrink-0 ${
                                     SEVERITY_DOT[insight.severity] ?? SEVERITY_DOT.info
                                 }`}
-                                title={insight.severity}
                                 aria-label={`Severity: ${insight.severity}`}
                             />
+                            </Tip>
                             <div className="min-w-0 flex-1">
                                 {insight.href ? (
+                                    <Tip content={insight.detail}>
                                     <a
                                         href={insight.href}
                                         className="block text-foreground hover:text-primary transition-colors truncate"
-                                        title={insight.detail}
                                     >
                                         {insight.title}
                                     </a>
+                                    </Tip>
                                 ) : (
-                                    <span className="block text-foreground truncate" title={insight.detail}>
+                                    <Tip content={insight.detail}>
+                                    <span className="block text-foreground truncate">
                                         {insight.title}
                                     </span>
+                                    </Tip>
                                 )}
                             </div>
+                            <Tip content="Dismiss">
                             <button
                                 type="button"
                                 onClick={() => void dismiss(insight.id)}
                                 disabled={dismissing === insight.id}
                                 aria-label={`Dismiss "${insight.title}"`}
                                 className="shrink-0 text-foreground-muted hover:text-foreground disabled:opacity-40 transition-colors leading-none px-1"
-                                title="Dismiss"
                             >
                                 ×
                             </button>
+                            </Tip>
                         </li>
                     ))}
                     {insights.length > MAX_VISIBLE && (

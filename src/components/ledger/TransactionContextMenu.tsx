@@ -115,7 +115,7 @@ export function TransactionContextMenu({
                         item.variant === 'danger'
                             ? 'text-negative hover:bg-negative/10 hover:text-negative'
                             : 'text-foreground-secondary hover:bg-surface-hover hover:text-foreground'
-                    } ${activeIndex === index ? item.variant === 'danger' ? 'bg-negative/10 text-negative' : 'bg-surface-hover text-foreground' : ''}`}
+                    } ${activeIndex === index ? item.variant === 'danger' ? 'bg-error/10 text-error' : 'bg-surface-hover text-foreground' : ''}`}
                 >
                     {item.label}
                 </button>

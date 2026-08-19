@@ -8,6 +8,7 @@
 
 import type { DrawdownYearRow } from '@/lib/drawdown/types';
 import { Abbr } from '@/components/ui/Abbr';
+import { Tip } from '@/components/ui/Tooltip';
 
 const TNUM = { fontFeatureSettings: "'tnum'" } as const;
 
@@ -111,12 +112,13 @@ export default function DrawdownTable({ rows }: { rows: DrawdownYearRow[] }) {
                                         </span>
                                     )}
                                     {row.irmaa && (
+                                        <Tip content={`MAGI ${row.irmaa.label} (2026 $) — est. +${fmt0.format(row.irmaa.annualSurcharge)}/yr Medicare per enrollee`}>
                                         <span
                                             className="rounded px-1 py-0.5 text-[10px] font-semibold bg-warning/10 text-warning"
-                                            title={`MAGI ${row.irmaa.label} (2026 $) — est. +${fmt0.format(row.irmaa.annualSurcharge)}/yr Medicare per enrollee`}
                                         >
                                             IRMAA {row.irmaa.tier}
                                         </span>
+                                        </Tip>
                                     )}
                                     {row.shortfall > 0 && (
                                         <span className="rounded px-1 py-0.5 text-[10px] font-semibold bg-negative/10 text-negative">

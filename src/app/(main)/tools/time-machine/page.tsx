@@ -49,7 +49,7 @@ interface TimeMachineResponse {
 
 function StatCard({ label, value, delta }: { label: string; value: number; delta?: number }) {
     return (
-        <div className="rounded-xl border border-border bg-surface p-4">
+        <div className="rounded-lg border border-border bg-surface p-4">
             <p className="text-xs font-medium uppercase tracking-wider text-foreground-muted">{label}</p>
             <p className="mt-1 font-mono text-xl font-semibold text-foreground sm:text-2xl" style={TNUM}>
                 {fmtAmount(value)}
@@ -252,16 +252,16 @@ export default function TimeMachinePage() {
                 <>
                     <section className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                         {[1, 2, 3].map(i => (
-                            <div key={i} className="h-24 animate-pulse rounded-xl border border-border bg-surface/30" />
+                            <div key={i} className="h-24 animate-pulse rounded-lg border border-border bg-surface/30" />
                         ))}
                     </section>
-                    <div className="h-96 animate-pulse rounded-xl border border-border bg-surface/30" />
+                    <div className="h-96 animate-pulse rounded-lg border border-border bg-surface/30" />
                 </>
             )}
 
             {/* Error */}
             {!loading && error && (
-                <section className="rounded-xl border border-error/30 bg-surface/30 p-6">
+                <section className="rounded-lg border border-error/30 bg-surface/30 p-6">
                     <p className="text-sm text-error">{error}</p>
                     <button
                         type="button"
@@ -283,7 +283,7 @@ export default function TimeMachinePage() {
                     </section>
 
                     {/* Account tree */}
-                    <section className="overflow-x-auto rounded-xl border border-border bg-surface p-4">
+                    <section className="overflow-x-auto rounded-lg border border-border bg-surface p-4">
                         <table className="w-full text-sm">
                             <thead>
                                 <tr className="border-b border-border text-left text-xs uppercase tracking-wider text-foreground-muted">

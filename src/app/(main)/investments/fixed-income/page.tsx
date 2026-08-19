@@ -22,6 +22,7 @@ import type {
     FixedIncomeKind,
     LadderBucket,
 } from '@/lib/fixed-income';
+import { Tip } from '@/components/ui/Tooltip';
 
 const TNUM = { fontFeatureSettings: "'tnum'" } as const;
 
@@ -46,9 +47,11 @@ function KindBadge({ kind, callable }: { kind: FixedIncomeKind; callable?: boole
                 {KIND_LABELS[kind]}
             </span>
             {callable && (
-                <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider bg-background-tertiary text-foreground-muted" title="Issuer may redeem before maturity">
+                <Tip content="Issuer may redeem before maturity">
+                <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider bg-background-tertiary text-foreground-muted">
                     Callable
                 </span>
+                </Tip>
             )}
         </span>
     );
@@ -316,7 +319,7 @@ function PositionModal({
                     </div>
                 </FieldGrid>
 
-                {error && <p className="text-sm text-negative">{error}</p>}
+                {error && <p className="text-sm text-error">{error}</p>}
 
                 <div className="flex items-center justify-between pt-2">
                     <div>
@@ -324,7 +327,7 @@ function PositionModal({
                             <button
                                 onClick={remove}
                                 disabled={saving}
-                                className="px-3 py-1.5 text-xs font-medium rounded border border-error/40 text-negative hover:bg-error/10 transition-colors disabled:opacity-40"
+                                className="px-3 py-1.5 text-xs font-medium rounded border border-error/40 text-error hover:bg-error/10 transition-colors disabled:opacity-40"
                             >
                                 Remove tracking
                             </button>
@@ -414,7 +417,7 @@ export default function FixedIncomePage() {
             <div className="space-y-6">
                 <PageHeader title="Fixed Income Ladder" subtitle="Bonds, CDs, treasuries, and I-Bonds by maturity" />
                 <div className="bg-surface border border-border rounded-lg p-8 text-center">
-                    <p className="text-negative">{error ?? 'Failed to load fixed income data'}</p>
+                    <p className="text-error">{error ?? 'Failed to load fixed income data'}</p>
                 </div>
             </div>
         );

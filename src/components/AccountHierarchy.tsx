@@ -32,6 +32,7 @@ import TagChip from './tags/TagChip';
 import type { Tag } from '@/lib/tags';
 import { useCurrentUser, READONLY_TOOLTIP } from '@/hooks/useCurrentUser';
 import { extractErrorMessage } from '@/lib/api-error';
+import { Tip } from '@/components/ui/Tooltip';
 
 interface TagWithAccounts extends Tag {
     account_guids?: string[];
@@ -817,6 +818,7 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                             </svg>
                         </Link>
                         <div className="opacity-0 group-hover:opacity-100 hidden md:flex gap-0 ml-0.5 transition-opacity">
+                            <Tip content="Add Child Account" describedBy={false}>
                             <button
                                 onClick={(event) => {
                                     event.stopPropagation();
@@ -824,12 +826,13 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                                 }}
                                 className="p-1 min-h-[24px] min-w-[24px] flex items-center justify-center rounded hover:bg-primary/20 text-foreground-muted hover:text-primary transition-colors"
                                 aria-label="Add Child Account"
-                                title="Add Child Account"
                             >
                                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
                                 </svg>
                             </button>
+                            </Tip>
+                            <Tip content="Edit Account" describedBy={false}>
                             <button
                                 onClick={(event) => {
                                     event.stopPropagation();
@@ -837,12 +840,13 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                                 }}
                                 className="p-1 min-h-[24px] min-w-[24px] flex items-center justify-center rounded hover:bg-primary/20 text-foreground-muted hover:text-primary transition-colors"
                                 aria-label="Edit Account"
-                                title="Edit Account"
                             >
                                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                                 </svg>
                             </button>
+                            </Tip>
+                            <Tip content="Delete Account" describedBy={false}>
                             <button
                                 onClick={(event) => {
                                     event.stopPropagation();
@@ -850,12 +854,12 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                                 }}
                                 className="p-1 min-h-[24px] min-w-[24px] flex items-center justify-center rounded hover:bg-negative/20 text-foreground-muted hover:text-negative transition-colors"
                                 aria-label="Delete Account"
-                                title="Delete Account"
                             >
                                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                                 </svg>
                             </button>
+                            </Tip>
                         </div>
                     </div>
                 );
@@ -1131,24 +1135,25 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
     }, [focusGuid, expanded, accounts]);
 
     return (
-        <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-3 sm:p-6 shadow-2xl">
+        <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-3 sm:p-6 shadow-2xl">
             <div className="flex flex-col gap-4 mb-6 sm:mb-8 pb-4 border-b border-border/50">
                 <div className="flex items-center justify-between gap-3">
                     <h2 className="text-lg sm:text-xl font-semibold text-foreground flex items-center gap-2 min-w-0">
                         <span className="w-2 h-6 bg-primary rounded-full shrink-0" />
                         <span className="truncate">Account Assets & Liabilities</span>
                     </h2>
+                    <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                     <button
                         onClick={handleNewAccount}
                         disabled={isReadonly}
-                        title={isReadonly ? READONLY_TOOLTIP : undefined}
-                        className="shrink-0 flex items-center justify-center gap-2 px-3 sm:px-4 py-2 text-sm bg-primary hover:bg-primary-hover text-primary-foreground rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="shrink-0 flex items-center justify-center gap-2 px-3 sm:px-4 py-2 text-sm bg-primary hover:bg-primary-hover text-primary-foreground rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
                         </svg>
                         New<span className="hidden sm:inline"> Account</span>
                     </button>
+                    </Tip>
                 </div>
 
                 <FilterBar
@@ -1159,7 +1164,7 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                                 ref={filterInputRef}
                                 type="text"
                                 placeholder="Filter accounts... (press / to focus)"
-                                className="w-full bg-input-bg border border-border rounded-xl px-4 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50 transition-all"
+                                className="w-full bg-input-bg border border-border rounded-lg px-4 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50 transition-all"
                                 value={filterText}
                                 onChange={(event) => setFilterText(event.target.value)}
                             />
@@ -1196,26 +1201,28 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                     <div className="flex items-center gap-2">
                         <span className="text-xs text-foreground-muted uppercase tracking-widest font-bold">Expand</span>
                         <div className="flex gap-1">
+                            <Tip content="Collapse All">
                             <button
                                 onClick={() => {
                                     setExpandToDepth(0);
                                     setManualExpanded({});
                                 }}
                                 className="bg-input-bg border border-border rounded-lg px-3 py-2 min-h-[44px] text-xs text-foreground-secondary hover:bg-surface-hover hover:border-primary/50 transition-all flex items-center"
-                                title="Collapse All"
                             >
                                 Collapse All
                             </button>
+                            </Tip>
+                            <Tip content="Expand All">
                             <button
                                 onClick={() => {
                                     setExpandToDepth(Infinity);
                                     setManualExpanded({});
                                 }}
                                 className="bg-input-bg border border-border rounded-lg px-3 py-2 min-h-[44px] text-xs text-foreground-secondary hover:bg-surface-hover hover:border-primary/50 transition-all flex items-center"
-                                title="Expand All"
                             >
                                 Expand All
                             </button>
+                            </Tip>
                         </div>
                         <select
                             className="bg-input-bg border border-border rounded-lg px-3 py-2 min-h-[44px] text-xs text-foreground focus:outline-none focus:border-primary/50 transition-all cursor-pointer"
@@ -1224,7 +1231,7 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                                 setExpandToDepth(event.target.value === 'all' ? Infinity : parseInt(event.target.value, 10));
                                 setManualExpanded({});
                             }}
-                            title="Expand to Depth"
+                            aria-label="Expand to Depth"
                         >
                             <option value="0">Level 0</option>
                             <option value="1">Level 1</option>
@@ -1239,7 +1246,7 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                     <div className="flex items-center gap-2">
                         <span className="text-xs text-foreground-muted uppercase tracking-widest font-bold">Sort By</span>
                         <select
-                            className="bg-input-bg border border-border rounded-xl px-3 py-2 min-h-[44px] text-sm text-foreground focus:outline-none focus:border-primary/50 transition-all cursor-pointer"
+                            className="bg-input-bg border border-border rounded-lg px-3 py-2 min-h-[44px] text-sm text-foreground focus:outline-none focus:border-primary/50 transition-all cursor-pointer"
                             value={sortKey}
                             onChange={(event) => setSortKey(event.target.value as SortKey)}
                         >
@@ -1254,12 +1261,12 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                         <button
                             type="button"
                             onClick={() => setIsColumnsMenuOpen((prev) => !prev)}
-                            className="list-none bg-input-bg border border-border rounded-xl px-3 py-2 min-h-[44px] text-sm text-foreground-secondary hover:bg-surface-hover transition-all cursor-pointer flex items-center"
+                            className="list-none bg-input-bg border border-border rounded-lg px-3 py-2 min-h-[44px] text-sm text-foreground-secondary hover:bg-surface-hover transition-all cursor-pointer flex items-center"
                         >
                             Columns
                         </button>
                         {isColumnsMenuOpen && (
-                        <div className="absolute right-0 z-20 mt-2 w-64 rounded-xl border border-border bg-surface shadow-2xl p-3 space-y-2">
+                        <div className="absolute right-0 z-20 mt-2 w-64 rounded-lg border border-border bg-surface shadow-2xl p-3 space-y-2">
                             {table.getAllLeafColumns().map((column) => {
                                 const isRequired = ALWAYS_VISIBLE_COLUMNS.includes(column.id as ColumnId);
                                 const label = String(column.columnDef.header);
@@ -1267,6 +1274,7 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
 
                                 return (
                                     <label key={column.id} className={`flex items-center gap-2 text-sm ${isRequired ? 'text-foreground-muted' : 'text-foreground-secondary cursor-pointer'}`}>
+                                        <Tip content={draggable ? 'Drag to reorder column' : 'Account Name stays first'}>
                                         <span
                                             draggable={draggable}
                                             onDragStart={() => {
@@ -1284,10 +1292,10 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                                                 setDraggedColumnId(null);
                                             }}
                                             className={`text-xs ${draggable ? 'cursor-grab text-foreground-muted' : 'text-foreground-muted/40'}`}
-                                            title={draggable ? 'Drag to reorder column' : 'Account Name stays first'}
                                         >
                                             ≡
                                         </span>
+                                        </Tip>
                                         <input
                                             type="checkbox"
                                             checked={column.getIsVisible()}
@@ -1311,6 +1319,7 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                         {table.getHeaderGroups().map((headerGroup) => (
                             <tr key={headerGroup.id}>
                                 {headerGroup.headers.map((header) => (
+                                    <Tip content={!header.isPlaceholder && header.column.id !== 'accountName' ? 'Drag to reorder column' : undefined} key={header.id}>
                                     <th
                                         key={header.id}
                                         draggable={!header.isPlaceholder && header.column.id !== 'accountName'}
@@ -1337,7 +1346,6 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                                         } ${
                                             draggedColumnId && draggedColumnId === header.column.id ? 'opacity-50' : ''
                                         }`}
-                                        title={!header.isPlaceholder && header.column.id !== 'accountName' ? 'Drag to reorder column' : undefined}
                                     >
                                         {header.isPlaceholder ? null : (
                                             <div className="flex items-center gap-1.5">
@@ -1348,6 +1356,7 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                                             </div>
                                         )}
                                     </th>
+                                    </Tip>
                                 ))}
                             </tr>
                         ))}

@@ -88,7 +88,7 @@ export default function PayslipUploadZone({ onUploadComplete }: PayslipUploadZon
         aria-label="Upload payslip PDF"
         tabIndex={0}
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') fileInputRef.current?.click(); }}
-        className={`flex flex-col items-center justify-center p-8 border-2 border-dashed rounded-xl cursor-pointer transition-colors ${
+        className={`flex flex-col items-center justify-center p-8 border-2 border-dashed rounded-lg cursor-pointer transition-colors ${
           isDragging
             ? 'border-primary bg-primary/10'
             : 'border-border hover:border-primary hover:bg-surface-hover'

@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import type { RebalanceSuggestion } from '@/lib/rebalancing';
 import { formatCurrency } from '@/lib/format';
+import { Tip } from '@/components/ui/Tooltip';
 
 interface SuggestionsTableProps {
     suggestions: RebalanceSuggestion[];
@@ -135,9 +136,11 @@ function SuggestionRow({
                         {s.action}
                     </span>
                     {!s.outsideBand && (
-                        <span className="ml-2 text-xs text-foreground-muted" title="Drift is within the tolerance band">
+                        <Tip content="Drift is within the tolerance band">
+                        <span className="ml-2 text-xs text-foreground-muted">
                             within band
                         </span>
+                        </Tip>
                     )}
                 </td>
                 <td className="px-4 py-2">

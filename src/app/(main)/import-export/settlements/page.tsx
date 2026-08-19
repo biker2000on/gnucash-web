@@ -10,6 +10,7 @@
 import { useState, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import { INPUT } from '@/components/ui/form';
+import { Tip } from '@/components/ui/Tooltip';
 
 type SettlementSource = 'stripe' | 'square' | 'paypal' | 'shopify';
 type SettlementRole = 'income' | 'fees' | 'clearing' | 'bank';
@@ -231,7 +232,7 @@ export default function SettlementImportPage() {
 
             {/* Step 1: source + upload */}
             {!result && (
-                <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-6 space-y-6">
+                <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-6 space-y-6">
                     <div>
                         <h2 className="text-xl font-semibold text-foreground">Payout export</h2>
                         <p className="text-sm text-foreground-secondary mt-2">{sourceInfo.hint}</p>
@@ -273,7 +274,7 @@ export default function SettlementImportPage() {
                             setDragOver(false);
                         }}
                         onClick={() => inputRef.current?.click()}
-                        className={`relative border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all
+                        className={`relative border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-all
                             ${dragOver
                                 ? 'border-primary bg-primary/10'
                                 : 'border-border hover:border-foreground-secondary hover:bg-surface/50'
@@ -317,7 +318,7 @@ export default function SettlementImportPage() {
                         <button
                             onClick={() => void runPreview()}
                             disabled={previewing || !file}
-                            className="flex items-center gap-2 px-5 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-primary-foreground rounded-xl transition-colors"
+                            className="flex items-center gap-2 px-5 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-primary-foreground rounded-lg transition-colors"
                         >
                             {previewing ? (
                                 <>
@@ -339,7 +340,7 @@ export default function SettlementImportPage() {
                     </div>
 
                     {error && !preview && (
-                        <div className="bg-negative/10 border border-negative/30 rounded-lg p-4 text-sm text-negative">
+                        <div className="bg-error/10 border border-error/30 rounded-lg p-4 text-sm text-error">
                             {error}
                         </div>
                     )}
@@ -348,7 +349,7 @@ export default function SettlementImportPage() {
 
             {/* Step 2: mapping + preview */}
             {preview && !result && (
-                <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-6 space-y-6">
+                <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-6 space-y-6">
                     <h2 className="text-xl font-semibold text-foreground">Preview</h2>
 
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
@@ -405,12 +406,13 @@ export default function SettlementImportPage() {
                         </div>
                         <div className="bg-surface/50 border border-border rounded-lg p-3">
                             <div className="text-foreground-muted text-xs">Clearing balance change</div>
+                            <Tip content="Net change to the clearing account from this import. Near zero means payouts fully sweep the settled sales.">
                             <div
                                 className={`font-mono ${Math.abs(preview.clearingProjection) < 0.005 ? 'text-positive' : 'text-foreground'}`}
-                                title="Net change to the clearing account from this import. Near zero means payouts fully sweep the settled sales."
                             >
                                 {fmtAmount(preview.clearingProjection)}
                             </div>
+                            </Tip>
                         </div>
                     </div>
 
@@ -570,7 +572,7 @@ export default function SettlementImportPage() {
                     )}
 
                     {error && (
-                        <div className="bg-negative/10 border border-negative/30 rounded-lg p-4 text-sm text-negative">
+                        <div className="bg-error/10 border border-error/30 rounded-lg p-4 text-sm text-error">
                             {error}
                         </div>
                     )}
@@ -579,7 +581,7 @@ export default function SettlementImportPage() {
                         <button
                             onClick={() => void handleImport()}
                             disabled={importing || preview.transactionCount === 0}
-                            className="flex items-center gap-2 px-5 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-primary-foreground rounded-xl transition-colors"
+                            className="flex items-center gap-2 px-5 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-primary-foreground rounded-lg transition-colors"
                         >
                             {importing ? (
                                 <>
@@ -590,14 +592,15 @@ export default function SettlementImportPage() {
                                 `Import ${preview.transactionCount} Transaction${preview.transactionCount === 1 ? '' : 's'}`
                             )}
                         </button>
+                        <Tip content="Re-run the preview with the current mappings">
                         <button
                             onClick={() => void runPreview()}
                             disabled={previewing || importing}
                             className="px-4 py-2 text-sm text-foreground-secondary hover:text-foreground transition-colors"
-                            title="Re-run the preview with the current mappings"
                         >
                             Refresh Preview
                         </button>
+                        </Tip>
                         <button
                             onClick={() => setPreview(null)}
                             disabled={importing}
@@ -611,7 +614,7 @@ export default function SettlementImportPage() {
 
             {/* Step 3: result */}
             {result && (
-                <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-6 space-y-4">
+                <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-6 space-y-4">
                     <div className="bg-primary/10 border border-primary/30 rounded-lg p-4">
                         <h3 className="text-primary font-semibold mb-2">Import Successful</h3>
                         <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-sm">

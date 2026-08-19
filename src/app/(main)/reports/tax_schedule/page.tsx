@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { formatCurrency } from '@/lib/format';
 import { txfCodesByForm, TXF_CODES } from '@/lib/tax/txf-codes';
 import { Abbr } from '@/components/ui/Abbr';
+import { Tip } from '@/components/ui/Tooltip';
 
 /* ------------------------------------------------------------------ */
 /* API payload types (mirror src/lib/tax/tax-schedule.ts)               */
@@ -270,7 +271,7 @@ export default function TaxSchedulePage() {
       )}
 
       {error && (
-        <div className="bg-negative/10 border border-negative/20 rounded-lg p-4 text-negative text-sm">
+        <div className="bg-error/10 border border-error/20 rounded-lg p-4 text-error text-sm">
           {error}
         </div>
       )}
@@ -294,7 +295,7 @@ export default function TaxSchedulePage() {
               <ul className="space-y-1">
                 {data.unmappedTaxRelated.map(a => (
                   <li key={a.accountGuid} className="flex items-center justify-between gap-4 text-xs">
-                    <span className="text-foreground-secondary truncate" title={a.path}>{a.path}</span>
+                    <Tip content={a.path}><span className="text-foreground-secondary truncate">{a.path}</span></Tip>
                     <span className="font-mono tabular-nums text-foreground-muted shrink-0">
                       {formatCurrency(a.amount, 'USD')}
                     </span>
@@ -408,9 +409,11 @@ export default function TaxSchedulePage() {
                         return (
                           <tr key={a.guid} className="border-t border-border hover:bg-surface-hover">
                             <td className="px-3 py-1.5">
-                              <div className="text-foreground text-xs truncate max-w-md" title={a.path}>
+                              <Tip content={a.path}>
+                              <div className="text-foreground text-xs truncate max-w-md">
                                 {a.path}
                               </div>
+                              </Tip>
                               {value && (
                                 <div className="text-[11px] text-foreground-muted">
                                   {CODE_LABELS.get(value)}
@@ -505,7 +508,8 @@ function FragmentRows({
             <td className="px-4 py-1.5"></td>
             <td className="px-4 py-1.5"></td>
             <td className="px-4 py-1.5"></td>
-            <td className="px-4 py-1.5 text-xs text-foreground-secondary" title={a.path}>
+            <Tip content={a.path}>
+            <td className="px-4 py-1.5 text-xs text-foreground-secondary">
               {a.path}
               {a.source === 'override' && (
                 <span className="ml-2 text-[9px] uppercase tracking-wider text-primary border border-primary/40 rounded px-1 py-px align-middle">
@@ -513,6 +517,7 @@ function FragmentRows({
                 </span>
               )}
             </td>
+            </Tip>
             <td className="px-4 py-1.5"></td>
             <td className="px-4 py-1.5 text-right font-mono tabular-nums text-xs text-foreground-secondary">
               {formatCurrency(a.amount, 'USD')}

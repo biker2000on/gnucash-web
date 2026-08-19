@@ -95,7 +95,7 @@ function DateRangePickerInner({ startDate, endDate, onChange, className = '', al
         <div className={`relative ${className}`} ref={dropdownRef}>
             <button
                 onClick={() => setIsOpen(!isOpen)}
-                className="flex items-center gap-2 bg-surface/50 border border-border rounded-xl px-4 py-2 text-sm text-foreground hover:border-primary/50 transition-all"
+                className="flex items-center gap-2 bg-surface/50 border border-border rounded-lg px-4 py-2 text-sm text-foreground hover:border-primary/50 transition-all"
             >
                 <svg className="w-4 h-4 text-foreground-secondary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
@@ -107,7 +107,7 @@ function DateRangePickerInner({ startDate, endDate, onChange, className = '', al
             </button>
 
             {isOpen && (
-                <div className={`absolute top-full mt-2 w-80 max-w-[calc(100vw-2rem)] bg-background-secondary border border-border rounded-xl shadow-xl z-50 ${
+                <div className={`absolute top-full mt-2 w-80 max-w-[calc(100vw-2rem)] bg-background-secondary border border-border rounded-lg shadow-xl z-50 ${
                     align === 'left' ? 'left-0' : 'left-0 sm:right-0 sm:left-auto'
                 }`}>
                     {/* Presets */}

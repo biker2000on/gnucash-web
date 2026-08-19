@@ -135,10 +135,10 @@ function ToolCard({ title, description, icon, href }: ToolCardProps) {
     return (
         <Link
             href={href}
-            className="group block bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-6 hover:border-primary/50 hover:bg-surface/50 transition-all duration-200"
+            className="group block bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-6 hover:border-primary/50 hover:bg-surface/50 transition-all duration-200"
         >
             <div className="flex items-start gap-4">
-                <div className="p-3 bg-primary/20 rounded-xl text-primary group-hover:bg-primary/30 transition-colors">
+                <div className="p-3 bg-primary/20 rounded-lg text-primary group-hover:bg-primary/30 transition-colors">
                     <ToolIcon icon={icon} />
                 </div>
                 <div className="flex-1 min-w-0">

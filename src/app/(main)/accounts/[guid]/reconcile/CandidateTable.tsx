@@ -2,6 +2,7 @@
 
 import { formatCurrency } from '@/lib/format';
 import type { ReconcileCandidate } from '@/lib/reconcile-shared';
+import { Tip } from '@/components/ui/Tooltip';
 
 interface CandidateTableProps {
     candidates: ReconcileCandidate[];
@@ -54,7 +55,6 @@ export function CandidateTable({
                                 type="checkbox"
                                 checked={allSelected}
                                 onChange={(e) => onSelectAll(e.target.checked)}
-                                title="Select all"
                                 aria-label="Select all splits"
                                 className="accent-[var(--primary)] cursor-pointer disabled:cursor-not-allowed"
                             />
@@ -131,14 +131,16 @@ export function CandidateTable({
                                     {c.amount < 0 ? formatCurrency(Math.abs(c.amount), currency) : ''}
                                 </td>
                                 <td className="p-3 text-center">
+                                    <Tip content={badge.label}>
                                     <span
                                         className={`inline-flex items-center justify-center w-5 h-5 rounded text-[10px] font-mono font-semibold ${badge.color}`}
-                                        title={badge.label}
                                     >
                                         {badge.icon}
                                     </span>
+                                    </Tip>
                                 </td>
                                 <td className="p-2 text-center">
+                                    <Tip content="Delete transaction">
                                     <button
                                         type="button"
                                         onClick={(event) => {
@@ -147,7 +149,6 @@ export function CandidateTable({
                                         }}
                                         className="inline-flex h-8 w-8 items-center justify-center rounded-md text-foreground-muted hover:bg-negative/10 hover:text-negative transition-colors"
                                         aria-label={`Delete ${c.description || 'transaction'}`}
-                                        title="Delete transaction"
                                     >
                                         <svg
                                             className="h-4 w-4"
@@ -163,6 +164,7 @@ export function CandidateTable({
                                             <path d="M10 11v5M14 11v5" />
                                         </svg>
                                     </button>
+                                    </Tip>
                                 </td>
                             </tr>
                         );

@@ -5,6 +5,7 @@ import { formatCurrency } from '@/lib/format';
 import ReconciliationPanel from './ReconciliationPanel';
 import { RelatedLinks } from '@/components/RelatedLinks';
 import { Abbr } from '@/components/ui/Abbr';
+import { Tip } from '@/components/ui/Tooltip';
 
 interface TermTotals {
   proceeds: number;
@@ -151,7 +152,7 @@ export default function CapitalGainsPage() {
       )}
 
       {error && (
-        <div className="bg-negative/10 border border-negative/20 rounded-lg p-4 text-negative">
+        <div className="bg-error/10 border border-error/20 rounded-lg p-4 text-error">
           {error}
         </div>
       )}
@@ -247,12 +248,13 @@ export default function CapitalGainsPage() {
                           <td className="px-4 py-3 font-medium text-foreground">
                             {r.description}
                             {r.suspect && (
+                              <Tip content={r.suspectReason}>
                               <span
                                 className="ml-2 text-[9px] font-bold px-1.5 py-0.5 rounded bg-negative/20 text-negative align-middle"
-                                title={r.suspectReason}
                               >
                                 REVIEW
                               </span>
+                              </Tip>
                             )}
                           </td>
                           <td className="px-4 py-3 font-mono tabular-nums text-foreground-secondary">{fmtDate(r.dateAcquired)}</td>
@@ -261,7 +263,7 @@ export default function CapitalGainsPage() {
                           <td className="px-4 py-3 text-right font-mono tabular-nums text-foreground">{formatCurrency(r.costBasis, 'USD')}</td>
                           <td className="px-4 py-3 text-center">
                             {r.code === 'W' && (
-                              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-warning/20 text-warning" title="Wash sale — loss disallowed">W</span>
+                              <Tip content="Wash sale — loss disallowed"><span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-warning/20 text-warning">W</span></Tip>
                             )}
                           </td>
                           <td className="px-4 py-3 text-right font-mono tabular-nums text-warning">

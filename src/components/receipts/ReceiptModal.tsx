@@ -130,7 +130,7 @@ export function ReceiptModal({ isOpen, onClose, transactionGuid, transactionDesc
             <div className="space-y-4">
               {/* Main receipt view */}
               {activeReceipt && (
-                <div className="bg-black/20 rounded-xl overflow-hidden flex items-center justify-center min-h-[300px]">
+                <div className="bg-black/20 rounded-lg overflow-hidden flex items-center justify-center min-h-[300px]">
                   {activeReceipt.mime_type === 'application/pdf' ? (
                     <iframe
                       src={`/api/receipts/${activeReceipt.id}`}

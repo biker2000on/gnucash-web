@@ -99,7 +99,7 @@ export function PendingQueueBanner({
                                 <div className="text-xs text-foreground-muted">
                                     {STATUS_LABEL[item.status]}
                                     {item.status === 'failed' && item.error && (
-                                        <span className="text-negative"> — {item.error}</span>
+                                        <span className="text-error"> — {item.error}</span>
                                     )}
                                 </div>
                             </div>

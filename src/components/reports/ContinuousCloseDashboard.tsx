@@ -29,7 +29,7 @@ export function ContinuousCloseDashboard() {
   }, []);
 
   if (error) {
-    return <div className="rounded-lg border border-negative/40 bg-negative/10 p-4 text-sm text-negative">{error}</div>;
+    return <div className="rounded-lg border border-error/40 bg-error/10 p-4 text-sm text-error">{error}</div>;
   }
   if (!coverage) {
     return <div className="rounded-lg border border-border bg-surface p-5 text-sm text-foreground-muted">Measuring close readiness…</div>;

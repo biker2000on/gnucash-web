@@ -198,7 +198,7 @@ export default function NewBookForm({
 
       <ErrorLiveRegion message={error} />
       {error && (
-        <div className="px-3 py-2 bg-negative/10 border border-negative/30 rounded-lg text-sm text-negative">
+        <div className="px-3 py-2 bg-error/10 border border-error/30 rounded-lg text-sm text-error">
           {error}
         </div>
       )}

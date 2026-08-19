@@ -5,6 +5,7 @@ import type { ReactNode } from 'react';
 import { INPUT } from './ui';
 import { DocumentPreviewModal } from '@/components/documents/DocumentPreviewModal';
 import { extractErrorMessage } from '@/lib/api-error';
+import { Tip } from '@/components/ui/Tooltip';
 
 /** Minimal shape of a document-vault row as returned by GET /api/business/documents. */
 export interface VaultDocument {
@@ -28,14 +29,15 @@ export function DocumentChip(props: { doc: VaultDocument | undefined; id: number
   const [previewOpen, setPreviewOpen] = useState(false);
   return (
     <span className="inline-flex items-center gap-1 rounded-full border border-border bg-background-tertiary px-2 py-0.5 text-[11px]">
+      <Tip content="Preview document">
       <button
         type="button"
         onClick={() => setPreviewOpen(true)}
-        title="Preview document"
         className="text-primary hover:text-primary-hover"
       >
         {props.doc?.title ?? `Document #${props.id}`}
       </button>
+      </Tip>
       <DocumentPreviewModal
         documentId={props.id}
         title={props.doc?.title}

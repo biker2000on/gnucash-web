@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useToast } from '@/contexts/ToastContext';
 import { formatMinutesAsHours } from '@/lib/timesheet';
 import type { TimeEntryDTO } from '@/lib/business/time-tracking.service';
+import { Tip } from '@/components/ui/Tooltip';
 
 const TNUM = { fontFeatureSettings: "'tnum'" } as const;
 const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -111,14 +112,16 @@ export function MonthCalendar({ canWrite, refreshKey, onEditEntry, onQuickAdd }:
                 {/* Month nav */}
                 <div className="flex items-center justify-between border-b border-border px-4 py-2">
                     <div className="flex items-center gap-1">
+                        <Tip content="Previous month ( [ )">
                         <button
                             type="button"
                             onClick={() => setMonthStart((d) => new Date(d.getFullYear(), d.getMonth() - 1, 1))}
                             className="px-2 py-1 text-sm rounded-md text-foreground-secondary hover:text-foreground hover:bg-surface-hover transition-colors duration-150"
-                            aria-label="Previous month" title="Previous month ( [ )"
+                            aria-label="Previous month"
                         >
                             ◀
                         </button>
+                        </Tip>
                         <button
                             type="button"
                             onClick={() => { const now = new Date(); setMonthStart(new Date(now.getFullYear(), now.getMonth(), 1)); }}
@@ -126,14 +129,16 @@ export function MonthCalendar({ canWrite, refreshKey, onEditEntry, onQuickAdd }:
                         >
                             Today
                         </button>
+                        <Tip content="Next month ( ] )">
                         <button
                             type="button"
                             onClick={() => setMonthStart((d) => new Date(d.getFullYear(), d.getMonth() + 1, 1))}
                             className="px-2 py-1 text-sm rounded-md text-foreground-secondary hover:text-foreground hover:bg-surface-hover transition-colors duration-150"
-                            aria-label="Next month" title="Next month ( ] )"
+                            aria-label="Next month"
                         >
                             ▶
                         </button>
+                        </Tip>
                     </div>
                     <span className="text-sm font-semibold text-foreground">
                         {MONTHS[monthStart.getMonth()]} <span className="font-mono font-normal text-foreground-secondary" style={TNUM}>{monthStart.getFullYear()}</span>

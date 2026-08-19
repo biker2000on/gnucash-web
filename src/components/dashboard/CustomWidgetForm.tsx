@@ -17,6 +17,7 @@ import {
     validateCustomWidgetDef,
     isChartViz,
 } from '@/lib/dashboard-widgets';
+import { Tip } from '@/components/ui/Tooltip';
 
 interface CustomWidgetFormProps {
     isOpen: boolean;
@@ -219,17 +220,18 @@ export default function CustomWidgetForm({ isOpen, onClose, initial, onSave }: C
                                     className="flex-1"
                                     compact
                                 />
+                                <Tip content="Remove account" describedBy={false}>
                                 <button
                                     type="button"
                                     onClick={() => removeAccountAt(index)}
                                     aria-label="Remove account"
-                                    title="Remove account"
                                     className="p-1.5 rounded-md text-foreground-muted hover:text-negative hover:bg-surface-hover transition-colors"
                                 >
                                     <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
                                         <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                                     </svg>
                                 </button>
+                                </Tip>
                             </div>
                         ))}
                     </div>

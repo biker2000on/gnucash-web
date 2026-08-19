@@ -195,15 +195,15 @@ function AccountPageContent() {
 
             {/* Transaction Ledger */}
             {loading ? (
-                <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-12 shadow-2xl flex items-center justify-center">
+                <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-12 shadow-2xl flex items-center justify-center">
                     <div className="flex items-center gap-3">
                         <div className="w-5 h-5 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
                         <span className="text-foreground-secondary">Loading transactions...</span>
                     </div>
                 </div>
             ) : error ? (
-                <div className="bg-surface/30 backdrop-blur-xl border border-error/50 rounded-2xl p-12 shadow-2xl flex items-center justify-center">
-                    <div className="text-negative">{error}</div>
+                <div className="bg-surface/30 backdrop-blur-xl border border-error/50 rounded-lg p-12 shadow-2xl flex items-center justify-center">
+                    <div className="text-error">{error}</div>
                 </div>
             ) : (
                 <AccountLedger
@@ -237,7 +237,7 @@ export default function AccountPage() {
                     </nav>
                     <h1 className="text-3xl font-bold text-foreground">Loading...</h1>
                 </header>
-                <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-12 shadow-2xl flex items-center justify-center">
+                <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-12 shadow-2xl flex items-center justify-center">
                     <div className="flex items-center gap-3">
                         <div className="w-5 h-5 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
                         <span className="text-foreground-secondary">Loading...</span>

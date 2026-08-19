@@ -21,6 +21,7 @@ import {
     ResponsiveContainer,
 } from 'recharts';
 import type { PieLabelRenderProps } from 'recharts';
+import { Tip } from '@/components/ui/Tooltip';
 
 const OTHER_GUID = '__other__';
 
@@ -372,6 +373,7 @@ export default function AccountBreakdownPage() {
                                     ? (slice.amount / reportData.total) * 100
                                     : 0;
                                 return (
+                                    <Tip content={slice.path} describedBy={false} key={slice.accountGuid}>
                                     <button
                                         key={slice.accountGuid}
                                         onClick={() => drill(slice)}
@@ -379,7 +381,7 @@ export default function AccountBreakdownPage() {
                                         className={`flex items-center gap-2 text-sm text-left rounded px-1 py-0.5 ${
                                             slice.hasChildren ? 'hover:bg-surface-hover transition-colors' : 'cursor-default'
                                         }`}
-                                        title={slice.path}
+                                        aria-label={slice.path}
                                     >
                                         <span
                                             className="w-2.5 h-2.5 rounded-full shrink-0"
@@ -389,6 +391,7 @@ export default function AccountBreakdownPage() {
                                         <span className="font-mono tabular-nums text-foreground">{formatFullCurrency(slice.amount)}</span>
                                         <span className="font-mono tabular-nums text-foreground-muted w-14 text-right">{percent.toFixed(1)}%</span>
                                     </button>
+                                    </Tip>
                                 );
                             })}
                         </div>

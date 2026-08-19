@@ -10,6 +10,7 @@ import { TAG_COLORS, normalizeTagName, isValidTagName, type Tag } from '@/lib/ta
 import { useCurrentUser, READONLY_TOOLTIP } from '@/hooks/useCurrentUser';
 import { useIsMobile } from '@/lib/hooks/useIsMobile';
 import { MobileCard } from '@/components/ui/MobileCard';
+import { Tip } from '@/components/ui/Tooltip';
 
 export default function TagsPage() {
     const { success, error } = useToast();
@@ -146,18 +147,19 @@ export default function TagsPage() {
                         placeholder="New tag name..."
                         className="bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder-foreground-muted focus:outline-none focus:border-primary/50 transition-all"
                     />
+                    <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                     <button
                         type="submit"
                         disabled={creating || !newTagName.trim() || isReadonly}
-                        title={isReadonly ? READONLY_TOOLTIP : undefined}
                         className="px-4 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 disabled:cursor-not-allowed text-primary-foreground rounded-lg transition-colors whitespace-nowrap"
                     >
                         {creating ? 'Creating...' : '+ Create Tag'}
                     </button>
+                    </Tip>
                 </form>
             </header>
 
-            <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl overflow-hidden shadow-2xl">
+            <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg overflow-hidden shadow-2xl">
                 {loading ? (
                     <div className="p-12 flex items-center justify-center gap-3">
                         <div className="w-5 h-5 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
@@ -280,17 +282,18 @@ export default function TagsPage() {
                         <label className="block text-sm font-medium text-foreground-secondary mb-2">Color</label>
                         <div className="flex flex-wrap gap-1.5">
                             {TAG_COLORS.map(color => (
+                                <Tip content={color} key={color}>
                                 <button
                                     key={color}
                                     type="button"
                                     onClick={() => setEditColor(color)}
-                                    title={color}
                                     className={`px-2 py-1 rounded text-[10px] font-medium border transition-all ${tagColorClass(color)} ${
                                         editColor === color ? 'ring-2 ring-primary/60' : 'opacity-70 hover:opacity-100'
                                     }`}
                                 >
                                     {color}
                                 </button>
+                                </Tip>
                             ))}
                         </div>
                     </div>

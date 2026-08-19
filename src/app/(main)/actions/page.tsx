@@ -15,6 +15,7 @@ import type {
 } from '@/lib/financial-actions/types';
 import { subscribeToActionCenterUpdates } from '@/lib/financial-actions/client-events';
 import { usePopoutHost } from '@/lib/popout/usePopout';
+import { Tip } from '@/components/ui/Tooltip';
 
 const RESOLUTION_POPOUT_PREF = 'gnucash-web:action-center:popout-resolution';
 
@@ -177,7 +178,7 @@ function ActionCard({
     <article
       data-action-id={action.id}
       tabIndex={focused ? 0 : -1}
-      className={`rounded-xl border bg-surface p-4 transition-colors ${
+      className={`rounded-lg border bg-surface p-4 transition-colors ${
         selected || focused ? 'border-primary ring-1 ring-primary/30' : 'border-border hover:border-primary/40'
       }`}
       onTouchStart={event => {
@@ -670,11 +671,11 @@ export default function FinancialActionCenterPage() {
           >
             Refresh
           </button>
+          <Tip content="Open action resolution surfaces in a separate window for two-monitor triage">
           <button
             type="button"
             onClick={toggleResolutionPopout}
             aria-pressed={popOutResolution}
-            title="Open action resolution surfaces in a separate window for two-monitor triage"
             className={`hidden rounded-lg border px-3 py-2 text-xs font-medium sm:block ${
               popOutResolution
                 ? 'border-primary/60 text-primary'
@@ -683,11 +684,12 @@ export default function FinancialActionCenterPage() {
           >
             {popOutResolution ? 'Two-window: on' : 'Two-window: off'}
           </button>
+          </Tip>
         </div>
       </header>
 
       {data && (
-        <section className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-border bg-border lg:grid-cols-4">
+        <section className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-border bg-border lg:grid-cols-4">
           {[
             ['New this week', data.summary.new],
             ['Resolved', data.summary.resolved],
@@ -703,7 +705,7 @@ export default function FinancialActionCenterPage() {
       )}
 
       {selected.size > 0 && (
-        <div className="sticky top-3 z-30 flex flex-wrap items-center gap-2 rounded-xl border border-primary/40 bg-background-secondary p-3 shadow-xl">
+        <div className="sticky top-3 z-30 flex flex-wrap items-center gap-2 rounded-lg border border-primary/40 bg-background-secondary p-3 shadow-xl">
           <span className="mr-2 text-sm font-semibold text-foreground">{selected.size} selected</span>
           <button onClick={() => void updateState([...selected], 'accepted')} disabled={mutating} className="rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-background disabled:opacity-50">
             Accept
@@ -730,19 +732,19 @@ export default function FinancialActionCenterPage() {
       {loading && (
         <div className="grid gap-4 lg:grid-cols-3">
           {Array.from({ length: 6 }).map((_, index) => (
-            <div key={index} className="h-48 animate-pulse rounded-xl border border-border bg-surface" />
+            <div key={index} className="h-48 animate-pulse rounded-lg border border-border bg-surface" />
           ))}
         </div>
       )}
       {error && (
-        <div className="rounded-xl border border-negative/40 bg-negative/10 p-5">
-          <p className="text-sm text-negative">{error}</p>
+        <div className="rounded-lg border border-error/40 bg-error/10 p-5">
+          <p className="text-sm text-error">{error}</p>
           <button onClick={() => void load()} className="mt-3 text-sm font-medium text-foreground underline">Try again</button>
         </div>
       )}
 
       {!loading && !error && data && data.actions.length === 0 && (
-        <div className="rounded-xl border border-positive/30 bg-surface px-6 py-14 text-center">
+        <div className="rounded-lg border border-positive/30 bg-surface px-6 py-14 text-center">
           <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full border border-positive/40 text-xl text-positive">✓</div>
           <h2 className="mt-4 text-lg font-semibold text-foreground">
             {actionView === 'completed'
@@ -766,7 +768,7 @@ export default function FinancialActionCenterPage() {
           {LANES.map(lane => {
             const actions = data.actions.filter(action => action.lane === lane.id);
             return (
-              <section key={lane.id} className={`rounded-xl border-t-2 ${lane.accent}`}>
+              <section key={lane.id} className={`rounded-lg border-t-2 ${lane.accent}`}>
                 <div className="flex items-end justify-between px-1 py-3">
                   <div>
                     <h2 className="text-base font-semibold text-foreground">{lane.label}</h2>
@@ -776,7 +778,7 @@ export default function FinancialActionCenterPage() {
                 </div>
                 <div className="space-y-3">
                   {actions.length === 0 && (
-                    <div className="rounded-xl border border-dashed border-border px-4 py-8 text-center text-xs text-foreground-muted">
+                    <div className="rounded-lg border border-dashed border-border px-4 py-8 text-center text-xs text-foreground-muted">
                       Nothing in this lane.
                     </div>
                   )}

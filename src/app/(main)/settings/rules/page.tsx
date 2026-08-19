@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useToast } from '@/contexts/ToastContext';
 import AccountPickerDialog from '@/components/AccountPickerDialog';
 import ApplyHistoryModal from './ApplyHistoryModal';
+import { Tip } from '@/components/ui/Tooltip';
 
 type MatchType = 'contains' | 'exact' | 'regex';
 
@@ -305,7 +306,7 @@ export default function CategorizationRulesPage() {
               value={draft.matchType}
               onChange={e => setDraft(d => ({ ...d, matchType: e.target.value as MatchType }))}
               className="px-2 py-2 text-sm bg-background-tertiary border border-border rounded-md text-foreground focus:outline-none focus:border-border-hover"
-              title={MATCH_TYPE_OPTIONS.find(o => o.value === draft.matchType)?.description}
+              aria-label={MATCH_TYPE_OPTIONS.find(o => o.value === draft.matchType)?.description}
             >
               {MATCH_TYPE_OPTIONS.map(o => (
                 <option key={o.value} value={o.value}>{o.label}</option>
@@ -399,21 +400,23 @@ export default function CategorizationRulesPage() {
                       aria-label={`Enable rule ${rule.pattern}`}
                     />
                   </td>
+                  <Tip content={rule.lastHitAt ? `Last hit ${new Date(rule.lastHitAt).toLocaleString()}` : 'Never hit'}>
                   <td
                     className="px-4 py-2 text-right font-mono text-foreground-secondary"
-                    title={rule.lastHitAt ? `Last hit ${new Date(rule.lastHitAt).toLocaleString()}` : 'Never hit'}
                   >
                     {rule.hitCount}
                   </td>
+                  </Tip>
                   <td className="px-4 py-2">
                     <div className="flex items-center gap-2 justify-end">
+                      <Tip content="Retroactively apply this rule to historical transactions">
                       <button
                         onClick={() => setApplyRule(rule)}
-                        title="Retroactively apply this rule to historical transactions"
                         className="px-2 py-1 text-xs text-foreground-secondary hover:text-primary hover:bg-surface-hover rounded transition-colors whitespace-nowrap"
                       >
                         Apply to history
                       </button>
+                      </Tip>
                       <button
                         onClick={() => startEdit(rule)}
                         className="px-2 py-1 text-xs text-foreground-secondary hover:text-foreground hover:bg-surface-hover rounded transition-colors"

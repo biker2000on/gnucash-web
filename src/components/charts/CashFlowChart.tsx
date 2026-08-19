@@ -65,7 +65,7 @@ function formatPeriodLong(periodStr: string): string {
 
 function ChartSkeleton() {
     return (
-        <div className="bg-surface border border-border rounded-xl p-6 animate-pulse">
+        <div className="bg-surface border border-border rounded-lg p-6 animate-pulse">
             <div className="h-5 w-48 bg-background-secondary rounded mb-6" />
             <div className="h-[350px] bg-background-secondary rounded" />
         </div>
@@ -138,7 +138,7 @@ export default function CashFlowChart({ data, loading }: CashFlowChartProps) {
 
     if (!data || data.length === 0) {
         return (
-            <div className={`bg-surface border border-border rounded-xl p-6 ${expanded ? 'h-full' : ''}`}>
+            <div className={`bg-surface border border-border rounded-lg p-6 ${expanded ? 'h-full' : ''}`}>
                 <div className="h-[350px] flex items-center justify-center">
                     <p className="text-foreground-muted text-sm">No cash flow data available for this period.</p>
                 </div>
@@ -149,7 +149,7 @@ export default function CashFlowChart({ data, loading }: CashFlowChartProps) {
     const height = expanded ? 500 : 300;
 
     return (
-        <div className={`bg-surface border border-border rounded-xl p-6 ${expanded ? 'h-full' : ''}`}>
+        <div className={`bg-surface border border-border rounded-lg p-6 ${expanded ? 'h-full' : ''}`}>
             <ResponsiveContainer width="100%" height={height}>
                 <ComposedChart data={data} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />

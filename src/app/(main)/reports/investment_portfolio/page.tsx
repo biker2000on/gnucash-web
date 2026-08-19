@@ -61,7 +61,7 @@ function InvestmentPortfolioContent() {
     return (
         <div className="space-y-6">
             {/* Zero-share toggle */}
-            <div className="bg-background-secondary/30 backdrop-blur-xl border border-border rounded-xl p-4">
+            <div className="bg-background-secondary/30 backdrop-blur-xl border border-border rounded-lg p-4">
                 <label className="flex items-center gap-3 cursor-pointer select-none">
                     <input
                         type="checkbox"

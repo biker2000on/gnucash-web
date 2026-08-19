@@ -16,12 +16,16 @@ import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 import { formatDateForDisplay, parseDateInput } from '@/lib/date-format';
 import { toLocalDateString } from '@/lib/datePresets';
 import { useIsMobile } from '@/lib/hooks/useIsMobile';
+import { ErrorLiveRegion } from '@/components/a11y/LiveRegion';
+import { FieldError } from '@/components/ui/form';
+import { ApiRequestError } from '@/lib/api-error';
 import {
     buildCurrencySplitAmounts,
     deriveRecordedExchangeRate,
     editableDecimalMagnitude,
     parseExchangeRate,
 } from '@/lib/transaction-currency';
+import { Tip } from '@/components/ui/Tooltip';
 
 export interface TransactionFormHandle {
     /**
@@ -690,6 +694,49 @@ export function TransactionForm({
         }
     };
 
+    /**
+     * Translate the server's field names into this form's field keys.
+     *
+     * The API validates the wire shape (`splits[0].account_guid`), the form
+     * renders its own controls (`splits[0]`, and in simple mode `fromAccount`
+     * / `toAccount` / `amount` rather than a split list). Anything that does
+     * not map onto a rendered control is dropped here rather than stored under
+     * a key nothing reads — the banner still carries the full text.
+     */
+    const mapServerFieldErrors = (serverErrors: Record<string, string>): Record<string, string> => {
+        const mapped: Record<string, string> = {};
+        for (const [field, message] of Object.entries(serverErrors)) {
+            const splitMatch = field.match(/^splits\[(\d+)\]/);
+            if (splitMatch) {
+                // Simple mode has no split rows; the two accounts stand in.
+                if (isSimpleMode) {
+                    mapped.splits = mapped.splits ?? message;
+                } else {
+                    const key = `splits[${splitMatch[1]}]`;
+                    mapped[key] = mapped[key] ?? message;
+                }
+                continue;
+            }
+            if (field === 'currency_guid') {
+                mapped.splits = mapped.splits ?? message;
+                continue;
+            }
+            mapped[field] = mapped[field] ?? message;
+        }
+        return mapped;
+    };
+
+    /** Shared failure path for both save buttons. */
+    const applySaveError = (error: unknown) => {
+        if (error instanceof ApiRequestError) {
+            setErrors([error.message]);
+            const mapped = mapServerFieldErrors(error.fieldErrors);
+            if (Object.keys(mapped).length > 0) setFieldErrors(mapped);
+            return;
+        }
+        setErrors([error instanceof Error ? error.message : 'An error occurred while saving']);
+    };
+
     const validateForm = (): { valid: boolean; errors: string[]; fieldErrors: Record<string, string> } => {
         const errors: string[] = [];
         const fieldErrors: Record<string, string> = {};
@@ -725,7 +772,14 @@ export function TransactionForm({
                 errors.push('To account is required');
                 fieldErrors.toAccount = 'Required';
             }
-            if (simpleData.fromAccountGuid === simpleData.toAccountGuid) {
+            // Both empty is "Required" on each side, not "must be different" —
+            // the equality test would otherwise overwrite the real reason with
+            // one the user cannot act on.
+            if (
+                simpleData.fromAccountGuid &&
+                simpleData.toAccountGuid &&
+                simpleData.fromAccountGuid === simpleData.toAccountGuid
+            ) {
                 errors.push('From and To accounts must be different');
                 fieldErrors.fromAccount = 'Must differ';
                 fieldErrors.toAccount = 'Must differ';
@@ -940,11 +994,7 @@ export function TransactionForm({
         try {
             await onSave(apiData);
         } catch (error) {
-            if (error instanceof Error) {
-                setErrors([error.message]);
-            } else {
-                setErrors(['An error occurred while saving']);
-            }
+            applySaveError(error);
         } finally {
             savingRef.current = false;
             setSaving(false);
@@ -981,11 +1031,7 @@ export function TransactionForm({
             // Focus date field for the next transaction
             setTimeout(() => dateInputRef.current?.focus(), 0);
         } catch (error) {
-            if (error instanceof Error) {
-                setErrors([error.message]);
-            } else {
-                setErrors(['An error occurred while saving']);
-            }
+            applySaveError(error);
         } finally {
             savingRef.current = false;
             setSaving(false);
@@ -1033,10 +1079,16 @@ export function TransactionForm({
     return (
         <div ref={formRef}>
             <form onSubmit={handleSubmit} className="space-y-6">
-                {/* Error Messages */}
+                {/* Error Messages.
+                    The visible list carries no role of its own — ErrorLiveRegion
+                    is the always-mounted region that speaks, and doubling the
+                    role would announce twice (see a11y/LiveRegion.tsx). Each
+                    message that names a field is ALSO rendered under that field
+                    below, so the user is not left re-reading the form. */}
+            <ErrorLiveRegion message={errors.length > 0 ? errors.join('. ') : null} />
             {errors.length > 0 && (
-                <div className="bg-negative/10 border border-negative/30 rounded-lg p-4">
-                    <ul className="list-disc list-inside text-sm text-negative space-y-1">
+                <div data-testid="form-errors" className="rounded-lg border border-error/30 bg-error/10 p-4">
+                    <ul className="list-disc list-inside text-sm text-error space-y-1">
                         {errors.map((error, i) => (
                             <li key={i}>{error}</li>
                         ))}
@@ -1119,9 +1171,14 @@ export function TransactionForm({
                             onKeyDown={handleDateKeyDown}
                             data-field="post_date"
                             placeholder="MM/DD/YYYY"
-                            className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
+                            aria-invalid={fieldErrors.post_date ? true : undefined}
+                            aria-describedby={fieldErrors.post_date ? 'tx-error-post_date' : undefined}
+                            className={`w-full bg-input-bg border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50 ${
+                                fieldErrors.post_date ? 'border-error' : 'border-border'
+                            }`}
                         />
                     )}
+                    <FieldError id="tx-error-post_date" message={fieldErrors.post_date} />
                 </div>
                 {/* Num recedes: check-number width, mono digits, muted text */}
                 <div className="md:w-24">
@@ -1148,6 +1205,7 @@ export function TransactionForm({
                         placeholder="Enter description..."
                         hasError={!!fieldErrors.description}
                     />
+                    <FieldError id="tx-error-description" message={fieldErrors.description} />
                 </div>
             </div>
 
@@ -1182,25 +1240,33 @@ export function TransactionForm({
                                     onBlur={handleAmountBlur}
                                     onKeyDown={handleAmountKeyDown}
                                     placeholder="0.00"
-                                    className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder-foreground-muted focus:outline-none focus:border-primary/50"
+                                    data-field="amount"
+                                    aria-invalid={fieldErrors.amount ? true : undefined}
+                                    aria-describedby={fieldErrors.amount ? 'tx-error-amount' : undefined}
+                                    className={`w-full bg-input-bg border rounded-lg px-3 py-2 text-sm text-foreground placeholder-foreground-muted focus:outline-none focus:border-primary/50 ${
+                                        fieldErrors.amount ? 'border-error' : 'border-border'
+                                    }`}
                                 />
                                 {containsMathExpression(simpleData.amount) && (
                                     <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-primary pointer-events-none">=</span>
                                 )}
                             </div>
                             {defaultTaxRate > 0 && (
+                                <Tip content={`Apply tax (${(defaultTaxRate * 100).toFixed(1)}%)`} describedBy={false}>
                                 <button
                                     type="button"
                                     onClick={applyTax}
                                     className="p-2 rounded-lg bg-input-bg border border-border text-foreground-muted hover:text-foreground hover:border-border-hover transition-colors"
-                                    title={`Apply tax (${(defaultTaxRate * 100).toFixed(1)}%)`}
+                                    aria-label={`Apply tax (${(defaultTaxRate * 100).toFixed(1)}%)`}
                                 >
                                     <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
                                         <path strokeLinecap="round" d="M19 5L5 19M6.5 9a2.5 2.5 0 100-5 2.5 2.5 0 000 5zM17.5 20a2.5 2.5 0 100-5 2.5 2.5 0 000 5z" />
                                     </svg>
                                 </button>
+                                </Tip>
                             )}
                         </div>
+                        <FieldError id="tx-error-amount" message={fieldErrors.amount} />
                     </div>
 
                     {/* From/To accounts */}
@@ -1214,8 +1280,10 @@ export function TransactionForm({
                                 onChange={(guid) => setSimpleData(prev => ({ ...prev, fromAccountGuid: guid }))}
                                 placeholder="Select source account..."
                             />
+                            <FieldError id="tx-error-fromAccount" message={fieldErrors.fromAccount} />
                         </div>
                         <div className="flex items-center justify-center md:pt-5">
+                            <Tip content="Swap accounts (reverse transfer direction)" describedBy={false}>
                             <button
                                 type="button"
                                 onClick={() => setSimpleData(prev => ({
@@ -1224,12 +1292,13 @@ export function TransactionForm({
                                     toAccountGuid: prev.fromAccountGuid,
                                 }))}
                                 className="p-1.5 rounded-lg text-foreground-muted hover:text-primary hover:bg-primary/10 transition-colors"
-                                title="Swap accounts (reverse transfer direction)"
+                                aria-label="Swap accounts (reverse transfer direction)"
                             >
                                 <svg className="w-5 h-5 md:w-6 md:h-6 md:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" />
                                 </svg>
                             </button>
+                            </Tip>
                         </div>
                         <div className="w-full md:flex-1">
                             <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-1">
@@ -1240,8 +1309,10 @@ export function TransactionForm({
                                 onChange={(guid) => setSimpleData(prev => ({ ...prev, toAccountGuid: guid }))}
                                 placeholder="Select destination account..."
                             />
+                            <FieldError id="tx-error-toAccount" message={fieldErrors.toAccount} />
                         </div>
                     </div>
+                    <FieldError id="tx-error-splits" message={fieldErrors.splits} />
 
                     {/* Memo — written to both splits, like GnuCash desktop's
                         Transfer dialog for a simple two-split entry */}
@@ -1313,6 +1384,7 @@ export function TransactionForm({
                             />
                         ))}
                     </div>
+                    <FieldError id="tx-error-splits-advanced" message={fieldErrors.splits} />
 
                     {/* Totals - Desktop */}
                     <div className="hidden md:grid grid-cols-12 gap-2 text-sm font-mono py-3 border-t border-border-hover mt-2">

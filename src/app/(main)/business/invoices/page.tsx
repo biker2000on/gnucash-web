@@ -10,6 +10,7 @@ import { formatCurrency } from '@/lib/format';
 import { STATUS_META, type InvoiceKind, type InvoiceStatus } from '@/components/business/invoice-ui';
 import type { InvoiceView } from '@/lib/business/invoice-engine';
 import type { EmailBill } from '@/lib/business/bill-capture';
+import { Tip } from '@/components/ui/Tooltip';
 
 const TNUM = { fontFeatureSettings: "'tnum'" } as const;
 const inputClass = 'w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder-foreground-muted focus:outline-none focus:border-primary/50 transition-all';
@@ -27,12 +28,13 @@ function StatusBadge({ status }: { status: InvoiceStatus }) {
 
 function FromEmailBadge() {
     return (
+        <Tip content="Created from an emailed bill">
         <span
             className="inline-block ml-2 px-1.5 py-0.5 text-[10px] rounded bg-secondary-light text-secondary whitespace-nowrap align-middle"
-            title="Created from an emailed bill"
         >
             from email
         </span>
+        </Tip>
     );
 }
 
@@ -113,10 +115,10 @@ function EmailBillReviewPanel({
                                 disabled={isReadonly || busy}
                                 onChange={(e) => setAmounts((prev) => ({ ...prev, [bill.id]: e.target.value }))}
                             />
+                            <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                             <button
                                 type="button"
                                 disabled={!canResolve || busy}
-                                title={isReadonly ? READONLY_TOOLTIP : undefined}
                                 onClick={async () => {
                                     setBusyId(bill.id);
                                     try {
@@ -129,10 +131,11 @@ function EmailBillReviewPanel({
                             >
                                 {busy ? 'Creating…' : 'Create draft'}
                             </button>
+                            </Tip>
+                            <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                             <button
                                 type="button"
                                 disabled={isReadonly || busy}
-                                title={isReadonly ? READONLY_TOOLTIP : undefined}
                                 onClick={async () => {
                                     setBusyId(bill.id);
                                     try {
@@ -145,6 +148,7 @@ function EmailBillReviewPanel({
                             >
                                 Dismiss
                             </button>
+                            </Tip>
                         </div>
                     );
                 })}
@@ -360,15 +364,16 @@ function InvoicesContent() {
                     ? 'Customer invoices — accounts receivable.'
                     : 'Vendor bills — accounts payable.'}
                 actions={
+                    <Tip content={isReadonly ? READONLY_TOOLTIP : `New ${singular} (n)`}>
                     <button
                         type="button"
                         onClick={openNew}
                         disabled={isReadonly}
-                        title={isReadonly ? READONLY_TOOLTIP : `New ${singular} (n)`}
                         className="px-4 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 disabled:cursor-not-allowed text-primary-foreground rounded-lg transition-colors whitespace-nowrap"
                     >
                         + New {singular}
                     </button>
+                    </Tip>
                 }
                 toolbar={
                     <FilterBar

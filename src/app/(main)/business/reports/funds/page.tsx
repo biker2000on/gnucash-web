@@ -12,6 +12,7 @@ import { FilterBar } from '@/components/ui/FilterBar';
 import { DateRangePicker } from '@/components/ui/DateRangePicker';
 import { Modal } from '@/components/ui/Modal';
 import { formatCurrency } from '@/lib/format';
+import { Tip } from '@/components/ui/Tooltip';
 
 const TNUM = { fontFeatureSettings: "'tnum'" } as const;
 
@@ -152,17 +153,17 @@ export default function FundsReportPage() {
                     </div>
                 </div>
             ) : error ? (
-                <div className="border border-error/30 bg-surface/30 rounded-xl p-4">
+                <div className="border border-error/30 bg-surface/30 rounded-lg p-4">
                     <p className="text-sm text-error">{error}</p>
                 </div>
             ) : report && report.rows.length === 0 ? (
-                <div className="bg-background-secondary/30 border border-border rounded-xl p-8 text-center">
+                <div className="bg-background-secondary/30 border border-border rounded-lg p-8 text-center">
                     <p className="text-sm text-foreground-secondary">
                         No funds yet. Create funds and assign income/expense accounts to them to see by-fund reporting.
                     </p>
                 </div>
             ) : report ? (
-                <div className="bg-background-secondary/30 backdrop-blur-xl border border-border rounded-xl overflow-hidden">
+                <div className="bg-background-secondary/30 backdrop-blur-xl border border-border rounded-lg overflow-hidden">
                     <div className="overflow-x-auto">
                         <table className="w-full text-sm">
                             <thead>
@@ -349,7 +350,7 @@ function ManageFundsModal({
         <Modal isOpen onClose={onClose} title="Manage Funds" size="lg">
             <div className="p-6 space-y-5">
                 {/* Create */}
-                <div className="border border-border rounded-xl p-4 space-y-3">
+                <div className="border border-border rounded-lg p-4 space-y-3">
                     <h3 className="text-xs font-semibold text-foreground uppercase tracking-wider">New fund</h3>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div>
@@ -386,7 +387,7 @@ function ManageFundsModal({
                 {funds.length === 0 ? (
                     <p className="text-sm text-foreground-muted">No funds yet.</p>
                 ) : (
-                    <div className="border border-border rounded-xl overflow-hidden">
+                    <div className="border border-border rounded-lg overflow-hidden">
                         <table className="w-full text-sm">
                             <thead>
                                 <tr className="text-xs text-foreground-muted uppercase tracking-wider border-b border-border">
@@ -437,14 +438,15 @@ function ManageFundsModal({
                                             >
                                                 {fund.active ? 'Deactivate' : 'Activate'}
                                             </button>
+                                            <Tip content="Delete (blocked while accounts are assigned)">
                                             <button
                                                 onClick={() => handleDelete(fund)}
                                                 disabled={busy}
                                                 className="text-xs text-foreground-muted hover:text-negative disabled:opacity-50"
-                                                title="Delete (blocked while accounts are assigned)"
                                             >
                                                 Delete
                                             </button>
+                                            </Tip>
                                         </td>
                                     </tr>
                                 ))}
@@ -530,7 +532,7 @@ function AssignAccountsModal({
                 {loading ? (
                     <div className="py-8 text-center text-foreground-muted text-sm">Loading accounts…</div>
                 ) : (
-                    <div className="border border-border rounded-xl max-h-[50vh] overflow-y-auto divide-y divide-border/30">
+                    <div className="border border-border rounded-lg max-h-[50vh] overflow-y-auto divide-y divide-border/30">
                         {accounts.map((a) => {
                             const depth = a.fullname.split(':').length - 1;
                             return (

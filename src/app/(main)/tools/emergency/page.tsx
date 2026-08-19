@@ -153,7 +153,7 @@ export default function EmergencyPackagePage() {
             <div className="space-y-6">
                 <PageHeader title="In Case of Emergency" subtitle="Printable account package for your family" />
                 <div className="bg-surface border border-border rounded-lg p-8 text-center">
-                    <p className="text-negative">{error ?? 'Failed to load emergency package'}</p>
+                    <p className="text-error">{error ?? 'Failed to load emergency package'}</p>
                 </div>
             </div>
         );
@@ -231,7 +231,7 @@ export default function EmergencyPackagePage() {
             />
 
             {saveError && (
-                <div className="bg-error/10 border border-error/40 rounded-lg px-4 py-2.5 text-sm text-negative">
+                <div className="bg-error/10 border border-error/40 rounded-lg px-4 py-2.5 text-sm text-error">
                     {saveError}
                 </div>
             )}

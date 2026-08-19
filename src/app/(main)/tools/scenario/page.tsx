@@ -87,7 +87,7 @@ const INPUT_CLASS = `${INPUT} font-mono`;
 function TaxCard({ title, cmp }: { title: string; cmp: TaxYearComparison }) {
     const decision = cmp.itemizeDecision;
     return (
-        <div className="bg-surface/30 border border-border rounded-xl p-4 sm:p-5 space-y-3">
+        <div className="bg-surface/30 border border-border rounded-lg p-4 sm:p-5 space-y-3">
             <div className="flex items-baseline justify-between gap-2">
                 <h3 className="text-sm font-semibold text-foreground">{title}</h3>
                 <span className="text-[11px] text-foreground-muted">{cmp.taxYear} rules</span>
@@ -348,13 +348,13 @@ export default function ScenarioSandboxPage() {
 
             {/* Baseline status */}
             {baselineState === 'loading' && (
-                <section className="bg-surface/30 border border-border rounded-xl p-4 flex items-center gap-3">
+                <section className="bg-surface/30 border border-border rounded-lg p-4 flex items-center gap-3">
                     <div className="animate-spin h-4 w-4 border-2 border-primary border-t-transparent rounded-full" />
                     <span className="text-sm text-foreground-muted">Loading your baseline from the book…</span>
                 </section>
             )}
             {baselineState === 'error' && (
-                <section className="bg-surface/30 border border-warning/30 rounded-xl p-4">
+                <section className="bg-surface/30 border border-warning/30 rounded-lg p-4">
                     <span className="text-sm text-warning">
                         Couldn&apos;t load book data — the sandbox needs the baseline to run.
                     </span>
@@ -362,7 +362,7 @@ export default function ScenarioSandboxPage() {
             )}
 
             {/* Builder + save/load */}
-            <section className="bg-surface/30 border border-border rounded-xl p-4 sm:p-6 space-y-4">
+            <section className="bg-surface/30 border border-border rounded-lg p-4 sm:p-6 space-y-4">
                 <div className="flex flex-wrap items-end justify-between gap-3">
                     <div>
                         <h2 className="text-lg font-semibold text-foreground">Scenario</h2>
@@ -434,7 +434,7 @@ export default function ScenarioSandboxPage() {
 
             {/* Negative-month warnings */}
             {cash && cash.negativeMonths.length > 0 && (
-                <section className="bg-surface/30 border border-negative/40 rounded-xl p-4">
+                <section className="bg-surface/30 border border-negative/40 rounded-lg p-4">
                     <p className="text-sm text-negative font-medium">
                         Liquid balance goes negative in {cash.negativeMonths.length} month{cash.negativeMonths.length === 1 ? '' : 's'},
                         starting {cash.firstNegativeMonth}.
@@ -450,7 +450,7 @@ export default function ScenarioSandboxPage() {
 
             {/* Cash flow chart */}
             {result && (
-                <section className="bg-surface/30 border border-border rounded-xl p-4 sm:p-6">
+                <section className="bg-surface/30 border border-border rounded-lg p-4 sm:p-6">
                     <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
                         <div>
                             <h2 className="text-lg font-semibold text-foreground">Cash Flow — Liquid Balance</h2>
@@ -472,7 +472,7 @@ export default function ScenarioSandboxPage() {
 
             {/* Net worth chart */}
             {result && (
-                <section className="bg-surface/30 border border-border rounded-xl p-4 sm:p-6">
+                <section className="bg-surface/30 border border-border rounded-lg p-4 sm:p-6">
                     <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
                         <div>
                             <h2 className="text-lg font-semibold text-foreground">Net Worth</h2>
@@ -493,7 +493,7 @@ export default function ScenarioSandboxPage() {
                 <div className="grid gap-4 lg:grid-cols-3">
                     <TaxCard title={`Taxes ${result.tax.currentYear.calendarYear}`} cmp={result.tax.currentYear} />
                     <TaxCard title={`Taxes ${result.tax.nextYear.calendarYear}`} cmp={result.tax.nextYear} />
-                    <div className="bg-surface/30 border border-border rounded-xl p-4 sm:p-5 space-y-3">
+                    <div className="bg-surface/30 border border-border rounded-lg p-4 sm:p-5 space-y-3">
                         <div className="flex items-baseline justify-between gap-2">
                             <h3 className="text-sm font-semibold text-foreground"><Abbr term="FIRE" /> Impact</h3>
                             <span className="text-[11px] text-foreground-muted">deterministic</span>
@@ -544,7 +544,7 @@ export default function ScenarioSandboxPage() {
 
             {/* Loan summaries */}
             {result && result.loans.length > 0 && (
-                <section className="bg-surface/30 border border-border rounded-xl p-4 sm:p-6">
+                <section className="bg-surface/30 border border-border rounded-lg p-4 sm:p-6">
                     <h2 className="text-lg font-semibold text-foreground mb-3">Loans in This Scenario</h2>
                     <div className="overflow-x-auto">
                         <table className="w-full max-w-3xl text-xs font-mono" style={TNUM}>
@@ -578,7 +578,7 @@ export default function ScenarioSandboxPage() {
             )}
 
             {runError && (
-                <section className="bg-surface/30 border border-warning/30 rounded-xl p-4">
+                <section className="bg-surface/30 border border-warning/30 rounded-lg p-4">
                     <span className="text-sm text-warning">{runError}</span>
                 </section>
             )}

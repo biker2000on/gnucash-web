@@ -90,7 +90,7 @@ export function CreateBookWizard({ onBookCreated, isOnboarding = false }: Create
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <button
             onClick={() => setStep('create')}
-            className="text-left p-6 bg-surface/50 border border-border rounded-xl hover:border-primary/50 transition-colors group"
+            className="text-left p-6 bg-surface/50 border border-border rounded-lg hover:border-primary/50 transition-colors group"
           >
             <div className="w-10 h-10 bg-primary/10 rounded-lg flex items-center justify-center mb-4">
               <svg className="w-5 h-5 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -107,7 +107,7 @@ export function CreateBookWizard({ onBookCreated, isOnboarding = false }: Create
 
           <button
             onClick={() => setStep('import')}
-            className="text-left p-6 bg-surface/50 border border-border rounded-xl hover:border-primary/50 transition-colors group"
+            className="text-left p-6 bg-surface/50 border border-border rounded-lg hover:border-primary/50 transition-colors group"
           >
             <div className="w-10 h-10 bg-primary/10 rounded-lg flex items-center justify-center mb-4">
               <svg className="w-5 h-5 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -155,7 +155,7 @@ export function CreateBookWizard({ onBookCreated, isOnboarding = false }: Create
         </p>
 
         {error && (
-          <div className="mb-4 p-3 bg-negative/10 border border-negative/30 rounded-lg text-negative text-sm">
+          <div className="mb-4 p-3 bg-error/10 border border-error/30 rounded-lg text-error text-sm">
             {error}
           </div>
         )}
@@ -164,7 +164,7 @@ export function CreateBookWizard({ onBookCreated, isOnboarding = false }: Create
           <button
             onClick={() => void handleCreateDemo('household')}
             disabled={demoCreating !== null}
-            className="text-left p-6 bg-surface/50 border border-border rounded-xl hover:border-primary/50 transition-colors group disabled:opacity-60"
+            className="text-left p-6 bg-surface/50 border border-border rounded-lg hover:border-primary/50 transition-colors group disabled:opacity-60"
           >
             <h3 className="text-lg font-semibold text-foreground mb-1 group-hover:text-primary transition-colors">
               {demoCreating === 'household' ? 'Creating…' : 'Demo Household'}
@@ -178,7 +178,7 @@ export function CreateBookWizard({ onBookCreated, isOnboarding = false }: Create
           <button
             onClick={() => void handleCreateDemo('business')}
             disabled={demoCreating !== null}
-            className="text-left p-6 bg-surface/50 border border-border rounded-xl hover:border-primary/50 transition-colors group disabled:opacity-60"
+            className="text-left p-6 bg-surface/50 border border-border rounded-lg hover:border-primary/50 transition-colors group disabled:opacity-60"
           >
             <h3 className="text-lg font-semibold text-foreground mb-1 group-hover:text-primary transition-colors">
               {demoCreating === 'business' ? 'Creating…' : 'Demo Business'}
@@ -212,7 +212,7 @@ export function CreateBookWizard({ onBookCreated, isOnboarding = false }: Create
         </p>
 
         {error && (
-          <div className="mb-4 p-3 bg-negative/10 border border-negative/30 rounded-lg text-negative text-sm">
+          <div className="mb-4 p-3 bg-error/10 border border-error/30 rounded-lg text-error text-sm">
             {error}
           </div>
         )}

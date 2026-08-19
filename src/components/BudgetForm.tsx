@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { ErrorLiveRegion } from '@/components/a11y/LiveRegion';
+import { INPUT, SELECT, TEXTAREA, inputClass } from '@/components/ui/form';
 
 interface BudgetFormData {
     name: string;
@@ -61,7 +62,7 @@ export function BudgetForm({ mode, initialData, onSave, onCancel }: BudgetFormPr
         <form onSubmit={handleSubmit} className="space-y-6">
             <ErrorLiveRegion message={error} />
             {error && (
-                <div className="bg-negative/10 border border-negative/30 rounded-lg p-4 text-negative text-sm">
+                <div className="rounded-lg border border-error/30 bg-error/10 p-4 text-sm text-error">
                     {error}
                 </div>
             )}
@@ -69,14 +70,14 @@ export function BudgetForm({ mode, initialData, onSave, onCancel }: BudgetFormPr
             {/* Name */}
             <div>
                 <label className="block text-sm font-medium text-foreground-secondary mb-2">
-                    Budget Name <span className="text-negative">*</span>
+                    Budget Name <span className="text-error">*</span>
                 </label>
                 <input
                     type="text"
                     required
                     value={formData.name}
                     onChange={e => setFormData(prev => ({ ...prev, name: e.target.value }))}
-                    className="w-full bg-input-bg border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:border-primary/50 transition-all"
+                    className={INPUT}
                     placeholder="e.g., 2024 Annual Budget"
                 />
             </div>
@@ -90,7 +91,7 @@ export function BudgetForm({ mode, initialData, onSave, onCancel }: BudgetFormPr
                     value={formData.description}
                     onChange={e => setFormData(prev => ({ ...prev, description: e.target.value }))}
                     rows={3}
-                    className="w-full bg-input-bg border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:border-primary/50 transition-all resize-none"
+                    className={TEXTAREA}
                     placeholder="Optional description..."
                 />
             </div>
@@ -118,7 +119,7 @@ export function BudgetForm({ mode, initialData, onSave, onCancel }: BudgetFormPr
                                 ...prev,
                                 num_periods: Math.max(1, Math.min(60, parseInt(e.target.value) || 12))
                             }))}
-                            className="w-24 bg-input-bg border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:border-primary/50 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                            className={inputClass({ extra: 'w-24 disabled:cursor-not-allowed disabled:opacity-50' })}
                         />
                     </div>
                     {mode === 'edit' && formData.recurrence_period_type && (
@@ -195,7 +196,7 @@ export function BudgetForm({ mode, initialData, onSave, onCancel }: BudgetFormPr
                         type="month"
                         value={startMonth}
                         onChange={e => setStartMonth(e.target.value)}
-                        className="bg-input-bg border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:border-primary/50 transition-all font-mono"
+                        className={inputClass({ base: SELECT, extra: 'font-mono' })}
                     />
                     <p className="mt-2 text-xs text-foreground-muted">
                         When period 1 begins. Drives period labels, current-budget detection, and seasonal estimates.

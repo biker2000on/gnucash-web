@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { formatCurrency, applyBalanceReversal, BalanceReversal } from '@/lib/format';
+import { Tip } from '@/components/ui/Tooltip';
 
 interface InlineAmountEditorProps {
     /** Raw (GnuCash-signed) budget amount for this account/period. */
@@ -151,15 +152,16 @@ export function InlineAmountEditor({
     }
 
     return (
+        <Tip content="Click to edit">
         <button
             onClick={() => onActivate?.()}
             disabled={isSaving}
             className={`w-full text-right px-2 py-1 rounded hover:bg-surface-hover/50 transition-colors ${
                 isSaving ? 'opacity-50' : ''
             } ${value === 0 ? 'text-foreground-muted' : displayValue < 0 ? 'text-negative' : 'text-foreground'}`}
-            title="Click to edit"
         >
             {value === 0 ? '—' : formatCurrency(displayValue, currency)}
         </button>
+        </Tip>
     );
 }

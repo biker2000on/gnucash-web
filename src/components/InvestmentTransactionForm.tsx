@@ -12,6 +12,7 @@ import { AccountSelector } from '@/components/ui/AccountSelector';
 import { FieldGrid } from '@/components/ui/form';
 import { ErrorLiveRegion } from '@/components/a11y/LiveRegion';
 import { extractErrorMessage } from '@/lib/api-error';
+import { Tip } from '@/components/ui/Tooltip';
 
 export type InvestmentAction = 'Buy' | 'Sell' | 'Dividend' | 'ReturnOfCapital' | 'Split';
 
@@ -596,7 +597,7 @@ export function InvestmentTransactionForm({
             <ErrorLiveRegion message={errors.join('. ')} />
             {errors.length > 0 && (
                 <div className="bg-negative/10 border border-negative/30 rounded-lg p-4">
-                    <ul className="list-disc list-inside text-sm text-negative space-y-1">
+                    <ul className="list-disc list-inside text-sm text-error space-y-1">
                         {errors.map((error, i) => (
                             <li key={i}>{error}</li>
                         ))}
@@ -611,6 +612,7 @@ export function InvestmentTransactionForm({
                 </label>
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
                     {ACTION_OPTIONS.map(option => (
+                        <Tip content={option.description} key={option.value}>
                         <button
                             key={option.value}
                             type="button"
@@ -620,10 +622,10 @@ export function InvestmentTransactionForm({
                                     ? 'bg-primary text-primary-foreground'
                                     : 'bg-background-tertiary text-foreground-secondary hover:bg-surface-hover hover:text-foreground'
                             }`}
-                            title={option.description}
                         >
                             {option.label}
                         </button>
+                        </Tip>
                     ))}
                 </div>
             </div>
@@ -680,6 +682,7 @@ export function InvestmentTransactionForm({
                                     } focus:border-primary/50`}
                                 />
                                 {form.action === 'Sell' && currentShares > (0.5 / commodityFraction) && (
+                                    <Tip content={`Sell all ${currentShares.toFixed(sharePrecision)} shares`}>
                                     <button
                                         type="button"
                                         onClick={() => handleNumericFieldChange(
@@ -687,10 +690,10 @@ export function InvestmentTransactionForm({
                                             currentShares.toFixed(sharePrecision),
                                         )}
                                         className="shrink-0 rounded-lg border border-border px-3 py-2 text-xs text-foreground-secondary hover:border-border-hover hover:text-foreground transition-colors"
-                                        title={`Sell all ${currentShares.toFixed(sharePrecision)} shares`}
                                     >
                                         Sell all
                                     </button>
+                                    </Tip>
                                 )}
                             </div>
                         </div>

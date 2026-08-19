@@ -8,6 +8,7 @@ import {
   ContributionLineItem,
 } from '@/lib/reports/types';
 import { ContributionLimitBar } from './ContributionLimitBar';
+import { Tip } from '@/components/ui/Tooltip';
 
 const TYPE_LABELS: Record<string, string> = {
   contribution: 'Contribution',
@@ -118,20 +119,22 @@ function TransactionRow({
               className="w-16 px-1 py-0.5 text-xs bg-input-bg border border-border rounded text-foreground text-center"
               autoFocus
             />
+            <Tip content="Save">
             <button
               onClick={handleSave}
               className="text-success hover:text-success text-xs px-1"
-              title="Save"
             >
               Save
             </button>
+            </Tip>
+            <Tip content="Cancel">
             <button
               onClick={handleCancel}
               className="text-foreground-muted hover:text-foreground-secondary text-xs px-1"
-              title="Cancel"
             >
               Cancel
             </button>
+            </Tip>
           </span>
         ) : (
           <button
@@ -163,7 +166,7 @@ function AccountCard({
     : null;
 
   return (
-    <div className="border border-border rounded-xl overflow-hidden">
+    <div className="border border-border rounded-lg overflow-hidden">
       {/* Account header */}
       <button
         onClick={() => setExpanded(!expanded)}
@@ -280,7 +283,7 @@ export function ContributionByTypeTable({
   if (entries.length === 0) return null;
 
   return (
-    <div className="border border-border rounded-xl overflow-hidden">
+    <div className="border border-border rounded-lg overflow-hidden">
       <div className="px-4 py-2.5 bg-background-secondary/50 text-sm font-medium text-foreground">
         Contributions by account type
       </div>

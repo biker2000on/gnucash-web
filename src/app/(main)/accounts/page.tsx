@@ -35,15 +35,15 @@ function AccountsContent() {
             </header>
 
             {isLoading ? (
-                <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-12 shadow-2xl flex items-center justify-center">
+                <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-12 shadow-2xl flex items-center justify-center">
                     <div className="flex items-center gap-3">
                         <div className="w-5 h-5 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
                         <span className="text-foreground-secondary">Loading accounts...</span>
                     </div>
                 </div>
             ) : error ? (
-                <div className="bg-surface/30 backdrop-blur-xl border border-error/50 rounded-2xl p-12 shadow-2xl flex items-center justify-center">
-                    <div className="text-negative">{error instanceof Error ? error.message : 'An error occurred'}</div>
+                <div className="bg-surface/30 backdrop-blur-xl border border-error/50 rounded-lg p-12 shadow-2xl flex items-center justify-center">
+                    <div className="text-error">{error instanceof Error ? error.message : 'An error occurred'}</div>
                 </div>
             ) : (
                 <AccountHierarchy accounts={accounts} />
@@ -60,7 +60,7 @@ export default function AccountsPage() {
                     <h1 className="text-3xl font-bold text-foreground">Accounts</h1>
                     <p className="text-foreground-muted">Explore your account structure.</p>
                 </header>
-                <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-12 shadow-2xl flex items-center justify-center">
+                <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-12 shadow-2xl flex items-center justify-center">
                     <div className="flex items-center gap-3">
                         <div className="w-5 h-5 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
                         <span className="text-foreground-secondary">Loading...</span>

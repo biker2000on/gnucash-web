@@ -63,10 +63,10 @@ function ReportCard({ report }: { report: ReportConfig }) {
     return (
         <Link
             href={`/reports/${report.type}`}
-            className="group block bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-6 hover:border-primary/50 hover:bg-surface/50 transition-all duration-200"
+            className="group block bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-6 hover:border-primary/50 hover:bg-surface/50 transition-all duration-200"
         >
             <div className="flex items-start gap-4">
-                <div className="p-3 bg-primary/20 rounded-xl text-primary group-hover:bg-primary/30 transition-colors">
+                <div className="p-3 bg-primary/20 rounded-lg text-primary group-hover:bg-primary/30 transition-colors">
                     <ReportIcon icon={report.icon} />
                 </div>
                 <div className="flex-1 min-w-0">
@@ -274,10 +274,10 @@ export default function ReportsPage() {
                 <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                     <Link
                         href="/reports/capital-gains"
-                        className="group block bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-6 hover:border-primary/50 hover:bg-surface/50 transition-all duration-200"
+                        className="group block bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-6 hover:border-primary/50 hover:bg-surface/50 transition-all duration-200"
                     >
                         <div className="flex items-start gap-4">
-                            <div className="p-3 bg-primary/20 rounded-xl text-primary group-hover:bg-primary/30 transition-colors">
+                            <div className="p-3 bg-primary/20 rounded-lg text-primary group-hover:bg-primary/30 transition-colors">
                                 <ReportIcon icon="account" />
                             </div>
                             <div className="flex-1 min-w-0">
@@ -298,10 +298,10 @@ export default function ReportsPage() {
                     </Link>
                     <Link
                         href="/reports/tax-package"
-                        className="group block bg-surface\30 backdrop-blur-xl border border-border rounded-xl p-6 hover:border-primary/50 hover:bg-surface/50 transition-all duration-200"
+                        className="group block bg-surface\30 backdrop-blur-xl border border-border rounded-lg p-6 hover:border-primary/50 hover:bg-surface/50 transition-all duration-200"
                     >
                         <div className="flex items-start gap-4">
-                            <div className="p-3 bg-primary\20 rounded-xl text-primary group-hover:bg-primary/30 transition-colors">
+                            <div className="p-3 bg-primary\20 rounded-lg text-primary group-hover:bg-primary/30 transition-colors">
                                 <ReportIcon icon="account" />
                             </div>
                             <div className="flex-1 min-w-0">
@@ -321,10 +321,10 @@ export default function ReportsPage() {
                     </Link>
                     <Link
                         href="/reports/tax_schedule"
-                        className="group block bg-surface\30 backdrop-blur-xl border border-border rounded-xl p-6 hover:border-primary/50 hover:bg-surface/50 transition-all duration-200"
+                        className="group block bg-surface\30 backdrop-blur-xl border border-border rounded-lg p-6 hover:border-primary/50 hover:bg-surface/50 transition-all duration-200"
                     >
                         <div className="flex items-start gap-4">
-                            <div className="p-3 bg-primary\20 rounded-xl text-primary group-hover:bg-primary/30 transition-colors">
+                            <div className="p-3 bg-primary\20 rounded-lg text-primary group-hover:bg-primary/30 transition-colors">
                                 <ReportIcon icon="account" />
                             </div>
                             <div className="flex-1 min-w-0">

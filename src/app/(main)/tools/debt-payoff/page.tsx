@@ -71,7 +71,7 @@ function StrategyCard({
       type="button"
       onClick={onSelect}
       disabled={!clickable}
-      className={`text-left bg-surface/30 border rounded-xl p-3 sm:p-5 transition-colors ${
+      className={`text-left bg-surface/30 border rounded-lg p-3 sm:p-5 transition-colors ${
         selected
           ? 'border-primary bg-primary/5'
           : clickable
@@ -120,7 +120,7 @@ function PayoffOrderList({ plan }: { plan: DebtPlan }) {
   );
 
   return (
-    <div className="bg-surface/30 border border-border rounded-xl p-4">
+    <div className="bg-surface/30 border border-border rounded-lg p-4">
       <h3 className="text-sm font-semibold text-foreground mb-1">
         Payoff order — {plan.strategy === 'snowball' ? 'Snowball' : 'Avalanche'}
       </h3>
@@ -332,13 +332,13 @@ export default function DebtPayoffPage() {
       </header>
 
       {loadError && (
-        <div className="p-4 bg-error/10 border border-error/30 rounded-xl text-sm text-negative">
+        <div className="p-4 bg-error/10 border border-error/30 rounded-lg text-sm text-error">
           {loadError}
         </div>
       )}
 
       {/* ---------------- Debt table ---------------- */}
-      <section className="bg-surface/30 border border-border rounded-xl p-6">
+      <section className="bg-surface/30 border border-border rounded-lg p-6">
         <h2 className="text-lg font-semibold text-foreground mb-1">Your debts</h2>
         <p className="text-sm text-foreground-muted mb-4">
           Liability accounts from your book. Enter each debt&apos;s APR and minimum monthly
@@ -506,7 +506,7 @@ export default function DebtPayoffPage() {
 
           <div className="flex items-center gap-3 ml-auto">
             {saveStatus === 'saved' && <span className="text-sm text-primary">Saved</span>}
-            {saveStatus === 'error' && <span className="text-sm text-negative">Failed to save</span>}
+            {saveStatus === 'error' && <span className="text-sm text-error">Failed to save</span>}
             <button
               type="button"
               onClick={handleSave}
@@ -528,7 +528,7 @@ export default function DebtPayoffPage() {
         <>
           {/* Global warnings for the selected plan */}
           {selectedPlan.warnings.length > 0 && (
-            <div className="p-4 bg-error/10 border border-error/30 rounded-xl space-y-1">
+            <div className="p-4 bg-error/10 border border-error/30 rounded-lg space-y-1">
               {selectedPlan.warnings.map((w, i) => (
                 <p key={i} className="text-sm text-negative">
                   {w}
@@ -564,7 +564,7 @@ export default function DebtPayoffPage() {
 
           {/* Comparison summary */}
           {comparison && (
-            <section className="bg-surface/30 border border-border rounded-xl p-4 text-sm space-y-1">
+            <section className="bg-surface/30 border border-border rounded-lg p-4 text-sm space-y-1">
               <p className="text-foreground-secondary">
                 {comparison.avalancheVsSnowball.interestSaved !== null &&
                 comparison.avalancheVsSnowball.monthsSaved !== null ? (

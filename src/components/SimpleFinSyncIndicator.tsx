@@ -1,3 +1,5 @@
+import { Tip } from '@/components/ui/Tooltip';
+
 interface SimpleFinSyncIndicatorProps {
     status: string | null;
     error?: string | null;
@@ -66,32 +68,34 @@ export default function SimpleFinSyncIndicator({
 
     if (compact) {
         return (
-            <span
-                className={`inline-flex flex-shrink-0 items-center justify-center ${colorClass}`}
-                role="img"
-                aria-label={label}
-                title={title}
-            >
-                {icon}
-            </span>
+            <Tip content={title}>
+                <span
+                    className={`inline-flex flex-shrink-0 items-center justify-center ${colorClass}`}
+                    role="img"
+                    aria-label={label}
+                >
+                    {icon}
+                </span>
+            </Tip>
         );
     }
 
     return (
-        <span
-            className={`inline-flex items-center gap-1.5 rounded-sm border px-2 py-1 text-xs font-medium ${
-                hasFailure
-                    ? 'border-error/30 bg-error/10 text-error'
-                    : isSyncing
-                        ? 'border-primary/20 bg-primary/10 text-primary'
-                        : 'border-border bg-background-tertiary text-foreground-muted'
-            }`}
-            role="status"
-            aria-label={label}
-            title={title}
-        >
-            {icon}
-            <span>{label}</span>
-        </span>
+        <Tip content={title}>
+            <span
+                className={`inline-flex items-center gap-1.5 rounded-sm border px-2 py-1 text-xs font-medium ${
+                    hasFailure
+                        ? 'border-error/30 bg-error/10 text-error'
+                        : isSyncing
+                            ? 'border-primary/20 bg-primary/10 text-primary'
+                            : 'border-border bg-background-tertiary text-foreground-muted'
+                }`}
+                role="status"
+                aria-label={label}
+            >
+                {icon}
+                <span>{label}</span>
+            </span>
+        </Tip>
     );
 }

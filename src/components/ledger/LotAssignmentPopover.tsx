@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
+import { Tip } from '@/components/ui/Tooltip';
 
 interface LotOption {
   guid: string;
@@ -70,6 +71,7 @@ export default function LotAssignmentPopover({
 
   return (
     <div className="relative" ref={popoverRef}>
+      <Tip content={currentLot ? `Assigned to: ${currentLot.title}` : 'Assign to lot'}>
       <button
         onClick={() => setIsOpen(!isOpen)}
         className={`text-xs px-1.5 py-0.5 rounded border transition-colors ${
@@ -77,10 +79,10 @@ export default function LotAssignmentPopover({
             ? 'border-primary/30 bg-primary/10 text-primary hover:bg-primary/20'
             : 'border-border/50 bg-background-secondary/20 text-foreground-muted hover:bg-background-secondary/40'
         }`}
-        title={currentLot ? `Assigned to: ${currentLot.title}` : 'Assign to lot'}
       >
         {currentLot ? currentLot.title : '+ Lot'}
       </button>
+      </Tip>
 
       {isOpen && (
         <div className="absolute z-50 top-full left-0 mt-1 w-56 bg-surface border border-border rounded-lg shadow-xl">

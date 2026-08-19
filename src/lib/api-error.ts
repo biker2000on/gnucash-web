@@ -89,6 +89,69 @@ export async function readErrorBody(response: Response, fallback: string): Promi
 }
 
 /**
+ * Pull the per-field entries out of an error body, keyed by field name.
+ *
+ * Complements `extractErrorMessage`, which flattens the same list into one
+ * banner string. A form that shows only the banner makes the user re-read
+ * every field to find the one the server rejected; with this the message can
+ * also be parked under the control it is about.
+ *
+ * Handles both `{ field, message }` (validateTransaction, domain commands) and
+ * Zod issues, whose location lives in `path: (string | number)[]`. When two
+ * entries name the same field the first wins — servers emit them in the order
+ * they want them read.
+ */
+export function extractFieldErrors(body: unknown): Record<string, string> {
+    const result: Record<string, string> = {};
+    if (!body || typeof body !== 'object') return result;
+    const list = (body as Record<string, unknown>).errors;
+    if (!Array.isArray(list)) return result;
+
+    for (const item of list) {
+        if (!item || typeof item !== 'object') continue;
+        const entry = item as ApiErrorItem;
+        const message = asNonEmptyString(entry.message);
+        if (!message) continue;
+        let field = asNonEmptyString(entry.field);
+        if (!field && Array.isArray(entry.path) && entry.path.length > 0) {
+            // Zod: ['splits', 0, 'account_guid'] -> 'splits[0].account_guid'
+            field = entry.path.reduce<string>((acc, segment) => {
+                if (typeof segment === 'number') return `${acc}[${segment}]`;
+                return acc ? `${acc}.${String(segment)}` : String(segment);
+            }, '');
+        }
+        if (!field) continue;
+        if (!(field in result)) result[field] = message;
+    }
+    return result;
+}
+
+/**
+ * An `Error` that still carries the server's per-field entries.
+ *
+ * Save handlers throw across a component boundary (the modal fetches, the form
+ * renders), so anything not on the `Error` is lost. Without this the field
+ * list is read, joined into a banner, and discarded — which is why a rejected
+ * post date used to surface only as a sentence at the top of the form.
+ */
+export class ApiRequestError extends Error {
+    readonly fieldErrors: Record<string, string>;
+    readonly status?: number;
+
+    constructor(message: string, fieldErrors: Record<string, string> = {}, status?: number) {
+        super(message);
+        this.name = 'ApiRequestError';
+        this.fieldErrors = fieldErrors;
+        this.status = status;
+    }
+
+    /** Build from an already-parsed error body. */
+    static fromBody(body: unknown, fallback: string, status?: number): ApiRequestError {
+        return new ApiRequestError(extractErrorMessage(body, fallback), extractFieldErrors(body), status);
+    }
+}
+
+/**
  * Convenience wrapper: read the error body and throw it as an `Error`.
  * For call sites whose surrounding code already catches and toasts.
  */

@@ -15,6 +15,7 @@ import { useBooks } from '@/contexts/BookContext';
 import { formatCurrency } from '@/lib/format';
 import { formatMinutesAsHours, type TimeProject } from '@/lib/timesheet';
 import type { TimeEntryDTO, UnbilledCustomerGroup } from '@/lib/business/time-tracking.service';
+import { Tip } from '@/components/ui/Tooltip';
 
 const TNUM = { fontFeatureSettings: "'tnum'" } as const;
 const inputClass = 'w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder-foreground-muted focus:outline-none focus:border-primary/50 transition-colors duration-150';
@@ -340,15 +341,16 @@ export default function TimeTrackingPage() {
                                 placeholder="What are you working on?"
                             />
                         </div>
+                        <Tip content={!canWrite ? 'Read-only access' : undefined}>
                         <button
                             type="button"
                             onClick={handleStartTimer}
                             disabled={timerBusy || !canWrite}
-                            title={!canWrite ? 'Read-only access' : undefined}
                             className="px-4 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 disabled:cursor-not-allowed text-primary-foreground rounded-lg transition-colors duration-150 whitespace-nowrap"
                         >
                             ▶ Start Timer
                         </button>
+                        </Tip>
                     </div>
                 )}
             </div>
@@ -469,15 +471,16 @@ export default function TimeTrackingPage() {
                                             <span className="font-mono text-sm text-foreground" style={TNUM}>
                                                 {formatCurrency(group.amount)}
                                             </span>
+                                            <Tip content={!canInvoice ? 'Read-only access' : undefined}>
                                             <button
                                                 type="button"
                                                 onClick={() => (isOpen ? setInvoicingCustomer(null) : openInvoicePanel(group))}
                                                 disabled={!canInvoice}
-                                                title={!canInvoice ? 'Read-only access' : undefined}
                                                 className="px-3 py-1.5 text-xs bg-primary hover:bg-primary-hover disabled:bg-primary/50 disabled:cursor-not-allowed text-primary-foreground rounded-md transition-colors duration-150"
                                             >
                                                 {isOpen ? 'Close' : 'Create invoice'}
                                             </button>
+                                            </Tip>
                                         </div>
 
                                         {isOpen && (

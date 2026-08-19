@@ -547,13 +547,13 @@ export function RoomDetailPanel({
 
             <ErrorLiveRegion message={error} />
             {error && (
-                <div className="border border-error/30 bg-surface/30 rounded-xl p-4">
+                <div className="border border-error/30 bg-surface/30 rounded-lg p-4">
                     <p className="text-sm text-error">{error}</p>
                 </div>
             )}
 
             {/* Add item */}
-            <div className="bg-background-secondary/30 border border-border rounded-xl p-4 space-y-3">
+            <div className="bg-background-secondary/30 border border-border rounded-lg p-4 space-y-3">
                 {addOpen ? (
                     <>
                         {renderFormFields(addForm, setAddForm, addPhotos, setAddPhotos, {
@@ -594,14 +594,14 @@ export function RoomDetailPanel({
 
             {/* Item list */}
             {items !== null && items.length === 0 ? (
-                <div className="bg-background-secondary/30 border border-border rounded-xl p-8 text-center">
+                <div className="bg-background-secondary/30 border border-border rounded-lg p-8 text-center">
                     <p className="text-sm text-foreground-secondary">
                         No items in this room yet — add one above, or run the walk-through.
                     </p>
                 </div>
             ) : (
                 items !== null && (
-                    <div className="bg-background-secondary/30 border border-border rounded-xl overflow-hidden">
+                    <div className="bg-background-secondary/30 border border-border rounded-lg overflow-hidden">
                         <ul>
                             {items.map((item) => (
                                 <Fragment key={item.id}>

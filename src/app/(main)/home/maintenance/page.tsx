@@ -714,7 +714,7 @@ export default function HomeMaintenancePage() {
             )}
 
             {!loading && error && (
-                <div className="border border-error/30 bg-surface/30 rounded-xl p-4">
+                <div className="border border-error/30 bg-surface/30 rounded-lg p-4">
                     <p className="text-sm text-error">{error}</p>
                 </div>
             )}
@@ -753,7 +753,7 @@ export default function HomeMaintenancePage() {
                     {tab === 'tasks' && (
                         <>
                             {addOpen && (
-                                <div className="bg-background-secondary/30 border border-border rounded-xl p-4">
+                                <div className="bg-background-secondary/30 border border-border rounded-lg p-4">
                                     {renderTaskForm(
                                         addForm,
                                         setAddForm,
@@ -768,7 +768,7 @@ export default function HomeMaintenancePage() {
                             )}
 
                             {tasks.length === 0 && (
-                                <div className="bg-background-secondary/30 border border-border rounded-xl p-6 space-y-3">
+                                <div className="bg-background-secondary/30 border border-border rounded-lg p-6 space-y-3">
                                     <p className="text-sm text-foreground">
                                         No maintenance tasks yet. Start with the standard template —
                                         every task is editable afterwards:
@@ -796,7 +796,7 @@ export default function HomeMaintenancePage() {
                                 return (
                                     <div
                                         key={group.status}
-                                        className="bg-background-secondary/30 border border-border rounded-xl overflow-hidden"
+                                        className="bg-background-secondary/30 border border-border rounded-lg overflow-hidden"
                                     >
                                         <div
                                             className={`border-b border-border px-4 py-2.5 text-[10px] font-medium uppercase tracking-wider ${group.tone}`}
@@ -812,7 +812,7 @@ export default function HomeMaintenancePage() {
                             })}
 
                             {inactiveTasks.length > 0 && (
-                                <div className="bg-background-secondary/30 border border-border rounded-xl overflow-hidden opacity-70">
+                                <div className="bg-background-secondary/30 border border-border rounded-lg overflow-hidden opacity-70">
                                     <div className="border-b border-border px-4 py-2.5 text-[10px] font-medium uppercase tracking-wider text-foreground-muted">
                                         Paused
                                         <span className="ml-2 font-mono" style={TNUM}>
@@ -827,7 +827,7 @@ export default function HomeMaintenancePage() {
 
                     {tab === 'log' && (
                         <>
-                            <div className="bg-background-secondary/30 border border-border rounded-xl p-5">
+                            <div className="bg-background-secondary/30 border border-border rounded-lg p-5">
                                 <p className="text-[10px] font-medium uppercase tracking-wider text-foreground-muted">
                                     Maintenance cost — year to date
                                 </p>
@@ -840,7 +840,7 @@ export default function HomeMaintenancePage() {
                             </div>
 
                             {/* Add standalone entry */}
-                            <div className="bg-background-secondary/30 border border-border rounded-xl p-4 space-y-3">
+                            <div className="bg-background-secondary/30 border border-border rounded-lg p-4 space-y-3">
                                 <p className="text-xs font-medium uppercase tracking-wider text-foreground-muted">
                                     Log a service
                                 </p>
@@ -952,14 +952,14 @@ export default function HomeMaintenancePage() {
                             </div>
 
                             {logEntries.length === 0 ? (
-                                <div className="bg-background-secondary/30 border border-border rounded-xl p-8 text-center">
+                                <div className="bg-background-secondary/30 border border-border rounded-lg p-8 text-center">
                                     <p className="text-sm text-foreground-secondary">
                                         No service history yet. Marking a task done logs an entry here
                                         automatically.
                                     </p>
                                 </div>
                             ) : (
-                                <div className="bg-background-secondary/30 border border-border rounded-xl overflow-hidden">
+                                <div className="bg-background-secondary/30 border border-border rounded-lg overflow-hidden">
                                     <ul>
                                         {logEntries.map((entry) => (
                                             <li

@@ -325,7 +325,7 @@ export default function PayslipsPage() {
 
       {/* Upload zone */}
       {showUpload && (
-        <div className="bg-surface/30 backdrop-blur-xl rounded-2xl border border-border p-6">
+        <div className="bg-surface/30 backdrop-blur-xl rounded-lg border border-border p-6">
           <PayslipUploadZone onUploadComplete={handleUploadComplete} />
         </div>
       )}
@@ -381,7 +381,7 @@ export default function PayslipsPage() {
       </div>
 
       {/* Table */}
-      <div className="bg-surface/30 backdrop-blur-xl rounded-2xl border border-border overflow-hidden">
+      <div className="bg-surface/30 backdrop-blur-xl rounded-lg border border-border overflow-hidden">
         {loading ? (
           <div className="flex items-center justify-center py-16">
             <span className="text-sm text-foreground-muted">Loading...</span>

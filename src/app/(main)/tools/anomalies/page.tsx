@@ -29,7 +29,7 @@ function StatCard({
     valueClass?: string;
 }) {
     return (
-        <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-5">
+        <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-5">
             <p className="text-xs uppercase tracking-wide text-foreground-muted">{label}</p>
             <p className={`mt-1 text-2xl font-mono font-semibold ${valueClass}`} style={{ fontFeatureSettings: "'tnum'" }}>
                 {value}
@@ -178,7 +178,7 @@ export default function AnomaliesPage() {
             {loading && (
                 <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                     {[1, 2, 3, 4].map(i => (
-                        <div key={i} className="bg-surface/30 border border-border rounded-xl p-5 animate-pulse">
+                        <div key={i} className="bg-surface/30 border border-border rounded-lg p-5 animate-pulse">
                             <div className="h-3 bg-foreground-muted/20 rounded w-24 mb-3" />
                             <div className="h-7 bg-foreground-muted/20 rounded w-28" />
                         </div>
@@ -188,7 +188,7 @@ export default function AnomaliesPage() {
 
             {/* Error */}
             {!loading && error && (
-                <section className="bg-surface/30 border border-error/30 rounded-xl p-6">
+                <section className="bg-surface/30 border border-error/30 rounded-lg p-6">
                     <p className="text-sm text-error">{error}</p>
                     <button
                         type="button"
@@ -231,7 +231,7 @@ export default function AnomaliesPage() {
 
             {/* Filters + table */}
             {!loading && !error && data && (
-                <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-6">
+                <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-6">
                     <div className="flex flex-wrap items-center gap-3 mb-4">
                         <input
                             type="text"

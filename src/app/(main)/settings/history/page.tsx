@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { useToast } from '@/contexts/ToastContext';
+import { Tip } from '@/components/ui/Tooltip';
 
 interface AuditEntry {
     id: number;
@@ -118,7 +119,7 @@ export default function HistoryPage() {
                 </select>
             </div>
 
-            <div className="border border-border rounded-xl overflow-hidden divide-y divide-border">
+            <div className="border border-border rounded-lg overflow-hidden divide-y divide-border">
                 {!loaded ? (
                     <div className="px-4 py-10 text-center text-sm text-foreground-muted">Loading…</div>
                 ) : entries.length === 0 ? (
@@ -133,13 +134,14 @@ export default function HistoryPage() {
                                     {entry.action}
                                 </span>
                                 <span className="shrink-0 text-xs text-foreground-muted w-28">{entry.entityType.toLowerCase().replace(/_/g, ' ')}</span>
+                                <Tip content="Show details">
                                 <button
                                     onClick={() => setExpanded(expanded === entry.id ? null : entry.id)}
                                     className="flex-1 min-w-0 text-left text-foreground truncate hover:text-primary transition-colors"
-                                    title="Show details"
                                 >
                                     {summarize(entry)}
                                 </button>
+                                </Tip>
                                 <span className="shrink-0 text-xs text-foreground-muted hidden sm:inline">{entry.user ?? '—'}</span>
                                 <span className="shrink-0 text-xs text-foreground-muted font-mono">
                                     {new Date(entry.createdAt).toLocaleString()}

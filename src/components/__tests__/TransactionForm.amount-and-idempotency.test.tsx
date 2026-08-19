@@ -13,7 +13,7 @@
  * are exercised end to end.
  */
 
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TransactionForm } from '../TransactionForm';
 
@@ -107,7 +107,7 @@ describe('simple-mode amount parsing', () => {
         fillSimpleEntry(typed);
         fireEvent.click(screen.getByRole('button', { name: 'Create Transaction' }));
 
-        await screen.findByText(new RegExp(message));
+        within(await screen.findByTestId('form-errors')).getByText(new RegExp(message));
         expect(onSave).not.toHaveBeenCalled();
     });
 
@@ -147,8 +147,9 @@ describe('advanced-mode split amount parsing', () => {
         fillAdvancedEntry('abc', 'abc');
         fireEvent.click(screen.getByRole('button', { name: 'Create Transaction' }));
 
-        await screen.findByText(/Enter a valid amount/);
-        expect(screen.queryByText(/unbalanced/i)).toBeNull();
+        const errorList = await screen.findByTestId('form-errors');
+        within(errorList).getByText(/Enter a valid amount/);
+        expect(within(errorList).queryByText(/unbalanced/i)).toBeNull();
         expect(onSave).not.toHaveBeenCalled();
     });
 
@@ -159,7 +160,7 @@ describe('advanced-mode split amount parsing', () => {
         fillAdvancedEntry('1,23', '25.00');
         fireEvent.click(screen.getByRole('button', { name: 'Create Transaction' }));
 
-        await screen.findByText(/Enter a valid amount/);
+        within(await screen.findByTestId('form-errors')).getByText(/Enter a valid amount/);
         expect(onSave).not.toHaveBeenCalled();
     });
 

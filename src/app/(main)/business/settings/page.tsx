@@ -9,6 +9,7 @@ import { useToast } from '@/contexts/ToastContext';
 import { useCurrentUser, READONLY_TOOLTIP } from '@/hooks/useCurrentUser';
 import { HouseholdBookBanner } from '@/components/business/HouseholdBookBanner';
 import type { BilltermDTO, TaxtableDTO } from '@/lib/business-types';
+import { Tip } from '@/components/ui/Tooltip';
 
 const inputClass = 'w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder-foreground-muted focus:outline-none focus:border-primary/50 transition-all';
 const labelClass = 'block text-xs font-medium text-foreground-secondary mb-1';
@@ -154,15 +155,16 @@ function BilltermsSection() {
                     <h2 className="text-xl font-semibold text-foreground">Bill Terms</h2>
                     <p className="text-sm text-foreground-muted">Net-N payment terms for customers and vendors.</p>
                 </div>
+                <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                 <button
                     type="button"
                     onClick={openCreate}
                     disabled={isReadonly}
-                    title={isReadonly ? READONLY_TOOLTIP : undefined}
                     className={primaryButtonClass}
                 >
                     + New Terms
                 </button>
+                </Tip>
             </div>
 
             <div className="bg-surface border border-border rounded-lg overflow-hidden">
@@ -205,15 +207,16 @@ function BilltermsSection() {
                                             >
                                                 Edit
                                             </button>
+                                            <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                                             <button
                                                 type="button"
                                                 onClick={() => setDeleting(term)}
                                                 disabled={isReadonly}
-                                                title={isReadonly ? READONLY_TOOLTIP : undefined}
                                                 className="ml-1 px-2 py-1 text-xs rounded-md text-negative hover:bg-negative/10 transition-colors disabled:opacity-50"
                                             >
                                                 Delete
                                             </button>
+                                            </Tip>
                                         </td>
                                     </tr>
                                 ))}
@@ -298,14 +301,15 @@ function BilltermsSection() {
                         >
                             Cancel
                         </button>
+                        <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                         <button
                             type="submit"
                             disabled={saving || isReadonly}
-                            title={isReadonly ? READONLY_TOOLTIP : undefined}
                             className={primaryButtonClass}
                         >
                             {saving ? 'Saving...' : 'Save'}
                         </button>
+                        </Tip>
                     </div>
                 </form>
             </Modal>
@@ -467,15 +471,16 @@ function TaxtablesSection() {
                         Sales tax rates posted to liability or expense accounts on invoice entries.
                     </p>
                 </div>
+                <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                 <button
                     type="button"
                     onClick={openCreate}
                     disabled={isReadonly}
-                    title={isReadonly ? READONLY_TOOLTIP : undefined}
                     className={primaryButtonClass}
                 >
                     + New Tax Table
                 </button>
+                </Tip>
             </div>
 
             <div className="bg-surface border border-border rounded-lg overflow-hidden">
@@ -512,15 +517,16 @@ function TaxtablesSection() {
                                             >
                                                 Edit
                                             </button>
+                                            <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                                             <button
                                                 type="button"
                                                 onClick={() => setDeleting(table)}
                                                 disabled={isReadonly}
-                                                title={isReadonly ? READONLY_TOOLTIP : undefined}
                                                 className="ml-1 px-2 py-1 text-xs rounded-md text-negative hover:bg-negative/10 transition-colors disabled:opacity-50"
                                             >
                                                 Delete
                                             </button>
+                                            </Tip>
                                         </td>
                                     </tr>
                                 ))}
@@ -587,15 +593,16 @@ function TaxtablesSection() {
                                         <option value="percent">Percent %</option>
                                         <option value="value">Fixed value</option>
                                     </select>
+                                    <Tip content="Remove entry">
                                     <button
                                         type="button"
                                         onClick={() => removeEntry(index)}
                                         disabled={form.entries.length <= 1}
                                         className="px-2 py-2 text-xs rounded-md text-negative hover:bg-negative/10 transition-colors disabled:opacity-30"
-                                        title="Remove entry"
                                     >
                                         ✕
                                     </button>
+                                    </Tip>
                                 </div>
                             ))}
                         </div>
@@ -616,14 +623,15 @@ function TaxtablesSection() {
                         >
                             Cancel
                         </button>
+                        <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                         <button
                             type="submit"
                             disabled={saving || isReadonly}
-                            title={isReadonly ? READONLY_TOOLTIP : undefined}
                             className={primaryButtonClass}
                         >
                             {saving ? 'Saving...' : 'Save'}
                         </button>
+                        </Tip>
                     </div>
                 </form>
             </Modal>
@@ -787,15 +795,16 @@ function DunningSection() {
                         </div>
 
                         <div className="flex justify-end pt-2 border-t border-border">
+                            <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                             <button
                                 type="button"
                                 onClick={handleSave}
                                 disabled={saving || isReadonly}
-                                title={isReadonly ? READONLY_TOOLTIP : undefined}
                                 className={primaryButtonClass}
                             >
                                 {saving ? 'Saving...' : 'Save Reminder Settings'}
                             </button>
+                            </Tip>
                         </div>
                     </>
                 )}

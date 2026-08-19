@@ -1,5 +1,7 @@
 'use client';
 
+import { Tip } from '@/components/ui/Tooltip';
+
 export const RECONCILE_STATES = [
     { value: 'n', label: 'Not Reconciled', shortLabel: 'N', color: 'neutral' },
     { value: 'c', label: 'Cleared', shortLabel: 'C', color: 'amber' },
@@ -45,17 +47,17 @@ export function ReconcileFilter({ selectedStates, onChange }: ReconcileFilterPro
                     const isSelected = selectedStates.includes(state.value);
                     const colors = colorClasses[state.color];
                     return (
-                        <button
-                            key={state.value}
-                            onClick={() => toggleState(state.value)}
-                            className={`flex-1 min-w-0 px-3 py-2 min-h-[44px] text-sm rounded-lg border transition-all flex items-center justify-center gap-2 ${
-                                isSelected ? colors.selected : colors.unselected
-                            }`}
-                            title={state.label}
-                        >
-                            <span className="font-mono font-bold">{state.shortLabel}</span>
-                            <span className="hidden text-xs md:inline">{state.label}</span>
-                        </button>
+                        <Tip key={state.value} content={state.label}>
+                            <button
+                                onClick={() => toggleState(state.value)}
+                                className={`flex-1 min-w-0 px-3 py-2 min-h-[44px] text-sm rounded-lg border transition-all flex items-center justify-center gap-2 ${
+                                    isSelected ? colors.selected : colors.unselected
+                                }`}
+                            >
+                                <span className="font-mono font-bold">{state.shortLabel}</span>
+                                <span className="hidden text-xs md:inline">{state.label}</span>
+                            </button>
+                        </Tip>
                     );
                 })}
             </div>

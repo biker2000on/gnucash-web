@@ -17,6 +17,7 @@ import {
     parseQty,
     todayIso,
 } from '@/components/business/inventory-ui';
+import { Tip } from '@/components/ui/Tooltip';
 
 const TNUM = { fontFeatureSettings: "'tnum'" } as const;
 const inputClass = 'w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder-foreground-muted focus:outline-none focus:border-primary/50 transition-all';
@@ -330,15 +331,16 @@ export function BillReceivingSection({ billGuid, entries }: BillReceivingSection
                     )}
                 </div>
                 {receiving && (
+                    <Tip content={isReadonly ? READONLY_TOOLTIP : !canReceive ? 'All lines are fully received' : undefined}>
                     <button
                         type="button"
                         onClick={() => setReceiveOpen(true)}
                         disabled={isReadonly || !canReceive}
-                        title={isReadonly ? READONLY_TOOLTIP : !canReceive ? 'All lines are fully received' : undefined}
                         className="px-2.5 py-1 text-xs rounded-md bg-primary hover:bg-primary-hover disabled:bg-primary/50 disabled:cursor-not-allowed text-primary-foreground transition-colors"
                     >
                         Receive...
                     </button>
+                    </Tip>
                 )}
             </div>
 

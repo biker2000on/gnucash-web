@@ -94,7 +94,7 @@ export default function InviteAcceptPage() {
     if (errorMsg) {
         return (
             <div className="max-w-lg mx-auto mt-20">
-                <div className="bg-surface rounded-xl border border-border p-8 text-center">
+                <div className="bg-surface rounded-lg border border-border p-8 text-center">
                     <div className="w-12 h-12 mx-auto mb-4 rounded-full bg-negative/10 flex items-center justify-center">
                         <svg className="w-6 h-6 text-negative" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
                             <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
@@ -111,7 +111,7 @@ export default function InviteAcceptPage() {
 
     return (
         <div className="max-w-lg mx-auto mt-20">
-            <div className="bg-surface rounded-xl border border-border p-8">
+            <div className="bg-surface rounded-lg border border-border p-8">
                 <div className="text-center mb-6">
                     <div className="w-12 h-12 mx-auto mb-4 rounded-full bg-primary/10 flex items-center justify-center">
                         <svg className="w-6 h-6 text-primary" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">

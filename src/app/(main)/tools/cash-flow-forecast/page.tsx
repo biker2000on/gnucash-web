@@ -7,6 +7,7 @@ import { COMBINED_GUID } from '@/lib/forecast';
 import { StatCard, StatGrid } from '@/components/ui/StatCard';
 import { ProvenanceModal } from '@/components/provenance/ProvenanceModal';
 import ForecastChart from './ForecastChart';
+import { Tip } from '@/components/ui/Tooltip';
 
 const HORIZON_OPTIONS = [30, 60, 90, 180] as const;
 
@@ -166,7 +167,7 @@ export default function CashFlowForecastPage() {
             </header>
 
             {/* Controls */}
-            <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-4 space-y-4">
+            <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-4 space-y-4">
                 <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
                     {/* Horizon */}
                     <div className="flex items-center gap-3">
@@ -226,6 +227,7 @@ export default function CashFlowForecastPage() {
                         {data.availableAccounts.map(account => {
                             const active = selectedSet.has(account.guid);
                             return (
+                                <Tip content={account.accountType} key={account.guid}>
                                 <button
                                     key={account.guid}
                                     onClick={() => toggleAccount(account.guid)}
@@ -234,10 +236,10 @@ export default function CashFlowForecastPage() {
                                             ? 'bg-primary/15 border-primary/40 text-primary'
                                             : 'bg-surface/50 border-border text-foreground-muted hover:border-border-hover hover:text-foreground-secondary'
                                     }`}
-                                    title={account.accountType}
                                 >
                                     {account.name}
                                 </button>
+                                </Tip>
                             );
                         })}
                     </div>
@@ -246,14 +248,14 @@ export default function CashFlowForecastPage() {
 
             {/* Error */}
             {error && (
-                <section className="bg-surface/30 border border-error/30 rounded-xl p-4">
+                <section className="bg-surface/30 border border-error/30 rounded-lg p-4">
                     <p className="text-sm text-error">Failed to load forecast: {error}</p>
                 </section>
             )}
 
             {/* Loading skeleton */}
             {loading && !data && (
-                <section className="bg-surface/30 border border-border rounded-xl p-8">
+                <section className="bg-surface/30 border border-border rounded-lg p-8">
                     <div className="flex items-center gap-4">
                         <div className="animate-spin h-6 w-6 border-2 border-primary border-t-transparent rounded-full" />
                         <p className="text-foreground font-medium">Building your forecast…</p>
@@ -284,7 +286,7 @@ export default function CashFlowForecastPage() {
 
                     {/* Warnings */}
                     {displayWarnings.length > 0 && (
-                        <section className="border border-negative/40 bg-negative/5 rounded-xl p-4">
+                        <section className="border border-negative/40 bg-negative/5 rounded-lg p-4">
                             <div className="flex items-center gap-2 mb-3">
                                 <svg className="w-5 h-5 text-negative shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
@@ -315,7 +317,7 @@ export default function CashFlowForecastPage() {
                     )}
 
                     {/* Chart */}
-                    <section className={`bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-6 transition-opacity duration-150 ease-out ${loading ? 'opacity-60' : 'opacity-100'}`}>
+                    <section className={`bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-6 transition-opacity duration-150 ease-out ${loading ? 'opacity-60' : 'opacity-100'}`}>
                         <div className="mb-4">
                             <h2 className="text-lg font-semibold text-foreground">Projected Balance</h2>
                             <p className="text-xs text-foreground-muted mt-0.5">
@@ -338,7 +340,7 @@ export default function CashFlowForecastPage() {
                     </section>
 
                     {/* Upcoming events table */}
-                    <section className={`bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-6 transition-opacity duration-150 ease-out ${loading ? 'opacity-60' : 'opacity-100'}`}>
+                    <section className={`bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-6 transition-opacity duration-150 ease-out ${loading ? 'opacity-60' : 'opacity-100'}`}>
                         <h2 className="text-lg font-semibold text-foreground mb-1">Upcoming Scheduled Transactions</h2>
                         <p className="text-xs text-foreground-muted mb-4">
                             Occurrences within the forecast window affecting the selected accounts.

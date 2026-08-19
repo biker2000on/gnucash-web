@@ -324,7 +324,7 @@ export default function FundingRulesPage() {
 
             <PersonalToolNotice />
 
-            <section className="bg-surface/30 border border-border rounded-xl p-4 text-sm text-foreground-secondary">
+            <section className="bg-surface/30 border border-border rounded-lg p-4 text-sm text-foreground-secondary">
                 <p>
                     <span className="text-foreground font-medium">How it works:</span>{' '}
                     create envelope sub-accounts under your savings (e.g.{' '}
@@ -338,21 +338,21 @@ export default function FundingRulesPage() {
             </section>
 
             {loading && (
-                <section className="bg-surface/30 border border-border rounded-xl p-6 animate-pulse">
+                <section className="bg-surface/30 border border-border rounded-lg p-6 animate-pulse">
                     <div className="h-4 bg-foreground-muted/20 rounded w-48 mb-3" />
                     <div className="h-4 bg-foreground-muted/20 rounded w-72" />
                 </section>
             )}
 
             {!loading && error && (
-                <section className="bg-surface/30 border border-error/30 rounded-xl p-6">
+                <section className="bg-surface/30 border border-error/30 rounded-lg p-6">
                     <p className="text-sm text-error">{error}</p>
                 </section>
             )}
 
             {/* Rules list */}
             {!loading && !error && (
-                <section className="bg-surface/30 border border-border rounded-xl p-6">
+                <section className="bg-surface/30 border border-border rounded-lg p-6">
                     <h2 className="text-sm font-semibold text-foreground mb-4">Rules</h2>
                     {rules.length === 0 ? (
                         <p className="text-sm text-foreground-muted py-6 text-center">
@@ -438,7 +438,7 @@ export default function FundingRulesPage() {
 
             {/* Application history */}
             {!loading && !error && (
-                <section className="bg-surface/30 border border-border rounded-xl p-6">
+                <section className="bg-surface/30 border border-border rounded-lg p-6">
                     <h2 className="text-sm font-semibold text-foreground mb-4">Recent applications</h2>
                     {applications.length === 0 ? (
                         <p className="text-sm text-foreground-muted py-4 text-center">

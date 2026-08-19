@@ -10,6 +10,7 @@ import { TagPicker, type SelectedTag } from '@/components/tags/TagPicker';
 import type { Tag } from '@/lib/tags';
 import { ErrorLiveRegion } from '@/components/a11y/LiveRegion';
 import { extractErrorMessage } from '@/lib/api-error';
+import { FIELD_ERROR, INPUT, SELECT, TEXTAREA, inputClass } from '@/components/ui/form';
 
 const ACCOUNT_TYPES = [
     { value: 'ASSET', label: 'Asset', group: 'Assets' },
@@ -346,7 +347,7 @@ export function AccountForm({ mode, accountGuid, initialData, parentGuid, onSave
         <form onSubmit={handleSubmit} className="space-y-6">
             <ErrorLiveRegion message={error} />
             {error && (
-                <div className="bg-negative/10 border border-negative/30 rounded-lg p-4 text-negative text-sm">
+                <div className="rounded-lg border border-error/30 bg-error/10 p-4 text-sm text-error">
                     {error}
                 </div>
             )}
@@ -354,7 +355,7 @@ export function AccountForm({ mode, accountGuid, initialData, parentGuid, onSave
             {/* Name */}
             <div>
                 <label className="block text-sm font-medium text-foreground-secondary mb-2">
-                    Account Name <span className="text-negative">*</span>
+                    Account Name <span className="text-error">*</span>
                 </label>
                 <input
                     type="text"
@@ -362,13 +363,11 @@ export function AccountForm({ mode, accountGuid, initialData, parentGuid, onSave
                     data-field="name"
                     value={formData.name}
                     onChange={e => setFormData(prev => ({ ...prev, name: e.target.value }))}
-                    className={`w-full bg-input-bg border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:border-primary/50 transition-all ${
-                        fieldErrors.name ? 'border-negative ring-1 ring-negative/30' : 'border-border'
-                    }`}
+                    className={inputClass({ invalid: Boolean(fieldErrors.name) })}
                     placeholder="e.g., Checking Account"
                 />
                 {fieldErrors.name && (
-                    <p className="mt-1 text-xs text-negative">{fieldErrors.name}</p>
+                    <p className={FIELD_ERROR}>{fieldErrors.name}</p>
                 )}
             </div>
 
@@ -376,13 +375,13 @@ export function AccountForm({ mode, accountGuid, initialData, parentGuid, onSave
             {mode === 'create' && (
                 <div>
                     <label className="block text-sm font-medium text-foreground-secondary mb-2">
-                        Account Type <span className="text-negative">*</span>
+                        Account Type <span className="text-error">*</span>
                     </label>
                     <select
                         required
                         value={formData.account_type}
                         onChange={e => setFormData(prev => ({ ...prev, account_type: e.target.value }))}
-                        className="w-full bg-input-bg border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:border-primary/50 transition-all cursor-pointer"
+                        className={SELECT}
                     >
                         {Object.entries(groupedAccountTypes).map(([group, types]) => (
                             <optgroup key={group} label={group}>
@@ -428,7 +427,7 @@ export function AccountForm({ mode, accountGuid, initialData, parentGuid, onSave
             {/* Commodity (currency or security depending on account type) */}
             <div>
                 <label className="block text-sm font-medium text-foreground-secondary mb-2">
-                    {isSecurityAccount ? 'Security' : 'Currency'} <span className="text-negative">*</span>
+                    {isSecurityAccount ? 'Security' : 'Currency'} <span className="text-error">*</span>
                 </label>
                 <select
                     required
@@ -449,11 +448,10 @@ export function AccountForm({ mode, accountGuid, initialData, parentGuid, onSave
                                 : {}),
                         }));
                     }}
-                    className={`w-full bg-input-bg border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:border-primary/50 transition-all ${
-                        commodityLocked ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'
-                    } ${
-                        fieldErrors.commodity_guid ? 'border-negative ring-1 ring-negative/30' : 'border-border'
-                    }`}
+                    className={inputClass({
+                        base: commodityLocked ? `${INPUT} cursor-not-allowed opacity-60` : SELECT,
+                        invalid: Boolean(fieldErrors.commodity_guid),
+                    })}
                 >
                     <option value="">
                         {isSecurityAccount ? '(Select a security...)' : '(Select a currency...)'}
@@ -474,7 +472,7 @@ export function AccountForm({ mode, accountGuid, initialData, parentGuid, onSave
                     </p>
                 ) : null}
                 {fieldErrors.commodity_guid && (
-                    <p className="mt-1 text-xs text-negative">{fieldErrors.commodity_guid}</p>
+                    <p className={FIELD_ERROR}>{fieldErrors.commodity_guid}</p>
                 )}
             </div>
 
@@ -487,7 +485,7 @@ export function AccountForm({ mode, accountGuid, initialData, parentGuid, onSave
                     <select
                         value={formData.commodity_scu ?? 10000}
                         onChange={e => setFormData(prev => ({ ...prev, commodity_scu: Number(e.target.value) }))}
-                        className="w-full bg-input-bg border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:border-primary/50 transition-all cursor-pointer"
+                        className={SELECT}
                     >
                         <option value={1}>0 (whole shares)</option>
                         <option value={10}>1</option>
@@ -512,7 +510,7 @@ export function AccountForm({ mode, accountGuid, initialData, parentGuid, onSave
                     type="text"
                     value={formData.code}
                     onChange={e => setFormData(prev => ({ ...prev, code: e.target.value }))}
-                    className="w-full bg-input-bg border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:border-primary/50 transition-all"
+                    className={INPUT}
                     placeholder="e.g., 1010"
                 />
                 <p className="mt-1 text-xs text-foreground-muted">
@@ -529,7 +527,7 @@ export function AccountForm({ mode, accountGuid, initialData, parentGuid, onSave
                     value={formData.description}
                     onChange={e => setFormData(prev => ({ ...prev, description: e.target.value }))}
                     rows={3}
-                    className="w-full bg-input-bg border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:border-primary/50 transition-all resize-none"
+                    className={TEXTAREA}
                     placeholder="Optional description..."
                 />
             </div>
@@ -624,7 +622,7 @@ export function AccountForm({ mode, accountGuid, initialData, parentGuid, onSave
                                     ? 'self'
                                     : prev.owner,
                             }))}
-                            className="bg-input-bg border border-border rounded-lg px-3 py-2.5 text-sm text-foreground focus:outline-none focus:border-primary/50"
+                            className={inputClass({ extra: 'w-auto' })}
                         >
                             <option value="">Select type...</option>
                             <option value="401k">401(k)</option>
@@ -685,7 +683,7 @@ export function AccountForm({ mode, accountGuid, initialData, parentGuid, onSave
                                         ...prev,
                                         owner: OWNER_VALUES.has(e.target.value) ? e.target.value : 'self',
                                     }))}
-                                    className="bg-input-bg border border-border rounded-lg px-3 py-2.5 text-sm text-foreground focus:outline-none focus:border-primary/50"
+                                    className={inputClass({ extra: 'w-auto' })}
                                 >
                                     <option value="self">{selfName ?? 'Self'}</option>
                                     <option value="spouse">{spouseName ?? 'Spouse'}</option>
@@ -700,7 +698,7 @@ export function AccountForm({ mode, accountGuid, initialData, parentGuid, onSave
                                         ...prev,
                                         owner: e.target.value || null,
                                     }))}
-                                    className="bg-input-bg border border-border rounded-lg px-3 py-2.5 text-sm text-foreground focus:outline-none focus:border-primary/50"
+                                    className={inputClass({ extra: 'w-auto' })}
                                 >
                                     <option value="">—</option>
                                     <option value="self">{selfName ?? 'Self'}</option>

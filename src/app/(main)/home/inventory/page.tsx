@@ -130,7 +130,7 @@ export default function HomeInventoryPage() {
             )}
 
             {!loading && error && (
-                <div className="border border-error/30 bg-surface/30 rounded-xl p-4">
+                <div className="border border-error/30 bg-surface/30 rounded-lg p-4">
                     <p className="text-sm text-error">{error}</p>
                 </div>
             )}
@@ -163,7 +163,7 @@ export default function HomeInventoryPage() {
                         <button
                             type="button"
                             onClick={() => setBulkDetailing(true)}
-                            className="flex w-full items-center justify-between gap-3 rounded-xl border border-primary/30 bg-primary/5 px-4 py-3 text-left transition-colors hover:bg-primary/10"
+                            className="flex w-full items-center justify-between gap-3 rounded-lg border border-primary/30 bg-primary/5 px-4 py-3 text-left transition-colors hover:bg-primary/10"
                         >
                             <span className="text-sm text-foreground">
                                 <span className="font-mono font-medium" style={TNUM}>
@@ -179,7 +179,7 @@ export default function HomeInventoryPage() {
                     )}
 
                     {/* Coverage hero */}
-                    <div className="bg-background-secondary/30 border border-border rounded-xl p-5">
+                    <div className="bg-background-secondary/30 border border-border rounded-lg p-5">
                         <p className="text-[10px] font-medium uppercase tracking-wider text-foreground-muted">
                             Estimated contents value
                         </p>
@@ -220,7 +220,7 @@ export default function HomeInventoryPage() {
 
                     {/* Warranty alert detail */}
                     {warrantyAlertCount > 0 && (
-                        <div className="border border-warning/30 bg-warning/5 rounded-xl px-4 py-3 text-sm text-foreground-secondary">
+                        <div className="border border-warning/30 bg-warning/5 rounded-lg px-4 py-3 text-sm text-foreground-secondary">
                             {[...summary.warrantyExpired, ...summary.warrantyExpiringSoon]
                                 .slice(0, 6)
                                 .map((a) => (
@@ -249,7 +249,7 @@ export default function HomeInventoryPage() {
 
                     {/* Room cards */}
                     {rooms.length === 0 ? (
-                        <div className="bg-background-secondary/30 border border-border rounded-xl p-8 text-center space-y-2">
+                        <div className="bg-background-secondary/30 border border-border rounded-lg p-8 text-center space-y-2">
                             <p className="text-sm text-foreground-secondary">
                                 No rooms yet. Tap{' '}
                                 <span className="font-medium text-foreground">Start walk-through</span>{' '}
@@ -264,7 +264,7 @@ export default function HomeInventoryPage() {
                                     key={room.id}
                                     type="button"
                                     onClick={() => setSelectedRoomId(room.id)}
-                                    className="rounded-xl border border-border bg-background-secondary/30 p-4 text-left transition-colors hover:border-border-hover hover:bg-surface-hover"
+                                    className="rounded-lg border border-border bg-background-secondary/30 p-4 text-left transition-colors hover:border-border-hover hover:bg-surface-hover"
                                 >
                                     <p className="text-sm font-medium text-foreground">{room.name}</p>
                                     <p className="mt-1 text-xs text-foreground-secondary">

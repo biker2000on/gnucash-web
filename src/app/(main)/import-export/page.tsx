@@ -4,6 +4,7 @@ import { useState, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import { ImportPreview } from '@/components/ImportPreview';
 import { useBooks } from '@/contexts/BookContext';
+import { Tip } from '@/components/ui/Tooltip';
 
 interface PreviewData {
   commodities: number;
@@ -266,7 +267,7 @@ export default function ImportExportPage() {
       </header>
 
       {/* Import Section */}
-      <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-6 space-y-6">
+      <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-6 space-y-6">
         <div>
           <h2 className="text-xl font-semibold text-foreground">Import</h2>
           <p className="text-sm text-foreground-secondary mt-1">
@@ -281,7 +282,7 @@ export default function ImportExportPage() {
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
             onClick={() => fileInputRef.current?.click()}
-            className={`relative border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all
+            className={`relative border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-all
               ${dragOver
                 ? 'border-primary bg-primary/10'
                 : 'border-border hover:border-foreground-secondary hover:bg-surface/50'
@@ -363,7 +364,7 @@ export default function ImportExportPage() {
               <button
                 onClick={handlePreview}
                 disabled={previewing}
-                className="flex items-center gap-2 px-5 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-primary-foreground rounded-xl transition-colors"
+                className="flex items-center gap-2 px-5 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-primary-foreground rounded-lg transition-colors"
               >
                 {previewing ? (
                   <>
@@ -435,12 +436,13 @@ export default function ImportExportPage() {
                 {businessObjectTotal(importResult) > 0 && (
                   <div>
                     <span className="text-foreground-muted">Business: </span>
+                    <Tip content="Customers, vendors, employees, jobs, invoices, entries, orders, bill terms, and tax tables">
                     <span
                       className="text-foreground"
-                      title="Customers, vendors, employees, jobs, invoices, entries, orders, bill terms, and tax tables"
                     >
                       {businessObjectTotal(importResult)}
                     </span>
+                    </Tip>
                   </div>
                 )}
               </div>
@@ -483,7 +485,7 @@ export default function ImportExportPage() {
       </section>
 
       {/* QIF Import Section */}
-      <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-6 space-y-4">
+      <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-6 space-y-4">
         <div>
           <h2 className="text-xl font-semibold text-foreground">Import QIF</h2>
           <p className="text-sm text-foreground-secondary mt-1">
@@ -493,14 +495,14 @@ export default function ImportExportPage() {
         </div>
         <Link
           href="/import-export/qif"
-          className="inline-flex items-center gap-2 px-5 py-2 text-sm bg-primary hover:bg-primary-hover text-primary-foreground rounded-xl transition-colors"
+          className="inline-flex items-center gap-2 px-5 py-2 text-sm bg-primary hover:bg-primary-hover text-primary-foreground rounded-lg transition-colors"
         >
           Open QIF Import
         </Link>
       </section>
 
       {/* QuickBooks Import Section */}
-      <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-6 space-y-4">
+      <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-6 space-y-4">
         <div>
           <h2 className="text-xl font-semibold text-foreground">Import QuickBooks Online</h2>
           <p className="text-sm text-foreground-secondary mt-1">
@@ -511,14 +513,14 @@ export default function ImportExportPage() {
         </div>
         <Link
           href="/import-export/quickbooks"
-          className="inline-flex items-center gap-2 px-5 py-2 text-sm bg-primary hover:bg-primary-hover text-primary-foreground rounded-xl transition-colors"
+          className="inline-flex items-center gap-2 px-5 py-2 text-sm bg-primary hover:bg-primary-hover text-primary-foreground rounded-lg transition-colors"
         >
           Open QuickBooks Import
         </Link>
       </section>
 
       {/* Business importers */}
-      <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-6 space-y-4">
+      <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-6 space-y-4">
         <div>
           <h2 className="text-xl font-semibold text-foreground">Import Business Accounting Apps</h2>
           <p className="text-sm text-foreground-secondary mt-1">
@@ -527,7 +529,7 @@ export default function ImportExportPage() {
           </p>
         </div>
         <div className="grid gap-4 sm:grid-cols-3">
-          <div className="bg-surface/50 border border-border rounded-xl p-4 space-y-3">
+          <div className="bg-surface/50 border border-border rounded-lg p-4 space-y-3">
             <div>
               <h3 className="text-foreground font-medium">Wave</h3>
               <p className="text-xs text-foreground-secondary mt-1">
@@ -537,12 +539,12 @@ export default function ImportExportPage() {
             </div>
             <Link
               href="/import-export/wave"
-              className="inline-flex items-center gap-2 px-4 py-1.5 text-sm bg-primary hover:bg-primary-hover text-primary-foreground rounded-xl transition-colors"
+              className="inline-flex items-center gap-2 px-4 py-1.5 text-sm bg-primary hover:bg-primary-hover text-primary-foreground rounded-lg transition-colors"
             >
               Open Wave Import
             </Link>
           </div>
-          <div className="bg-surface/50 border border-border rounded-xl p-4 space-y-3">
+          <div className="bg-surface/50 border border-border rounded-lg p-4 space-y-3">
             <div>
               <h3 className="text-foreground font-medium">Xero</h3>
               <p className="text-xs text-foreground-secondary mt-1">
@@ -552,12 +554,12 @@ export default function ImportExportPage() {
             </div>
             <Link
               href="/import-export/xero"
-              className="inline-flex items-center gap-2 px-4 py-1.5 text-sm bg-primary hover:bg-primary-hover text-primary-foreground rounded-xl transition-colors"
+              className="inline-flex items-center gap-2 px-4 py-1.5 text-sm bg-primary hover:bg-primary-hover text-primary-foreground rounded-lg transition-colors"
             >
               Open Xero Import
             </Link>
           </div>
-          <div className="bg-surface/50 border border-border rounded-xl p-4 space-y-3">
+          <div className="bg-surface/50 border border-border rounded-lg p-4 space-y-3">
             <div>
               <h3 className="text-foreground font-medium">Payment Settlements</h3>
               <p className="text-xs text-foreground-secondary mt-1">
@@ -567,7 +569,7 @@ export default function ImportExportPage() {
             </div>
             <Link
               href="/import-export/settlements"
-              className="inline-flex items-center gap-2 px-4 py-1.5 text-sm bg-primary hover:bg-primary-hover text-primary-foreground rounded-xl transition-colors"
+              className="inline-flex items-center gap-2 px-4 py-1.5 text-sm bg-primary hover:bg-primary-hover text-primary-foreground rounded-lg transition-colors"
             >
               Open Settlement Import
             </Link>
@@ -576,7 +578,7 @@ export default function ImportExportPage() {
       </section>
 
       {/* Personal finance importers */}
-      <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-6 space-y-4">
+      <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-6 space-y-4">
         <div>
           <h2 className="text-xl font-semibold text-foreground">Import Personal Finance Apps</h2>
           <p className="text-sm text-foreground-secondary mt-1">
@@ -585,7 +587,7 @@ export default function ImportExportPage() {
           </p>
         </div>
         <div className="grid gap-4 sm:grid-cols-3">
-          <div className="bg-surface/50 border border-border rounded-xl p-4 space-y-3">
+          <div className="bg-surface/50 border border-border rounded-lg p-4 space-y-3">
             <div>
               <h3 className="text-foreground font-medium">Mint</h3>
               <p className="text-xs text-foreground-secondary mt-1">
@@ -594,12 +596,12 @@ export default function ImportExportPage() {
             </div>
             <Link
               href="/import-export/mint"
-              className="inline-flex items-center gap-2 px-4 py-1.5 text-sm bg-primary hover:bg-primary-hover text-primary-foreground rounded-xl transition-colors"
+              className="inline-flex items-center gap-2 px-4 py-1.5 text-sm bg-primary hover:bg-primary-hover text-primary-foreground rounded-lg transition-colors"
             >
               Open Mint Import
             </Link>
           </div>
-          <div className="bg-surface/50 border border-border rounded-xl p-4 space-y-3">
+          <div className="bg-surface/50 border border-border rounded-lg p-4 space-y-3">
             <div>
               <h3 className="text-foreground font-medium">YNAB</h3>
               <p className="text-xs text-foreground-secondary mt-1">
@@ -608,12 +610,12 @@ export default function ImportExportPage() {
             </div>
             <Link
               href="/import-export/ynab"
-              className="inline-flex items-center gap-2 px-4 py-1.5 text-sm bg-primary hover:bg-primary-hover text-primary-foreground rounded-xl transition-colors"
+              className="inline-flex items-center gap-2 px-4 py-1.5 text-sm bg-primary hover:bg-primary-hover text-primary-foreground rounded-lg transition-colors"
             >
               Open YNAB Import
             </Link>
           </div>
-          <div className="bg-surface/50 border border-border rounded-xl p-4 space-y-3">
+          <div className="bg-surface/50 border border-border rounded-lg p-4 space-y-3">
             <div>
               <h3 className="text-foreground font-medium">Monarch Money</h3>
               <p className="text-xs text-foreground-secondary mt-1">
@@ -622,7 +624,7 @@ export default function ImportExportPage() {
             </div>
             <Link
               href="/import-export/monarch"
-              className="inline-flex items-center gap-2 px-4 py-1.5 text-sm bg-primary hover:bg-primary-hover text-primary-foreground rounded-xl transition-colors"
+              className="inline-flex items-center gap-2 px-4 py-1.5 text-sm bg-primary hover:bg-primary-hover text-primary-foreground rounded-lg transition-colors"
             >
               Open Monarch Import
             </Link>
@@ -631,7 +633,7 @@ export default function ImportExportPage() {
       </section>
 
       {/* Export Section */}
-      <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-6 space-y-4">
+      <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-6 space-y-4">
         <div>
           <h2 className="text-xl font-semibold text-foreground">Export</h2>
           <p className="text-sm text-foreground-secondary mt-1">
@@ -648,7 +650,7 @@ export default function ImportExportPage() {
         <button
           onClick={handleExport}
           disabled={exporting}
-          className="flex items-center gap-2 px-5 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-primary-foreground rounded-xl transition-colors"
+          className="flex items-center gap-2 px-5 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-primary-foreground rounded-lg transition-colors"
         >
           {exporting ? (
             <>

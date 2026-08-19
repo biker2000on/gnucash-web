@@ -9,6 +9,7 @@ import {
     movementQtyClass,
     formatSignedQty,
 } from '@/components/business/inventory-ui';
+import { Tip } from '@/components/ui/Tooltip';
 
 const TNUM = { fontFeatureSettings: "'tnum'" } as const;
 
@@ -26,9 +27,11 @@ interface MovementsTableProps {
 function PostedMark({ txnGuid }: { txnGuid: string | null }) {
     if (!txnGuid) return <span className="text-foreground-muted">—</span>;
     return (
-        <span className="text-positive" title="Posted to the ledger">
+        <Tip content="Posted to the ledger">
+        <span className="text-positive">
             ✓
         </span>
+        </Tip>
     );
 }
 
@@ -76,7 +79,7 @@ export function MovementsTable({
                             <th className="px-3 py-2 font-semibold text-right">Qty</th>
                             <th className="px-3 py-2 font-semibold text-right">Unit cost</th>
                             <th className="px-3 py-2 font-semibold">Reference</th>
-                            <th className="px-3 py-2 font-semibold text-center" title="Posted to ledger">Posted</th>
+                            <Tip content="Posted to ledger"><th className="px-3 py-2 font-semibold text-center">Posted</th></Tip>
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-border">

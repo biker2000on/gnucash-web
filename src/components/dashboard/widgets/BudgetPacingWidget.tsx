@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { formatCurrency } from '@/lib/format';
 import { WidgetShell, WidgetShimmer, TNUM } from './WidgetShell';
+import { Tip } from '@/components/ui/Tooltip';
 
 interface BudgetListItem {
     guid: string;
@@ -128,11 +129,12 @@ export default function BudgetPacingWidget() {
                                 style={{ width: `${pct}%` }}
                             />
                             {/* Elapsed-time marker: spend left of this line is on pace. */}
+                            <Tip content={`${Math.round(elapsedPct)}% of period elapsed`}>
                             <div
                                 className="absolute top-0 bottom-0 w-px bg-foreground-muted"
                                 style={{ left: `${elapsedPct}%` }}
-                                title={`${Math.round(elapsedPct)}% of period elapsed`}
                             />
+                            </Tip>
                         </div>
                         <div
                             className="mt-1.5 flex items-baseline justify-between font-mono tabular-nums text-xs"

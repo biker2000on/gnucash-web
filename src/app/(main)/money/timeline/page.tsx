@@ -150,7 +150,7 @@ function ConflictCard({ conflict, currency }: { conflict: TimelineConflict; curr
     }`}>
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className={`text-sm font-semibold ${conflict.severity === 'critical' ? 'text-negative' : 'text-warning'}`}>
+          <p className={`text-sm font-semibold ${conflict.severity === 'critical' ? 'text-error' : 'text-warning'}`}>
             {conflict.title}
           </p>
           <p className="mt-1 text-xs leading-5 text-foreground-secondary">{conflict.description}</p>
@@ -238,7 +238,7 @@ export default function MoneyTimelinePage() {
         </div>
       </header>
 
-      {error && <div className="rounded-lg border border-negative/40 bg-negative/10 p-4 text-sm text-negative">{error}</div>}
+      {error && <div className="rounded-lg border border-error/40 bg-error/10 p-4 text-sm text-error">{error}</div>}
       {loading && !timeline && <div className="rounded-lg border border-border bg-surface p-8 text-sm text-foreground-muted">Loading the shared financial chronology…</div>}
 
       {timeline && (

@@ -139,7 +139,7 @@ function ReportFiltersForm({ filters, onChange, showCompare = true, showBasis = 
     );
 
     return (
-        <div className="bg-background-secondary/30 backdrop-blur-xl border border-border rounded-xl p-4">
+        <div className="bg-background-secondary/30 backdrop-blur-xl border border-border rounded-lg p-4">
             <FilterBar
                 activeCount={showCompare && localFilters.compareToPrevious ? 1 : 0}
                 primary={

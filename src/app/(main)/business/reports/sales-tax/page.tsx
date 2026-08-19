@@ -88,7 +88,7 @@ export default function SalesTaxPage() {
             )}
 
             {!loading && error && (
-                <div className="border border-error/30 bg-surface/30 rounded-xl p-4">
+                <div className="border border-error/30 bg-surface/30 rounded-lg p-4">
                     <p className="text-sm text-error">{error}</p>
                 </div>
             )}
@@ -110,7 +110,7 @@ export default function SalesTaxPage() {
                     </StatGrid>
 
                     {report.accounts.length === 0 && report.monthly.length === 0 ? (
-                        <div className="bg-background-secondary/30 border border-border rounded-xl p-8 text-center">
+                        <div className="bg-background-secondary/30 border border-border rounded-lg p-8 text-center">
                             <p className="text-sm text-foreground-secondary">
                                 No tax was collected on posted invoices in this range. Post customer
                                 invoices with a tax table applied and they will show up here.
@@ -119,7 +119,7 @@ export default function SalesTaxPage() {
                     ) : (
                         <>
                             {/* Per tax account/table */}
-                            <div className="bg-background-secondary/30 backdrop-blur-xl border border-border rounded-xl overflow-hidden">
+                            <div className="bg-background-secondary/30 backdrop-blur-xl border border-border rounded-lg overflow-hidden">
                                 <div className="p-4 border-b border-border">
                                     <h3 className="text-sm font-semibold text-foreground uppercase tracking-wider">
                                         By Tax Account
@@ -169,7 +169,7 @@ export default function SalesTaxPage() {
                             </div>
 
                             {/* Monthly breakdown */}
-                            <div className="bg-background-secondary/30 backdrop-blur-xl border border-border rounded-xl overflow-hidden">
+                            <div className="bg-background-secondary/30 backdrop-blur-xl border border-border rounded-lg overflow-hidden">
                                 <div className="p-4 border-b border-border">
                                     <h3 className="text-sm font-semibold text-foreground uppercase tracking-wider">
                                         Monthly Filing Summary

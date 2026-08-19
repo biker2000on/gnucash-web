@@ -89,7 +89,7 @@ export function WidgetShell({
     children,
 }: WidgetShellProps) {
     return (
-        <div className="bg-surface border border-border rounded-xl p-4 h-full flex flex-col min-h-[132px]">
+        <div className="bg-surface border border-border rounded-lg p-4 h-full flex flex-col min-h-[132px]">
             <div className="flex items-center justify-between gap-2 mb-3">
                 <div className="flex items-center gap-2 min-w-0">
                     <h3 className="text-sm font-semibold text-foreground truncate">{title}</h3>

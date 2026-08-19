@@ -22,6 +22,7 @@ import type { Tag } from '@/lib/tags';
 import { useCurrentUser, READONLY_TOOLTIP } from '@/hooks/useCurrentUser';
 import { suppressNextDataEvent } from './DataEventsProvider';
 import { extractErrorMessage } from '@/lib/api-error';
+import { Tip } from '@/components/ui/Tooltip';
 
 function getReconcileStatus(splits: Split[] | undefined): {
     hasReconciled: boolean;
@@ -626,7 +627,7 @@ export default function TransactionJournal({ initialTransactions, startDate, end
                 ref={filterInputRef}
                 type="text"
                 placeholder="Search or #tag... (press / to focus)"
-                className="w-full bg-input-bg border border-border rounded-xl px-4 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50 transition-all pl-10"
+                className="w-full bg-input-bg border border-border rounded-lg px-4 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50 transition-all pl-10"
                 value={filterText}
                 onChange={(e) => setFilterText(e.target.value)}
             />
@@ -647,7 +648,7 @@ export default function TransactionJournal({ initialTransactions, startDate, end
     );
 
     return (
-        <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl overflow-hidden shadow-2xl">
+        <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg overflow-hidden shadow-2xl">
             <div className="p-6 border-b border-border flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                 <div className="flex items-center gap-3">
                     <h2 className="text-xl font-semibold text-foreground flex items-center gap-2">
@@ -676,33 +677,35 @@ export default function TransactionJournal({ initialTransactions, startDate, end
                                 </button>
                             )}
                         </FilterBar>
+                        <Tip content={isReadonly ? READONLY_TOOLTIP : 'New Transaction'}>
                         <button
                             onClick={() => {
                                 setEditingTransaction(null);
                                 setIsEditModalOpen(true);
                             }}
                             disabled={isReadonly}
-                            title={isReadonly ? READONLY_TOOLTIP : 'New Transaction'}
                             aria-label="New Transaction"
                             className="flex items-center justify-center w-9 h-9 shrink-0 rounded-lg border border-border bg-surface/50 text-foreground-secondary text-lg hover:text-foreground hover:border-border-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                             +
                         </button>
+                        </Tip>
                     </div>
                 ) : (
                     <div className="flex flex-wrap gap-2 w-full md:w-auto">
+                        <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                         <button
                             onClick={() => {
                                 setEditingTransaction(null);
                                 setIsEditModalOpen(true);
                             }}
                             disabled={isReadonly}
-                            title={isReadonly ? READONLY_TOOLTIP : undefined}
                             className="w-full md:w-auto px-3 py-2 min-h-[44px] text-xs rounded-lg border border-border text-foreground-muted hover:text-foreground hover:bg-surface-hover transition-colors font-medium flex items-center gap-2 whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                             <span>+</span>
                             New Transaction
                         </button>
+                        </Tip>
 
                         <FilterPanel
                             activeFilterCount={activeFilterCount}

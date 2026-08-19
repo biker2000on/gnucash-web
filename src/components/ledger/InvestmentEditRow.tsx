@@ -9,6 +9,7 @@ import { formatCurrency } from '@/lib/format';
 import { formatDisplayAccountPath } from '@/lib/account-path';
 import { toUTCDateString } from '@/lib/datePresets';
 import { transformToInvestmentRow, isMultiSplitTransaction, type InvestmentRowData } from './investment-utils';
+import { Tip } from '@/components/ui/Tooltip';
 import {
     CostBasisCoverageMark,
     BASIS_CONSEQUENCE,
@@ -253,17 +254,19 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
             <td className="px-2 py-1 align-middle">
                 <div className="flex items-center gap-1">
                     {onDuplicate && (
+                        <Tip content="Duplicate (d)">
                         <button
                             onClick={() => onDuplicate(transaction.guid)}
                             className="text-foreground-muted hover:text-primary transition-colors"
                             aria-label="Duplicate transaction"
-                            title="Duplicate (d)"
                         >
                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
                             </svg>
                         </button>
+                        </Tip>
                     )}
+                    <Tip content="Edit in modal" describedBy={false}>
                     <button
                         onClick={() => onEditModal(transaction.guid)}
                         onKeyDown={(e) => {
@@ -274,12 +277,12 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
                         }}
                         className="text-foreground-muted hover:text-primary transition-colors"
                         aria-label="Edit in modal"
-                        title="Edit in modal"
                     >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                         </svg>
                     </button>
+                    </Tip>
                 </div>
             </td>
         );
@@ -340,27 +343,29 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
                             <td className="px-2 py-2 align-middle">
                                 <div className="flex items-center gap-1">
                                     {onDuplicate && (
+                                        <Tip content="Duplicate (d)">
                                         <button
                                             onClick={() => onDuplicate(transaction.guid)}
                                             className="text-foreground-muted hover:text-primary transition-colors"
                                             aria-label="Duplicate transaction"
-                                            title="Duplicate (d)"
                                         >
                                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
                                             </svg>
                                         </button>
+                                        </Tip>
                                     )}
+                                    <Tip content="Multi-split: edit in modal" describedBy={false}>
                                     <button
                                         onClick={() => onEditModal(transaction.guid)}
                                         className="text-warning hover:text-warning transition-colors text-xs italic"
                                         aria-label="Multi-split: edit in modal"
-                                        title="Multi-split: edit in modal"
                                     >
                                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                                         </svg>
                                     </button>
+                                    </Tip>
                                 </div>
                             </td>
                         ),
@@ -490,6 +495,7 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
                                     />
                                 </div>
                                 {!isBuy && availableShares > (0.5 * Math.pow(10, -sp)) && (
+                                    <Tip content={`Sell all ${availableShares.toFixed(sp)} shares`}>
                                     <button
                                         type="button"
                                         onClick={() => {
@@ -497,10 +503,10 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
                                             setAutoCalcField('total');
                                         }}
                                         className="shrink-0 rounded border border-border px-1.5 py-1 text-[10px] text-foreground-muted hover:border-border-hover hover:text-foreground transition-colors"
-                                        title={`Sell all ${availableShares.toFixed(sp)} shares`}
                                     >
                                         All
                                     </button>
+                                    </Tip>
                                 )}
                             </div>
                         </td>

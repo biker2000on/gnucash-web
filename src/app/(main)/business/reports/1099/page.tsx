@@ -13,6 +13,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { StatCard, StatGrid } from '@/components/ui/StatCard';
 import { useToast } from '@/contexts/ToastContext';
 import { LinkedDocumentsPanel } from '@/components/documents/LinkedDocumentsPanel';
+import { Tip } from '@/components/ui/Tooltip';
 
 const TNUM = { fontFeatureSettings: "'tnum'" } as const;
 
@@ -265,7 +266,7 @@ export default function Nec1099Page() {
             />
 
             <div
-                className={`rounded-xl border px-4 py-3 text-sm text-foreground-secondary ${
+                className={`rounded-lg border px-4 py-3 text-sm text-foreground-secondary ${
                     unfiledCount > 0 && daysLeft < 0
                         ? 'border-error/30 bg-surface/30'
                         : 'border-secondary/30 bg-secondary-light'
@@ -291,7 +292,7 @@ export default function Nec1099Page() {
                 .
             </div>
 
-            <div className="rounded-xl border border-warning/30 bg-surface/30 px-4 py-3 text-sm text-foreground-secondary">
+            <div className="rounded-lg border border-warning/30 bg-surface/30 px-4 py-3 text-sm text-foreground-secondary">
                 <span className="font-medium text-foreground">Corporate-payment review required.</span>{' '}
                 Corporations are generally exempt, but attorneys&apos; fees and medical/health-care payments can still be reportable. This tracker cannot detect either payment type; explicitly set each vendor&apos;s Exempt checkbox after review.
             </div>
@@ -306,7 +307,7 @@ export default function Nec1099Page() {
             )}
 
             {!loading && error && (
-                <div className="border border-error/30 bg-surface/30 rounded-xl p-4">
+                <div className="border border-error/30 bg-surface/30 rounded-lg p-4">
                     <p className="text-sm text-error">{error}</p>
                 </div>
             )}
@@ -345,14 +346,14 @@ export default function Nec1099Page() {
                     </StatGrid>
 
                     {summary.vendors.length === 0 ? (
-                        <div className="bg-background-secondary/30 border border-border rounded-xl p-8 text-center">
+                        <div className="bg-background-secondary/30 border border-border rounded-lg p-8 text-center">
                             <p className="text-sm text-foreground-secondary">
                                 No vendors with posted bills in this book yet. Post vendor bills and
                                 payments and they&apos;ll show up here with their {summary.year} totals.
                             </p>
                         </div>
                     ) : (
-                        <div className="bg-background-secondary/30 backdrop-blur-xl border border-border rounded-xl overflow-hidden">
+                        <div className="bg-background-secondary/30 backdrop-blur-xl border border-border rounded-lg overflow-hidden">
                             <div className="overflow-x-auto">
                                 <table className="w-full min-w-[840px] text-sm">
                                     <thead>
@@ -420,15 +421,16 @@ export default function Nec1099Page() {
                                                             onClick={(e) => e.stopPropagation()}
                                                         >
                                                             {row.filedDate ? (
+                                                                <Tip content="Clear filing status">
                                                                 <button
                                                                     type="button"
                                                                     onClick={() => handleFilingToggle(row)}
-                                                                    title="Clear filing status"
                                                                     className="font-mono text-xs text-positive hover:text-foreground transition-colors"
                                                                     style={TNUM}
                                                                 >
                                                                     ✓ {row.filedDate}
                                                                 </button>
+                                                                </Tip>
                                                             ) : row.crosses600 && row.status !== 'exempt' ? (
                                                                 <button
                                                                     type="button"

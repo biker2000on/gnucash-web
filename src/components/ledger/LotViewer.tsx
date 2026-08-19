@@ -100,7 +100,7 @@ export default function LotViewer({ accountGuid, currencyMnemonic, sharePrecisio
     if (error) {
         return (
             <div className="flex items-center justify-center py-12">
-                <div className="text-negative">{error}</div>
+                <div className="text-error">{error}</div>
             </div>
         );
     }

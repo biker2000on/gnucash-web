@@ -46,7 +46,7 @@ function formatCompactCurrency(value: number): string {
 
 function ChartSkeleton() {
     return (
-        <div className="bg-surface border border-border rounded-xl p-6 animate-pulse">
+        <div className="bg-surface border border-border rounded-lg p-6 animate-pulse">
             <div className="h-5 w-40 bg-background-secondary rounded mb-6" />
             <div className="h-[300px] bg-background-secondary rounded" />
         </div>
@@ -115,7 +115,7 @@ export default function TaxPieChart({ data, loading, taggedMode = false }: TaxPi
 
     if (!data || data.length === 0) {
         return (
-            <div className={`bg-surface border border-border rounded-xl p-6 ${expanded ? 'h-full' : ''}`}>
+            <div className={`bg-surface border border-border rounded-lg p-6 ${expanded ? 'h-full' : ''}`}>
                 <h3 className="text-lg font-semibold text-foreground mb-4">Taxes by Category</h3>
                 <div className="h-[300px] flex flex-col items-center justify-center gap-2 px-6 text-center">
                     <p className="text-foreground-muted text-sm">No tax data available.</p>
@@ -133,7 +133,7 @@ export default function TaxPieChart({ data, loading, taggedMode = false }: TaxPi
     const dataWithTotal = data.map(d => ({ ...d, total }));
 
     return (
-        <div className={`bg-surface border border-border rounded-xl p-6 ${expanded ? 'h-full' : ''}`}>
+        <div className={`bg-surface border border-border rounded-lg p-6 ${expanded ? 'h-full' : ''}`}>
             <h3 className="text-lg font-semibold text-foreground mb-4">Taxes by Category</h3>
             <ResponsiveContainer width="100%" height={expanded ? "100%" : 300}>
                 <PieChart>

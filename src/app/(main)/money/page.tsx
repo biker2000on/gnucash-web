@@ -19,7 +19,7 @@ function pad2(n: number): string {
 
 function StatSkeleton() {
     return (
-        <div className="bg-surface/30 border border-border rounded-lg px-3 py-2 sm:rounded-xl sm:p-5 animate-pulse">
+        <div className="bg-surface/30 border border-border rounded-lg px-3 py-2 sm:rounded-lg sm:p-5 animate-pulse">
             <div className="h-3 bg-foreground-muted/20 rounded w-20 mb-2" />
             <div className="h-5 sm:h-7 bg-foreground-muted/20 rounded w-28" />
         </div>

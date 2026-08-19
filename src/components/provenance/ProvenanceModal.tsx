@@ -77,7 +77,7 @@ export function ProvenanceTraceView({ traceId, trace: suppliedTrace }: ExplainPa
     <div className="p-5 sm:p-6 space-y-6">
       {loading && <p className="text-sm text-foreground-secondary">Loading calculation trace…</p>}
       <ErrorLiveRegion message={error} />
-      {error && <p className="text-sm text-negative">{error}</p>}
+      {error && <p className="text-sm text-error">{error}</p>}
       {trace && (
         <>
           <div>

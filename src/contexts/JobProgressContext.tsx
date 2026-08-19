@@ -27,6 +27,7 @@ import {
   type ReactNode,
 } from 'react';
 import { useToast } from '@/contexts/ToastContext';
+import { Tip } from '@/components/ui/Tooltip';
 
 export interface JobProgressEventPayload {
   jobId: string;
@@ -378,9 +379,11 @@ export function JobProgressToasts() {
             )}
           </div>
           {job.message && (
-            <p className="text-xs text-foreground-muted truncate" title={job.message}>
+            <Tip content={job.message}>
+            <p className="text-xs text-foreground-muted truncate">
               {job.message}
             </p>
+            </Tip>
           )}
           <div className="h-1.5 rounded-full bg-background-tertiary overflow-hidden">
             {job.percent !== undefined ? (

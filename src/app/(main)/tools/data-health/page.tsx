@@ -18,7 +18,7 @@ function ScoreHero({ report }: { report: DataHealthReport }) {
     const failing = report.checks.filter((c) => c.count > 0).length;
 
     return (
-        <section className="flex flex-wrap items-center gap-4 rounded-xl border border-border bg-surface/30 p-4 backdrop-blur-xl sm:gap-8 sm:p-6">
+        <section className="flex flex-wrap items-center gap-4 rounded-lg border border-border bg-surface/30 p-4 backdrop-blur-xl sm:gap-8 sm:p-6">
             <div className="flex items-baseline gap-2">
                 <span className={`font-mono text-4xl font-bold sm:text-6xl ${scoreColor(report.score)}`} style={TNUM}>
                     {report.score}
@@ -120,12 +120,12 @@ export default function DataHealthPage() {
             {/* Loading */}
             {loading && (
                 <>
-                    <div className="h-32 animate-pulse rounded-xl border border-border bg-surface/30" />
+                    <div className="h-32 animate-pulse rounded-lg border border-border bg-surface/30" />
                     <section className="grid grid-cols-1 gap-4 md:grid-cols-2">
                         {[1, 2, 3, 4, 5, 6].map((i) => (
                             <div
                                 key={i}
-                                className="h-24 animate-pulse rounded-xl border border-border bg-surface/30"
+                                className="h-24 animate-pulse rounded-lg border border-border bg-surface/30"
                             />
                         ))}
                     </section>
@@ -134,7 +134,7 @@ export default function DataHealthPage() {
 
             {/* Error */}
             {!loading && error && (
-                <section className="rounded-xl border border-error/30 bg-surface/30 p-6">
+                <section className="rounded-lg border border-error/30 bg-surface/30 p-6">
                     <p className="text-sm text-error">{error}</p>
                     <button
                         type="button"

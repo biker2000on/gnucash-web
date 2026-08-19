@@ -390,7 +390,7 @@ function LoginInstallPrompt() {
 
     return (
         <div className="fixed top-4 right-4 left-4 md:left-auto md:w-[28rem] z-50">
-            <div className="rounded-2xl border border-primary/30 bg-surface/95 backdrop-blur-xl shadow-2xl p-5">
+            <div className="rounded-lg border border-primary/30 bg-surface/95 backdrop-blur-xl shadow-2xl p-5">
                 <div className="flex items-start justify-between gap-4">
                     <div>
                         <p className="text-sm font-semibold text-foreground">Install {product.brand}</p>
@@ -411,7 +411,7 @@ function LoginInstallPrompt() {
                 </div>
 
                 {isIos ? (
-                    <div className="mt-4 rounded-xl border border-border bg-background/60 px-4 py-3 text-sm text-foreground-secondary">
+                    <div className="mt-4 rounded-lg border border-border bg-background/60 px-4 py-3 text-sm text-foreground-secondary">
                         Open Safari’s share menu, then choose <span className="font-medium text-foreground">Add to Home Screen</span>.
                     </div>
                 ) : (

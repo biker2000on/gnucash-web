@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { CollapsibleConfigSection } from '@/components/ui/CollapsibleConfigSection';
 import { useToast } from '@/contexts/ToastContext';
+import { Tip } from '@/components/ui/Tooltip';
 import { extractErrorMessage } from '@/lib/api-error';
 
 interface IngestSender {
@@ -117,16 +118,18 @@ function LogRow({ entry, badge, onRetry, retrying }: LogRowProps) {
     const blocked = onRetry && !entry.retriable ? entry.retryBlockedReason : null;
     return (
         <li className="flex items-start gap-3 text-sm border border-border rounded-lg px-3 py-2">
+            <Tip content={badge.label}>
             <span
                 className={`inline-block w-2.5 h-2.5 mt-1 rounded-full shrink-0 ${badge.color}`}
-                title={badge.label}
             />
+            </Tip>
             <div className="min-w-0 flex-1">
                 <div className="text-foreground truncate">
                     {entry.subject || '(no subject)'}
                     <span className="text-foreground-muted"> — {entry.fromEmail ?? 'unknown sender'}</span>
                 </div>
-                <div className="text-xs text-foreground-muted truncate" title={entry.detail ?? undefined}>
+                <Tip content={entry.detail ?? undefined}>
+                <div className="text-xs text-foreground-muted truncate">
                     {badge.label}
                     {entry.attempts > 0 && ` · attempt ${entry.attempts}`}
                     {entry.manualRetries > 0 && ` · ${entry.manualRetries} manual retr${entry.manualRetries === 1 ? 'y' : 'ies'}`}
@@ -134,20 +137,22 @@ function LogRow({ entry, badge, onRetry, retrying }: LogRowProps) {
                     {' · '}{new Date(entry.processedAt).toLocaleString()}
                     {entry.detail && ` · ${entry.detail}`}
                 </div>
+                </Tip>
                 {blocked && (
                     <div className="text-xs text-foreground-secondary mt-1">{blocked}</div>
                 )}
             </div>
             {onRetry && (
+                <Tip content={blocked ?? 'Re-fetch this email and process it again'}>
                 <button
                     type="button"
                     onClick={onRetry}
                     disabled={!entry.retriable || retrying}
-                    title={blocked ?? 'Re-fetch this email and process it again'}
                     className="px-2 py-1 text-xs rounded-lg border border-border text-foreground hover:bg-surface-hover disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
                 >
                     {retrying ? 'Retrying…' : 'Retry'}
                 </button>
+                </Tip>
             )}
         </li>
     );

@@ -71,7 +71,7 @@ function ContributionSummaryContent() {
     return (
         <div className="space-y-6">
             {/* Group-by toggle */}
-            <div className="bg-background-secondary/30 backdrop-blur-xl border border-border rounded-xl p-4 flex flex-wrap items-center gap-x-4 gap-y-2">
+            <div className="bg-background-secondary/30 backdrop-blur-xl border border-border rounded-lg p-4 flex flex-wrap items-center gap-x-4 gap-y-2">
                 <span className="text-sm text-foreground-secondary">Group by:</span>
                 <div className="inline-flex rounded-lg border border-border overflow-hidden">
                     <button
@@ -129,27 +129,27 @@ function ContributionSummaryContent() {
                             <div className="p-6 space-y-8">
                                 {/* Summary cards */}
                                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                                    <div className="bg-background-tertiary/50 rounded-xl p-4 border border-border/50">
+                                    <div className="bg-background-tertiary/50 rounded-lg p-4 border border-border/50">
                                         <div className="text-xs text-foreground-muted mb-1">Total Contributions</div>
                                         <div className="text-2xl font-bold text-success">
                                             {formatCurrency(reportData.grandTotalContributions + reportData.grandTotalIncomeContributions)}
                                         </div>
                                         <div className="text-xs text-foreground-muted mt-1">Direct + payroll deferrals</div>
                                     </div>
-                                    <div className="bg-background-tertiary/50 rounded-xl p-4 border border-border/50">
+                                    <div className="bg-background-tertiary/50 rounded-lg p-4 border border-border/50">
                                         <div className="text-xs text-foreground-muted mb-1">Employer Match</div>
                                         <div className="text-2xl font-bold text-primary">
                                             {formatCurrency(reportData.grandTotalEmployerMatch)}
                                         </div>
                                     </div>
-                                    <div className="bg-background-tertiary/50 rounded-xl p-4 border border-border/50">
+                                    <div className="bg-background-tertiary/50 rounded-lg p-4 border border-border/50">
                                         <div className="text-xs text-foreground-muted mb-1">Transfers (net)</div>
                                         <div className="text-2xl font-bold text-foreground-secondary">
                                             {formatCurrency(reportData.grandTotalTransfers)}
                                         </div>
                                         <div className="text-xs text-foreground-muted mt-1">Rollovers/conversions, excluded from net</div>
                                     </div>
-                                    <div className="bg-background-tertiary/50 rounded-xl p-4 border border-border/50">
+                                    <div className="bg-background-tertiary/50 rounded-lg p-4 border border-border/50">
                                         <div className="text-xs text-foreground-muted mb-1">Net Contributions</div>
                                         <div className="text-2xl font-bold text-foreground">
                                             {formatCurrency(reportData.grandTotalNetContributions)}

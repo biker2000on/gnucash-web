@@ -19,6 +19,7 @@ import {
 } from '@/lib/mortgage-schedule';
 import { MortgageCharts } from '@/components/mortgage/MortgageCharts';
 import { ProvenanceModal } from '@/components/provenance/ProvenanceModal';
+import { Tip } from '@/components/ui/Tooltip';
 
 const PAYOFF_STRATEGY_OPTIONS: { value: PayoffStrategyType; label: string }[] = [
   { value: 'fixed_monthly', label: 'Fixed extra / month' },
@@ -123,7 +124,7 @@ function ResultCard({ label, value, sublabel, color }: ResultCardProps) {
   const accent = color === 'primary' || color === 'emerald' ? 'text-primary' : 'text-foreground';
 
   return (
-    <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-5">
+    <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-5">
       <p className="text-xs font-medium text-foreground-muted uppercase tracking-wider">{label}</p>
       <p className={`text-2xl font-bold mt-1 font-mono ${accent}`} style={{ fontFeatureSettings: "'tnum'" }}>{value}</p>
       <p className="text-xs text-foreground-muted mt-1">{sublabel}</p>
@@ -144,7 +145,7 @@ interface SavedCardProps {
 
 function SavedMortgageCard({ config, onLoad, onDelete, isDeleting }: SavedCardProps) {
   return (
-    <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-4 flex items-center justify-between gap-4 hover:border-primary/30 transition-colors">
+    <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-4 flex items-center justify-between gap-4 hover:border-primary/30 transition-colors">
       <button
         type="button"
         onClick={() => onLoad(config)}
@@ -163,17 +164,19 @@ function SavedMortgageCard({ config, onLoad, onDelete, isDeleting }: SavedCardPr
           )}
         </div>
       </button>
+      <Tip content="Delete saved mortgage" describedBy={false}>
       <button
         type="button"
         onClick={() => onDelete(config.id)}
         disabled={isDeleting}
         className="shrink-0 p-1.5 text-foreground-muted hover:text-negative transition-colors disabled:opacity-50"
-        title="Delete saved mortgage"
+        aria-label="Delete saved mortgage"
       >
         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
         </svg>
       </button>
+      </Tip>
     </div>
   );
 }
@@ -713,7 +716,7 @@ export default function MortgageCalculatorPage() {
       {/* Section 1: Saved Mortgages                                    */}
       {/* ============================================================ */}
 
-      <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-6">
+      <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-6">
         <h2 className="text-lg font-semibold text-foreground mb-4">Saved Mortgages</h2>
         {loadingConfigs ? (
           <p className="text-sm text-foreground-muted">Loading saved configurations...</p>
@@ -914,7 +917,7 @@ export default function MortgageCalculatorPage() {
                 <span className="text-sm text-primary">Saved successfully</span>
               )}
               {saveStatus === 'error' && (
-                <span className="text-sm text-negative">Failed to save</span>
+                <span className="text-sm text-error">Failed to save</span>
               )}
             </div>
           </div>
@@ -971,7 +974,7 @@ export default function MortgageCalculatorPage() {
       {/* Payoff Estimator (T10)                                        */}
       {/* ============================================================ */}
 
-      <section id="payoff" className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-6">
+      <section id="payoff" className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-6">
         <h2 className="text-lg font-semibold text-foreground mb-4">Payoff Estimator</h2>
 
         {/* Mode toggle */}
@@ -1179,14 +1182,14 @@ export default function MortgageCalculatorPage() {
             </div>
 
             {payoffTargetCalc.error ? (
-              <div className="flex items-center gap-3 p-4 bg-error/10 border border-error/30 rounded-xl">
-                <svg className="w-5 h-5 text-negative shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <div className="flex items-center gap-3 p-4 bg-error/10 border border-error/30 rounded-lg">
+                <svg className="w-5 h-5 text-error shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                 </svg>
-                <span className="text-sm text-negative">{payoffTargetCalc.error}</span>
+                <span className="text-sm text-error">{payoffTargetCalc.error}</span>
               </div>
             ) : payoffTargetCalc.noExtraNeeded ? (
-              <div className="flex items-center gap-3 p-4 bg-primary/10 border border-primary/30 rounded-xl">
+              <div className="flex items-center gap-3 p-4 bg-primary/10 border border-primary/30 rounded-lg">
                 <svg className="w-5 h-5 text-primary shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>

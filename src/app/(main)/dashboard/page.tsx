@@ -44,6 +44,7 @@ import DataHealthWidget from '@/components/dashboard/widgets/DataHealthWidget';
 import InsightsWidget from '@/components/dashboard/widgets/InsightsWidget';
 import CustomWidget from '@/components/dashboard/widgets/CustomWidget';
 import { product } from '@/lib/product';
+import { Tip } from '@/components/ui/Tooltip';
 
 // ------------------------------------------------------------------
 // Types matching API responses
@@ -754,20 +755,22 @@ function DashboardContent() {
                         }}
                     />
                     {period !== dashboardDefaultPeriod && (
+                        <Tip content="Save as default period" describedBy={false}>
                         <button
                             onClick={() => setDashboardDefaultPeriod(period)}
-                            title="Save as default period"
+                            aria-label="Save as default period"
                             className="p-1.5 rounded-md text-foreground-secondary hover:text-warning hover:bg-surface-hover transition-colors"
                         >
                             <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" d="M11.48 3.499a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.385a.562.562 0 01-.84.61l-4.725-2.885a.563.563 0 00-.586 0L6.982 20.54a.562.562 0 01-.84-.61l1.285-5.386a.562.562 0 00-.182-.557l-4.204-3.602a.563.563 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z" />
                             </svg>
                         </button>
+                        </Tip>
                     )}
+                    <Tip content={editing ? 'Done customizing' : 'Customize dashboard'}>
                     <button
                         onClick={() => setEditing(e => !e)}
-                        title={editing ? 'Done customizing' : 'Customize dashboard'}
-                        className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border text-sm transition-colors ${
+                        className={`flex items-center gap-1.5 px-3 py-2 rounded-lg border text-sm transition-colors ${
                             editing
                                 ? 'border-primary/50 bg-primary/10 text-primary'
                                 : 'border-border bg-surface/50 text-foreground-secondary hover:border-primary/50'
@@ -782,12 +785,13 @@ function DashboardContent() {
                         )}
                         {!editing && <span className="hidden sm:inline">Customize</span>}
                     </button>
+                    </Tip>
                 </div>
             </div>
 
             {/* Edit mode toolbar */}
             {editing && (
-                <div className="flex flex-wrap items-center gap-3 bg-surface border border-border rounded-xl px-4 py-3">
+                <div className="flex flex-wrap items-center gap-3 bg-surface border border-border rounded-lg px-4 py-3">
                     <span className="text-sm text-foreground-secondary">
                         Drag widgets to rearrange. Use the buttons on each widget to resize or remove it.
                     </span>
@@ -815,7 +819,7 @@ function DashboardContent() {
                     <div
                         key={item.id}
                         className={`${WIDTH_CLASSES[item.width]} ${
-                            editing ? 'relative rounded-xl ring-1 ring-primary/30 cursor-grab active:cursor-grabbing' : ''
+                            editing ? 'relative rounded-lg ring-1 ring-primary/30 cursor-grab active:cursor-grabbing' : ''
                         }`}
                         draggable={editing}
                         onDragStart={editing ? () => handleDragStart(index) : undefined}
@@ -824,20 +828,22 @@ function DashboardContent() {
                     >
                         {editing && (
                             <div className="absolute -top-3 right-3 z-20 flex items-center gap-1">
+                                <Tip content={`Width: ${item.width} (click to change)`}>
                                 <button
                                     onClick={() => cycleWidth(index)}
-                                    title={`Width: ${item.width} (click to change)`}
                                     className="px-2 py-0.5 rounded-md bg-surface border border-border text-xs text-foreground-secondary hover:text-primary hover:border-primary/50 transition-colors"
                                 >
                                     {item.width}
                                 </button>
+                                </Tip>
+                                <Tip content="Remove widget">
                                 <button
                                     onClick={() => removeWidget(index)}
-                                    title="Remove widget"
                                     className="px-2 py-0.5 rounded-md bg-surface border border-border text-xs text-foreground-secondary hover:text-negative hover:border-negative/50 transition-colors"
                                 >
                                     ✕
                                 </button>
+                                </Tip>
                             </div>
                         )}
                         <div className={editing ? 'pointer-events-none' : ''}>
@@ -848,7 +854,7 @@ function DashboardContent() {
             </div>
 
             {layout.length === 0 && (
-                <div className="bg-surface border border-border rounded-xl p-10 text-center">
+                <div className="bg-surface border border-border rounded-lg p-10 text-center">
                     <p className="text-foreground-secondary text-sm">
                         All widgets are hidden. {editing ? 'Add widgets from the toolbar above.' : 'Click Customize to add widgets.'}
                     </p>
@@ -952,7 +958,7 @@ export default function DashboardPage() {
                     {/* Create New Book Card */}
                     <button
                         onClick={() => setNewBookOpen(true)}
-                        className="bg-surface border border-border rounded-xl p-6 text-left hover:border-primary/50 transition-colors group"
+                        className="bg-surface border border-border rounded-lg p-6 text-left hover:border-primary/50 transition-colors group"
                     >
                         <div className="flex items-center gap-3 mb-3">
                             <div className="flex items-center justify-center w-10 h-10 bg-primary/10 rounded-lg group-hover:bg-primary/20 transition-colors">
@@ -968,7 +974,7 @@ export default function DashboardPage() {
                     </button>
 
                     {/* Import Card */}
-                    <Link href="/import-export" className="bg-surface border border-border rounded-xl p-6 text-left hover:border-primary/50 transition-colors group">
+                    <Link href="/import-export" className="bg-surface border border-border rounded-lg p-6 text-left hover:border-primary/50 transition-colors group">
                         <div className="flex items-center gap-3 mb-3">
                             <div className="flex items-center justify-center w-10 h-10 bg-primary/10 rounded-lg group-hover:bg-primary/20 transition-colors">
                                 <svg className="w-5 h-5 text-primary" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">

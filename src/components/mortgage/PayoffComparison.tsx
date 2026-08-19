@@ -88,7 +88,7 @@ export function PayoffComparison({
   const paymentDelta = acceleratedPayment - originalPayment;
 
   return (
-    <div className="border border-border rounded-xl overflow-hidden">
+    <div className="border border-border rounded-lg overflow-hidden">
       {isMobile ? (
         <div>
           <ComparisonCard

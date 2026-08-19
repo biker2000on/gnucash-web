@@ -3,6 +3,7 @@
 import type { RebalanceSuggestion } from '@/lib/rebalancing';
 import type { SectorSuggestionGroup } from '@/lib/rebalancing-sector';
 import { formatCurrency } from '@/lib/format';
+import { Tip } from '@/components/ui/Tooltip';
 
 interface SectorSuggestionsTableProps {
     groups: SectorSuggestionGroup[];
@@ -120,9 +121,11 @@ function SectorGroup({
                     </span>
                     <span className="font-medium text-foreground">{group.sector}</span>
                     {!group.outsideBand && (
-                        <span className="ml-2 text-xs text-foreground-muted" title="Drift is within the tolerance band">
+                        <Tip content="Drift is within the tolerance band">
+                        <span className="ml-2 text-xs text-foreground-muted">
                             within band
                         </span>
+                        </Tip>
                     )}
                 </td>
                 <td className="px-4 py-2" />
@@ -149,12 +152,13 @@ function SectorGroup({
                                     <span className="ml-2 text-xs text-foreground-muted">{trade.label}</span>
                                 )}
                                 {spansMultiple && net && (
+                                    <Tip content="This holding appears in multiple sectors; its slices net into a single trade in the table below.">
                                     <span
                                         className="ml-2 text-xs text-foreground-muted"
-                                        title="This holding appears in multiple sectors; its slices net into a single trade in the table below."
                                     >
                                         net {net.action.toLowerCase()} {formatCurrency(net.amount)}
                                     </span>
+                                    </Tip>
                                 )}
                             </td>
                             <td className="px-4 py-1.5 text-right font-mono tabular-nums text-xs text-foreground-muted">

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect, ReactNode } from 'react';
+import { Tip } from '@/components/ui/Tooltip';
 
 export interface ActionMenuItem {
     label: string;
@@ -41,11 +42,11 @@ export function ActionMenu({ items, label = 'More actions', className = '' }: Ac
 
     return (
         <div className={`relative ${className}`} ref={ref}>
+            <Tip content={label} describedBy={false}>
             <button
                 onClick={() => setOpen(o => !o)}
                 aria-label={label}
                 aria-expanded={open}
-                title={label}
                 className="flex items-center justify-center w-9 h-9 rounded-lg border border-border bg-surface/50 text-foreground-secondary hover:text-foreground hover:border-border-hover transition-colors"
             >
                 <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
@@ -54,6 +55,7 @@ export function ActionMenu({ items, label = 'More actions', className = '' }: Ac
                     <circle cx="19" cy="12" r="1.75" />
                 </svg>
             </button>
+            </Tip>
             {open && (
                 <div className="absolute right-0 top-full mt-1 min-w-48 bg-surface-elevated border border-border rounded-lg shadow-xl z-50 py-1">
                     {items.map((item, i) => (

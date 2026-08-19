@@ -659,7 +659,7 @@ export default function FireCalculatorPage() {
 
       {/* Loading State */}
       {isLoading && (
-        <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-8">
+        <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-8">
           <div className="flex items-center gap-4">
             <div className="animate-spin h-6 w-6 border-2 border-primary border-t-transparent rounded-full" />
             <div>
@@ -669,7 +669,7 @@ export default function FireCalculatorPage() {
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mt-6">
             {[1, 2, 3, 4].map(i => (
-              <div key={i} className="bg-foreground-muted/10 rounded-xl p-5 animate-pulse">
+              <div key={i} className="bg-foreground-muted/10 rounded-lg p-5 animate-pulse">
                 <div className="h-3 bg-foreground-muted/20 rounded w-20 mb-3" />
                 <div className="h-7 bg-foreground-muted/20 rounded w-28 mb-2" />
                 <div className="h-3 bg-foreground-muted/20 rounded w-24" />
@@ -681,7 +681,7 @@ export default function FireCalculatorPage() {
 
       {/* Error State */}
       {!isLoading && hasError && (
-        <section className="bg-surface/30 backdrop-blur-xl border border-error/30 rounded-xl p-6">
+        <section className="bg-surface/30 backdrop-blur-xl border border-error/30 rounded-lg p-6">
           <div className="flex items-center gap-3 text-error mb-4">
             <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
@@ -707,7 +707,7 @@ export default function FireCalculatorPage() {
 
       {/* Empty State */}
       {!isLoading && isEmpty && (
-        <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-6">
+        <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-6">
           <div className="flex items-center gap-3 text-foreground-muted mb-2">
             <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -756,7 +756,7 @@ export default function FireCalculatorPage() {
 
       {/* Target retirement readiness note */}
       {!isLoading && mcResult.medianFiAge !== null && (
-        <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-4">
+        <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-4">
           {mcResult.medianFiAge <= targetRetirementAge ? (
             <div className="flex items-center gap-3 text-primary">
               <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -784,7 +784,7 @@ export default function FireCalculatorPage() {
 
       {/* Monte Carlo projection chart */}
       {!isLoading && (
-        <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-6">
+        <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-6">
           <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
             <div>
               <div className="flex items-center gap-3">
@@ -838,7 +838,7 @@ export default function FireCalculatorPage() {
       {/* FI distribution + sensitivity */}
       {!isLoading && (
         <section className={`grid grid-cols-1 lg:grid-cols-2 gap-4 ${recalcDim}`}>
-          <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-6">
+          <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-6">
             <h2 className="text-lg font-semibold text-foreground mb-1">When Do You Reach FI?</h2>
             <p className="text-xs text-foreground-muted mb-4">
               Distribution of the age your portfolio first crosses the FI number
@@ -846,7 +846,7 @@ export default function FireCalculatorPage() {
             </p>
             <FiAgeHistogram result={mcResult} />
           </div>
-          <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-6">
+          <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-6">
             <h2 className="text-lg font-semibold text-foreground mb-1">Retirement Age Sensitivity</h2>
             <p className="text-xs text-foreground-muted mb-4">
               Success rate (money lasts to {assumptions.endAge}) if you retire a little earlier or later

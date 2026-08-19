@@ -41,6 +41,9 @@ import { useCurrentUser, READONLY_TOOLTIP } from '@/hooks/useCurrentUser';
 import AccountPickerDialog from './AccountPickerDialog';
 import EditableSplitRows, { EditableSplitRowsHandle, hasNonCurrencySplit, isNonCurrencySplit } from '@/components/ledger/EditableSplitRows';
 import { Modal } from '@/components/ui/Modal';
+import { CheckboxChip } from '@/components/ui/CheckboxChip';
+import { RowSaveErrorRow } from '@/components/ledger/RowSaveErrorRow';
+import { ErrorLiveRegion } from '@/components/a11y/LiveRegion';
 import LotViewer from './ledger/LotViewer';
 import TransactionTypeIcon from './ledger/TransactionTypeIcon';
 import LotBadge from './ledger/LotBadge';
@@ -61,6 +64,7 @@ import {
     toggleRowSelection,
     type ReconciliationRowSplit,
 } from '@/lib/reconciliation-selection';
+import { Tip } from '@/components/ui/Tooltip';
 
 export interface AccountTransaction extends Transaction {
     running_balance: string;
@@ -362,6 +366,35 @@ export default function AccountLedger({
     const [focusedRowIndex, setFocusedRowIndex] = useState<number>(-1);
     const [focusedColumnIndex, setFocusedColumnIndex] = useState<number>(0);
     const [editingGuid, setEditingGuid] = useState<string | null>(null);
+    /**
+     * Per-row inline-save failures, keyed by transaction guid.
+     *
+     * A toast alone is the wrong surface for this: it is transient, it appears
+     * in a corner far from the row that failed, and in a ledger of 200 rows it
+     * does not say *which* edit was rejected. The toast stays (it is what
+     * catches the eye), but the reason is also parked on the row itself until
+     * the next save attempt clears it, and announced through a live region.
+     */
+    const [rowSaveErrors, setRowSaveErrors] = useState<Record<string, string>>({});
+    /** Most recent inline-save failure, for the live region. */
+    const [lastRowSaveError, setLastRowSaveError] = useState<string | null>(null);
+
+    const clearRowSaveError = useCallback((guid: string) => {
+        // Emptying the region first is what lets the SAME message announce
+        // again if the retry fails identically.
+        setLastRowSaveError(null);
+        setRowSaveErrors(prev => {
+            if (!(guid in prev)) return prev;
+            const next = { ...prev };
+            delete next[guid];
+            return next;
+        });
+    }, []);
+
+    const recordRowSaveError = useCallback((guid: string, message: string) => {
+        setRowSaveErrors(prev => ({ ...prev, [guid]: message }));
+        setLastRowSaveError(message);
+    }, []);
     const tableRef = useRef<HTMLTableElement>(null);
 
     // Reviewed filter state
@@ -753,6 +786,7 @@ export default function AccountLedger({
         /** Double-line edit: transaction-level notes. Undefined = untouched. */
         notes?: string;
     }) => {
+        clearRowSaveError(guid);
         try {
             const tx = transactions.find(t => t.guid === guid);
             if (!tx) return;
@@ -913,9 +947,11 @@ export default function AccountLedger({
             }
         } catch (err) {
             console.error('Inline save failed:', err);
-            error(err instanceof Error && err.message !== 'Failed to save' ? err.message : 'Failed to save transaction');
+            const message = err instanceof Error && err.message !== 'Failed to save' ? err.message : 'Failed to save transaction';
+            error(message);
+            recordRowSaveError(guid, message);
         }
-    }, [transactions, accountGuid, accountCommodityGuid, fetchTransactions, success, error, isEditMode, handleEdit]);
+    }, [transactions, accountGuid, accountCommodityGuid, fetchTransactions, success, error, isEditMode, handleEdit, clearRowSaveError, recordRowSaveError]);
 
     // Journal/autosplit save orchestration (combines EditableRow + EditableSplitRows)
     const handleJournalSave = useCallback(async (txGuid: string): Promise<boolean> => {
@@ -988,6 +1024,7 @@ export default function AccountLedger({
 
     // Investment inline edit save handler
     const handleInvestmentInlineSave = useCallback(async (guid: string, data: InvestmentSaveData) => {
+        clearRowSaveError(guid);
         try {
             const tx = transactions.find(t => t.guid === guid);
             if (!tx) return;
@@ -1091,7 +1128,9 @@ export default function AccountLedger({
             await fetchTransactions();
         } catch (err) {
             console.error('Investment inline save failed:', err);
-            error(err instanceof Error && err.message !== 'Failed to update' ? err.message : 'Failed to update transaction');
+            const message = err instanceof Error && err.message !== 'Failed to update' ? err.message : 'Failed to update transaction';
+            error(message);
+            recordRowSaveError(guid, message);
             throw err; // Re-throw so InvestmentEditRow knows save failed
         }
     }, [
@@ -1104,6 +1143,8 @@ export default function AccountLedger({
         fetchTransactions,
         success,
         error,
+        clearRowSaveError,
+        recordRowSaveError,
     ]);
 
     // Toggle reviewed status
@@ -2195,7 +2236,7 @@ export default function AccountLedger({
                 ref={searchInputRef}
                 type="text"
                 placeholder="Search or #tag... (press / to focus)"
-                className="w-full bg-input-bg border border-border rounded-xl px-4 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50 transition-all pl-10"
+                className="w-full bg-input-bg border border-border rounded-lg px-4 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50 transition-all pl-10"
                 value={searchText}
                 onChange={(e) => setSearchText(e.target.value)}
             />
@@ -2231,7 +2272,7 @@ export default function AccountLedger({
                 } catch {}
             }}
             className="px-3 py-2 min-h-[44px] text-xs rounded-lg border border-border bg-background-secondary text-foreground hover:text-foreground transition-colors"
-            title="Cost basis method for this account"
+            aria-label="Cost basis method for this account"
         >
             <option value="fifo">FIFO</option>
             <option value="lifo">LIFO</option>
@@ -2261,7 +2302,10 @@ export default function AccountLedger({
 
     return (
         <>
-        <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl overflow-clip shadow-2xl">
+        <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg overflow-clip shadow-2xl">
+            {/* Inline-save failures are announced once, here; the per-row
+                RowSaveErrorRow shows the same text where it happened. */}
+            <ErrorLiveRegion message={lastRowSaveError} />
             {/* Top Bar: mobile = search + Filters + overflow menu; desktop = inline toolbar */}
             <div className="p-4 border-b border-border flex flex-col md:flex-row gap-3">
                 {isMobile ? (
@@ -2273,29 +2317,19 @@ export default function AccountLedger({
                         >
                             {filterControls}
                             {hasChildren && (
-                                <button
-                                    onClick={() => setShowSubaccounts(prev => !prev)}
-                                    className={`flex items-center gap-2 px-3 py-2 min-h-[44px] text-sm rounded-lg border text-left transition-colors ${
-                                        showSubaccounts
-                                            ? 'bg-primary/10 border-primary/30 text-primary'
-                                            : 'border-border text-foreground-secondary'
-                                    }`}
+                                <CheckboxChip
+                                    checked={showSubaccounts}
+                                    onChange={setShowSubaccounts}
                                 >
-                                    <span>{showSubaccounts ? '☑' : '☐'}</span>
                                     Sub-Accounts
-                                </button>
+                                </CheckboxChip>
                             )}
-                            <button
-                                onClick={() => setShowUnreviewedOnly(prev => !prev)}
-                                className={`flex items-center gap-2 px-3 py-2 min-h-[44px] text-sm rounded-lg border text-left transition-colors ${
-                                    showUnreviewedOnly
-                                        ? 'bg-primary/10 border-primary/30 text-primary'
-                                        : 'border-border text-foreground-secondary'
-                                }`}
+                            <CheckboxChip
+                                checked={showUnreviewedOnly}
+                                onChange={setShowUnreviewedOnly}
                             >
-                                <span>{showUnreviewedOnly ? '☑' : '☐'}</span>
                                 Unreviewed Only
-                            </button>
+                            </CheckboxChip>
                             {isInvestmentAccount && (
                                 <div className="[&>select]:w-full">
                                     <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-2">
@@ -2316,18 +2350,19 @@ export default function AccountLedger({
                                 </button>
                             )}
                         </FilterBar>
+                        <Tip content={isReadonly ? READONLY_TOOLTIP : 'New Transaction'}>
                         <button
                             onClick={() => {
                                 setEditingTransaction(null);
                                 setIsEditModalOpen(true);
                             }}
                             disabled={isReadonly}
-                            title={isReadonly ? READONLY_TOOLTIP : 'New Transaction'}
                             aria-label="New Transaction"
                             className="flex items-center justify-center w-9 h-9 shrink-0 rounded-lg border border-border bg-surface/50 text-foreground-secondary text-lg hover:text-foreground hover:border-border-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                             +
                         </button>
+                        </Tip>
                         <ActionMenu items={mobileActions} />
                     </div>
                 ) : (
@@ -2345,17 +2380,18 @@ export default function AccountLedger({
 
                 {/* Action buttons - right aligned */}
                 <div className="flex flex-wrap gap-2 items-center md:justify-end">
+                    <Tip content={isReadonly ? READONLY_TOOLTIP : (isEditMode ? 'New Transaction (n)' : 'New Transaction')}>
                     <button
                         onClick={() => {
                             setEditingTransaction(null);
                             setIsEditModalOpen(true);
                         }}
                         disabled={isReadonly}
-                        title={isReadonly ? READONLY_TOOLTIP : (isEditMode ? 'New Transaction (n)' : 'New Transaction')}
                         className="px-3 py-2 min-h-[44px] text-xs rounded-lg border border-border text-foreground-muted hover:text-foreground hover:bg-surface-hover transition-colors font-medium flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-foreground-muted"
                     >
                         New Transaction
                     </button>
+                    </Tip>
                     <ViewMenu
                         showSubaccounts={showSubaccounts}
                         onToggleSubaccounts={() => setShowSubaccounts(prev => !prev)}
@@ -2389,10 +2425,10 @@ export default function AccountLedger({
                             )}
                         </span>
                     )}
+                    <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                     <button
                         onClick={handleToggleEditMode}
                         disabled={isReadonly}
-                        title={isReadonly ? READONLY_TOOLTIP : undefined}
                         className={`hidden md:inline-flex px-3 py-2 min-h-[44px] items-center text-xs rounded-lg border transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
                             isEditMode
                                 ? 'bg-primary/10 border-primary/30 text-primary'
@@ -2401,6 +2437,7 @@ export default function AccountLedger({
                     >
                         {isEditMode ? 'Exit Edit Mode' : 'Edit Mode'}
                     </button>
+                    </Tip>
                     {isEditMode && (
                         <div className="flex items-center gap-2">
                             <button
@@ -2416,51 +2453,57 @@ export default function AccountLedger({
                             >
                                 Clear
                             </button>
+                            <Tip content="Mark Reviewed (Ctrl+R)">
                             <button
                                 onClick={handleBulkReview}
                                 disabled={editSelectedGuids.size === 0}
-                                title="Mark Reviewed (Ctrl+R)"
                                 className="px-3 py-2 min-h-[44px] text-xs rounded-lg border border-border text-foreground-muted hover:text-foreground hover:bg-surface-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center"
                             >
                                 Mark Reviewed ({editSelectedGuids.size})
                             </button>
+                            </Tip>
                             {editSelectedGuids.size > 0 && (
                                 <>
+                                    <Tip content="Move to Account (m)">
                                     <button
                                         onClick={() => setShowMoveDialog(true)}
-                                        title="Move to Account (m)"
                                         className="px-3 py-2 min-h-[44px] text-xs rounded-lg border border-border text-foreground-muted hover:text-secondary hover:border-secondary/30 hover:bg-secondary/10 transition-colors flex items-center"
                                     >
                                         Move to Account ({editSelectedGuids.size})
                                     </button>
+                                    </Tip>
+                                    <Tip content="Delete Selected (x)">
                                     <button
                                         onClick={() => setBulkDeleteConfirmOpen(true)}
-                                        title="Delete Selected (x)"
                                         className="px-3 py-2 min-h-[44px] text-xs rounded-lg border border-border text-foreground-muted hover:text-negative hover:border-negative/30 hover:bg-negative/10 transition-colors flex items-center"
                                     >
                                         Delete Selected ({editSelectedGuids.size})
                                     </button>
+                                    </Tip>
+                                    <Tip content="Edit description of selected transactions">
                                     <button
                                         onClick={() => setBulkDescOpen(true)}
-                                        title="Edit description of selected transactions"
                                         className="px-3 py-2 min-h-[44px] text-xs rounded-lg border border-border text-foreground-muted hover:text-foreground hover:bg-surface-hover transition-colors flex items-center"
                                     >
                                         Edit Description ({editSelectedGuids.size})
                                     </button>
+                                    </Tip>
+                                    <Tip content="Recategorize the counter-split of selected transactions">
                                     <button
                                         onClick={() => setBulkRecatOpen(true)}
-                                        title="Recategorize the counter-split of selected transactions"
                                         className="px-3 py-2 min-h-[44px] text-xs rounded-lg border border-border text-foreground-muted hover:text-positive hover:border-positive/30 hover:bg-positive/10 transition-colors flex items-center"
                                     >
                                         Recategorize ({editSelectedGuids.size})
                                     </button>
+                                    </Tip>
+                                    <Tip content="Add or remove tags on selected transactions">
                                     <button
                                         onClick={() => setBulkTagsOpen(true)}
-                                        title="Add or remove tags on selected transactions"
                                         className="px-3 py-2 min-h-[44px] text-xs rounded-lg border border-border text-foreground-muted hover:text-foreground hover:bg-surface-hover transition-colors flex items-center"
                                     >
                                         Tags ({editSelectedGuids.size})
                                     </button>
+                                    </Tip>
                                 </>
                             )}
                         </div>
@@ -2528,7 +2571,7 @@ export default function AccountLedger({
                                 disabled={!isUnreviewed}
                                 onCommit={() => toggleReviewed(tx.guid)}
                             >
-                                <div className={`bg-surface/30 backdrop-blur p-3 space-y-2 border-b border-border/30 sm:border sm:border-border sm:rounded-xl ${isUnreviewed ? 'border-l-2 border-l-warning' : ''}`} onClick={() => { setSelectedTxGuid(tx.guid); setIsViewModalOpen(true); }}>
+                                <div className={`bg-surface/30 backdrop-blur p-3 space-y-2 border-b border-border/30 sm:border sm:border-border sm:rounded-lg ${isUnreviewed ? 'border-l-2 border-l-warning' : ''}`} onClick={() => { setSelectedTxGuid(tx.guid); setIsViewModalOpen(true); }}>
                                     <div className="flex justify-between items-start">
                                         <div>
                                             <div className="text-xs text-foreground-muted">
@@ -2696,7 +2739,7 @@ export default function AccountLedger({
                                                         else clearSelection();
                                                     }}
                                                     tabIndex={-1}
-                                                    title="Select all unreconciled"
+                                                    aria-label="Select all unreconciled"
                                                     className="w-4 h-4 rounded border-border-hover bg-background-tertiary text-primary cursor-pointer"
                                                 />
                                             )}
@@ -2726,6 +2769,8 @@ export default function AccountLedger({
                     <tbody className="divide-y divide-border/50">
                         {isEditMode ? (
                             displayTransactions.map((tx, index) => (
+                                <React.Fragment key={`edit-${tx.guid}`}>
+                                {
                                 isInvestmentAccount ? (
                                     <React.Fragment key={tx.guid}>
                                         <InvestmentEditRow
@@ -2992,6 +3037,12 @@ export default function AccountLedger({
                                         }}
                                     />
                                 )
+                                }
+                                <RowSaveErrorRow
+                                    message={rowSaveErrors[tx.guid]}
+                                    colSpan={table.getVisibleFlatColumns().length}
+                                />
+                                </React.Fragment>
                             ))
                         ) : (
                             table.getRowModel().rows.map((row) => {
@@ -3012,16 +3063,21 @@ export default function AccountLedger({
 
                                 if (editingGuid === tx.guid) {
                                     return (
-                                        <InlineEditRow
-                                            key={tx.guid}
-                                            transaction={tx}
-                                            accountGuid={accountGuid}
-                                            accountType={accountType}
-                                            columnCount={row.getVisibleCells().length}
-                                            onSave={handleInlineSave}
-                                            onCancel={() => setEditingGuid(null)}
-                                            doubleLine={doubleLineEdit}
-                                        />
+                                        <React.Fragment key={tx.guid}>
+                                            <InlineEditRow
+                                                transaction={tx}
+                                                accountGuid={accountGuid}
+                                                accountType={accountType}
+                                                columnCount={row.getVisibleCells().length}
+                                                onSave={handleInlineSave}
+                                                onCancel={() => setEditingGuid(null)}
+                                                doubleLine={doubleLineEdit}
+                                            />
+                                            <RowSaveErrorRow
+                                                message={rowSaveErrors[tx.guid]}
+                                                colSpan={row.getVisibleCells().length}
+                                            />
+                                        </React.Fragment>
                                     );
                                 }
 
@@ -3087,12 +3143,13 @@ export default function AccountLedger({
                                             if (colId === 'reconcile') {
                                                 return (
                                                     <td key={cell.id} className="px-3 py-2 align-middle">
+                                                        <Tip content={reconcileInfo.label}>
                                                         <span
                                                             className={`inline-flex items-center justify-center w-5 h-5 rounded text-[10px] font-bold ${reconcileInfo.color}`}
-                                                            title={reconcileInfo.label}
                                                         >
                                                             {reconcileInfo.icon}
                                                         </span>
+                                                        </Tip>
                                                     </td>
                                                 );
                                             }
@@ -3162,9 +3219,11 @@ export default function AccountLedger({
                                                             )}
                                                         </div>
                                                         {originalPayeeLine(tx) && (
-                                                            <div className="text-[11px] text-foreground-muted truncate" title={originalPayeeLine(tx) ?? undefined}>
+                                                            <Tip content={originalPayeeLine(tx) ?? undefined}>
+                                                            <div className="text-[11px] text-foreground-muted truncate">
                                                                 Imported as &ldquo;{originalPayeeLine(tx)}&rdquo;
                                                             </div>
+                                                            </Tip>
                                                         )}
                                                         {tx.num && <span className="text-[10px] text-foreground-muted font-mono">#{tx.num}</span>}
                                                     </td>
@@ -3330,9 +3389,11 @@ export default function AccountLedger({
                                                                     {formatCurrency(invRow.buyAmount, invRow.currencyMnemonic)}
                                                                 </span>
                                                             ) : gainHere !== null ? (
-                                                                <span className="text-positive" title="Realized gain">
+                                                                <Tip content="Realized gain">
+                                                                <span className="text-positive">
                                                                     {formatCurrency(gainHere, invRow!.currencyMnemonic)}
                                                                 </span>
+                                                                </Tip>
                                                             ) : (
                                                                 <span className="opacity-30">&mdash;</span>
                                                             )}
@@ -3351,9 +3412,11 @@ export default function AccountLedger({
                                                                     {formatCurrency(invRow.sellAmount, invRow.currencyMnemonic)}
                                                                 </span>
                                                             ) : lossHere !== null ? (
-                                                                <span className="text-negative" title="Realized loss">
+                                                                <Tip content="Realized loss">
+                                                                <span className="text-negative">
                                                                     {formatCurrency(lossHere, invRow!.currencyMnemonic)}
                                                                 </span>
+                                                                </Tip>
                                                             ) : (
                                                                 <span className="opacity-30">&mdash;</span>
                                                             )}

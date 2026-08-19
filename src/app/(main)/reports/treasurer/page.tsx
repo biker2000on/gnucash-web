@@ -8,6 +8,7 @@ import { TreasurerReport } from '@/components/reports/TreasurerReport';
 import { downloadCSV, escapeCSVField } from '@/lib/reports/csv-export';
 import { AccountPicker } from '@/components/reports/AccountPicker';
 import SaveReportDialog from '@/components/reports/SaveReportDialog';
+import { Tip } from '@/components/ui/Tooltip';
 
 interface TreasurerConfig {
     organization: string;
@@ -239,7 +240,7 @@ function TreasurerReportContent() {
             )}
 
             {/* Config Section */}
-            <div className="bg-background-secondary/30 backdrop-blur-xl border border-border rounded-xl overflow-hidden">
+            <div className="bg-background-secondary/30 backdrop-blur-xl border border-border rounded-lg overflow-hidden">
                 <div className="flex items-center">
                     <button
                         onClick={() => setConfigOpen(!configOpen)}
@@ -257,9 +258,10 @@ function TreasurerReportContent() {
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                         </svg>
                     </button>
+                    <Tip content="Save Configuration" describedBy={false}>
                     <button
                         onClick={() => setIsSaveDialogOpen(true)}
-                        title="Save Configuration"
+                        aria-label="Save Configuration"
                         className="mr-4 shrink-0 flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-primary hover:bg-primary-hover text-primary-foreground rounded-lg transition-colors"
                     >
                         <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -268,6 +270,7 @@ function TreasurerReportContent() {
                         <span className="hidden sm:inline">Save Configuration</span>
                         <span className="sm:hidden">Save</span>
                     </button>
+                    </Tip>
                 </div>
                 {configOpen && (
                     <div className="px-4 pb-4 space-y-4">

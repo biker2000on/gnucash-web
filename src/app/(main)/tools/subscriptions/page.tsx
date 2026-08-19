@@ -111,7 +111,7 @@ export default function SubscriptionsPage() {
             {loading && (
                 <StatGrid cols={4}>
                     {[1, 2, 3, 4].map(i => (
-                        <div key={i} className="bg-surface/30 border border-border rounded-lg px-3 py-2 sm:rounded-xl sm:p-5 animate-pulse">
+                        <div key={i} className="bg-surface/30 border border-border rounded-lg px-3 py-2 sm:rounded-lg sm:p-5 animate-pulse">
                             <div className="h-3 bg-foreground-muted/20 rounded w-24 mb-2 sm:mb-3" />
                             <div className="h-5 sm:h-7 bg-foreground-muted/20 rounded w-28" />
                         </div>
@@ -121,7 +121,7 @@ export default function SubscriptionsPage() {
 
             {/* Error */}
             {!loading && error && (
-                <section className="bg-surface/30 border border-error/30 rounded-xl p-6">
+                <section className="bg-surface/30 border border-error/30 rounded-lg p-6">
                     <p className="text-sm text-error">{error}</p>
                     <button
                         type="button"
@@ -163,7 +163,7 @@ export default function SubscriptionsPage() {
 
             {/* Filters + table */}
             {!loading && !error && data && (
-                <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-6">
+                <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-6">
                     <div className="flex flex-wrap items-center gap-3 mb-4">
                         <input
                             type="text"

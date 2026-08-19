@@ -4,6 +4,7 @@ import { formatCurrency } from '@/lib/format';
 import type { Goal, GoalProgress } from '@/lib/goals';
 import { ProgressRing } from './ProgressRing';
 import { useCurrentUser, READONLY_TOOLTIP } from '@/hooks/useCurrentUser';
+import { Tip } from '@/components/ui/Tooltip';
 
 export interface GoalWithProgress extends Goal {
     progress: GoalProgress;
@@ -127,24 +128,26 @@ export function GoalCard({ goal, onEdit, onDelete }: GoalCardProps) {
 
             {/* Actions */}
             <div className="flex justify-end gap-2 pt-1">
+                <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                 <button
                     type="button"
                     onClick={() => onEdit(goal)}
                     disabled={isReadonly}
-                    title={isReadonly ? READONLY_TOOLTIP : undefined}
                     className="px-3 py-1.5 text-xs rounded-md border border-border text-foreground-secondary hover:text-foreground hover:bg-surface-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                     Edit
                 </button>
+                </Tip>
+                <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                 <button
                     type="button"
                     onClick={() => onDelete(goal)}
                     disabled={isReadonly}
-                    title={isReadonly ? READONLY_TOOLTIP : undefined}
                     className="px-3 py-1.5 text-xs rounded-md border border-negative/30 text-negative hover:text-negative hover:bg-negative/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                     Delete
                 </button>
+                </Tip>
             </div>
         </div>
     );

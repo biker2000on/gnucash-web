@@ -216,7 +216,7 @@ export function TransactionDrilldownModal({ target, onClose, endpoint = '/api/re
                     {isLoading && <DrilldownSkeleton />}
                     <ErrorLiveRegion message={error} />
                     {error && (
-                        <div className="px-4 py-6 text-sm text-negative">
+                        <div className="px-4 py-6 text-sm text-error">
                             {error}
                         </div>
                     )}

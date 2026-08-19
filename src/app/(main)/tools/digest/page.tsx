@@ -57,7 +57,7 @@ function deltaClass(n: number, invert = false): string {
 /** AI-written 3-5 sentence overview; rendered only when the digest carries one. */
 function NarrativeBlock({ narrative }: { narrative: string }) {
     return (
-        <section className="bg-primary-light/40 border border-primary/30 rounded-xl p-4 sm:p-6">
+        <section className="bg-primary-light/40 border border-primary/30 rounded-lg p-4 sm:p-6">
             <p className="text-[10px] sm:text-xs uppercase tracking-wide text-primary mb-2 flex items-center gap-1.5">
                 <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
                     <path
@@ -77,7 +77,7 @@ function NetWorthHero({ digest }: { digest: MonthlyDigest }) {
     const { end, change, changePercent } = digest.netWorth;
     const arrow = change > 0 ? '▲' : change < 0 ? '▼' : '—';
     return (
-        <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-4 sm:p-6">
+        <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-4 sm:p-6">
             <p className="text-[10px] sm:text-xs uppercase tracking-wide text-foreground-muted">
                 Net worth · end of {digest.monthLabel}
             </p>
@@ -114,7 +114,7 @@ function StatRow({ digest }: { digest: MonthlyDigest }) {
 
 function CategoriesTable({ categories, currency }: { categories: DigestCategory[]; currency: string }) {
     return (
-        <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-6">
+        <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-6">
             <h2 className="text-lg font-semibold text-foreground mb-4">Top categories</h2>
             {categories.length === 0 ? (
                 <p className="text-sm text-foreground-muted py-4">No expenses recorded this month.</p>
@@ -204,7 +204,7 @@ function SubscriptionGroup({
 function SubscriptionsSection({ digest }: { digest: MonthlyDigest }) {
     const { subscriptions, currency } = digest;
     return (
-        <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-6 space-y-5">
+        <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-6 space-y-5">
             <h2 className="text-lg font-semibold text-foreground">Subscription changes</h2>
             <SubscriptionGroup title="New" items={subscriptions.new} currency={currency} emptyHint="No new subscriptions this month." />
             <SubscriptionGroup title="Price changes" items={subscriptions.changed} currency={currency} emptyHint="No price changes this month." />
@@ -216,7 +216,7 @@ function SubscriptionsSection({ digest }: { digest: MonthlyDigest }) {
 function BillsSection({ bills, currency }: { bills: DigestBill[]; currency: string }) {
     const total = bills.reduce((sum, b) => sum + b.amount, 0);
     return (
-        <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-6">
+        <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-6">
             <div className="flex items-baseline justify-between mb-4">
                 <h2 className="text-lg font-semibold text-foreground">Upcoming bills (30 days)</h2>
                 {bills.length > 0 && (
@@ -252,7 +252,7 @@ function BudgetSection({ digest }: { digest: MonthlyDigest }) {
     const budget = digest.budget;
     if (!budget) {
         return (
-            <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-6">
+            <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-6">
                 <h2 className="text-lg font-semibold text-foreground mb-2">Budget status</h2>
                 <p className="text-sm text-foreground-muted">
                     No budget configured. Create one to see per-category over/under here.
@@ -273,7 +273,7 @@ function BudgetSection({ digest }: { digest: MonthlyDigest }) {
     };
 
     return (
-        <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-6">
+        <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-6">
             <div className="flex items-baseline justify-between mb-4">
                 <h2 className="text-lg font-semibold text-foreground">Budget status · {budget.budgetName}</h2>
                 {budget.rows.length > 0 && (
@@ -428,13 +428,13 @@ export default function DigestPage() {
 
             {loading && (
                 <div className="space-y-4">
-                    <div className="bg-surface/30 border border-border rounded-xl p-6 animate-pulse">
+                    <div className="bg-surface/30 border border-border rounded-lg p-6 animate-pulse">
                         <div className="h-3 bg-foreground-muted/20 rounded w-40 mb-3" />
                         <div className="h-9 bg-foreground-muted/20 rounded w-52" />
                     </div>
                     <StatGrid cols={3}>
                         {[1, 2, 3].map(i => (
-                            <div key={i} className="bg-surface/30 border border-border rounded-lg px-3 py-2 sm:rounded-xl sm:p-5 animate-pulse">
+                            <div key={i} className="bg-surface/30 border border-border rounded-lg px-3 py-2 sm:rounded-lg sm:p-5 animate-pulse">
                                 <div className="h-3 bg-foreground-muted/20 rounded w-20 mb-2 sm:mb-3" />
                                 <div className="h-5 sm:h-7 bg-foreground-muted/20 rounded w-28" />
                             </div>
@@ -444,7 +444,7 @@ export default function DigestPage() {
             )}
 
             {!loading && error && (
-                <section className="bg-surface/30 border border-error/30 rounded-xl p-6">
+                <section className="bg-surface/30 border border-error/30 rounded-lg p-6">
                     <p className="text-sm text-error">{error}</p>
                     <button
                         type="button"

@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { BrandLockup } from '@/components/brand/BrandLockup';
 import { ErrorLiveRegion } from '@/components/a11y/LiveRegion';
 import { extractErrorMessage } from '@/lib/api-error';
+import { FIELD_ERROR, INPUT, inputClass } from '@/components/ui/form';
 
 interface LoginFormProps {
     mode: 'login' | 'register';
@@ -132,7 +133,7 @@ export function LoginForm({ mode, onToggleMode, redirectTo = '/dashboard', oidcP
         if (/[0-9]/.test(pass)) score++;
         if (/[^A-Za-z0-9]/.test(pass)) score++;
 
-        if (score <= 2) return { score, label: 'Weak', color: 'bg-negative' };
+        if (score <= 2) return { score, label: 'Weak', color: 'bg-error' };
         if (score <= 4) return { score, label: 'Fair', color: 'bg-warning' };
         return { score, label: 'Strong', color: 'bg-primary' };
     };
@@ -142,7 +143,7 @@ export function LoginForm({ mode, onToggleMode, redirectTo = '/dashboard', oidcP
     if (totpStep) {
         return (
             <div className="w-full max-w-md">
-                <div className="bg-surface/50 backdrop-blur-xl border border-border rounded-2xl p-8">
+                <div className="bg-surface/50 backdrop-blur-xl border border-border rounded-lg p-8">
                     <div className="text-center mb-8">
                         <h1 className="flex justify-center text-left text-lg text-foreground">
                             <BrandLockup size={32} />
@@ -154,7 +155,7 @@ export function LoginForm({ mode, onToggleMode, redirectTo = '/dashboard', oidcP
 
                     <ErrorLiveRegion message={error} />
                     {error && (
-                        <div className="mb-6 p-4 bg-negative/10 border border-negative/30 rounded-lg text-negative text-sm">
+                        <div className="mb-6 rounded-lg border border-error/30 bg-error/10 p-4 text-sm text-error">
                             {error}
                         </div>
                     )}
@@ -180,7 +181,7 @@ export function LoginForm({ mode, onToggleMode, redirectTo = '/dashboard', oidcP
                                 }
                                 required
                                 maxLength={useRecoveryCode ? 16 : 6}
-                                className="w-full bg-input-bg border border-input-border rounded-lg px-4 py-3 text-foreground text-center text-xl tracking-[0.3em] font-mono focus:outline-none focus:border-primary/50 transition-colors"
+                                className={inputClass({ extra: 'text-center font-mono text-xl tracking-[0.3em]' })}
                                 placeholder={useRecoveryCode ? 'xxxx-xxxx' : '000000'}
                             />
                             <p className="mt-2 text-xs text-foreground-muted">
@@ -231,7 +232,7 @@ export function LoginForm({ mode, onToggleMode, redirectTo = '/dashboard', oidcP
 
     return (
         <div className="w-full max-w-md">
-            <div className="bg-surface/50 backdrop-blur-xl border border-border rounded-2xl p-8">
+            <div className="bg-surface/50 backdrop-blur-xl border border-border rounded-lg p-8">
                 <div className="text-center mb-8">
                     <h1 className="flex justify-center text-left text-lg text-foreground">
                         <BrandLockup size={32} />
@@ -249,7 +250,7 @@ export function LoginForm({ mode, onToggleMode, redirectTo = '/dashboard', oidcP
 
                 <ErrorLiveRegion message={error || flowError} />
                 {(error || flowError) && (
-                    <div className="mb-6 p-4 bg-negative/10 border border-negative/30 rounded-lg text-negative text-sm">
+                    <div className="mb-6 rounded-lg border border-error/30 bg-error/10 p-4 text-sm text-error">
                         {error || flowError}
                     </div>
                 )}
@@ -265,7 +266,7 @@ export function LoginForm({ mode, onToggleMode, redirectTo = '/dashboard', oidcP
                             onChange={e => setUsername(e.target.value)}
                             required
                             minLength={3}
-                            className="w-full bg-input-bg border border-input-border rounded-lg px-4 py-3 text-foreground focus:outline-none focus:border-primary/50 transition-colors"
+                            className={INPUT}
                             placeholder="Enter username"
                         />
                     </div>
@@ -280,7 +281,7 @@ export function LoginForm({ mode, onToggleMode, redirectTo = '/dashboard', oidcP
                             onChange={e => setPassword(e.target.value)}
                             required
                             minLength={8}
-                            className="w-full bg-input-bg border border-input-border rounded-lg px-4 py-3 text-foreground focus:outline-none focus:border-primary/50 transition-colors"
+                            className={INPUT}
                             placeholder="Enter password"
                         />
                         {mode === 'register' && password && (
@@ -308,11 +309,11 @@ export function LoginForm({ mode, onToggleMode, redirectTo = '/dashboard', oidcP
                                 value={confirmPassword}
                                 onChange={e => setConfirmPassword(e.target.value)}
                                 required
-                                className="w-full bg-input-bg border border-input-border rounded-lg px-4 py-3 text-foreground focus:outline-none focus:border-primary/50 transition-colors"
+                                className={INPUT}
                                 placeholder="Confirm password"
                             />
                             {confirmPassword && password !== confirmPassword && (
-                                <p className="mt-1 text-xs text-negative">Passwords do not match</p>
+                                <p className={FIELD_ERROR}>Passwords do not match</p>
                             )}
                         </div>
                     )}

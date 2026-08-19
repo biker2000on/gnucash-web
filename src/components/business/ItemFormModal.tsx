@@ -8,6 +8,7 @@ import { useToast } from '@/contexts/ToastContext';
 import { useCurrentUser, READONLY_TOOLTIP } from '@/hooks/useCurrentUser';
 import type { ItemDTO, ValuationMethod } from '@/components/business/inventory-ui';
 import { extractErrorMessage } from '@/lib/api-error';
+import { Tip } from '@/components/ui/Tooltip';
 
 const inputClass = 'w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder-foreground-muted focus:outline-none focus:border-primary/50 transition-all';
 const labelClass = 'block text-xs font-medium text-foreground-secondary mb-1';
@@ -293,7 +294,7 @@ export function ItemFormModal({ editing, onClose, onSaved }: ItemFormModalProps)
                                 className={`${inputClass} font-mono text-right`}
                                 style={TNUM}
                                 placeholder="No alert"
-                                title="Alert when total on-hand is at or below this quantity"
+                                aria-label="Alert when total on-hand is at or below this quantity"
                             />
                         </div>
                         <div>
@@ -307,7 +308,7 @@ export function ItemFormModal({ editing, onClose, onSaved }: ItemFormModalProps)
                                 className={`${inputClass} font-mono text-right`}
                                 style={TNUM}
                                 placeholder="Optional"
-                                title="Suggested quantity to reorder (shown in the alert)"
+                                aria-label="Suggested quantity to reorder (shown in the alert)"
                             />
                         </div>
                     </div>
@@ -322,15 +323,16 @@ export function ItemFormModal({ editing, onClose, onSaved }: ItemFormModalProps)
                 <div className="pt-2 border-t border-border">
                     <div className="flex items-center justify-between mb-2">
                         <h3 className="text-sm font-semibold text-foreground">Posting accounts</h3>
+                        <Tip content={isReadonly ? READONLY_TOOLTIP : 'Create default Inventory (asset) and Cost of Goods Sold (expense) accounts'}>
                         <button
                             type="button"
                             onClick={handleBootstrap}
                             disabled={bootstrapping || isReadonly}
-                            title={isReadonly ? READONLY_TOOLTIP : 'Create default Inventory (asset) and Cost of Goods Sold (expense) accounts'}
                             className="px-2 py-1 text-xs rounded-md text-primary hover:bg-primary-light transition-colors disabled:opacity-50"
                         >
                             {bootstrapping ? 'Creating...' : 'Create default accounts'}
                         </button>
+                        </Tip>
                     </div>
                     <label className="flex items-start gap-2 text-sm text-foreground-secondary mb-2">
                         <input
@@ -396,14 +398,15 @@ export function ItemFormModal({ editing, onClose, onSaved }: ItemFormModalProps)
                     >
                         Cancel
                     </button>
+                    <Tip content={isReadonly ? READONLY_TOOLTIP : undefined}>
                     <button
                         type="submit"
                         disabled={saving || isReadonly}
-                        title={isReadonly ? READONLY_TOOLTIP : undefined}
                         className="px-4 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 disabled:cursor-not-allowed text-primary-foreground rounded-lg transition-colors"
                     >
                         {saving ? 'Saving...' : 'Save'}
                     </button>
+                    </Tip>
                 </div>
             </form>
         </Modal>

@@ -2,6 +2,7 @@
 
 import type { Anomaly, AnomalyType, AnomalySeverity } from '@/lib/anomaly-detection';
 import { formatCurrency } from '@/lib/format';
+import { Tip } from '@/components/ui/Tooltip';
 
 const TNUM = { fontFeatureSettings: "'tnum'" } as const;
 
@@ -79,9 +80,11 @@ export default function AnomaliesTable({ anomalies }: { anomalies: Anomaly[] }) 
                             <td className="py-2 pr-3">
                                 <div className="text-foreground font-medium">{a.label}</div>
                                 {a.accountName && a.accountName !== a.label && (
-                                    <div className="text-xs text-foreground-muted max-w-[220px] truncate" title={a.accountName}>
+                                    <Tip content={a.accountName}>
+                                    <div className="text-xs text-foreground-muted max-w-[220px] truncate">
                                         {a.accountName}
                                     </div>
+                                    </Tip>
                                 )}
                             </td>
                             <td className="py-2 pr-3 text-right font-mono text-foreground" style={TNUM}>

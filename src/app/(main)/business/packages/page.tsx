@@ -12,6 +12,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { Modal } from '@/components/ui/Modal';
 import { StatCard, StatGrid } from '@/components/ui/StatCard';
 import { formatCurrency } from '@/lib/format';
+import { Tip } from '@/components/ui/Tooltip';
 
 const TNUM = { fontFeatureSettings: "'tnum'" } as const;
 
@@ -132,17 +133,17 @@ export default function PackagesPage() {
                     </div>
                 </div>
             ) : error ? (
-                <div className="border border-error/30 bg-surface/30 rounded-xl p-4">
+                <div className="border border-error/30 bg-surface/30 rounded-lg p-4">
                     <p className="text-sm text-error">{error}</p>
                 </div>
             ) : packages.length === 0 ? (
-                <div className="bg-background-secondary/30 border border-border rounded-xl p-8 text-center">
+                <div className="bg-background-secondary/30 border border-border rounded-lg p-8 text-center">
                     <p className="text-sm text-foreground-secondary">
                         No packages yet. Sell one to book the cash as deferred revenue and track redemptions here.
                     </p>
                 </div>
             ) : (
-                <div className="bg-background-secondary/30 backdrop-blur-xl border border-border rounded-xl overflow-hidden">
+                <div className="bg-background-secondary/30 backdrop-blur-xl border border-border rounded-lg overflow-hidden">
                     <div className="overflow-x-auto">
                         <table className="w-full text-sm">
                             <thead>
@@ -497,7 +498,7 @@ function PackageDetailModal({
                 )}
                 {error && <p className="text-sm text-error">{error}</p>}
 
-                <div className="border border-border rounded-xl overflow-hidden">
+                <div className="border border-border rounded-lg overflow-hidden">
                     <div className="p-3 border-b border-border">
                         <h3 className="text-xs font-semibold text-foreground uppercase tracking-wider">Redemption history</h3>
                     </div>
@@ -522,14 +523,15 @@ function PackageDetailModal({
                                         <td className="px-3 py-2 text-right font-mono text-foreground" style={TNUM}>{formatCurrency(r.amount)}</td>
                                         <td className="px-3 py-2 text-foreground-secondary">{r.notes ?? ''}</td>
                                         <td className="px-3 py-2 text-right">
+                                            <Tip content="Delete redemption (removes its transaction)">
                                             <button
                                                 onClick={() => handleDeleteRedemption(r.id)}
                                                 disabled={busy}
                                                 className="text-xs text-foreground-muted hover:text-negative transition-colors disabled:opacity-50"
-                                                title="Delete redemption (removes its transaction)"
                                             >
                                                 Delete
                                             </button>
+                                            </Tip>
                                         </td>
                                     </tr>
                                 ))}
@@ -541,8 +543,8 @@ function PackageDetailModal({
                 <div className="flex items-center justify-between pt-1">
                     {confirmDelete ? (
                         <div className="flex items-center gap-2">
-                            <span className="text-xs text-negative">Void this package and remove all its transactions?</span>
-                            <button onClick={handleDeletePackage} disabled={busy} className="text-xs text-negative hover:underline disabled:opacity-50">
+                            <span className="text-xs text-error">Void this package and remove all its transactions?</span>
+                            <button onClick={handleDeletePackage} disabled={busy} className="text-xs text-error hover:underline disabled:opacity-50">
                                 Yes, void
                             </button>
                             <button onClick={() => setConfirmDelete(false)} className="text-xs text-foreground-muted hover:text-foreground">

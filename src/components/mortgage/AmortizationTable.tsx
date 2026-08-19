@@ -59,7 +59,7 @@ export function AmortizationTable({ schedule, showExtraPayment = true, showDates
   const hasExtra = showExtraPayment && schedule.some(r => r.extra > 0);
 
   return (
-    <div className="border border-border rounded-xl overflow-hidden">
+    <div className="border border-border rounded-lg overflow-hidden">
       <div className="max-h-96 overflow-y-auto overflow-x-auto">
         {isMobile ? (
           <div>

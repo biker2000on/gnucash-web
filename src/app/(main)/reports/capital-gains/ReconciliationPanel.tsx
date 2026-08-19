@@ -126,7 +126,7 @@ export default function ReconciliationPanel({ year }: { year: number }) {
         </div>
 
         {error && (
-          <div className="bg-negative/10 border border-negative/20 rounded-md p-3 text-sm text-negative">{error}</div>
+          <div className="bg-error/10 border border-error/20 rounded-md p-3 text-sm text-error">{error}</div>
         )}
 
         {result && (

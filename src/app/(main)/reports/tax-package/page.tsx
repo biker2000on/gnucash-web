@@ -55,7 +55,7 @@ export default function TaxPackagePage() {
                 </p>
             </div>
 
-            <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-6 space-y-4">
+            <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-6 space-y-4">
                 <div className="flex flex-wrap items-end gap-4">
                     <label className="block">
                         <span className="text-xs uppercase tracking-wider text-foreground-muted">Tax year</span>
@@ -78,13 +78,13 @@ export default function TaxPackagePage() {
                     </button>
                 </div>
                 {error && (
-                    <div className="text-sm text-negative border border-negative/30 bg-negative/10 rounded-lg px-3 py-2">
+                    <div className="text-sm text-error border border-error/30 bg-error/10 rounded-lg px-3 py-2">
                         {error}
                     </div>
                 )}
             </div>
 
-            <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-6">
+            <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-lg p-6">
                 <h2 className="text-sm font-semibold text-foreground-secondary uppercase tracking-wider mb-4">
                     What&rsquo;s inside
                 </h2>

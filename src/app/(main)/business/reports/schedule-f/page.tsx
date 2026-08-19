@@ -225,7 +225,7 @@ export default function ScheduleFPage() {
             )}
 
             {!loading && needsFarmAccounts && (
-                <div className="border border-warning/30 bg-warning/5 rounded-xl px-4 py-4 text-sm text-foreground-secondary space-y-2">
+                <div className="border border-warning/30 bg-warning/5 rounded-lg px-4 py-4 text-sm text-foreground-secondary space-y-2">
                     <p>
                         This book isn&apos;t a farm business book, and no farm accounts are selected
                         yet. Pick the income and expense subtrees that represent your farm in the{' '}
@@ -241,7 +241,7 @@ export default function ScheduleFPage() {
             )}
 
             {!loading && error && (
-                <div className="border border-error/30 bg-surface/30 rounded-xl p-4">
+                <div className="border border-error/30 bg-surface/30 rounded-lg p-4">
                     <p className="text-sm text-error">{error}</p>
                 </div>
             )}
@@ -249,7 +249,7 @@ export default function ScheduleFPage() {
             {!loading && !error && report && (
                 <>
                     {report.scopedToFarmSelection && (
-                        <div className="border border-border bg-surface/30 rounded-xl px-4 py-3 text-sm text-foreground-secondary">
+                        <div className="border border-border bg-surface/30 rounded-lg px-4 py-3 text-sm text-foreground-secondary">
                             Scoped to the farm accounts selected in the{' '}
                             <Link
                                 href="/tools/farm-analyzer"
@@ -281,14 +281,14 @@ export default function ScheduleFPage() {
                     </StatGrid>
 
                     {report.grossIncome === 0 && report.totalExpenses === 0 ? (
-                        <div className="bg-background-secondary/30 border border-border rounded-xl p-8 text-center">
+                        <div className="bg-background-secondary/30 border border-border rounded-lg p-8 text-center">
                             <p className="text-sm text-foreground-secondary">
                                 No farm income or expense activity in {report.year}. Pick another
                                 year ([ and ] step years) or post some transactions first.
                             </p>
                         </div>
                     ) : (
-                        <div className="bg-background-secondary/30 backdrop-blur-xl border border-border rounded-xl overflow-hidden">
+                        <div className="bg-background-secondary/30 backdrop-blur-xl border border-border rounded-lg overflow-hidden">
                             <div className="overflow-x-auto">
                                 <table className="w-full min-w-[560px] text-sm">
                                     <thead>
@@ -346,7 +346,7 @@ export default function ScheduleFPage() {
                     )}
 
                     {report.unmappedCount > 0 && otherLine && (
-                        <div className="border border-warning/30 bg-warning/5 rounded-xl px-4 py-3 text-sm text-foreground-secondary">
+                        <div className="border border-warning/30 bg-warning/5 rounded-lg px-4 py-3 text-sm text-foreground-secondary">
                             <span className="font-medium text-foreground">
                                 {report.unmappedCount} expense account
                                 {report.unmappedCount === 1 ? '' : 's'}

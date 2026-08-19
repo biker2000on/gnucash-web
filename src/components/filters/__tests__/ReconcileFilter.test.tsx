@@ -15,8 +15,10 @@ describe('ReconcileFilter', () => {
 
         const controls = container.querySelector('.flex.min-w-0.gap-2');
         expect(controls).toBeInTheDocument();
-        expect(screen.getByTitle('Not Reconciled')).toHaveClass('flex-1', 'min-w-0');
-        expect(screen.getByTitle('Cleared')).toHaveClass('flex-1', 'min-w-0');
-        expect(screen.getByTitle('Reconciled')).toHaveClass('flex-1', 'min-w-0');
+        // The hint is a Tip, not a native title= (DESIGN.md), so the buttons
+        // are found by their short-label text instead.
+        const buttons = screen.getAllByRole('button');
+        expect(buttons).toHaveLength(3);
+        for (const button of buttons) expect(button).toHaveClass('flex-1', 'min-w-0');
     });
 });

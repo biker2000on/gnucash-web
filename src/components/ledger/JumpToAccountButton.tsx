@@ -1,6 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
+import { Tip } from '@/components/ui/Tooltip';
 
 interface JumpToAccountButtonProps {
   /** GUID of the account to jump to. */
@@ -22,9 +23,9 @@ export function JumpToAccountButton({ accountGuid, accountLabel, className = '' 
   const label = accountLabel ? `Jump to ${accountLabel}` : 'Jump to account';
 
   return (
+    <Tip content={label} describedBy={false}>
     <button
       type="button"
-      title={label}
       aria-label={label}
       onClick={(e) => {
         e.stopPropagation();
@@ -36,5 +37,6 @@ export function JumpToAccountButton({ accountGuid, accountLabel, className = '' 
         <path d="M7 13L13 7M13 7H8M13 7V12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
       </svg>
     </button>
+    </Tip>
   );
 }

@@ -16,7 +16,7 @@ export function CommandPreviewCard({
 }) {
   const { preview } = command;
   return (
-    <article className="rounded-xl border border-border bg-surface p-4">
+    <article className="rounded-lg border border-border bg-surface p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">

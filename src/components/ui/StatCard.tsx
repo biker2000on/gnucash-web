@@ -68,7 +68,7 @@ export function StatCard({
     return (
         <div
             className={`bg-surface/30 border border-border min-w-0 ${
-                compact ? 'rounded-lg px-3 py-2' : 'rounded-lg px-3 py-2 sm:rounded-xl sm:p-5'
+                compact ? 'rounded-lg px-3 py-2' : 'rounded-lg px-3 py-2 sm:rounded-lg sm:p-5'
             } ${className}`}
         >
             <div
