@@ -561,7 +561,14 @@ export function ensureEmailIngestTables(): Promise<void> {
             ADD COLUMN IF NOT EXISTS owner_book_guid VARCHAR(32),
             ADD COLUMN IF NOT EXISTS owner_sender_id INTEGER,
             ADD COLUMN IF NOT EXISTS owner_sender_email VARCHAR(255),
-            ADD COLUMN IF NOT EXISTS manual_retries INTEGER NOT NULL DEFAULT 0;
+            ADD COLUMN IF NOT EXISTS manual_retries INTEGER NOT NULL DEFAULT 0,
+            -- When the owner last re-armed this row BY HAND. The cooldown is a
+            -- rate limit on the human, so it has to be measured against the
+            -- human's last action; processed_at moves on every automatic
+            -- attempt and every poll outcome, so measuring against it charged
+            -- the user a cooldown for work they did not do. NULL means never
+            -- manually retried, and imposes no cooldown at all.
+            ADD COLUMN IF NOT EXISTS last_manual_retry_at TIMESTAMPTZ;
 
           CREATE INDEX IF NOT EXISTS idx_ingest_messages_owner
             ON gnucash_web_ingest_messages(owner_user_id);
@@ -766,6 +773,7 @@ interface MessageRow {
   owner_sender_id: number | null;
   owner_sender_email: string | null;
   manual_retries: number | null;
+  last_manual_retry_at: Date | null;
   processed_at: Date;
 }
 
@@ -1194,7 +1202,7 @@ export async function requestIngestRetry(
   const rows = await prisma.$queryRaw<MessageRow[]>`
     SELECT id, message_key, from_email, subject, outcome, detail, ingested_count,
            attempts, owner_user_id, owner_book_guid, owner_sender_id,
-           owner_sender_email, manual_retries, processed_at
+           owner_sender_email, manual_retries, last_manual_retry_at, processed_at
     FROM gnucash_web_ingest_messages
     WHERE id = ${id}
     LIMIT 1`;
@@ -1228,16 +1236,24 @@ export async function requestIngestRetry(
   const blocked = retryBlockedReason(row);
   if (blocked) return { ok: false, reason: 'not_retriable', detail: blocked };
 
-  const elapsedMinutes = (Date.now() - row.processed_at.getTime()) / 60_000;
-  if (elapsedMinutes < INGEST_MANUAL_RETRY_COOLDOWN_MINUTES) {
-    return {
-      ok: false,
-      reason: 'cooldown',
-      retryAfterMinutes: Math.max(
-        1,
-        Math.ceil(INGEST_MANUAL_RETRY_COOLDOWN_MINUTES - elapsedMinutes),
-      ),
-    };
+  // The cooldown rate-limits the PERSON, so it runs from their last manual
+  // retry — not from `processed_at`, which is the time of the last automatic
+  // attempt or poll outcome and moves on its own. Measuring against that made
+  // a fresh failure look like a cooldown the user had just used up. A row that
+  // has never been re-armed by hand has no cooldown to serve.
+  const lastManual = row.last_manual_retry_at;
+  if (lastManual) {
+    const elapsedMinutes = (Date.now() - lastManual.getTime()) / 60_000;
+    if (elapsedMinutes < INGEST_MANUAL_RETRY_COOLDOWN_MINUTES) {
+      return {
+        ok: false,
+        reason: 'cooldown',
+        retryAfterMinutes: Math.max(
+          1,
+          Math.ceil(INGEST_MANUAL_RETRY_COOLDOWN_MINUTES - elapsedMinutes),
+        ),
+      };
+    }
   }
 
   // Atomic re-check under the row lock: outcome, owner, cap, and cooldown are
@@ -1247,14 +1263,16 @@ export async function requestIngestRetry(
     SET outcome = ${INGEST_OUTCOME_RETRY_REQUESTED},
         detail = 'Manual retry requested; queued for the next mailbox poll',
         manual_retries = manual_retries + 1,
+        last_manual_retry_at = NOW(),
         processed_at = CURRENT_TIMESTAMP
     WHERE id = ${id}
       AND outcome = ${INGEST_OUTCOME_FAILED}
       AND owner_user_id IS NOT NULL
       AND message_key NOT LIKE 'fallback:%'
       AND manual_retries < ${INGEST_MAX_MANUAL_RETRIES}
-      AND processed_at
-          < (NOW() - ${INGEST_MANUAL_RETRY_COOLDOWN_MINUTES} * INTERVAL '1 minute')::timestamp`;
+      AND (last_manual_retry_at IS NULL
+           OR last_manual_retry_at
+              < NOW() - ${INGEST_MANUAL_RETRY_COOLDOWN_MINUTES} * INTERVAL '1 minute')`;
   if (updated === 0) return { ok: false, reason: 'cooldown', retryAfterMinutes: 1 };
   return { ok: true };
 }
