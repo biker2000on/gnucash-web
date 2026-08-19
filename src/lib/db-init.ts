@@ -2876,7 +2876,11 @@ async function createExtensionTables() {
  * These indexes are critical for query performance - without them, tables like
  * prices get full sequential scans on every currency/price lookup.
  *
- * See sql/001-performance-indexes.sql for the standalone version with full documentation.
+ * This list is the single source of truth. sql/001-performance-indexes.sql
+ * carried a hand-maintained copy of it and had already fallen three indexes
+ * behind (idx_splits_account_covering, idx_splits_tx_account,
+ * idx_slots_obj_name), so it was deleted rather than resynced: anything that
+ * must exist on a deployment belongs here, where the app applies it at startup.
  */
 async function createPerformanceIndexes() {
     const indexes = [

@@ -58,10 +58,12 @@ data/
 *sync-conflict*
 
 # One-off repair/backfill scripts — kept locally, not tracked.
-# scripts/check-docs-coverage.ts, db-init-entrypoint.ts, and dev-run-db-init.ts
-# stay tracked: CI, the Docker image, and dev db-init depend on them.
+# check-docs-coverage.ts, check-schema-drift.ts, db-init-entrypoint.ts, and
+# dev-run-db-init.ts stay tracked: CI, the Docker image, and dev db-init depend
+# on them.
 scripts/*
 !scripts/check-docs-coverage.ts
+!scripts/check-schema-drift.ts
 !scripts/db-init-entrypoint.ts
 !scripts/dev-run-db-init.ts
 .polly/
