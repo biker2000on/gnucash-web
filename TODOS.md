@@ -2230,7 +2230,18 @@ the price DB with refuse-to-book fallback and stock splits scale lots;
 per-sale LIFO replay with acquisition-date FIFO ordering; oversell remainder
 left unassigned; ledger rows sum sub-splits; wash-sale exclusions;
 preference-flag/account-type classification with commodity-aware epsilons).
-**Remaining:** the supervised prod data repair —
+**Resolved 2026-08-20:** the supervised prod repair was executed against the
+live prod DB (backup first: `~/backups/gnucash-prod-pre-lot-repair-20260820-110507.dump`
+on truenas). Part (a) found **0** transfer-closed lots with phantom gains — the
+engine fixes that landed after the rehearsal had already cleaned them via
+re-scrub — and `--apply` was a verified no-op. Part (b)'s report-only
+inventory matched the rehearsal exactly: **106 closed lots with no gains
+offset**, net implied unbooked gain **$29,453.63**, saved to
+`~/backups/lot-repair-report-20260820.txt` on truenas. Booking gains for those
+pre-gains-generation closes is a tax-year decision (which year each gain lands
+in) and stays a supervised follow-up, not a script run.
+
+**Was:** the supervised prod data repair —
 `scripts/repair-transfer-lot-gains.mjs` (dry-run by default, `--apply` to
 write) reverts the transfer-close gains transactions, re-links carried
 basis along transfer chains, and reports the 106 no-offset lots.
