@@ -68,4 +68,7 @@ scripts/*
 !scripts/check-schema-drift.ts
 !scripts/db-init-entrypoint.ts
 !scripts/dev-run-db-init.ts
+# Tracked deliberately: the supervised lot-gain repair TODOS.md references,
+# including its TAX_EXEMPT-aware report.
+!scripts/repair-transfer-lot-gains.mjs
 .polly/

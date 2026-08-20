@@ -2237,9 +2237,19 @@ engine fixes that landed after the rehearsal had already cleaned them via
 re-scrub — and `--apply` was a verified no-op. Part (b)'s report-only
 inventory matched the rehearsal exactly: **106 closed lots with no gains
 offset**, net implied unbooked gain **$29,453.63**, saved to
-`~/backups/lot-repair-report-20260820.txt` on truenas. Booking gains for those
-pre-gains-generation closes is a tax-year decision (which year each gain lands
-in) and stays a supervised follow-up, not a script run.
+`~/backups/lot-repair-report-20260820.txt` on truenas. **Sweep completed 2026-08-20:** every one of the 106 lots sits in a Roth IRA
+or HSA. The engine's own `classifyAccountTax` marks all of them TAX_EXEMPT and
+`generateCapitalGains` deliberately books nothing for sheltered lots (a Roth/
+HSA gain is not income), so the closed-with-no-gains-split state is the fixed
+engine's INTENDED output — verified by rehearsing `generateCapitalGains` per
+lot on a prod copy: 106/106 skipped "Tax-exempt account". Actions taken:
+(1) flagged the three accounts that were missing their explicit preference —
+HSA Bank (`hsa`), HSA MyBenefitWallet (`hsa`), Scottrade Roth IRA
+(`roth_ira`) — on prod, since the tax surfaces' `getRetirementAccountGuids`
+reads only the preference row, not account names; (2) taught the repair
+script's part (b) the same TAX_EXEMPT rule so it now reports **0 actionable
+lots** on prod, with the 106 sheltered lots ($29,453.63) tallied separately
+as by-design. Nothing left to book; the audit item is closed.
 
 **Was:** the supervised prod data repair —
 `scripts/repair-transfer-lot-gains.mjs` (dry-run by default, `--apply` to
