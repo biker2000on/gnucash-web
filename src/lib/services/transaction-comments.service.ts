@@ -97,13 +97,27 @@ export async function buildCommentContext(auth: {
     };
 }
 
-/** Thrown for a request that is well-formed but not allowed / not found. */
+/**
+ * Thrown for a request that is well-formed but not allowed / not found.
+ *
+ * `field` names the request field at fault on a 400 so the route can answer
+ * with the same `{ error, errors }` shape every other validation failure uses.
+ */
 export class CommentAccessError extends Error {
-    constructor(message: string, readonly status: 403 | 404) {
+    constructor(message: string, readonly status: 400 | 403 | 404, readonly field?: string) {
         super(message);
         this.name = 'CommentAccessError';
     }
 }
+
+/**
+ * The prisma surface these functions use.
+ *
+ * Typed structurally rather than as `PrismaClient` so an interactive
+ * transaction client (`prisma.$transaction(tx => …)`) can be passed straight
+ * through — which is what makes a combined edit+resolve one atomic write.
+ */
+export type CommentDb = Pick<typeof prisma, '$queryRaw' | '$queryRawUnsafe' | '$executeRaw'>;
 
 /**
  * Does this transaction belong to the caller's book?
@@ -114,9 +128,10 @@ export class CommentAccessError extends Error {
 export async function isTransactionInBook(
     txnGuid: string,
     bookAccountGuids: string[],
+    db: CommentDb = prisma,
 ): Promise<boolean> {
     if (bookAccountGuids.length === 0) return false;
-    const rows = await prisma.$queryRaw<Array<{ one: number }>>`
+    const rows = await db.$queryRaw<Array<{ one: number }>>`
         SELECT 1 AS one
         FROM splits
         WHERE tx_guid = ${txnGuid}
@@ -126,8 +141,12 @@ export async function isTransactionInBook(
     return rows.length > 0;
 }
 
-async function requireTransactionInBook(txnGuid: string, context: CommentContext): Promise<void> {
-    if (!(await isTransactionInBook(txnGuid, context.bookAccountGuids))) {
+async function requireTransactionInBook(
+    txnGuid: string,
+    context: CommentContext,
+    db: CommentDb = prisma,
+): Promise<void> {
+    if (!(await isTransactionInBook(txnGuid, context.bookAccountGuids, db))) {
         // Deliberately "not found": a transaction in another book must not be
         // distinguishable from one that does not exist.
         throw new CommentAccessError('Transaction not found', 404);
@@ -140,22 +159,56 @@ const SELECT_COLUMNS = `
     c.body, c.resolved, c.created_at, c.edited_at, c.deleted_at
 `;
 
-/** Every comment on a transaction, assembled into threads. */
+/**
+ * The comment table is shared with other commentable entities (`entity_type`),
+ * so every read names the one this module owns. Without it a future
+ * `entity_type = 'invoice'` row whose id collided on `txn_guid` would surface
+ * in a transaction's thread list.
+ */
+const TRANSACTION_ENTITY = 'transaction';
+
+/**
+ * How many comments one GET returns. A transaction with more than this has a
+ * runaway thread, and the page must not grow without bound because of it; the
+ * newest are the ones being read, so those are the ones returned.
+ */
+export const MAX_COMMENTS_PER_TRANSACTION = 200;
+
+export interface TransactionCommentPage {
+    threads: CommentThread[];
+    /** True when older comments exist beyond the returned window. */
+    hasMore: boolean;
+}
+
+/**
+ * A transaction's comments, newest window first, assembled into threads.
+ *
+ * The window is taken over rows, not threads: a thread whose root fell outside
+ * it keeps its replies visible as roots (see `buildCommentThreads`), which is
+ * the same orphan handling a hard-deleted parent already gets.
+ */
 export async function listTransactionComments(
     txnGuid: string,
     context: CommentContext,
-): Promise<CommentThread[]> {
+    limit: number = MAX_COMMENTS_PER_TRANSACTION,
+): Promise<TransactionCommentPage> {
     await requireTransactionInBook(txnGuid, context);
+    // One extra row is the cheapest possible "is there more?" probe.
     const rows = await prisma.$queryRawUnsafe<CommentRow[]>(
         `SELECT ${SELECT_COLUMNS}
          FROM gnucash_web_transaction_comments c
          LEFT JOIN gnucash_web_users u ON u.id = c.user_id
-         WHERE c.txn_guid = $1 AND c.book_root_guid = $2
-         ORDER BY c.created_at ASC, c.id ASC`,
+         WHERE c.txn_guid = $1 AND c.book_root_guid = $2 AND c.entity_type = $3
+         ORDER BY c.created_at DESC, c.id DESC
+         LIMIT $4`,
         txnGuid,
         context.bookRootGuid,
+        TRANSACTION_ENTITY,
+        limit + 1,
     );
-    return buildCommentThreads(rows.map(toComment));
+    const hasMore = rows.length > limit;
+    const window = hasMore ? rows.slice(0, limit) : rows;
+    return { threads: buildCommentThreads(window.map(toComment)), hasMore };
 }
 
 /**
@@ -174,6 +227,7 @@ export async function commentCountsForTransactions(
         SELECT txn_guid, COUNT(*)::bigint AS count
         FROM gnucash_web_transaction_comments
         WHERE book_root_guid = ${context.bookRootGuid}
+          AND entity_type = ${TRANSACTION_ENTITY}
           AND deleted_at IS NULL
           AND txn_guid = ANY(${txnGuids}::text[])
         GROUP BY txn_guid
@@ -213,6 +267,7 @@ export async function listUnresolvedThreads(
         FROM gnucash_web_transaction_comments c
         LEFT JOIN gnucash_web_users u ON u.id = c.user_id
         WHERE c.book_root_guid = ${bookRootGuid}
+          AND c.entity_type = ${TRANSACTION_ENTITY}
           AND c.parent_id IS NULL
           AND c.resolved = FALSE
           AND c.deleted_at IS NULL
@@ -229,18 +284,41 @@ export async function listUnresolvedThreads(
     }));
 }
 
-async function loadComment(id: number, context: CommentContext): Promise<CommentRow> {
-    const rows = await prisma.$queryRawUnsafe<CommentRow[]>(
+async function loadComment(id: number, context: CommentContext, db: CommentDb = prisma): Promise<CommentRow> {
+    const rows = await db.$queryRawUnsafe<CommentRow[]>(
         `SELECT ${SELECT_COLUMNS}
          FROM gnucash_web_transaction_comments c
          LEFT JOIN gnucash_web_users u ON u.id = c.user_id
-         WHERE c.id = $1 AND c.book_root_guid = $2
+         WHERE c.id = $1 AND c.book_root_guid = $2 AND c.entity_type = $3
          LIMIT 1`,
         id,
         context.bookRootGuid,
+        TRANSACTION_ENTITY,
     );
     const row = rows[0];
     if (!row) throw new CommentAccessError('Comment not found', 404);
+    return row;
+}
+
+/**
+ * Load a comment and prove it belongs to the transaction in the URL.
+ *
+ * `/api/transactions/{A}/comments/{id}` is two identifiers, and until this
+ * check existed only the second one was enforced: a caller could edit or
+ * delete a comment on transaction B through transaction A's path, so the
+ * book-scope check on A proved nothing about the row being written. A
+ * mismatch is a 404 for the same reason a foreign book is — the comment does
+ * not exist *here*.
+ */
+async function loadCommentOnTransaction(
+    txnGuid: string,
+    id: number,
+    context: CommentContext,
+    db: CommentDb = prisma,
+): Promise<CommentRow> {
+    const row = await loadComment(id, context, db);
+    if (row.txn_guid !== txnGuid) throw new CommentAccessError('Comment not found', 404);
+    await requireTransactionInBook(row.txn_guid, context, db);
     return row;
 }
 
@@ -314,6 +392,37 @@ export interface CreateCommentInput {
  * thread root instead of nesting further, so a thread never becomes a tree the
  * feed cannot render.
  */
+/**
+ * Prove an `auditId` names an audit entry for *this* transaction.
+ *
+ * Unvalidated, a nonexistent id surfaced as a raw foreign-key 500, and a valid
+ * id from someone else's transaction was stored happily — anchoring the
+ * comment to a change the reader would never see. The entry may be on the
+ * transaction itself or on any of its splits, which is exactly the set the
+ * history route renders.
+ */
+async function requireAuditOnTransaction(
+    auditId: number,
+    txnGuid: string,
+    db: CommentDb = prisma,
+): Promise<void> {
+    const rows = await db.$queryRaw<Array<{ one: number }>>`
+        SELECT 1 AS one
+        FROM gnucash_web_audit a
+        WHERE a.id = ${auditId}
+          AND (a.entity_guid = ${txnGuid}
+               OR a.entity_guid IN (SELECT s.guid FROM splits s WHERE s.tx_guid = ${txnGuid}))
+        LIMIT 1
+    `;
+    if (rows.length === 0) {
+        throw new CommentAccessError(
+            'auditId must reference a change to this transaction',
+            400,
+            'auditId',
+        );
+    }
+}
+
 export async function createTransactionComment(
     input: CreateCommentInput,
     context: CommentContext,
@@ -331,6 +440,10 @@ export async function createTransactionComment(
         parentAuthorId = parent.user_id;
     }
 
+    if (input.auditId !== null && input.auditId !== undefined) {
+        await requireAuditOnTransaction(input.auditId, input.txnGuid);
+    }
+
     const rows = await prisma.$queryRaw<Array<{ id: number }>>`
         INSERT INTO gnucash_web_transaction_comments
             (entity_type, txn_guid, book_root_guid, user_id, parent_id, audit_id, body)
@@ -345,21 +458,22 @@ export async function createTransactionComment(
 
 /** Edit a comment's body. Authors only — see `canEditComment`. */
 export async function updateTransactionComment(
+    txnGuid: string,
     id: number,
     body: string,
     context: CommentContext,
+    db: CommentDb = prisma,
 ): Promise<TransactionComment> {
-    const existing = await loadComment(id, context);
-    await requireTransactionInBook(existing.txn_guid, context);
+    const existing = await loadCommentOnTransaction(txnGuid, id, context, db);
     if (!canEditComment(context.viewer, toComment(existing))) {
         throw new CommentAccessError('Only the author can edit a comment', 403);
     }
-    await prisma.$executeRaw`
+    await db.$executeRaw`
         UPDATE gnucash_web_transaction_comments
         SET body = ${body}, edited_at = NOW()
         WHERE id = ${id} AND book_root_guid = ${context.bookRootGuid}
     `;
-    return toComment(await loadComment(id, context));
+    return toComment(await loadComment(id, context, db));
 }
 
 /**
@@ -370,28 +484,35 @@ export async function updateTransactionComment(
  * question a thread asks is usually answered by someone other than the asker.
  */
 export async function setThreadResolved(
+    txnGuid: string,
     id: number,
     resolved: boolean,
     context: CommentContext,
+    db: CommentDb = prisma,
 ): Promise<TransactionComment> {
-    const existing = await loadComment(id, context);
-    await requireTransactionInBook(existing.txn_guid, context);
+    const existing = await loadCommentOnTransaction(txnGuid, id, context, db);
     const rootId = existing.parent_id ?? existing.id;
-    await prisma.$executeRaw`
+    const root = rootId === existing.id ? existing : await loadComment(rootId, context, db);
+    // A deleted root has no thread left to resolve: the flag would come back
+    // as an unresolved-thread action pointing at "This comment was deleted."
+    if (root.deleted_at !== null) {
+        throw new CommentAccessError('This thread has been deleted', 403);
+    }
+    await db.$executeRaw`
         UPDATE gnucash_web_transaction_comments
         SET resolved = ${resolved}
         WHERE id = ${rootId} AND book_root_guid = ${context.bookRootGuid}
     `;
-    return toComment(await loadComment(rootId, context));
+    return toComment(await loadComment(rootId, context, db));
 }
 
 /** Soft-delete: authors delete their own, admins delete any. */
 export async function deleteTransactionComment(
+    txnGuid: string,
     id: number,
     context: CommentContext,
 ): Promise<TransactionComment> {
-    const existing = await loadComment(id, context);
-    await requireTransactionInBook(existing.txn_guid, context);
+    const existing = await loadCommentOnTransaction(txnGuid, id, context);
     if (!canDeleteComment(context.viewer, toComment(existing))) {
         throw new CommentAccessError('Only the author or an admin can delete a comment', 403);
     }
@@ -401,4 +522,32 @@ export async function deleteTransactionComment(
         WHERE id = ${id} AND book_root_guid = ${context.bookRootGuid}
     `;
     return toComment(await loadComment(id, context));
+}
+
+/**
+ * Hard-delete every comment on a transaction that is itself being deleted.
+ *
+ * Soft deletion is for a person retracting one comment; this is the row going
+ * away entirely. Comment rows are app-owned and carry no GnuCash meaning, so
+ * nothing is lost by removing them — whereas leaving them behind orphans them
+ * against a `txn_guid` that no longer resolves, keeps their unresolved threads
+ * raising Action Center items that open onto nothing, and would hand a future
+ * transaction that reused the guid someone else's discussion.
+ *
+ * Call inside the same database transaction as the delete so a rolled-back
+ * delete cannot take the comments with it.
+ */
+export async function deleteCommentsForTransaction(
+    txnGuid: string,
+    bookRootGuid: string,
+    db: CommentDb = prisma,
+): Promise<number> {
+    // Replies first: parent_id is ON DELETE CASCADE, but being explicit keeps
+    // this correct if that ever changes.
+    return db.$executeRaw`
+        DELETE FROM gnucash_web_transaction_comments
+        WHERE txn_guid = ${txnGuid}
+          AND book_root_guid = ${bookRootGuid}
+          AND entity_type = ${TRANSACTION_ENTITY}
+    `;
 }
