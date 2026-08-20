@@ -52,18 +52,26 @@ describe('GET /api/search/documents', () => {
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.documents[0].tags).toEqual(['insurance']);
-    expect(mocks.attach).toHaveBeenCalledWith('book-1', expect.any(Array), []);
+    // Decoration only — no filter argument to post-filter with.
+    expect(mocks.attach).toHaveBeenCalledWith('book-1', expect.any(Array));
+    expect(mocks.search).toHaveBeenCalledWith(['acct'], 'book-1', 'policy', {
+      limit: 20,
+      tags: [],
+    });
   });
 
-  it('passes tags= as an AND filter', async () => {
-    mocks.attach.mockResolvedValue([]);
+  it('pushes tags= into searchDocuments rather than post-filtering the hits', async () => {
     const response = await GET(
       new Request('http://localhost/api/search/documents?q=policy&tags=insurance,farm') as never,
     );
     expect(response.status).toBe(200);
     const body = await response.json();
-    expect(body.documents).toEqual([]);
-    expect(body.totalHits).toBe(0);
-    expect(mocks.attach).toHaveBeenCalledWith('book-1', expect.any(Array), ['insurance', 'farm']);
+    expect(mocks.search).toHaveBeenCalledWith(['acct'], 'book-1', 'policy', {
+      limit: 20,
+      tags: ['insurance', 'farm'],
+    });
+    // totalHits comes straight from the (already tag-filtered) search — no
+    // subtraction of a post-filter's drop count.
+    expect(body.totalHits).toBe(1);
   });
 });

@@ -8,5 +8,9 @@ export interface ExtractEntityDocumentJobData {
 
 export async function handleExtractEntityDocument(job: Job): Promise<void> {
   const { documentId, bookGuid } = job.data as ExtractEntityDocumentJobData;
-  await runEntityDocumentExtraction(documentId, bookGuid, `[Job ${job.id}]`);
+  // This handler only ever runs inside the worker, so an inline thumbnail
+  // render on a queue hiccup is safe here (never on a request path).
+  await runEntityDocumentExtraction(documentId, bookGuid, `[Job ${job.id}]`, {
+    allowInlineThumbnail: true,
+  });
 }

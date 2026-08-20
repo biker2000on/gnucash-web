@@ -32,6 +32,7 @@ vi.mock('@/lib/db', () => ({
 }));
 
 import {
+  enqueueDocumentThumbnail,
   enqueueMissingDocumentThumbnails,
   handleRenderDocumentThumbnail,
   renderEntityDocumentThumbnail,
@@ -112,12 +113,41 @@ describe('handleRenderDocumentThumbnail', () => {
   });
 });
 
+describe('enqueueDocumentThumbnail', () => {
+  it('enqueues without rendering when the queue is up', async () => {
+    mocks.enqueue.mockResolvedValue('job-1');
+    await enqueueDocumentThumbnail(9, BOOK);
+    expect(mocks.storageGet).not.toHaveBeenCalled();
+  });
+
+  it('leaves the row pending instead of rendering inline on a request path', async () => {
+    // M7: a Redis outage must not turn an upload request into a PDF raster.
+    mocks.enqueue.mockResolvedValue(null);
+    await enqueueDocumentThumbnail(9, BOOK);
+    expect(mocks.storageGet).not.toHaveBeenCalled();
+    expect(mocks.storagePut).not.toHaveBeenCalled();
+    expect(mocks.setState).not.toHaveBeenCalled();
+  });
+
+  it('still renders inline for a caller that is already the worker', async () => {
+    mocks.enqueue.mockResolvedValue(null);
+    await enqueueDocumentThumbnail(9, BOOK, { allowInline: true });
+    expect(mocks.storagePut).toHaveBeenCalled();
+    expect(mocks.setState).toHaveBeenLastCalledWith(
+      BOOK, 9, 'complete', 'entity-documents/a.pdf_thumb.webp',
+    );
+  });
+});
+
 describe('enqueueMissingDocumentThumbnails', () => {
   it('enqueues one job per pending document under the advisory lock', async () => {
-    mocks.listPending.mockResolvedValue([
-      { id: 1, bookGuid: BOOK },
-      { id: 2, bookGuid: BOOK },
-    ]);
+    mocks.listPending.mockResolvedValue({
+      documents: [
+        { id: 1, bookGuid: BOOK },
+        { id: 2, bookGuid: BOOK },
+      ],
+      remaining: 0,
+    });
     mocks.enqueue.mockResolvedValue('job-1');
     await expect(enqueueMissingDocumentThumbnails()).resolves.toBe(2);
     expect(mocks.enqueue).toHaveBeenCalledTimes(2);
@@ -126,6 +156,20 @@ describe('enqueueMissingDocumentThumbnails', () => {
       { documentId: 1, bookGuid: BOOK },
       { jobId: 'render-document-thumbnail:1' },
     );
+  });
+
+  it('only enqueues the bounded batch and logs the remainder for the next pass', async () => {
+    // CODEX-7: the backfill must not materialize/flood the whole vault.
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    mocks.listPending.mockResolvedValue({
+      documents: [{ id: 1, bookGuid: BOOK }, { id: 2, bookGuid: BOOK }],
+      remaining: 4_800,
+    });
+    mocks.enqueue.mockResolvedValue('job-1');
+    await expect(enqueueMissingDocumentThumbnails()).resolves.toBe(2);
+    expect(mocks.enqueue).toHaveBeenCalledTimes(2);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('4800'));
+    log.mockRestore();
   });
 
   it('is a no-op when another process holds the lock', async () => {

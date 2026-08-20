@@ -14,6 +14,7 @@ import { useDocumentPreview } from '@/components/documents/DocumentPreviewModal'
 import {
     DocumentVaultBrowser,
     formatDocumentBytes,
+    type VaultDocumentRow,
 } from '@/components/documents/DocumentVaultBrowser';
 import { useToast } from '@/contexts/ToastContext';
 import { Tip } from '@/components/ui/Tooltip';
@@ -23,8 +24,10 @@ import { readErrorBody } from '@/lib/api-error';
 const TNUM = { fontFeatureSettings: "'tnum'" } as const;
 
 interface DocumentsResponse {
-    documents: EntityDocument[];
-    expiringSoon: EntityDocument[];
+    // The list endpoint batches `tags` and `thumbnailStatus` onto every row;
+    // typing them here is what lets the browser skip per-document fan-out.
+    documents: VaultDocumentRow[];
+    expiringSoon: VaultDocumentRow[];
     warningDays: number;
 }
 

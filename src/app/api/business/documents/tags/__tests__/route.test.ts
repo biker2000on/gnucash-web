@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { NextRequest } from 'next/server';
 
 const mocks = vi.hoisted(() => ({
   auth: vi.fn(),
@@ -14,6 +15,7 @@ vi.mock('@/lib/documents/document-tags', () => ({
   listDocumentTagRules: mocks.listRules,
   createDocumentTagRule: mocks.createRule,
   applyDocumentTagRules: mocks.apply,
+  APPLY_RULES_BATCH_SIZE: 500,
   DocumentTagValidationError: class DocumentTagValidationError extends Error {},
 }));
 
@@ -74,14 +76,46 @@ describe('GET /api/business/documents/tags/rules', () => {
   });
 });
 
+function applyRulesRequest(url = 'http://localhost/api/business/documents/tags/apply-rules') {
+  return new NextRequest(url, { method: 'POST' });
+}
+
 describe('POST /api/business/documents/tags/apply-rules', () => {
-  it('returns per-document applied counts', async () => {
-    mocks.apply.mockResolvedValue([{ documentId: 9, applied: 2 }]);
-    const response = await applyRules();
+  it('returns per-document applied counts plus the continue token', async () => {
+    mocks.apply.mockResolvedValue({
+      results: [{ documentId: 9, applied: 2 }],
+      processed: 1,
+      remaining: 0,
+      lastDocumentId: 9,
+      errors: [],
+    });
+    const response = await applyRules(applyRulesRequest());
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
       documents: [{ documentId: 9, applied: 2 }],
+      processed: 1,
+      remaining: 0,
+      lastDocumentId: 9,
+      errors: [],
     });
-    expect(mocks.apply).toHaveBeenCalledWith(BOOK);
+    expect(mocks.apply).toHaveBeenCalledWith(BOOK, { afterId: 0, batchSize: 500 });
+  });
+
+  it('threads afterId/batchSize through so a client can continue a capped sweep', async () => {
+    mocks.apply.mockResolvedValue({
+      results: [],
+      processed: 500,
+      remaining: 120,
+      lastDocumentId: 700,
+      errors: [{ documentId: 5, message: 'bad row' }],
+    });
+    const response = await applyRules(
+      applyRulesRequest('http://localhost/api/business/documents/tags/apply-rules?afterId=200&batchSize=500'),
+    );
+    const body = await response.json();
+    expect(mocks.apply).toHaveBeenCalledWith(BOOK, { afterId: 200, batchSize: 500 });
+    expect(body.remaining).toBe(120);
+    expect(body.lastDocumentId).toBe(700);
+    expect(body.errors).toEqual([{ documentId: 5, message: 'bad row' }]);
   });
 });

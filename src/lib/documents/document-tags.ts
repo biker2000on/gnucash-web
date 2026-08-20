@@ -5,6 +5,14 @@
  * (document_id + tag_id) and reuses the shared `gnucash_web_tags` vocabulary.
  * Persistence is raw SQL so this module does not depend on a regenerated
  * Prisma client.
+ *
+ * COLUMN-NAME WARNING — `gnucash_web_document_tag_rules.book_root_guid`
+ * stores a **books.guid** (the same value `requireRole()` hands back as
+ * `bookGuid`), NOT a root ACCOUNT guid. The identically-named column on
+ * `gnucash_web_transaction_comments` holds a root account guid instead.
+ * Never join or copy values between the two, and never scope one with a
+ * helper written for the other (`getActiveBookRootGuid()` returns the account
+ * guid and is the wrong key here).
  */
 
 import { Prisma } from '@prisma/client';
@@ -61,10 +69,8 @@ async function requireOwnedDocument(bookGuid: string, documentId: number): Promi
   return row;
 }
 
-async function resolveOrCreateTagsForBook(
-  bookGuid: string,
-  rawNames: string[],
-): Promise<Array<{ id: number; name: string }>> {
+/** Normalize + validate raw tag names, de-duplicated, order preserved. */
+function normalizeTagNames(rawNames: string[]): string[] {
   const names: string[] = [];
   const seen = new Set<string>();
   for (const raw of rawNames) {
@@ -79,6 +85,23 @@ async function resolveOrCreateTagsForBook(
       names.push(name);
     }
   }
+  return names;
+}
+
+/**
+ * Resolve tag names to rows, creating the missing ones.
+ *
+ * Creation goes through `INSERT ... ON CONFLICT (book_guid, name) DO NOTHING`
+ * followed by a re-select rather than `create()`: two concurrent callers
+ * (an upload's rule sweep and a manual tag save, say) otherwise race the
+ * `(book_guid, name)` unique index and one of them dies with P2002 — which
+ * used to surface as a 500 and abort a rule sweep mid-way.
+ */
+async function resolveOrCreateTagsForBook(
+  bookGuid: string,
+  rawNames: string[],
+): Promise<Array<{ id: number; name: string }>> {
+  const names = normalizeTagNames(rawNames);
   if (names.length === 0) return [];
 
   const existing = await prisma.gnucash_web_tags.findMany({
@@ -97,15 +120,24 @@ async function resolveOrCreateTagsForBook(
     for (const name of missing) {
       const color = pickTagColor(usedColors);
       usedColors.push(color);
-      const created = await prisma.gnucash_web_tags.create({
-        data: { book_guid: bookGuid, name, color },
-        select: { id: true, name: true },
-      });
-      byName.set(name, created);
+      await prisma.$executeRaw`
+        INSERT INTO gnucash_web_tags (book_guid, name, color)
+        VALUES (${bookGuid}, ${name}, ${color})
+        ON CONFLICT (book_guid, name) DO NOTHING
+      `;
     }
+    // Re-select: the insert above returns nothing on conflict, and the row a
+    // competing writer created is just as good as one of ours.
+    const settled = await prisma.gnucash_web_tags.findMany({
+      where: { book_guid: bookGuid, name: { in: missing } },
+      select: { id: true, name: true },
+    });
+    for (const tag of settled) byName.set(tag.name, tag);
   }
 
-  return names.map((name) => byName.get(name)!);
+  return names.map((name) => byName.get(name)).filter(
+    (tag): tag is { id: number; name: string } => tag != null,
+  );
 }
 
 export async function getDocumentTags(bookGuid: string, documentId: number): Promise<string[]> {
@@ -121,30 +153,55 @@ export async function getDocumentTags(bookGuid: string, documentId: number): Pro
   return rows.map((row) => row.name);
 }
 
+/**
+ * Bind-parameter ceiling for an `IN (...)` id list. Postgres caps a statement
+ * at 65535 parameters and the planner degrades long before that, so callers
+ * that pass an unbounded id list (a whole vault page, a search result set)
+ * are chunked instead of building one enormous statement.
+ */
+export const ID_CHUNK_SIZE = 1000;
+
+export function chunkIds<T>(ids: T[], size: number = ID_CHUNK_SIZE): T[][] {
+  if (ids.length <= size) return ids.length === 0 ? [] : [ids];
+  const chunks: T[][] = [];
+  for (let index = 0; index < ids.length; index += size) {
+    chunks.push(ids.slice(index, index + size));
+  }
+  return chunks;
+}
+
 export async function getTagsForDocuments(
   bookGuid: string,
   documentIds: number[],
 ): Promise<Map<number, string[]>> {
   const map = new Map<number, string[]>();
   if (documentIds.length === 0) return map;
-  const rows = await prisma.$queryRaw<Array<{ document_id: number; name: string }>>`
-    SELECT dt.document_id, t.name
-    FROM gnucash_web_document_tags dt
-    JOIN gnucash_web_tags t ON t.id = dt.tag_id
-    JOIN gnucash_web_entity_documents e ON e.id = dt.document_id
-    WHERE e.book_guid = ${bookGuid}
-      AND t.book_guid = ${bookGuid}
-      AND dt.document_id IN (${Prisma.join(documentIds)})
-    ORDER BY t.name ASC
-  `;
-  for (const row of rows) {
-    const list = map.get(row.document_id) ?? [];
-    list.push(row.name);
-    map.set(row.document_id, list);
+  for (const chunk of chunkIds(documentIds)) {
+    const rows = await prisma.$queryRaw<Array<{ document_id: number; name: string }>>`
+      SELECT dt.document_id, t.name
+      FROM gnucash_web_document_tags dt
+      JOIN gnucash_web_tags t ON t.id = dt.tag_id
+      JOIN gnucash_web_entity_documents e ON e.id = dt.document_id
+      WHERE e.book_guid = ${bookGuid}
+        AND t.book_guid = ${bookGuid}
+        AND dt.document_id IN (${Prisma.join(chunk)})
+      ORDER BY t.name ASC
+    `;
+    for (const row of rows) {
+      const list = map.get(row.document_id) ?? [];
+      list.push(row.name);
+      map.set(row.document_id, list);
+    }
   }
   return map;
 }
 
+/**
+ * Replace a document's tags. The DELETE and the INSERTs run inside one
+ * transaction: split across autocommitted statements, two concurrent saves
+ * interleave into the union of both sets, and any reader landing between the
+ * delete and the inserts sees the document as untagged.
+ */
 export async function setDocumentTags(
   bookGuid: string,
   documentId: number,
@@ -153,17 +210,19 @@ export async function setDocumentTags(
   await requireOwnedDocument(bookGuid, documentId);
   const tags = await resolveOrCreateTagsForBook(bookGuid, rawNames);
 
-  await prisma.$executeRaw`
-    DELETE FROM gnucash_web_document_tags
-    WHERE document_id = ${documentId}
-  `;
-  for (const tag of tags) {
-    await prisma.$executeRaw`
-      INSERT INTO gnucash_web_document_tags (document_id, tag_id)
-      VALUES (${documentId}, ${tag.id})
-      ON CONFLICT DO NOTHING
+  await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`
+      DELETE FROM gnucash_web_document_tags
+      WHERE document_id = ${documentId}
     `;
-  }
+    for (const tag of tags) {
+      await tx.$executeRaw`
+        INSERT INTO gnucash_web_document_tags (document_id, tag_id)
+        VALUES (${documentId}, ${tag.id})
+        ON CONFLICT DO NOTHING
+      `;
+    }
+  });
   return tags.map((tag) => tag.name);
 }
 
@@ -378,40 +437,167 @@ export async function applyDocumentTagRulesForDocument(
   return addDocumentTags(bookGuid, documentId, names);
 }
 
+/** Documents scanned by one apply-rules request. The client continues with `afterId`. */
+export const APPLY_RULES_BATCH_SIZE = 500;
+
+export interface ApplyTagRulesSweep {
+  results: ApplyTagRulesResult[];
+  /** Documents examined in this pass. */
+  processed: number;
+  /** Documents in the book still awaiting a pass (0 when the sweep is done). */
+  remaining: number;
+  /** Highest document id examined; pass back as `afterId` to continue. */
+  lastDocumentId: number | null;
+  /** Documents that failed and were skipped, so one bad row can't abort the sweep. */
+  errors: Array<{ documentId: number; message: string }>;
+}
+
+export interface ApplyTagRulesOptions {
+  /** Resume token: only documents with a greater id are scanned. */
+  afterId?: number;
+  /** Cap on documents scanned; clamped to 1..APPLY_RULES_BATCH_SIZE. */
+  batchSize?: number;
+}
+
+/**
+ * Re-run the book's auto-tag rules over a bounded slice of its documents.
+ *
+ * Set-based by construction: the rule list and the whole tag vocabulary the
+ * rules can produce are resolved ONCE, matches are evaluated in memory, and
+ * the join rows go in as a single multi-row INSERT ... ON CONFLICT DO NOTHING
+ * per batch. The previous shape re-read the vocabulary and issued three
+ * statements per matching document, and scanned the entire vault per request.
+ */
 export async function applyDocumentTagRules(
   bookGuid: string,
-): Promise<ApplyTagRulesResult[]> {
+  options: ApplyTagRulesOptions = {},
+): Promise<ApplyTagRulesSweep> {
+  const batchSize = Math.min(
+    Math.max(1, Math.floor(options.batchSize ?? APPLY_RULES_BATCH_SIZE)),
+    APPLY_RULES_BATCH_SIZE,
+  );
+  const afterId = Number.isInteger(options.afterId) && options.afterId! > 0 ? options.afterId! : 0;
+
   const rules = await listDocumentTagRules(bookGuid);
   const docs = await prisma.$queryRaw<EntityDocRow[]>`
     SELECT id, book_guid, title, file_name, issuer
     FROM gnucash_web_entity_documents
     WHERE book_guid = ${bookGuid}
+      AND id > ${afterId}
     ORDER BY id ASC
+    LIMIT ${batchSize}
   `;
-  if (docs.length === 0 || rules.length === 0) {
-    return docs.map((doc) => ({ documentId: doc.id, applied: 0 }));
-  }
+  const lastDocumentId = docs.length > 0 ? docs[docs.length - 1].id : null;
 
+  const remainingRows = lastDocumentId === null
+    ? []
+    : await prisma.$queryRaw<Array<{ n: bigint }>>`
+        SELECT COUNT(*)::bigint AS n
+        FROM gnucash_web_entity_documents
+        WHERE book_guid = ${bookGuid}
+          AND id > ${lastDocumentId}
+      `;
+  const remaining = Number(remainingRows[0]?.n ?? 0);
+
+  const empty: ApplyTagRulesSweep = {
+    results: docs.map((doc) => ({ documentId: doc.id, applied: 0 })),
+    processed: docs.length,
+    remaining,
+    lastDocumentId,
+    errors: [],
+  };
+  if (docs.length === 0 || rules.length === 0) return empty;
+
+  const ids = docs.map((doc) => doc.id);
   const texts = await prisma.$queryRaw<Array<{ source_id: string; extracted_text: string | null }>>`
     SELECT source_id, extracted_text
     FROM gnucash_web_documents
     WHERE book_guid = ${bookGuid}
       AND source_kind = 'entity_document'
+      AND source_id = ANY(${ids.map((id) => String(id))})
   `;
   const textBySource = new Map(texts.map((row) => [row.source_id, row.extracted_text]));
 
-  const results: ApplyTagRulesResult[] = [];
+  // Evaluate every rule in memory first, so the vocabulary is resolved once.
+  const errors: Array<{ documentId: number; message: string }> = [];
+  const matchesByDocument = new Map<number, string[]>();
   for (const doc of docs) {
-    const names = matchingTagNames(
-      rules as DocumentTagRule[],
-      ruleInputFromDoc(doc, textBySource.get(String(doc.id)) ?? null),
-    );
-    const applied = names.length > 0
-      ? await addDocumentTags(bookGuid, doc.id, names)
-      : 0;
-    results.push({ documentId: doc.id, applied });
+    try {
+      const names = matchingTagNames(
+        rules as DocumentTagRule[],
+        ruleInputFromDoc(doc, textBySource.get(String(doc.id)) ?? null),
+      );
+      if (names.length > 0) matchesByDocument.set(doc.id, names);
+    } catch (error) {
+      // Per-document isolation: a single unparseable row must not abort the sweep.
+      errors.push({
+        documentId: doc.id,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
-  return results;
+
+  const wantedNames = [...new Set([...matchesByDocument.values()].flat())];
+  if (wantedNames.length === 0) return { ...empty, errors };
+
+  const tags = await resolveOrCreateTagsForBook(bookGuid, wantedNames);
+  const tagIdByName = new Map(tags.map((tag) => [tag.name, tag.id]));
+
+  const existing = await getTagIdsForDocuments(ids);
+  const pairs: Array<{ documentId: number; tagId: number }> = [];
+  const appliedByDocument = new Map<number, number>();
+  for (const [documentId, names] of matchesByDocument) {
+    const already = existing.get(documentId) ?? new Set<number>();
+    for (const name of names) {
+      const tagId = tagIdByName.get(name);
+      if (tagId === undefined || already.has(tagId)) continue;
+      already.add(tagId);
+      pairs.push({ documentId, tagId });
+      appliedByDocument.set(documentId, (appliedByDocument.get(documentId) ?? 0) + 1);
+    }
+  }
+
+  if (pairs.length > 0) {
+    for (const chunk of chunkIds(pairs)) {
+      await prisma.$executeRaw`
+        INSERT INTO gnucash_web_document_tags (document_id, tag_id)
+        SELECT * FROM UNNEST(
+          ${chunk.map((pair) => pair.documentId)}::integer[],
+          ${chunk.map((pair) => pair.tagId)}::integer[]
+        )
+        ON CONFLICT DO NOTHING
+      `;
+    }
+  }
+
+  return {
+    results: docs.map((doc) => ({
+      documentId: doc.id,
+      applied: appliedByDocument.get(doc.id) ?? 0,
+    })),
+    processed: docs.length,
+    remaining,
+    lastDocumentId,
+    errors,
+  };
+}
+
+/** Existing (document_id, tag_id) pairs for the batch, so inserts stay minimal. */
+async function getTagIdsForDocuments(documentIds: number[]): Promise<Map<number, Set<number>>> {
+  const map = new Map<number, Set<number>>();
+  for (const chunk of chunkIds(documentIds)) {
+    const rows = await prisma.$queryRaw<Array<{ document_id: number; tag_id: number }>>`
+      SELECT document_id, tag_id
+      FROM gnucash_web_document_tags
+      WHERE document_id IN (${Prisma.join(chunk)})
+    `;
+    for (const row of rows) {
+      const set = map.get(row.document_id) ?? new Set<number>();
+      set.add(row.tag_id);
+      map.set(row.document_id, set);
+    }
+  }
+  return map;
 }
 
 /* ------------------------------------------------------------------ */
@@ -419,19 +605,16 @@ export async function applyDocumentTagRules(
 /* ------------------------------------------------------------------ */
 
 /**
- * Attach vault tags to canonical-document search hits and optionally keep
- * only hits that have every requested tag (AND). Non-entity hits have no
- * vault tags.
+ * Attach vault tags to canonical-document search hits. Decoration ONLY — the
+ * tag filter itself belongs in `searchDocuments`' SQL, ahead of the per-group
+ * LIMIT; filtering here would silently drop matches that sorted below the cap
+ * and made the truncated sample look like the whole result set.
+ * Non-entity hits have no vault tags.
  */
 export async function attachTagsToDocumentSearchHits<T extends { id: string }>(
   bookGuid: string,
   hits: T[],
-  filterTags: string[] = [],
 ): Promise<Array<T & { tags: string[] }>> {
-  const required = filterTags
-    .map((name) => normalizeTagName(name))
-    .filter((name) => isValidTagName(name));
-
   if (hits.length === 0) {
     return [];
   }
@@ -442,13 +625,15 @@ export async function attachTagsToDocumentSearchHits<T extends { id: string }>(
 
   const sources = canonicalIds.length === 0
     ? []
-    : await prisma.$queryRaw<Array<{ id: number; source_id: string | null }>>`
-        SELECT id, source_id
-        FROM gnucash_web_documents
-        WHERE book_guid = ${bookGuid}
-          AND source_kind = 'entity_document'
-          AND id IN (${Prisma.join(canonicalIds)})
-      `;
+    : (await Promise.all(chunkIds(canonicalIds).map((chunk) =>
+        prisma.$queryRaw<Array<{ id: number; source_id: string | null }>>`
+          SELECT id, source_id
+          FROM gnucash_web_documents
+          WHERE book_guid = ${bookGuid}
+            AND source_kind = 'entity_document'
+            AND id IN (${Prisma.join(chunk)})
+        `,
+      ))).flat();
   const entityIdByCanonical = new Map<number, number>();
   const entityIds: number[] = [];
   for (const row of sources) {
@@ -466,8 +651,7 @@ export async function attachTagsToDocumentSearchHits<T extends { id: string }>(
     return { ...hit, tags };
   });
 
-  if (required.length === 0) return tagged;
-  return tagged.filter((hit) => required.every((name) => hit.tags.includes(name)));
+  return tagged;
 }
 
 export function parseTagsQueryParam(raw: string | null | undefined): string[] {

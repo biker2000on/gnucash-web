@@ -83,4 +83,56 @@ describe('GET /api/business/documents/[id]/thumbnail', () => {
     expect(response.status).toBe(400);
     expect(getThumbMock).not.toHaveBeenCalled();
   });
+
+  // CODEX-8 — a `private, max-age=604800` thumbnail stays reusable from a
+  // shared browser profile after logout, with no round-trip that could
+  // re-check the session.
+  describe('caching', () => {
+    it('revalidates on every use instead of caching privately for a week', async () => {
+      const response = await GET(new Request('http://localhost/thumb'), params);
+      expect(response.headers.get('Cache-Control')).toBe('private, max-age=0, must-revalidate');
+      expect(response.headers.get('Cache-Control')).not.toContain('604800');
+      expect(response.headers.get('ETag')).toMatch(/^"[0-9a-f]{32}"$/);
+    });
+
+    it('304s an unchanged thumbnail without re-reading storage', async () => {
+      const first = await GET(new Request('http://localhost/thumb'), params);
+      const etag = first.headers.get('ETag')!;
+      storageGet.mockClear();
+
+      const second = await GET(
+        new Request('http://localhost/thumb', { headers: { 'If-None-Match': etag } }),
+        params,
+      );
+      expect(second.status).toBe(304);
+      expect(await second.text()).toBe('');
+      expect(second.headers.get('ETag')).toBe(etag);
+      expect(second.headers.get('Cache-Control')).toBe('private, max-age=0, must-revalidate');
+      expect(storageGet).not.toHaveBeenCalled();
+    });
+
+    it('derives the ETag from the thumbnail key, so a re-render busts it', async () => {
+      const first = await GET(new Request('http://localhost/thumb'), params);
+      getThumbMock.mockResolvedValue({
+        id: 12,
+        bookGuid: BOOK,
+        fileKey: 'entity-documents/a.pdf',
+        mimeType: 'application/pdf',
+        thumbnailStatus: 'complete',
+        thumbnailKey: 'entity-documents/a_thumb.v2.webp',
+      });
+      const second = await GET(new Request('http://localhost/thumb'), params);
+      expect(second.headers.get('ETag')).not.toBe(first.headers.get('ETag'));
+      expect(second.status).toBe(200);
+    });
+
+    it('ignores a stale If-None-Match and serves the new bytes', async () => {
+      const response = await GET(
+        new Request('http://localhost/thumb', { headers: { 'If-None-Match': '"stale"' } }),
+        params,
+      );
+      expect(response.status).toBe(200);
+      expect(storageGet).toHaveBeenCalled();
+    });
+  });
 });

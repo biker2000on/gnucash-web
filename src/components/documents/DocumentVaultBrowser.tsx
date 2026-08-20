@@ -23,22 +23,39 @@ import {
 import type { EntityDocument } from '@/lib/services/entity-documents.service';
 import type { DocSearchResults, SearchSnippet } from '@/lib/doc-search';
 import { getDocumentTypeLabel, getTaxFormLabel } from '@/lib/entity-document-context';
-import { findMissingTaxForms } from '@/lib/tax-records';
+import { findMissingTaxForms, type MissingTaxForm } from '@/lib/tax-records';
 import { ErrorLiveRegion } from '@/components/a11y/LiveRegion';
 import { SELECT, inputClass } from '@/components/ui/form';
 import { readErrorBody } from '@/lib/api-error';
 
-const STORAGE_KEY = 'documentVault.browser.v1';
+// v2: card and table expansion are stored separately (they were one shared
+// map in v1, which left the table permanently collapsed — see below).
+const STORAGE_KEY = 'documentVault.browser.v2';
 const TNUM = { fontFeatureSettings: "'tnum'" } as const;
 
 export type DocumentVaultViewMode = 'cards' | 'table';
 export type DocumentVaultGrouping = 'category' | 'taxYear' | 'issuer' | 'none';
+export type DocumentThumbnailStatus = 'pending' | 'complete' | 'failed';
+
+/**
+ * A vault row as the list endpoint returns it: the entity document plus the
+ * sidecars `GET /api/business/documents` already computes in one batched pass
+ * (`tags`, `thumbnailStatus`). Reading them here is what keeps the browser
+ * from firing one /tags request and one thumbnail request per document.
+ */
+export interface VaultDocumentRow extends EntityDocument {
+    tags?: string[];
+    thumbnailStatus?: DocumentThumbnailStatus | null;
+}
 
 interface StoredBrowserState {
     viewMode?: DocumentVaultViewMode;
     grouping?: DocumentVaultGrouping;
     sorting?: SortingState;
-    expanded?: ExpandedState;
+    /** Collapsed card groups, keyed by group label. */
+    cardExpanded?: Record<string, boolean>;
+    /** TanStack's own expanded state — never shares a map with the cards. */
+    tableExpanded?: ExpandedState;
 }
 
 interface SearchHitWithSource {
@@ -47,11 +64,11 @@ interface SearchHitWithSource {
     href: string;
     date?: string | null;
     snippet: SearchSnippet;
-    sourceId?: string;
+    sourceId?: string | null;
     sourceKind?: string;
 }
 
-interface VaultRow extends EntityDocument {
+interface VaultRow extends VaultDocumentRow {
     categoryLabel: string;
     groupCategory: string;
     taxYearGroup: string;
@@ -61,7 +78,7 @@ interface VaultRow extends EntityDocument {
 }
 
 export interface DocumentVaultBrowserProps {
-    documents: EntityDocument[];
+    documents: VaultDocumentRow[];
     categoryOptions: Array<{ value: string; label: string }>;
     onPreview: (document: EntityDocument) => void;
     onEdit: (document: EntityDocument) => void;
@@ -72,21 +89,55 @@ export interface DocumentVaultBrowserProps {
     renderEditor?: (document: EntityDocument) => ReactNode;
 }
 
-function loadStoredState(): StoredBrowserState {
-    if (typeof window === 'undefined') return {};
-    try {
-        return JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? '{}') as StoredBrowserState;
-    } catch {
-        return {};
-    }
-}
-
 function isViewMode(value: unknown): value is DocumentVaultViewMode {
     return value === 'cards' || value === 'table';
 }
 
 function isGrouping(value: unknown): value is DocumentVaultGrouping {
     return value === 'category' || value === 'taxYear' || value === 'issuer' || value === 'none';
+}
+
+/** TanStack accepts `true` (all expanded) or a record of row-id booleans. */
+function isExpandedState(value: unknown): value is ExpandedState {
+    if (value === true) return true;
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+    return Object.values(value as Record<string, unknown>).every((entry) => typeof entry === 'boolean');
+}
+
+function isSortingState(value: unknown): value is SortingState {
+    return Array.isArray(value) && value.every((entry) =>
+        typeof entry === 'object' && entry !== null
+        && typeof (entry as { id?: unknown }).id === 'string'
+        && typeof (entry as { desc?: unknown }).desc === 'boolean'
+    );
+}
+
+function isBooleanRecord(value: unknown): value is Record<string, boolean> {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+    return Object.values(value as Record<string, unknown>).every((entry) => typeof entry === 'boolean');
+}
+
+/**
+ * Read persisted preferences. Called from an effect, never during render:
+ * touching localStorage while rendering makes the server-rendered markup and
+ * the client's first paint disagree (hydration mismatch).
+ */
+function loadStoredState(): StoredBrowserState {
+    if (typeof window === 'undefined') return {};
+    try {
+        const parsed = JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? '{}') as unknown;
+        if (typeof parsed !== 'object' || parsed === null) return {};
+        const raw = parsed as Record<string, unknown>;
+        return {
+            viewMode: isViewMode(raw.viewMode) ? raw.viewMode : undefined,
+            grouping: isGrouping(raw.grouping) ? raw.grouping : undefined,
+            sorting: isSortingState(raw.sorting) ? raw.sorting : undefined,
+            cardExpanded: isBooleanRecord(raw.cardExpanded) ? raw.cardExpanded : undefined,
+            tableExpanded: isExpandedState(raw.tableExpanded) ? raw.tableExpanded : undefined,
+        };
+    } catch {
+        return {};
+    }
 }
 
 export function formatDocumentBytes(bytes: number | null): string {
@@ -125,10 +176,22 @@ function HighlightedSnippet({ snippet }: { snippet: SearchSnippet }) {
     );
 }
 
-function DocumentThumbnail({ document }: { document: EntityDocument }) {
+/**
+ * Renders the stored first-page thumbnail.
+ *
+ * The fetch is issued ONLY for `thumbnailStatus === 'complete'`. The status
+ * arrives with the list response, so a vault of N documents no longer fires N
+ * requests that mostly 404: pending and failed rows render their own state
+ * without touching the network, and they render *different* states — a failed
+ * render is terminal, and showing it as "Preview pending" forever was a lie.
+ */
+function DocumentThumbnail({ document }: { document: VaultDocumentRow }) {
     const [src, setSrc] = useState<string | null>(null);
+    const status = document.thumbnailStatus;
+    const shouldFetch = status === 'complete';
 
     useEffect(() => {
+        if (!shouldFetch) return;
         let cancelled = false;
         let objectUrl: string | null = null;
         const controller = new AbortController();
@@ -146,7 +209,8 @@ function DocumentThumbnail({ document }: { document: EntityDocument }) {
                 objectUrl = URL.createObjectURL(blob);
                 setSrc(objectUrl);
             } catch {
-                // Pending/unsupported thumbnail routes deliberately render the placeholder.
+                // A thumbnail that disappeared between list and fetch falls back
+                // to the placeholder rather than breaking the card.
             }
         })();
 
@@ -155,16 +219,27 @@ function DocumentThumbnail({ document }: { document: EntityDocument }) {
             controller.abort();
             if (objectUrl && typeof URL.revokeObjectURL === 'function') URL.revokeObjectURL(objectUrl);
         };
-    }, [document.id]);
+    }, [document.id, shouldFetch]);
 
     return (
         <div className="flex aspect-[4/3] items-center justify-center overflow-hidden border-b border-border bg-background-tertiary">
-            {src ? (
+            {shouldFetch && src ? (
                 // The byte route is accepted only after its image/webp response is verified above.
                 // eslint-disable-next-line @next/next/no-img-element
                 <img src={src} alt={`First page of ${document.title}`} className="h-full w-full object-cover" />
+            ) : status === 'failed' ? (
+                <div
+                    className="flex flex-col items-center gap-2 text-foreground-muted"
+                    data-testid={`thumbnail-failed-${document.id}`}
+                >
+                    <span aria-hidden="true" className="font-mono text-2xl">▧</span>
+                    <span className="text-xs">No preview</span>
+                </div>
             ) : (
-                <div className="flex flex-col items-center gap-2 text-foreground-muted" data-testid={`thumbnail-placeholder-${document.id}`}>
+                <div
+                    className="flex flex-col items-center gap-2 text-foreground-muted"
+                    data-testid={`thumbnail-placeholder-${document.id}`}
+                >
                     <span aria-hidden="true" className="font-mono text-2xl">▤</span>
                     <span className="text-xs">Preview pending</span>
                 </div>
@@ -184,6 +259,27 @@ function ExpiryText({ document }: { document: EntityDocument }) {
     return <span className={className}>{document.expiresOn}</span>;
 }
 
+/** Relative expiry pill ("Expires in 12d" / "Expired 5d ago") — restored. */
+function ExpiryPill({ document }: { document: EntityDocument }) {
+    if (!document.expiresOn || document.daysUntilExpiry === null) return null;
+    const days = document.daysUntilExpiry;
+    const label = days < 0
+        ? `Expired ${Math.abs(days)}d ago`
+        : days === 0
+          ? 'Expires today'
+          : `Expires in ${days}d`;
+    const tone = days < 0
+        ? 'border-error/40 bg-error/10 text-error'
+        : days <= 60
+          ? 'border-warning/40 bg-warning/10 text-warning'
+          : 'border-border bg-background-tertiary text-foreground-secondary';
+    return (
+        <span className={`inline-block rounded-full border px-2 py-0.5 text-[11px] ${tone}`} title={`Expires ${document.expiresOn}`}>
+            {label}
+        </span>
+    );
+}
+
 function TagChips({ tags }: { tags: string[] | undefined }) {
     if (!tags?.length) return null;
     return (
@@ -194,6 +290,29 @@ function TagChips({ tags }: { tags: string[] | undefined }) {
                 </span>
             ))}
         </span>
+    );
+}
+
+/** Missing prior-year tax forms, rendered in BOTH views and under any grouping. */
+function MissingTaxFormsNotice({ entries, className }: { entries: MissingTaxForm[]; className?: string }) {
+    if (entries.length === 0) return null;
+    const byYear = new Map<number, MissingTaxForm[]>();
+    for (const entry of entries) {
+        byYear.set(entry.year, [...(byYear.get(entry.year) ?? []), entry]);
+    }
+    return (
+        <div
+            className={`rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning ${className ?? ''}`}
+            data-testid="missing-tax-forms"
+        >
+            {[...byYear.entries()]
+                .sort(([a], [b]) => b - a)
+                .map(([year, yearEntries]) => (
+                    <p key={year}>
+                        Missing vs {year - 1}: {yearEntries.map((entry) => entry.label).join(', ')}
+                    </p>
+                ))}
+        </div>
     );
 }
 
@@ -212,8 +331,45 @@ function TagEditor({
     const [value, setValue] = useState(tags.join(', '));
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const dialogRef = useRef<HTMLDivElement | null>(null);
+    const inputRef = useRef<HTMLInputElement | null>(null);
+    const triggerRef = useRef<HTMLButtonElement | null>(null);
 
-    useEffect(() => setValue(tags.join(', ')), [tags]);
+    // Depend on the tag CONTENT, not the array identity: a parent re-render
+    // handing over a fresh `[]` would otherwise wipe the user's draft mid-edit.
+    const tagsKey = tags.join(' ');
+    useEffect(() => {
+        setValue(tagsKey.split(' ').filter(Boolean).join(', '));
+    }, [tagsKey, document.id]);
+
+    const close = useCallback(() => {
+        setOpen(false);
+        triggerRef.current?.focus();
+    }, []);
+
+    // Dialog semantics: focus moves in on open, Escape closes, outside click closes.
+    useEffect(() => {
+        if (!open) return;
+        inputRef.current?.focus();
+        const onKeyDown = (event: KeyboardEvent) => {
+            if (event.key === 'Escape') {
+                event.stopPropagation();
+                close();
+            }
+        };
+        const onPointerDown = (event: MouseEvent) => {
+            const target = event.target as Node | null;
+            if (!target) return;
+            if (dialogRef.current?.contains(target) || triggerRef.current?.contains(target)) return;
+            setOpen(false);
+        };
+        window.document.addEventListener('keydown', onKeyDown, true);
+        window.document.addEventListener('mousedown', onPointerDown);
+        return () => {
+            window.document.removeEventListener('keydown', onKeyDown, true);
+            window.document.removeEventListener('mousedown', onPointerDown);
+        };
+    }, [close, open]);
 
     const toggleVocabularyTag = (tag: string) => {
         const next = new Set(value.split(',').map((part) => part.trim()).filter(Boolean));
@@ -236,7 +392,7 @@ function TagEditor({
             if (!response.ok) throw new Error(await readErrorBody(response, 'Failed to save tags'));
             const body = await response.json().catch(() => ({ tags: next })) as { tags?: string[] };
             onSaved(Array.isArray(body.tags) ? body.tags : next);
-            setOpen(false);
+            close();
         } catch (caught) {
             setError(caught instanceof Error ? caught.message : 'Failed to save tags');
         } finally {
@@ -247,6 +403,7 @@ function TagEditor({
     return (
         <span className="relative">
             <button
+                ref={triggerRef}
                 type="button"
                 onClick={() => setOpen((current) => !current)}
                 aria-expanded={open}
@@ -256,17 +413,24 @@ function TagEditor({
                 Edit tags
             </button>
             {open && (
-                <span role="dialog" aria-label={`Edit tags for ${document.title}`} className="absolute right-0 top-7 z-20 block w-72 space-y-3 rounded-md border border-border bg-surface-elevated p-3 shadow-lg">
+                <div
+                    ref={dialogRef}
+                    role="dialog"
+                    aria-modal="false"
+                    aria-label={`Edit tags for ${document.title}`}
+                    className="absolute right-0 top-7 z-20 w-72 space-y-3 rounded-md border border-border bg-surface-elevated p-3 text-left shadow-lg"
+                >
                     <label className="block text-xs font-medium text-foreground-secondary">
                         Tags, separated by commas
                         <input
+                            ref={inputRef}
                             value={value}
                             onChange={(event) => setValue(event.target.value)}
                             className={inputClass({ extra: 'mt-1' })}
                         />
                     </label>
                     {vocabulary.length > 0 && (
-                        <span className="flex flex-wrap gap-1">
+                        <div className="flex flex-wrap gap-1">
                             {vocabulary.map((tag) => {
                                 const selected = value.split(',').map((part) => part.trim()).includes(tag);
                                 return (
@@ -281,17 +445,17 @@ function TagEditor({
                                     </button>
                                 );
                             })}
-                        </span>
+                        </div>
                     )}
                     {error && <span className="block text-xs text-error">{error}</span>}
-                    <span className="flex justify-end gap-2">
-                        <button type="button" onClick={() => setOpen(false)} className="text-xs text-foreground-secondary hover:text-foreground">Cancel</button>
+                    <div className="flex justify-end gap-2">
+                        <button type="button" onClick={close} className="text-xs text-foreground-secondary hover:text-foreground">Cancel</button>
                         <button type="button" onClick={save} disabled={saving} className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary-hover disabled:opacity-50">
                             {saving ? 'Saving…' : 'Save tags'}
                         </button>
-                    </span>
+                    </div>
                     <ErrorLiveRegion message={error} />
-                </span>
+                </div>
             )}
         </span>
     );
@@ -353,60 +517,92 @@ export function DocumentVaultBrowser({
     onRequestDelete,
     renderEditor,
 }: DocumentVaultBrowserProps) {
-    const stored = useRef(loadStoredState());
-    const [viewMode, setViewMode] = useState<DocumentVaultViewMode>(
-        isViewMode(stored.current.viewMode) ? stored.current.viewMode : 'cards',
-    );
-    const [grouping, setGrouping] = useState<DocumentVaultGrouping>(
-        isGrouping(stored.current.grouping) ? stored.current.grouping : 'category',
-    );
-    const [sorting, setSorting] = useState<SortingState>(
-        Array.isArray(stored.current.sorting) ? stored.current.sorting : [{ id: 'title', desc: false }],
-    );
-    const [expanded, setExpanded] = useState<ExpandedState>(stored.current.expanded ?? true);
+    // Defaults only during the first render so SSR and hydration agree; the
+    // persisted preferences land in the effect below.
+    const [viewMode, setViewMode] = useState<DocumentVaultViewMode>('cards');
+    const [grouping, setGrouping] = useState<DocumentVaultGrouping>('category');
+    const [sorting, setSorting] = useState<SortingState>([{ id: 'title', desc: false }]);
+    const [cardExpanded, setCardExpanded] = useState<Record<string, boolean>>({});
+    const [tableExpanded, setTableExpanded] = useState<ExpandedState>(true);
+    const [hydrated, setHydrated] = useState(false);
     const [query, setQuery] = useState('');
     const [category, setCategory] = useState('all');
     const [searchHits, setSearchHits] = useState<SearchHitWithSource[] | null>(null);
     const [searching, setSearching] = useState(false);
     const [searchError, setSearchError] = useState<string | null>(null);
-    const [tagsByDocument, setTagsByDocument] = useState<Record<number, string[]>>({});
+    const [tagOverrides, setTagOverrides] = useState<Record<number, string[]>>({});
     const [tagVocabulary, setTagVocabulary] = useState<Array<{ name: string; count: number }>>([]);
     const [tagsAvailable, setTagsAvailable] = useState(false);
     const [selectedTags, setSelectedTags] = useState<string[]>([]);
 
     useEffect(() => {
-        window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ viewMode, grouping, sorting, expanded }));
-    }, [expanded, grouping, sorting, viewMode]);
+        const stored = loadStoredState();
+        if (stored.viewMode) setViewMode(stored.viewMode);
+        if (stored.grouping) setGrouping(stored.grouping);
+        if (stored.sorting) setSorting(stored.sorting);
+        if (stored.cardExpanded) setCardExpanded(stored.cardExpanded);
+        if (stored.tableExpanded !== undefined) setTableExpanded(stored.tableExpanded);
+        setHydrated(true);
+    }, []);
 
     useEffect(() => {
-        let cancelled = false;
-        void (async () => {
-            try {
-                const response = await fetch('/api/business/documents/tags');
-                if (!response.ok) return;
-                const body = await response.json() as { tags?: Array<{ name: string; count: number }> };
-                if (cancelled || !Array.isArray(body.tags)) return;
-                setTagVocabulary(body.tags);
-                setTagsAvailable(true);
-                const entries = await Promise.all(documents.map(async (document) => {
-                    try {
-                        const tagResponse = await fetch(`/api/business/documents/${document.id}/tags`);
-                        if (!tagResponse.ok) return [document.id, []] as const;
-                        const tagBody = await tagResponse.json() as { tags?: string[] };
-                        return [document.id, Array.isArray(tagBody.tags) ? tagBody.tags : []] as const;
-                    } catch {
-                        return [document.id, []] as const;
-                    }
-                }));
-                if (!cancelled) setTagsByDocument(Object.fromEntries(entries));
-            } catch {
-                // A vault deployed before tag routes simply hides all tag controls.
+        if (!hydrated) return;
+        window.localStorage.setItem(
+            STORAGE_KEY,
+            JSON.stringify({ viewMode, grouping, sorting, cardExpanded, tableExpanded }),
+        );
+    }, [cardExpanded, grouping, hydrated, sorting, tableExpanded, viewMode]);
+
+    /**
+     * Tags come from the list response's `tags` sidecar. `tagOverrides` only
+     * holds documents edited during this session, so a save shows immediately
+     * without re-reading the whole vault — and the browser issues ZERO
+     * per-document tag requests on load (it used to issue one each).
+     */
+    const tagsByDocument = useMemo(() => {
+        const map: Record<number, string[]> = {};
+        for (const document of documents) {
+            map[document.id] = tagOverrides[document.id] ?? document.tags ?? [];
+        }
+        return map;
+    }, [documents, tagOverrides]);
+
+    const refreshVocabulary = useCallback(async (signal?: AbortSignal) => {
+        try {
+            const response = await fetch('/api/business/documents/tags', { signal });
+            if (!response.ok) return false;
+            const body = await response.json() as { tags?: Array<{ name: string; count: number }> };
+            if (!Array.isArray(body.tags)) return false;
+            setTagVocabulary(body.tags);
+            setTagsAvailable(true);
+            return true;
+        } catch {
+            // A vault deployed before the tag routes simply hides all tag controls.
+            return false;
+        }
+    }, []);
+
+    useEffect(() => {
+        const controller = new AbortController();
+        void refreshVocabulary(controller.signal);
+        return () => controller.abort();
+    }, [refreshVocabulary]);
+
+    /** After a save: adopt the new tags AND refresh vocabulary chips/counts. */
+    const handleTagsSaved = useCallback(async (documentId: number, tags: string[]) => {
+        setTagOverrides((current) => ({ ...current, [documentId]: tags }));
+        await refreshVocabulary();
+        try {
+            const response = await fetch(`/api/business/documents/${documentId}/tags`);
+            if (!response.ok) return;
+            const body = await response.json() as { tags?: string[] };
+            if (Array.isArray(body.tags)) {
+                setTagOverrides((current) => ({ ...current, [documentId]: body.tags! }));
             }
-        })();
-        return () => {
-            cancelled = true;
-        };
-    }, [documents]);
+        } catch {
+            // The optimistic value from the PUT response stands.
+        }
+    }, [refreshVocabulary]);
 
     useEffect(() => {
         const trimmed = query.trim();
@@ -450,18 +646,34 @@ export function DocumentVaultBrowser({
         const hitsByDocument = new Map<number, SearchSnippet>();
         const matchedIds = new Set<number>();
         if (searchHits) {
+            const byEntityId = new Map(documents.map((document) => [document.id, document]));
+            const byCanonicalId = new Map(
+                documents
+                    .filter((document) => document.canonicalDocumentId !== undefined)
+                    .map((document) => [document.canonicalDocumentId!, document]),
+            );
             for (const hit of searchHits) {
-                const sourceId = Number(hit.sourceId ?? hit.id);
-                let document = documents.find((candidate) =>
-                    candidate.id === sourceId || candidate.canonicalDocumentId === Number(hit.id)
-                );
-                const titleMatches = documents.filter((candidate) =>
-                    candidate.title === hit.title && !matchedIds.has(candidate.id)
-                );
-                document ??= titleMatches.find((candidate) =>
-                    hit.date && candidate.uploadedAt.slice(0, 10) === hit.date
-                );
-                document ??= titleMatches[0];
+                /*
+                 * Resolution order matters. `hit.id` is a CANONICAL document id
+                 * and `document.id` is an entity-document id — different key
+                 * spaces that collide, so matching a canonical id against an
+                 * entity id (or, worse, falling through to title/date) could
+                 * attach a snippet to, and let the UI act on, the wrong file.
+                 * `sourceId` is the authoritative link; the canonical-id map is
+                 * the fallback; title/date is a last resort for old servers
+                 * that send neither.
+                 */
+                const sourceId = hit.sourceId != null ? Number(hit.sourceId) : NaN;
+                let document = Number.isInteger(sourceId) ? byEntityId.get(sourceId) : undefined;
+                document ??= byCanonicalId.get(Number(hit.id));
+                if (!document && hit.sourceId == null) {
+                    const titleMatches = documents.filter((candidate) =>
+                        candidate.title === hit.title && !matchedIds.has(candidate.id)
+                    );
+                    document = titleMatches.find((candidate) =>
+                        hit.date && candidate.uploadedAt.slice(0, 10) === hit.date
+                    ) ?? titleMatches[0];
+                }
                 if (!document) continue;
                 matchedIds.add(document.id);
                 hitsByDocument.set(document.id, hit.snippet);
@@ -504,7 +716,21 @@ export function DocumentVaultBrowser({
                             <HighlightedSnippet snippet={row.original.searchSnippet} />
                         </span>
                     )}
+                    {row.original.notes && (
+                        <span className="mt-1 block max-w-md truncate text-xs font-normal text-foreground-muted" title={row.original.notes}>
+                            {row.original.notes}
+                        </span>
+                    )}
                     <span className="mt-1 block"><TagChips tags={tagsByDocument[row.original.id]} /></span>
+                </span>
+            ),
+        }),
+        columnHelper.accessor('fileName', {
+            id: 'fileName',
+            header: 'File',
+            cell: ({ getValue }) => (
+                <span className="block max-w-56 truncate font-mono text-xs" style={TNUM} title={getValue() ?? undefined}>
+                    {getValue() || '—'}
                 </span>
             ),
         }),
@@ -539,11 +765,11 @@ export function DocumentVaultBrowser({
                     onEdit={() => onEdit(row.original)}
                     onRequestDelete={onRequestDelete}
                     onDelete={() => onDelete(row.original.id)}
-                    onTagsSaved={(tags) => setTagsByDocument((current) => ({ ...current, [row.original.id]: tags }))}
+                    onTagsSaved={(tags) => void handleTagsSaved(row.original.id, tags)}
                 />
             ),
         }),
-    ], [confirmDeleteId, onDelete, onEdit, onPreview, onRequestDelete, tagVocabulary, tagsAvailable, tagsByDocument]);
+    ], [confirmDeleteId, handleTagsSaved, onDelete, onEdit, onPreview, onRequestDelete, tagVocabulary, tagsAvailable, tagsByDocument]);
 
     const tableGrouping = grouping === 'category'
         ? ['groupCategory']
@@ -558,12 +784,15 @@ export function DocumentVaultBrowser({
         columns,
         state: {
             sorting,
-            expanded,
+            // Card collapse state must NEVER reach TanStack: it reads a record
+            // as "only these row ids are expanded", so a single collapsed card
+            // group used to render every table group empty (and persist it).
+            expanded: tableExpanded,
             grouping: tableGrouping,
             columnVisibility: { groupCategory: false, taxYearGroup: false, issuerGroup: false },
         },
         onSortingChange: setSorting,
-        onExpandedChange: setExpanded,
+        onExpandedChange: setTableExpanded,
         autoResetExpanded: false,
         getCoreRowModel: getCoreRowModel(),
         getSortedRowModel: getSortedRowModel(),
@@ -587,16 +816,35 @@ export function DocumentVaultBrowser({
         return [...groups.entries()].map(([label, groupedDocuments]) => ({ key: label, label, documents: groupedDocuments }));
     }, [grouping, sortedRows]);
 
+    /**
+     * The prior-year completeness diff is derived from the tax records
+     * themselves, not from a group label that happens to parse as a year — the
+     * label-parse version only ever fired under "Group by → Tax year" and was
+     * invisible in table view.
+     */
     const missingTaxForms = useMemo(() => findMissingTaxForms(documents), [documents]);
+    const missingByYear = useMemo(() => {
+        const map = new Map<number, MissingTaxForm[]>();
+        for (const entry of missingTaxForms) {
+            map.set(entry.year, [...(map.get(entry.year) ?? []), entry]);
+        }
+        return map;
+    }, [missingTaxForms]);
+
+    const missingForGroup = useCallback((groupDocuments: VaultRow[]): MissingTaxForm[] => {
+        const years = new Set(
+            groupDocuments
+                .filter((row) => row.docType === 'tax' && row.taxYear !== null)
+                .map((row) => row.taxYear as number),
+        );
+        return [...years].flatMap((year) => missingByYear.get(year) ?? []);
+    }, [missingByYear]);
+
     const updateCardExpanded = useCallback((key: string) => {
-        setExpanded((current) => {
-            const record = current === true ? {} : current;
-            const storageKey = `card:${key}`;
-            return { ...record, [storageKey]: record[storageKey] === false };
-        });
+        setCardExpanded((current) => ({ ...current, [key]: current[key] === false }));
     }, []);
 
-    const isCardExpanded = (key: string) => expanded === true || expanded[`card:${key}`] !== false;
+    const isCardExpanded = (key: string) => cardExpanded[key] !== false;
     const visibleCategoryOptions = [
         ...categoryOptions,
         ...documents
@@ -678,6 +926,9 @@ export function DocumentVaultBrowser({
                 </div>
             )}
 
+            {/* Rendered in both views and under every grouping. */}
+            <MissingTaxFormsNotice entries={missingTaxForms} />
+
             <div className="flex items-center justify-between gap-3 text-xs text-foreground-muted">
                 <span className="font-mono" style={TNUM}>{rows.length} document{rows.length === 1 ? '' : 's'}</span>
                 {searching && <span>Searching…</span>}
@@ -696,10 +947,7 @@ export function DocumentVaultBrowser({
                 <div className="space-y-4" data-testid="document-card-view">
                     {cardGroups.map((group) => {
                         const open = isCardExpanded(group.key);
-                        const numericYear = Number(group.label);
-                        const missing = Number.isInteger(numericYear)
-                            ? missingTaxForms.filter((entry) => entry.year === numericYear)
-                            : [];
+                        const missing = missingForGroup(group.documents);
                         return (
                             <section key={group.key} className="overflow-hidden rounded-lg border border-border bg-background-secondary/30">
                                 {grouping !== 'none' && (
@@ -713,7 +961,9 @@ export function DocumentVaultBrowser({
                                         <span className="text-xs font-semibold uppercase tracking-wider text-foreground-secondary">{group.label}</span>
                                         <span className="font-mono text-xs text-foreground-muted" style={TNUM}>{group.documents.length}</span>
                                         {missing.length > 0 && (
-                                            <span className="text-xs text-warning">Missing vs {numericYear - 1}: {missing.map((entry) => entry.label).join(', ')}</span>
+                                            <span className="text-xs text-warning">
+                                                Missing vs {missing[0].priorYear}: {missing.map((entry) => entry.label).join(', ')}
+                                            </span>
                                         )}
                                     </button>
                                 )}
@@ -732,11 +982,17 @@ export function DocumentVaultBrowser({
                                                         </div>
                                                         <div className="space-y-1 font-mono text-xs text-foreground-muted" style={TNUM}>
                                                             <p>{document.issuedOn ?? document.uploadedAt.slice(0, 10)} · {formatDocumentBytes(document.sizeBytes)} · {document.fileType}</p>
+                                                            {document.fileName && (
+                                                                <p className="truncate" title={document.fileName}>{document.fileName}</p>
+                                                            )}
                                                             {document.docType === 'tax' && (document.taxForm || document.issuer) && (
                                                                 <p>{[getTaxFormLabel(document.taxForm), document.issuer].filter(Boolean).join(' · ')}</p>
                                                             )}
-                                                            {document.expiresOn && <p><ExpiryText document={document} /></p>}
                                                         </div>
+                                                        <ExpiryPill document={document} />
+                                                        {document.notes && (
+                                                            <p className="line-clamp-2 text-xs text-foreground-secondary" title={document.notes}>{document.notes}</p>
+                                                        )}
                                                         {document.searchSnippet && <p className="text-xs text-foreground-muted"><HighlightedSnippet snippet={document.searchSnippet} /></p>}
                                                         <TagChips tags={tagsByDocument[document.id]} />
                                                         <DocumentActions
@@ -749,7 +1005,7 @@ export function DocumentVaultBrowser({
                                                             onEdit={() => onEdit(document)}
                                                             onRequestDelete={onRequestDelete}
                                                             onDelete={() => onDelete(document.id)}
-                                                            onTagsSaved={(tags) => setTagsByDocument((current) => ({ ...current, [document.id]: tags }))}
+                                                            onTagsSaved={(tags) => void handleTagsSaved(document.id, tags)}
                                                         />
                                                     </div>
                                                 </article>
@@ -790,10 +1046,18 @@ export function DocumentVaultBrowser({
                             {table.getRowModel().rows.map((row) => row.getIsGrouped() ? (
                                 <tr key={row.id} className="border-b border-border/50 bg-background-tertiary/30">
                                     <td colSpan={table.getVisibleLeafColumns().length} className="px-3 py-2">
-                                        <button type="button" aria-expanded={row.getIsExpanded()} onClick={row.getToggleExpandedHandler()} className="flex items-center gap-3 text-left">
+                                        <button type="button" aria-expanded={row.getIsExpanded()} onClick={row.getToggleExpandedHandler()} className="flex flex-wrap items-center gap-3 text-left">
                                             <span aria-hidden="true">{row.getIsExpanded() ? '▾' : '▸'}</span>
                                             <span className="font-medium text-foreground">{String(row.groupingValue)}</span>
                                             <span className="font-mono text-xs text-foreground-muted" style={TNUM}>{row.subRows.length}</span>
+                                            {(() => {
+                                                const missing = missingForGroup(row.subRows.map((sub) => sub.original));
+                                                return missing.length > 0 ? (
+                                                    <span className="text-xs text-warning">
+                                                        Missing vs {missing[0].priorYear}: {missing.map((entry) => entry.label).join(', ')}
+                                                    </span>
+                                                ) : null;
+                                            })()}
                                         </button>
                                     </td>
                                 </tr>

@@ -30,25 +30,21 @@ export async function GET(request: NextRequest) {
         const filterTags = parseTagsQueryParam(searchParams.get('tags'));
 
         const bookAccountGuids = await getBookAccountGuids();
+        // The tag filter is pushed into the SQL so it applies BEFORE the
+        // per-group limit; `attachTagsToDocumentSearchHits` only decorates.
         const results = await searchDocuments(
             bookAccountGuids,
             roleResult.bookGuid,
             validation.query,
-            { limit },
+            { limit, tags: filterTags },
         );
 
         const documents = await attachTagsToDocumentSearchHits(
             roleResult.bookGuid,
             results.documents,
-            filterTags,
         );
-        const dropped = results.documents.length - documents.length;
 
-        return NextResponse.json({
-            ...results,
-            documents,
-            totalHits: results.totalHits - dropped,
-        });
+        return NextResponse.json({ ...results, documents });
     } catch (error) {
         console.error('Error searching documents:', error);
         return NextResponse.json({ error: 'Failed to search documents' }, { status: 500 });

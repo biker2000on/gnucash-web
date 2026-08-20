@@ -116,8 +116,22 @@ interface DocDbRow {
     uploaded_at: Date;
 }
 
-function mapDocument(row: DocDbRow, today: Date = new Date()): EntityDocument {
+/**
+ * `canonicalDocumentId` is the `gnucash_web_documents.id` that indexes this
+ * row. It is a DIFFERENT key space from `id` (the entity-document id) and the
+ * two collide freely — search hits are keyed by the canonical id, so a client
+ * that has to match a hit back to a vault row needs both. Pass
+ * `canonicalIdByDocument` whenever the caller has already batch-loaded the
+ * mapping; omitting it simply leaves the field undefined (as before).
+ */
+function mapDocument(
+    row: DocDbRow,
+    today: Date = new Date(),
+    canonicalIdByDocument?: Map<number, number>,
+): EntityDocument {
+    const canonicalDocumentId = canonicalIdByDocument?.get(row.id);
     return {
+        ...(canonicalDocumentId === undefined ? {} : { canonicalDocumentId }),
         id: row.id,
         title: row.title,
         docType: row.doc_type,
@@ -218,6 +232,30 @@ function parseDate(value: string | null | undefined, field: string): Date | null
 /* CRUD                                                                 */
 /* ------------------------------------------------------------------ */
 
+/**
+ * entity-document id -> canonical `gnucash_web_documents.id` for the book.
+ * One batched read; the canonical table may not exist on an older deployment,
+ * in which case the vault simply lists without canonical ids.
+ */
+async function canonicalIdsForEntityDocuments(bookGuid: string): Promise<Map<number, number>> {
+    const map = new Map<number, number>();
+    try {
+        const rows = await prisma.$queryRaw<Array<{ id: number; source_id: string | null }>>`
+            SELECT id, source_id
+            FROM gnucash_web_documents
+            WHERE book_guid = ${bookGuid}
+              AND source_kind = 'entity_document'
+        `;
+        for (const row of rows) {
+            const entityId = Number.parseInt(row.source_id ?? '', 10);
+            if (Number.isInteger(entityId) && entityId > 0) map.set(entityId, row.id);
+        }
+    } catch {
+        // Canonical index not provisioned yet — callers treat the id as optional.
+    }
+    return map;
+}
+
 /** All documents for the book, expiring-first then newest upload first. */
 export async function listEntityDocuments(bookGuid: string): Promise<EntityDocument[]> {
     const rows = await prisma.gnucash_web_entity_documents.findMany({
@@ -225,8 +263,9 @@ export async function listEntityDocuments(bookGuid: string): Promise<EntityDocum
         orderBy: [{ uploaded_at: 'desc' }],
     });
     const today = new Date();
+    const canonicalIds = await canonicalIdsForEntityDocuments(bookGuid);
     return rows
-        .map((r) => mapDocument(r, today))
+        .map((r) => mapDocument(r, today, canonicalIds))
         .sort((a, b) => {
             const ax = a.daysUntilExpiry ?? Number.POSITIVE_INFINITY;
             const bx = b.daysUntilExpiry ?? Number.POSITIVE_INFINITY;

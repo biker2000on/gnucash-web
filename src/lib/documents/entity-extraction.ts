@@ -121,6 +121,15 @@ export async function runEntityDocumentExtraction(
   documentId: number,
   bookGuid: string,
   logPrefix = '[entity-document]',
+  options: {
+    /**
+     * Allow a queue-less inline thumbnail render. Only the worker's job
+     * handler passes true — the inline callers on request paths (upload,
+     * re-extract) must leave the row `pending` for the boot backfill instead
+     * of rasterizing a PDF inside the HTTP handler.
+     */
+    allowInlineThumbnail?: boolean;
+  } = {},
 ): Promise<void> {
   const row = await prisma.gnucash_web_entity_documents.findFirst({
     where: { id: documentId, book_guid: bookGuid },
@@ -132,7 +141,9 @@ export async function runEntityDocumentExtraction(
 
   try {
     const { enqueueDocumentThumbnail } = await import('@/lib/queue/jobs/render-document-thumbnail');
-    await enqueueDocumentThumbnail(documentId, bookGuid);
+    await enqueueDocumentThumbnail(documentId, bookGuid, {
+      allowInline: options.allowInlineThumbnail === true,
+    });
   } catch (thumbError) {
     console.warn(
       `${logPrefix} Thumbnail enqueue failed for ${documentId}:`,
