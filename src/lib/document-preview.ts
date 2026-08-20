@@ -22,20 +22,39 @@ export const INLINE_PREVIEW_MIME_TYPES = [
 ] as const;
 
 /**
- * Headers added to inline responses.
+ * Headers added to inline responses, chosen PER TYPE.
  *
- * `sandbox` is the load-bearing one: it drops the response into a unique opaque
- * origin, so even if a safelisted type somehow carried script it could not touch
- * the app origin or its cookies. `default-src 'none'` blocks subresource loads.
- * Verified in Chrome 141 that the built-in PDF viewer still renders under this
- * exact policy, so no relaxation was needed (see DocumentPreviewModal for the
- * matching note about the iframe `sandbox` *attribute*, which is a different
- * mechanism and does break the viewer).
+ * For images, `sandbox` is the load-bearing directive: it drops the response
+ * into a unique opaque origin, so even if a safelisted type somehow carried
+ * script it could not touch the app origin or its cookies, and
+ * `default-src 'none'` blocks subresource loads.
+ *
+ * PDFs deliberately get the same policy WITHOUT `sandbox`. Chrome refuses to
+ * run its built-in PDF viewer in a CSP-sandboxed document and falls back to
+ * DOWNLOADING the file instead — clicking Preview popped a native save dialog
+ * over the app (observed in prod, 2026-08-20; an earlier note here claiming
+ * Chrome 141 rendered under `sandbox` did not hold in practice). The viewer
+ * itself is browser chrome: PDFium does not execute page-context script, the
+ * response still carries `default-src 'none'` + nosniff, and only the
+ * magic-byte-validated `application/pdf` upload path can reach this branch.
  */
-export const INLINE_RESPONSE_SECURITY_HEADERS: Readonly<Record<string, string>> = {
+const SANDBOXED_INLINE_HEADERS: Readonly<Record<string, string>> = {
     'Content-Security-Policy': "sandbox; default-src 'none'",
     'X-Content-Type-Options': 'nosniff',
 };
+
+const PDF_INLINE_HEADERS: Readonly<Record<string, string>> = {
+    'Content-Security-Policy': "default-src 'none'",
+    'X-Content-Type-Options': 'nosniff',
+};
+
+/** @deprecated kept for callers that predate the per-type split; sandboxed. */
+export const INLINE_RESPONSE_SECURITY_HEADERS = SANDBOXED_INLINE_HEADERS;
+
+/** Security headers for an inline response of the given (safelisted) type. */
+export function inlineResponseSecurityHeaders(mimeType: string | null | undefined): Readonly<Record<string, string>> {
+    return normalizeMime(mimeType) === 'application/pdf' ? PDF_INLINE_HEADERS : SANDBOXED_INLINE_HEADERS;
+}
 
 /** Strip parameters (`application/pdf; charset=…`) and normalise case. */
 function normalizeMime(mimeType: string | null | undefined): string {
@@ -85,7 +104,9 @@ export function documentDownloadUrl(documentId: number): string {
 
 /** Same bytes, asking for `inline`; the server still decides by MIME type. */
 export function documentInlineUrl(documentId: number): string {
-    return `${documentDownloadUrl(documentId)}?disposition=inline`;
+    // `v=2` busts the 24h-cached pre-fix responses whose CSP `sandbox` made
+    // Chrome download the PDF instead of rendering it.
+    return `${documentDownloadUrl(documentId)}?disposition=inline&v=2`;
 }
 
 /**
@@ -110,6 +131,6 @@ export function buildDocumentServeHeaders(options: {
         // nosniff on every response: it never changes how an attachment behaves,
         // and it stops a mislabelled body being re-typed as HTML.
         'X-Content-Type-Options': 'nosniff',
-        ...(inline ? INLINE_RESPONSE_SECURITY_HEADERS : {}),
+        ...(inline ? inlineResponseSecurityHeaders(options.mimeType) : {}),
     };
 }

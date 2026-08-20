@@ -46,7 +46,7 @@ describe('DocumentPreviewModal', () => {
 
         const frame = await screen.findByTitle('Preview of Homeowners policy');
         expect(frame.tagName).toBe('IFRAME');
-        expect(frame.getAttribute('src')).toBe('/api/business/documents/12/download?disposition=inline');
+        expect(frame.getAttribute('src')).toBe('/api/business/documents/12/download?disposition=inline&v=2');
     });
 
     it('leaves the iframe sandbox attribute off, which Chrome needs for its PDF viewer', async () => {
@@ -65,7 +65,7 @@ describe('DocumentPreviewModal', () => {
 
         const image = await screen.findByAltText('Preview of Roof photo');
         expect(image.tagName).toBe('IMG');
-        expect(image.getAttribute('src')).toBe('/api/business/documents/12/download?disposition=inline');
+        expect(image.getAttribute('src')).toBe('/api/business/documents/12/download?disposition=inline&v=2');
     });
 
     it('offers a download instead of a frame for a type that cannot be previewed', async () => {

@@ -66,9 +66,15 @@ describe('buildDocumentServeHeaders', () => {
     });
 
     it('sends the isolation headers only on inline responses', () => {
+        // PDF: no `sandbox` — Chrome's PDF viewer refuses to run in a CSP-
+        // sandboxed document and downloads the file instead (native save
+        // dialog over the app). Images keep the full sandbox.
         const inline = serve('application/pdf', 'inline');
-        expect(inline['Content-Security-Policy']).toBe("sandbox; default-src 'none'");
+        expect(inline['Content-Security-Policy']).toBe("default-src 'none'");
         expect(inline['X-Content-Type-Options']).toBe('nosniff');
+
+        const image = serve('image/png', 'inline');
+        expect(image['Content-Security-Policy']).toBe("sandbox; default-src 'none'");
 
         const attachment = serve('application/pdf');
         expect(attachment['Content-Security-Policy']).toBeUndefined();
@@ -112,6 +118,6 @@ describe('resolvePreviewKind', () => {
 describe('document urls', () => {
     it('keeps the download url free of the disposition parameter', () => {
         expect(documentDownloadUrl(7)).toBe('/api/business/documents/7/download');
-        expect(documentInlineUrl(7)).toBe('/api/business/documents/7/download?disposition=inline');
+        expect(documentInlineUrl(7)).toBe('/api/business/documents/7/download?disposition=inline&v=2');
     });
 });

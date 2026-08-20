@@ -1,5 +1,16 @@
 @import "tailwindcss";
 
+/* Tailwind v4 resets <button> to cursor: default; every clickable control in
+   this app expects the v3-era pointer (users read the arrow cursor as "not
+   clickable" — reported on the document vault's Preview/Edit/Delete). Disabled
+   controls keep the default cursor. */
+@layer base {
+    button:not(:disabled),
+    [role="button"]:not([aria-disabled="true"]) {
+        cursor: pointer;
+    }
+}
+
 /* ========================================
    Theme CSS Variables
    ======================================== */

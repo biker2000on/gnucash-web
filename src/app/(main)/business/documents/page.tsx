@@ -193,6 +193,7 @@ export default function EntityDocumentsPage() {
     // Upload panel state — files stage locally and nothing is sent until
     // Upload is pressed; every staged file can be removed first.
     const [staged, setStaged] = useState<StagedFile[]>([]);
+    const [uploadOpen, setUploadOpen] = useState(false);
     const [uploadTitle, setUploadTitle] = useState('');
     const [uploadType, setUploadType] = useState('other');
     const [uploadExpires, setUploadExpires] = useState('');
@@ -731,8 +732,16 @@ export default function EntityDocumentsPage() {
                         </div>
                     )}
 
-                    {/* Upload panel */}
-                    <div className="bg-background-secondary/30 border border-border rounded-lg p-4 space-y-4">
+                    {/* Upload panel — folded closed by default; staging a file opens it. */}
+                    <details
+                        className="bg-background-secondary/30 border border-border rounded-lg"
+                        open={uploadOpen || staged.length > 0}
+                        onToggle={(e) => setUploadOpen(e.currentTarget.open)}
+                    >
+                        <summary className="cursor-pointer select-none rounded-lg px-4 py-3 text-sm font-medium text-foreground-secondary hover:text-foreground">
+                            Upload documents
+                        </summary>
+                    <div className="p-4 pt-1 space-y-4">
                         <div
                             onDragOver={(e) => {
                                 e.preventDefault();
@@ -916,6 +925,7 @@ export default function EntityDocumentsPage() {
                             />
                         </div>
                     </div>
+                    </details>
 
                     {/* Post-upload detailing pass */}
                     {detailing.length > 0 && (

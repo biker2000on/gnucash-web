@@ -40,7 +40,10 @@ describe('GET document download', () => {
         const response = await GET(request('?disposition=inline'), params);
         expect(response.headers.get('Content-Disposition')).toBe("inline; filename*=UTF-8''policy.pdf");
         expect(response.headers.get('Content-Type')).toBe('application/pdf');
-        expect(response.headers.get('Content-Security-Policy')).toBe("sandbox; default-src 'none'");
+        // PDFs must NOT be CSP-sandboxed: Chrome refuses to run its PDF viewer in
+        // a sandboxed document and downloads the file instead (a native save
+        // dialog over the app). Images keep the sandbox.
+        expect(response.headers.get('Content-Security-Policy')).toBe("default-src 'none'");
         expect(response.headers.get('X-Content-Type-Options')).toBe('nosniff');
     });
 
