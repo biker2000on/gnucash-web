@@ -9,11 +9,16 @@ import {
     TAX_FORM_DEFINITIONS,
     type EntityDocumentProfile,
 } from '@/lib/entity-document-context';
-import { groupTaxRecordsByYear, findMissingTaxForms } from '@/lib/tax-records';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { useDocumentPreview } from '@/components/documents/DocumentPreviewModal';
+import {
+    DocumentVaultBrowser,
+    formatDocumentBytes,
+} from '@/components/documents/DocumentVaultBrowser';
 import { useToast } from '@/contexts/ToastContext';
 import { Tip } from '@/components/ui/Tooltip';
+import { INPUT, LABEL, SELECT } from '@/components/ui/form';
+import { readErrorBody } from '@/lib/api-error';
 
 const TNUM = { fontFeatureSettings: "'tnum'" } as const;
 
@@ -21,37 +26,6 @@ interface DocumentsResponse {
     documents: EntityDocument[];
     expiringSoon: EntityDocument[];
     warningDays: number;
-}
-
-function formatBytes(bytes: number | null): string {
-    if (bytes === null) return '—';
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function ExpiryBadge({ doc }: { doc: EntityDocument }) {
-    const days = doc.daysUntilExpiry;
-    if (days === null) return null;
-    if (days < 0) {
-        return (
-            <span className="inline-block rounded-full border border-error/30 bg-error/10 px-2 py-0.5 text-[11px] font-medium text-error whitespace-nowrap">
-                Expired {doc.expiresOn}
-            </span>
-        );
-    }
-    if (days <= 60) {
-        return (
-            <span className="inline-block rounded-full border border-warning/30 bg-warning/10 px-2 py-0.5 text-[11px] font-medium text-warning whitespace-nowrap">
-                Expires in {days}d
-            </span>
-        );
-    }
-    return (
-        <span className="inline-block rounded-full border border-border bg-background-tertiary px-2 py-0.5 text-[11px] text-foreground-muted whitespace-nowrap">
-            Expires {doc.expiresOn}
-        </span>
-    );
 }
 
 interface EditState {
@@ -64,6 +38,7 @@ interface EditState {
     taxYear: string;
     taxForm: string;
     issuer: string;
+    suggestedTags: string[];
 }
 
 function editStateFrom(doc: EntityDocument): EditState {
@@ -77,6 +52,7 @@ function editStateFrom(doc: EntityDocument): EditState {
         taxYear: doc.taxYear === null ? '' : String(doc.taxYear),
         taxForm: doc.taxForm ?? '',
         issuer: doc.issuer ?? '',
+        suggestedTags: [],
     };
 }
 
@@ -103,15 +79,50 @@ interface StagedFile {
     error?: string;
 }
 
-interface TaxSuggestions {
-    taxForm: string | null;
-    taxYear: number | null;
-    issuer: string | null;
+interface DocumentSuggestions {
+    suggestionKind: string;
+    values: Record<string, unknown>;
 }
 
-const inputClass =
-    'w-full rounded-lg border border-border bg-input-bg px-3 py-2.5 text-sm text-foreground placeholder:text-foreground-muted focus:border-primary/50 focus:outline-none';
-const labelClass = 'block text-xs text-foreground-secondary mb-1';
+const inputClass = INPUT;
+const labelClass = LABEL;
+
+function stringValue(value: unknown): string | null {
+    return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function stringList(value: unknown): string[] {
+    return Array.isArray(value)
+        ? value.flatMap((item) => typeof item === 'string' && item.trim() ? [item.trim()] : [])
+        : [];
+}
+
+function suggestedTagList(values: Record<string, unknown>): string[] {
+    const tags = stringList(values.tags);
+    return tags.length > 0 ? tags : stringList(values.suggestedTags);
+}
+
+function mergeSuggestionNote(existing: string, suggestion: string): string {
+    if (!suggestion || existing.includes(suggestion)) return existing;
+    return [existing, suggestion].filter(Boolean).join(' · ');
+}
+
+function suggestionSummary(suggestion: DocumentSuggestions): string {
+    const values = suggestion.values;
+    const tags = suggestedTagList(values);
+    let parts: Array<string | number | null> = [];
+    if (suggestion.suggestionKind === 'tax_record') {
+        parts = [getTaxFormLabel(stringValue(values.taxForm)), typeof values.taxYear === 'number' ? values.taxYear : null, stringValue(values.issuer)];
+    } else if (suggestion.suggestionKind === 'insurance_policy') {
+        parts = [stringValue(values.provider), stringValue(values.policyType), stringValue(values.renewalDate)];
+    } else if (suggestion.suggestionKind === 'estate_document') {
+        parts = [stringValue(values.kind), stringValue(values.principalName), stringValue(values.executionDate)];
+    } else {
+        parts = [stringValue(values.documentClass), ...stringList(values.effectiveDates).slice(0, 1), ...stringList(values.parties).slice(0, 2)];
+    }
+    if (tags.length > 0) parts.push(`tags: ${tags.join(', ')}`);
+    return parts.filter((part): part is string | number => part !== null && part !== '').join(' · ') || 'no suggestion';
+}
 
 /** Tax subtype fields shown whenever a form's type is 'tax'. */
 function TaxFields({
@@ -132,7 +143,7 @@ function TaxFields({
                 <select
                     value={taxForm}
                     onChange={(e) => onChange({ taxForm: e.target.value })}
-                    className={inputClass}
+                    className={SELECT}
                 >
                     <option value="">— Select form —</option>
                     {TAX_FORM_DEFINITIONS.map((o) => (
@@ -198,7 +209,7 @@ export default function EntityDocumentsPage() {
     const [detailEdits, setDetailEdits] = useState<Record<number, EditState>>({});
     const [detailSaved, setDetailSaved] = useState<Record<number, boolean>>({});
     const [detailSaving, setDetailSaving] = useState<Record<number, boolean>>({});
-    const [suggestions, setSuggestions] = useState<Record<number, TaxSuggestions>>({});
+    const [suggestions, setSuggestions] = useState<Record<number, DocumentSuggestions>>({});
     const pollTimers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
 
     // Inline edit state (existing documents)
@@ -251,7 +262,7 @@ export default function EntityDocumentsPage() {
     }, []);
 
     /**
-     * Poll the suggestions endpoint for a tax document until the AI pass
+     * Poll the suggestions endpoint for any document until the AI pass
      * finishes (bounded). Suggestions are advisory — Apply fills the form,
      * the user still saves.
      */
@@ -263,8 +274,14 @@ export default function EntityDocumentsPage() {
                 const res = await fetch(`/api/business/documents/${documentId}/suggestions`);
                 if (!res.ok) return;
                 const body = await res.json();
-                if (body.suggestionKind === 'tax_record' && body.suggestions) {
-                    setSuggestions((prev) => ({ ...prev, [documentId]: body.suggestions }));
+                if (typeof body.suggestionKind === 'string' && body.suggestions && typeof body.suggestions === 'object') {
+                    setSuggestions((prev) => ({
+                        ...prev,
+                        [documentId]: {
+                            suggestionKind: body.suggestionKind,
+                            values: body.suggestions as Record<string, unknown>,
+                        },
+                    }));
                     return;
                 }
                 if (body.extractionStatus === 'pending' || body.extractionStatus === 'processing') {
@@ -350,8 +367,7 @@ export default function EntityDocumentsPage() {
 
                 const res = await fetch('/api/business/documents', { method: 'POST', body: formData });
                 if (!res.ok) {
-                    const json = await res.json().catch(() => null);
-                    throw new Error(json?.error ?? 'Upload failed');
+                    throw new Error(await readErrorBody(res, 'Upload failed'));
                 }
                 const { document } = (await res.json()) as { document: EntityDocument };
                 created.push(document);
@@ -381,7 +397,7 @@ export default function EntityDocumentsPage() {
                 ...Object.fromEntries(created.map((doc) => [doc.id, editStateFrom(doc)])),
             }));
             for (const doc of created) {
-                if (doc.docType === 'tax') pollSuggestions(doc.id);
+                pollSuggestions(doc.id);
             }
             await load();
         }
@@ -403,14 +419,40 @@ export default function EntityDocumentsPage() {
                 body: JSON.stringify(editStateToPayload(detailEdit)),
             });
             if (!res.ok) {
-                const json = await res.json().catch(() => null);
-                throw new Error(json?.error ?? 'Save failed');
+                throw new Error(await readErrorBody(res, 'Save failed'));
             }
             setDetailSaved((prev) => ({ ...prev, [documentId]: true }));
-            // A doc switched to 'tax' post-upload: re-run the AI pass so its
-            // form/year/issuer suggestions arrive too.
-            const wasTax = detailing.find((d) => d.id === documentId)?.docType === 'tax';
-            if (detailEdit.docType === 'tax' && !wasTax && !suggestions[documentId]) {
+            if (detailEdit.suggestedTags.length > 0) {
+                const currentTagsResponse = await fetch(`/api/business/documents/${documentId}/tags`);
+                if (!currentTagsResponse.ok && currentTagsResponse.status !== 404) {
+                    throw new Error(await readErrorBody(currentTagsResponse, 'Failed to read document tags'));
+                }
+                if (currentTagsResponse.status !== 404) {
+                    const currentTagsBody = await currentTagsResponse.json() as { tags?: string[] };
+                    const acceptedTags = [...new Set([
+                        ...(Array.isArray(currentTagsBody.tags) ? currentTagsBody.tags : []),
+                        ...detailEdit.suggestedTags,
+                    ])].sort((a, b) => a.localeCompare(b));
+                    const tagResponse = await fetch(`/api/business/documents/${documentId}/tags`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ tags: acceptedTags }),
+                    });
+                    if (!tagResponse.ok && tagResponse.status !== 404) {
+                        throw new Error(await readErrorBody(tagResponse, 'Failed to save suggested tags'));
+                    }
+                }
+            }
+            // A changed category can select a different extraction schema.
+            const previousType = detailing.find((d) => d.id === documentId)?.docType;
+            const expectedSuggestionKind = detailEdit.docType === 'tax'
+                ? 'tax_record'
+                : detailEdit.docType === 'insurance'
+                  ? 'insurance_policy'
+                  : detailEdit.docType === 'estate'
+                    ? 'estate_document'
+                    : 'generic_document';
+            if (detailEdit.docType !== previousType && suggestions[documentId]?.suggestionKind !== expectedSuggestionKind) {
                 fetch(`/api/business/documents/${documentId}/suggestions`, { method: 'POST' })
                     .then(() => pollSuggestions(documentId))
                     .catch(() => undefined);
@@ -438,15 +480,57 @@ export default function EntityDocumentsPage() {
         setDetailEdits((prev) => {
             const current = prev[documentId];
             if (!current) return prev;
+            const values = suggestion.values;
+            const next = { ...current, suggestedTags: suggestedTagList(values) };
+            if (suggestion.suggestionKind === 'tax_record') {
+                const taxYear = typeof values.taxYear === 'number' ? values.taxYear : null;
+                return {
+                    ...prev,
+                    [documentId]: {
+                        ...next,
+                        docType: 'tax',
+                        taxForm: stringValue(values.taxForm) ?? current.taxForm,
+                        taxYear: taxYear !== null ? String(taxYear) : current.taxYear,
+                        issuer: stringValue(values.issuer) ?? current.issuer,
+                    },
+                };
+            }
+            if (suggestion.suggestionKind === 'insurance_policy') {
+                const provider = stringValue(values.provider);
+                const policy = stringValue(values.policyNumberMasked);
+                const note = [provider ? `Provider: ${provider}` : null, policy ? `Policy: ${policy}` : null]
+                    .filter(Boolean).join(' · ');
+                next.expiresOn = stringValue(values.renewalDate) ?? next.expiresOn;
+                next.notes = mergeSuggestionNote(next.notes, note);
+            } else if (suggestion.suggestionKind === 'estate_document') {
+                const principal = stringValue(values.principalName);
+                const kind = stringValue(values.kind);
+                const state = stringValue(values.state);
+                const note = [kind ? `Kind: ${kind}` : null, principal ? `Principal: ${principal}` : null, state ? `State: ${state}` : null]
+                    .filter(Boolean).join(' · ');
+                next.issuedOn = stringValue(values.executionDate) ?? next.issuedOn;
+                next.notes = mergeSuggestionNote(next.notes, note);
+            } else {
+                const documentClass = stringValue(values.documentClass);
+                const normalizedClass = documentClass?.toLowerCase().replace(/[_-]+/g, ' ').trim();
+                const matchingType = context.typeOptions.find((option) =>
+                    option.value === documentClass
+                    || option.value.replace(/[_-]+/g, ' ').toLowerCase() === normalizedClass
+                    || option.label.toLowerCase() === normalizedClass
+                );
+                const parties = stringList(values.parties);
+                const references = stringList(values.referenceNumbers);
+                const note = [
+                    parties.length > 0 ? `Parties: ${parties.join(', ')}` : null,
+                    references.length > 0 ? `References: ${references.join(', ')}` : null,
+                ].filter(Boolean).join(' · ');
+                if (matchingType) next.docType = matchingType.value;
+                next.issuedOn = stringList(values.effectiveDates)[0] ?? next.issuedOn;
+                next.notes = mergeSuggestionNote(next.notes, note);
+            }
             return {
                 ...prev,
-                [documentId]: {
-                    ...current,
-                    docType: 'tax',
-                    taxForm: suggestion.taxForm ?? current.taxForm,
-                    taxYear: suggestion.taxYear !== null ? String(suggestion.taxYear) : current.taxYear,
-                    issuer: suggestion.issuer ?? current.issuer,
-                },
+                [documentId]: next,
             };
         });
         setDetailSaved((prev) => ({ ...prev, [documentId]: false }));
@@ -478,8 +562,7 @@ export default function EntityDocumentsPage() {
                 body: JSON.stringify(editStateToPayload(edit)),
             });
             if (!res.ok) {
-                const json = await res.json().catch(() => null);
-                throw new Error(json?.error ?? 'Save failed');
+                throw new Error(await readErrorBody(res, 'Save failed'));
             }
             toast.success('Document updated');
             setEditingId(null);
@@ -507,121 +590,13 @@ export default function EntityDocumentsPage() {
     const documents = data?.documents ?? [];
     const expiring = data?.expiringSoon ?? [];
     const context = getEntityDocumentContext(entityProfile);
-    const contextualTypes = new Set(context.typeOptions.map(({ value }) => value));
-    const taxGroups = groupTaxRecordsByYear(documents);
-    const missingTaxForms = findMissingTaxForms(documents);
-    const documentGroups = [
-        ...context.typeOptions
-            .filter(({ value }) => value !== 'tax')
-            .map(({ value, label }) => ({
-                key: value,
-                label,
-                documents: documents.filter((doc) => doc.docType === value),
-            })),
-        {
-            key: '__legacy__',
-            label: 'Other document types',
-            documents: documents.filter(
-                (doc) => doc.docType !== 'tax' && !contextualTypes.has(doc.docType)
-            ),
-        },
-    ];
     const stagedCount = staged.filter((s) => s.status === 'staged' || s.status === 'failed').length;
     const untypedCount = detailing.filter(
         (doc) => (detailEdits[doc.id]?.docType ?? doc.docType) === 'other'
     ).length;
 
-    const renderDocumentRow = (doc: EntityDocument) => (
-        <Fragment key={doc.id}>
-            <li className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-border/30 px-4 py-2.5 last:border-b-0">
-                <div className="min-w-0 flex-1">
-                    <span className="text-sm text-foreground">{doc.title}</span>
-                    {doc.docType === 'tax' && (doc.taxForm || doc.issuer) && (
-                        <span className="ml-2 inline-block rounded-full border border-border bg-background-tertiary px-2 py-0.5 text-[11px] text-foreground-secondary whitespace-nowrap">
-                            {[getTaxFormLabel(doc.taxForm), doc.issuer].filter(Boolean).join(' · ')}
-                        </span>
-                    )}
-                    <span className="ml-3 font-mono text-xs text-foreground-muted" style={TNUM}>
-                        {doc.fileName ?? '—'} · {formatBytes(doc.sizeBytes)} ·{' '}
-                        {doc.uploadedAt.slice(0, 10)}
-                    </span>
-                    {doc.notes && (
-                        <p className="mt-0.5 truncate text-xs text-foreground-muted">
-                            {doc.notes}
-                        </p>
-                    )}
-                    {(doc.issuedOn || doc.returnCopyDueOn) && (
-                        <p className="mt-0.5 text-xs text-foreground-muted">
-                            {doc.issuedOn ? `Issued ${doc.issuedOn}` : ''}
-                            {doc.issuedOn && doc.returnCopyDueOn ? ' · ' : ''}
-                            {doc.returnCopyDueOn ? `Return copy due ${doc.returnCopyDueOn}` : ''}
-                        </p>
-                    )}
-                </div>
-                <ExpiryBadge doc={doc} />
-                <div className="flex items-center gap-3 text-sm">
-                    <button
-                        type="button"
-                        onClick={() => documentPreview.open({
-                            documentId: doc.id,
-                            title: doc.title,
-                            fileName: doc.fileName,
-                            mimeType: doc.mimeType,
-                        })}
-                        className="text-primary hover:text-primary-hover transition-colors"
-                    >
-                        Preview
-                    </button>
-                    <a
-                        href={`/api/business/documents/${doc.id}/download`}
-                        className="text-foreground-secondary hover:text-foreground transition-colors"
-                    >
-                        Download
-                    </a>
-                    <button
-                        type="button"
-                        onClick={() => {
-                            if (editingId === doc.id) {
-                                setEditingId(null);
-                                setEdit(null);
-                            } else {
-                                startEdit(doc);
-                            }
-                        }}
-                        className="text-foreground-secondary hover:text-foreground transition-colors"
-                    >
-                        Edit
-                    </button>
-                    {confirmDeleteId === doc.id ? (
-                        <span className="flex items-center gap-2">
-                            <button
-                                type="button"
-                                onClick={() => handleDelete(doc.id)}
-                                className="font-medium text-error hover:opacity-80 transition-opacity"
-                            >
-                                Confirm delete
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => setConfirmDeleteId(null)}
-                                className="text-foreground-muted hover:text-foreground transition-colors"
-                            >
-                                Cancel
-                            </button>
-                        </span>
-                    ) : (
-                        <button
-                            type="button"
-                            onClick={() => setConfirmDeleteId(doc.id)}
-                            className="text-foreground-muted hover:text-error transition-colors"
-                        >
-                            Delete
-                        </button>
-                    )}
-                </div>
-            </li>
-            {editingId === doc.id && edit && (
-                <li className="border-b border-border/30 bg-background-tertiary/30 px-4 py-3 last:border-b-0">
+    const renderDocumentEditor = (doc: EntityDocument) => editingId === doc.id && edit ? (
+                <div className="col-span-full rounded-md border border-border bg-background-tertiary/30 px-4 py-3">
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
                         <div>
                             <label className={labelClass}>Title</label>
@@ -637,7 +612,7 @@ export default function EntityDocumentsPage() {
                             <select
                                 value={edit.docType}
                                 onChange={(e) => setEdit({ ...edit, docType: e.target.value })}
-                                className={inputClass}
+                                className={SELECT}
                             >
                                 {getEditDocumentTypeOptions(context, doc.docType).map((o) => (
                                     <option key={o.value} value={o.value}>
@@ -715,10 +690,8 @@ export default function EntityDocumentsPage() {
                             Cancel
                         </button>
                     </div>
-                </li>
-            )}
-        </Fragment>
-    );
+                </div>
+            ) : null;
 
     return (
         <div className="space-y-6">
@@ -801,7 +774,7 @@ export default function EntityDocumentsPage() {
                                         <span className="min-w-0 flex-1 truncate text-foreground">
                                             {item.file.name}
                                             <span className="ml-2 font-mono text-xs text-foreground-muted" style={TNUM}>
-                                                ({formatBytes(item.file.size)})
+                                                ({formatDocumentBytes(item.file.size)})
                                             </span>
                                         </span>
                                         {item.status === 'uploading' && (
@@ -853,7 +826,7 @@ export default function EntityDocumentsPage() {
                                 <select
                                     value={uploadType}
                                     onChange={(e) => setUploadType(e.target.value)}
-                                    className={inputClass}
+                                    className={SELECT}
                                 >
                                     {context.typeOptions.map((o) => (
                                         <option key={o.value} value={o.value}>
@@ -962,7 +935,7 @@ export default function EntityDocumentsPage() {
                                                 if (e.target.value) applyTypeToAll(e.target.value);
                                                 e.target.value = '';
                                             }}
-                                            className="rounded-lg border border-border bg-input-bg px-2 py-1 text-xs text-foreground"
+                                            className={`${SELECT} w-auto px-2 py-1 text-xs`}
                                         >
                                             <option value="">— choose —</option>
                                             {context.typeOptions.map((o) => (
@@ -998,11 +971,7 @@ export default function EntityDocumentsPage() {
                                                 {suggestion && (
                                                     <span className="flex items-center gap-2 text-xs text-foreground-secondary">
                                                         <span className="inline-block rounded-full border border-primary/30 bg-primary-light px-2 py-0.5 text-[11px]">
-                                                            AI: {[
-                                                                getTaxFormLabel(suggestion.taxForm),
-                                                                suggestion.taxYear,
-                                                                suggestion.issuer,
-                                                            ].filter(Boolean).join(' · ') || 'no suggestion'}
+                                                            AI: {suggestionSummary(suggestion)}
                                                         </span>
                                                         <button
                                                             type="button"
@@ -1041,7 +1010,7 @@ export default function EntityDocumentsPage() {
                                                             }));
                                                             setDetailSaved((prev) => ({ ...prev, [doc.id]: false }));
                                                         }}
-                                                        className={inputClass}
+                                                        className={SELECT}
                                                     >
                                                         {getEditDocumentTypeOptions(context, doc.docType).map((o) => (
                                                             <option key={o.value} value={o.value}>
@@ -1117,62 +1086,29 @@ export default function EntityDocumentsPage() {
                             </p>
                         </div>
                     ) : (
-                        <div className="space-y-4">
-                            {/* Tax records grouped by year */}
-                            {taxGroups.length > 0 && (
-                                <div className="bg-background-secondary/30 border border-border rounded-lg overflow-hidden">
-                                    <div className="border-b border-border px-4 py-2.5 text-[10px] font-medium uppercase tracking-wider text-foreground-muted">
-                                        Tax records
-                                        <span className="ml-2 font-mono" style={TNUM}>
-                                            {taxGroups.reduce((sum, g) => sum + g.documents.length, 0)}
-                                        </span>
-                                    </div>
-                                    {taxGroups.map((group) => {
-                                        const missing = group.year === null
-                                            ? []
-                                            : missingTaxForms.filter((m) => m.year === group.year);
-                                        return (
-                                            <div key={group.year ?? 'none'}>
-                                                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border/50 bg-background-tertiary/30 px-4 py-2">
-                                                    <span className="font-mono text-sm font-medium text-foreground" style={TNUM}>
-                                                        {group.year ?? 'No tax year set'}
-                                                    </span>
-                                                    <span className="font-mono text-xs text-foreground-muted" style={TNUM}>
-                                                        {group.documents.length}
-                                                    </span>
-                                                    {missing.length > 0 && (
-                                                        <span className="text-xs text-warning">
-                                                            Missing vs {group.year! - 1}:{' '}
-                                                            {missing.map((m) => m.label).join(', ')}
-                                                        </span>
-                                                    )}
-                                                </div>
-                                                <ul>{group.documents.map(renderDocumentRow)}</ul>
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-                            )}
-
-                            {documentGroups.map((group) => {
-                                const docs = group.documents;
-                                if (docs.length === 0) return null;
-                                return (
-                                    <div
-                                        key={group.key}
-                                        className="bg-background-secondary/30 border border-border rounded-lg overflow-hidden"
-                                    >
-                                        <div className="border-b border-border px-4 py-2.5 text-[10px] font-medium uppercase tracking-wider text-foreground-muted">
-                                            {group.label}
-                                            <span className="ml-2 font-mono" style={TNUM}>
-                                                {docs.length}
-                                            </span>
-                                        </div>
-                                        <ul>{docs.map(renderDocumentRow)}</ul>
-                                    </div>
-                                );
+                        <DocumentVaultBrowser
+                            documents={documents}
+                            categoryOptions={context.typeOptions}
+                            onPreview={(doc) => documentPreview.open({
+                                documentId: doc.id,
+                                title: doc.title,
+                                fileName: doc.fileName,
+                                mimeType: doc.mimeType,
                             })}
-                        </div>
+                            onEdit={(doc) => {
+                                if (editingId === doc.id) {
+                                    setEditingId(null);
+                                    setEdit(null);
+                                } else {
+                                    startEdit(doc);
+                                }
+                            }}
+                            onDelete={handleDelete}
+                            editingId={editingId}
+                            confirmDeleteId={confirmDeleteId}
+                            onRequestDelete={setConfirmDeleteId}
+                            renderEditor={renderDocumentEditor}
+                        />
                     )}
 
                     <p className="text-xs text-foreground-muted">
