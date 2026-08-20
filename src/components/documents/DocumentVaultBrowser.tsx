@@ -27,6 +27,7 @@ import { findMissingTaxForms, type MissingTaxForm } from '@/lib/tax-records';
 import { ErrorLiveRegion } from '@/components/a11y/LiveRegion';
 import { SELECT, inputClass } from '@/components/ui/form';
 import { readErrorBody } from '@/lib/api-error';
+import { Tip } from '@/components/ui/Tooltip';
 
 // v2: card and table expansion are stored separately (they were one shared
 // map in v1, which left the table permanently collapsed — see below).
@@ -274,9 +275,11 @@ function ExpiryPill({ document }: { document: EntityDocument }) {
           ? 'border-warning/40 bg-warning/10 text-warning'
           : 'border-border bg-background-tertiary text-foreground-secondary';
     return (
-        <span className={`inline-block rounded-full border px-2 py-0.5 text-[11px] ${tone}`} title={`Expires ${document.expiresOn}`}>
+        <Tip content={`Expires ${document.expiresOn}`}>
+        <span className={`inline-block rounded-full border px-2 py-0.5 text-[11px] ${tone}`}>
             {label}
         </span>
+        </Tip>
     );
 }
 
@@ -337,9 +340,9 @@ function TagEditor({
 
     // Depend on the tag CONTENT, not the array identity: a parent re-render
     // handing over a fresh `[]` would otherwise wipe the user's draft mid-edit.
-    const tagsKey = tags.join(' ');
+    const tagsKey = tags.join('\u0000');
     useEffect(() => {
-        setValue(tagsKey.split(' ').filter(Boolean).join(', '));
+        setValue(tagsKey.split('\u0000').filter(Boolean).join(', '));
     }, [tagsKey, document.id]);
 
     const close = useCallback(() => {
@@ -717,9 +720,9 @@ export function DocumentVaultBrowser({
                         </span>
                     )}
                     {row.original.notes && (
-                        <span className="mt-1 block max-w-md truncate text-xs font-normal text-foreground-muted" title={row.original.notes}>
+                        <Tip content={row.original.notes}><span className="mt-1 block max-w-md truncate text-xs font-normal text-foreground-muted">
                             {row.original.notes}
-                        </span>
+                        </span></Tip>
                     )}
                     <span className="mt-1 block"><TagChips tags={tagsByDocument[row.original.id]} /></span>
                 </span>
@@ -729,9 +732,9 @@ export function DocumentVaultBrowser({
             id: 'fileName',
             header: 'File',
             cell: ({ getValue }) => (
-                <span className="block max-w-56 truncate font-mono text-xs" style={TNUM} title={getValue() ?? undefined}>
+                <Tip content={getValue() ?? ''}><span className="block max-w-56 truncate font-mono text-xs" style={TNUM}>
                     {getValue() || '—'}
-                </span>
+                </span></Tip>
             ),
         }),
         columnHelper.accessor('categoryLabel', {
@@ -983,7 +986,7 @@ export function DocumentVaultBrowser({
                                                         <div className="space-y-1 font-mono text-xs text-foreground-muted" style={TNUM}>
                                                             <p>{document.issuedOn ?? document.uploadedAt.slice(0, 10)} · {formatDocumentBytes(document.sizeBytes)} · {document.fileType}</p>
                                                             {document.fileName && (
-                                                                <p className="truncate" title={document.fileName}>{document.fileName}</p>
+                                                                <Tip content={document.fileName}><p className="truncate">{document.fileName}</p></Tip>
                                                             )}
                                                             {document.docType === 'tax' && (document.taxForm || document.issuer) && (
                                                                 <p>{[getTaxFormLabel(document.taxForm), document.issuer].filter(Boolean).join(' · ')}</p>
@@ -991,7 +994,7 @@ export function DocumentVaultBrowser({
                                                         </div>
                                                         <ExpiryPill document={document} />
                                                         {document.notes && (
-                                                            <p className="line-clamp-2 text-xs text-foreground-secondary" title={document.notes}>{document.notes}</p>
+                                                            <Tip content={document.notes}><p className="line-clamp-2 text-xs text-foreground-secondary">{document.notes}</p></Tip>
                                                         )}
                                                         {document.searchSnippet && <p className="text-xs text-foreground-muted"><HighlightedSnippet snippet={document.searchSnippet} /></p>}
                                                         <TagChips tags={tagsByDocument[document.id]} />
