@@ -98,6 +98,9 @@ const RAW_SQL_ONLY_TABLES = new Set<string>([
     'gnucash_web_statement_batches',
     'gnucash_web_statement_lines',
     'gnucash_web_totp',
+    // Transaction comments: the service reads/writes it exclusively through
+    // $queryRaw (see src/lib/services/transaction-comments.service.ts).
+    'gnucash_web_transaction_comments',
     'gnucash_web_txf_overrides',
     'gnucash_web_webhook_idempotency',
     'gnucash_web_webhooks',

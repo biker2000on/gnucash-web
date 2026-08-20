@@ -14,6 +14,7 @@ import { useToast } from '@/contexts/ToastContext';
 import { useIsMobile } from '@/lib/hooks/useIsMobile';
 import { MobileCard } from './ui/MobileCard';
 import { ReceiptIndicator } from '@/components/receipts/ReceiptIndicator';
+import { CommentCountBadge, useCommentCounts } from '@/components/transactions/CommentCountBadge';
 import { toLocalDateString } from '@/lib/datePresets';
 import { TransactionContextMenu, type TransactionContextMenuItem } from '@/components/ledger/TransactionContextMenu';
 import { TransactionTagEditor } from '@/components/tags/TransactionTagEditor';
@@ -66,6 +67,8 @@ export default function TransactionJournal({ initialTransactions, startDate, end
     const [debouncedFilter, setDebouncedFilter] = useState(initialSearch || '');
     const loader = useRef<HTMLDivElement>(null);
     const filterInputRef = useRef<HTMLInputElement>(null);
+    // One batched lookup for the whole page of rows; see CommentCountBadge.
+    const commentCounts = useCommentCounts(transactions.map(tx => tx.guid));
 
     // Modal state
     const [selectedTxGuid, setSelectedTxGuid] = useState<string | null>(null);
@@ -738,7 +741,7 @@ export default function TransactionJournal({ initialTransactions, startDate, end
                                     onClick={() => handleRowClick(tx.guid)}
                                     fields={[
                                         { label: 'Date', value: new Date(tx.post_date).toLocaleDateString('en-US', { timeZone: 'UTC' }) },
-                                        { label: 'Description', value: <><span className="font-medium">{tx.description}</span>{tx.num && <span className="text-xs text-foreground-muted ml-1">#{tx.num}</span>}</> },
+                                        { label: 'Description', value: <><span className="font-medium">{tx.description}</span>{tx.num && <span className="text-xs text-foreground-muted ml-1">#{tx.num}</span>}{(commentCounts[tx.guid] ?? 0) > 0 && <span className="ml-1 inline-block align-middle"><CommentCountBadge count={commentCounts[tx.guid] ?? 0} /></span>}</> },
                                         { label: 'Accounts', value: <div className="text-right">{tx.splits?.map(s => <div key={s.guid} className="text-foreground-secondary text-xs">{s.account_name}</div>)}</div> },
                                         ...(debitTotal > 0 ? [{ label: 'Debit', value: <span className="text-positive font-mono">{formatCurrency(debitTotal)}</span> }] : []),
                                         ...(creditTotal > 0 ? [{ label: 'Credit', value: <span className="text-negative font-mono">{formatCurrency(creditTotal)}</span> }] : []),
@@ -794,6 +797,11 @@ export default function TransactionJournal({ initialTransactions, startDate, end
                                         <td className="px-4 py-2 text-sm text-foreground align-middle max-w-xs leading-tight">
                                             <div className="font-medium">{tx.description}</div>
                                             {tx.num && <span className="text-xs text-foreground-muted">#{tx.num}</span>}
+                                            {(commentCounts[tx.guid] ?? 0) > 0 && (
+                                                <div className="mt-1">
+                                                    <CommentCountBadge count={commentCounts[tx.guid] ?? 0} />
+                                                </div>
+                                            )}
                                             {tx.tags && tx.tags.length > 0 && (
                                                 <div className="flex flex-wrap gap-1 mt-1">
                                                     {tx.tags.map(tag => (

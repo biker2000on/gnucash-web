@@ -30,6 +30,7 @@ import { detectOpportunities, type OpportunitySignal, type OpportunitySnapshot }
 import { listJobsEx, generateJobReport } from '@/lib/business/jobs.service';
 import { get1099Compliance } from '@/lib/business/vendor-1099.service';
 import { getReconciliationCoverage } from '@/lib/reconciliation-coverage';
+import { listUnresolvedThreads } from '@/lib/services/transaction-comments.service';
 import {
   getResolvedRetirementIncomeProfile,
   loadResilienceActions,
@@ -1193,6 +1194,75 @@ export async function loadBudgetNotificationContexts(
   return contexts;
 }
 
+/**
+ * Transaction comment threads nobody has resolved.
+ *
+ * A comment thread is a question someone asked about a transaction ("is this
+ * the reimbursement for the May trip?"). Until it is marked resolved it is
+ * open work, so it belongs in the Action Center next to every other open
+ * loop. Replies are counted but never raised on their own — the thread is the
+ * unit of work, not each message in it.
+ */
+export async function unresolvedCommentActions(bookGuid: string): Promise<FinancialActionCandidate[]> {
+  const book = await prisma.books.findUnique({
+    where: { guid: bookGuid },
+    select: { root_account_guid: true },
+  });
+  if (!book) return [];
+
+  const threads = await listUnresolvedThreads(book.root_account_guid);
+  return threads.map(thread => {
+    const preview = thread.body.length > 120 ? `${thread.body.slice(0, 117)}…` : thread.body;
+    const href = `/ledger?transaction=${thread.txnGuid}`;
+    return sourceAction({
+      stableKey: `transaction-comment:${thread.id}`,
+      lane: 'decide',
+      // NOTE: this wants a dedicated 'comment' origin, but the origin union
+      // has an exhaustive label map in src/app/(main)/actions/page.tsx, which
+      // is outside this change's scope. 'transaction_review' is the closest
+      // honest fit — a thread IS a transaction-level review item — and the
+      // title/metadata name it as a comment. See the report's follow-ups.
+      origin: 'transaction_review',
+      sourceId: String(thread.id),
+      // A thread that has been answered and still not closed is the one most
+      // likely to be forgotten, so it outranks one nobody has replied to yet.
+      severity: thread.replyCount > 0 ? 'warning' : 'info',
+      title: `Unresolved comment from ${thread.authorName}`,
+      summary: thread.replyCount > 0
+        ? `${preview} — ${thread.replyCount} repl${thread.replyCount === 1 ? 'y' : 'ies'}, still open.`
+        : `${preview} — no reply yet.`,
+      dueDate: null,
+      impact: null,
+      confidence: 1,
+      operations: [
+        { id: 'open', label: 'Open transaction', kind: 'link', href, primary: true },
+        { id: 'resolve', label: 'Mark resolved', kind: 'state', targetState: 'resolved' },
+      ],
+      evidence: [
+        {
+          kind: 'comment',
+          id: String(thread.id),
+          label: preview,
+          source: 'manual',
+          href,
+          observedAt: thread.createdAt.toISOString(),
+          verified: true,
+        },
+        {
+          kind: 'transaction',
+          id: thread.txnGuid,
+          label: 'Commented transaction',
+          source: 'manual',
+          href,
+          observedAt: thread.createdAt.toISOString(),
+          verified: true,
+        },
+      ],
+      metadata: { commentId: thread.id, txnGuid: thread.txnGuid, replyCount: thread.replyCount },
+    });
+  });
+}
+
 async function safe<T>(label: string, work: () => Promise<T>, fallback: T): Promise<T> {
   try {
     return await work();
@@ -1264,6 +1334,7 @@ export async function loadSourceActions(input: {
     safeActionSource('Tax records archive', () => taxRecordArchiveActions(bookGuid)),
     safeActionSource('Failed payments', () => failedPaymentActions(bookGuid)),
     safeActionSource('Household resilience', () => loadResilienceActions(bookGuid)),
+    safeActionSource('Unresolved comments', () => unresolvedCommentActions(bookGuid)),
     safeActionSource('Notifications and failed jobs', () => notificationActions(userId, bookGuid)),
   ]);
   return results.flat();

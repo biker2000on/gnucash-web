@@ -49,6 +49,7 @@ import TransactionTypeIcon from './ledger/TransactionTypeIcon';
 import LotBadge from './ledger/LotBadge';
 import LotAssignmentPopover from './ledger/LotAssignmentPopover';
 import { ReceiptIndicator } from '@/components/receipts/ReceiptIndicator';
+import { CommentCountBadge, useCommentCounts } from '@/components/transactions/CommentCountBadge';
 import { TransactionContextMenu, type TransactionContextMenuItem } from '@/components/ledger/TransactionContextMenu';
 import { TransactionTagEditor } from '@/components/tags/TransactionTagEditor';
 import { BulkDescriptionModal, BulkTagsModal, type BulkDescriptionPayload } from '@/components/ledger/BulkEditModals';
@@ -1292,6 +1293,10 @@ export default function AccountLedger({
         if (!showUnreviewedOnly) return transactions;
         return transactions.filter(tx => tx.reviewed === false);
     }, [transactions, showUnreviewedOnly]);
+
+    // Comment counts for the rows on screen: one batched call, refreshed
+    // whenever the visible set changes (filter, infinite-scroll page).
+    const commentCounts = useCommentCounts(displayTransactions.map(tx => tx.guid));
 
     // Build investment row data map for investment accounts
     const investmentRowMap = useMemo(() => {
@@ -3177,6 +3182,7 @@ export default function AccountLedger({
                                                             {tx.tags && tx.tags.length > 0 && tx.tags.map(tag => (
                                                                 <TagChip key={tag.id} name={tag.name} color={tag.color} title={`#${tag.name}`} />
                                                             ))}
+                                                            <CommentCountBadge count={commentCounts[tx.guid] ?? 0} />
                                                             {tx.source && tx.source !== 'manual' && tx.match_type !== 'manual_reconciliation' && (
                                                                 <span className="text-[9px] px-1.5 py-0.5 rounded bg-warning/10 text-warning border border-warning/20 uppercase tracking-wider font-bold">
                                                                     Imported

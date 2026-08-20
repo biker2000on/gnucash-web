@@ -63,7 +63,8 @@ export type EvidenceKind =
   | 'donation'
   | 'estate_document'
   | 'beneficiary'
-  | 'farm_record';
+  | 'farm_record'
+  | 'comment';
 
 export type EvidenceSource =
   | 'manual'

@@ -7,6 +7,7 @@ import { TransactionForm, type TransactionFormHandle } from './TransactionForm';
 import { Transaction, CreateTransactionRequest } from '@/lib/types';
 import { useToast } from '@/contexts/ToastContext';
 import { ApiRequestError } from '@/lib/api-error';
+import { TransactionActivityFeed } from './transactions/TransactionActivityFeed';
 
 interface TransactionFormModalProps {
     isOpen: boolean;
@@ -236,6 +237,20 @@ export function TransactionFormModal({
                         defaultFromAccount={defaultAccountGuid}
                         onSaveAndAnother={!isEditMode ? handleSaveAndAnother : undefined}
                     />
+                )}
+
+                {/*
+                  * Change history and discussion for the transaction being
+                  * edited. New transactions have neither yet, so the section
+                  * only exists in edit mode.
+                  */}
+                {isEditMode && transaction && !loading && (
+                    <section className="mt-6 border-t border-border pt-4">
+                        <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-foreground-secondary">
+                            Activity
+                        </h3>
+                        <TransactionActivityFeed transactionGuid={transaction.guid} />
+                    </section>
                 )}
             </div>
 

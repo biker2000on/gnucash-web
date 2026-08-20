@@ -2631,6 +2631,56 @@ async function createExtensionTables() {
         END $$;
     `;
 
+    /**
+     * Transaction comments (P2 "Transaction Comments and Change History").
+     *
+     * App-side discussion about a transaction: authored, timestamped, one
+     * level of reply, soft-deleted, and resolvable per thread. It is NOT the
+     * GnuCash note — nothing here touches the GnuCash schema, so a book still
+     * round-trips to the desktop app untouched.
+     *
+     * `entity_type` is present from day one (defaulted, never read yet) so the
+     * same table can carry account/invoice/document comments later without a
+     * second table; only transactions are wired today.
+     *
+     * Scoped by `book_root_guid` (the book's root account guid) so a comment
+     * can never be read from another book, and indexed on `(book_root_guid,
+     * resolved)` for the unresolved-threads Action Center source.
+     */
+    const transactionCommentsTableDDL = `
+        DO $$
+        BEGIN
+            PERFORM pg_advisory_xact_lock(hashtext('gnucash_web_transaction_comments_schema'));
+
+            CREATE TABLE IF NOT EXISTS gnucash_web_transaction_comments (
+                id SERIAL PRIMARY KEY,
+                entity_type VARCHAR(20) NOT NULL DEFAULT 'transaction',
+                txn_guid VARCHAR(32) NOT NULL,
+                book_root_guid VARCHAR(32) NOT NULL,
+                user_id INTEGER REFERENCES gnucash_web_users(id) ON DELETE SET NULL,
+                parent_id INTEGER REFERENCES gnucash_web_transaction_comments(id) ON DELETE CASCADE,
+                audit_id INTEGER REFERENCES gnucash_web_audit(id) ON DELETE SET NULL,
+                body TEXT NOT NULL,
+                resolved BOOLEAN NOT NULL DEFAULT FALSE,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                edited_at TIMESTAMP,
+                deleted_at TIMESTAMP
+            );
+
+            -- Upgrade path for a deployment created before entity_type existed.
+            ALTER TABLE gnucash_web_transaction_comments
+                ADD COLUMN IF NOT EXISTS entity_type VARCHAR(20) NOT NULL DEFAULT 'transaction';
+
+            CREATE INDEX IF NOT EXISTS idx_txn_comments_txn
+                ON gnucash_web_transaction_comments(txn_guid);
+            CREATE INDEX IF NOT EXISTS idx_txn_comments_book_resolved
+                ON gnucash_web_transaction_comments(book_root_guid, resolved);
+            CREATE INDEX IF NOT EXISTS idx_txn_comments_parent
+                ON gnucash_web_transaction_comments(parent_id)
+                WHERE parent_id IS NOT NULL;
+        END $$;
+    `;
+
     const financialActionsTableDDL = `
         DO $$
         BEGIN
@@ -2848,6 +2898,7 @@ async function createExtensionTables() {
         await query(importBatchesTableDDL);
         await query(webhookIdempotencyTableDDL);
         await query(notificationsTableDDL);
+        await query(transactionCommentsTableDDL);
         await query(financialActionsTableDDL);
         await query(operatorBusinessWorkflowsDDL);
         await query(resilienceProfilesDDL);
