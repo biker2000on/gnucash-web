@@ -9,6 +9,7 @@ export type FinancialActionState =
 export type FinancialActionSeverity = 'info' | 'warning' | 'critical';
 export type FinancialActionOrigin =
   | 'transaction_review'
+  | 'comment'
   | 'receipt_inbox'
   | 'payslip'
   | 'statement_reconciliation'

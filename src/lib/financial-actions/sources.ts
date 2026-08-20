@@ -1217,12 +1217,7 @@ export async function unresolvedCommentActions(bookGuid: string): Promise<Financ
     return sourceAction({
       stableKey: `transaction-comment:${thread.id}`,
       lane: 'decide',
-      // NOTE: this wants a dedicated 'comment' origin, but the origin union
-      // has an exhaustive label map in src/app/(main)/actions/page.tsx, which
-      // is outside this change's scope. 'transaction_review' is the closest
-      // honest fit — a thread IS a transaction-level review item — and the
-      // title/metadata name it as a comment. See the report's follow-ups.
-      origin: 'transaction_review',
+      origin: 'comment',
       sourceId: String(thread.id),
       // A thread that has been answered and still not closed is the one most
       // likely to be forgotten, so it outranks one nobody has replied to yet.

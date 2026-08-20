@@ -8,6 +8,7 @@ import { Transaction, Split } from '@/lib/types';
 import { formatCurrency } from '@/lib/format';
 import { formatAccountPath } from '@/lib/account-utils';
 import { PopoutButton } from './popout/PopoutButton';
+import { TransactionActivityFeed } from './transactions/TransactionActivityFeed';
 import { usePopoutHost } from '@/lib/popout/usePopout';
 import { Tip } from '@/components/ui/Tooltip';
 
@@ -284,6 +285,9 @@ export function TransactionDetailContent({
                     </Tip>
                 </div>
             </div>
+
+            {/* Comments + change history, same feed as the edit modal. */}
+            <TransactionActivityFeed transactionGuid={transaction.guid} />
 
             {actions}
         </div>

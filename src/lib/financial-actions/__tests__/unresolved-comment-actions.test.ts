@@ -55,7 +55,7 @@ describe('unresolvedCommentActions', () => {
         const actions = await unresolvedCommentActions(BOOK);
         expect(actions.map(action => action.stableKey))
             .toEqual(['transaction-comment:12', 'transaction-comment:13']);
-        expect(actions[0].origin).toBe('transaction_review');
+        expect(actions[0].origin).toBe('comment');
         expect(actions[0].lane).toBe('decide');
         expect(actions[0].title).toBe('Unresolved comment from Justin');
     });
