@@ -1709,6 +1709,15 @@ async function createExtensionTables() {
     // Document-vault tags reuse gnucash_web_tags; the join table mirrors
     // gnucash_web_transaction_tags. Rules are book-scoped deterministic
     // auto-tag matchers (filename/issuer/text substring -> tag name).
+    //
+    // !! COLUMN-NAME WARNING !!
+    // `gnucash_web_document_tag_rules.book_root_guid` stores a **books.guid**
+    // (what requireRole() returns as `bookGuid`), NOT a root account guid,
+    // despite the name. The identically-named column on
+    // `gnucash_web_transaction_comments` (below) DOES hold a root account guid.
+    // Do not join, copy, or migrate values between the two, and do not scope
+    // this table with getActiveBookRootGuid() — that returns the account guid
+    // and would silently match nothing (or the wrong book).
     const documentVaultTagsDDL = `
         DO $$
         BEGIN
