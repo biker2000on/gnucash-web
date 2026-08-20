@@ -1,4 +1,4 @@
-const CACHE_NAME = 'folio-pwa-v2';
+const CACHE_NAME = 'folio-pwa-v3';
 const PRECACHE_URLS = [
   '/',
   '/manifest.webmanifest',
@@ -49,6 +49,21 @@ self.addEventListener('fetch', (event) => {
 
   // Skip API routes and auth endpoints
   if (url.pathname.startsWith('/api/')) return;
+
+  // NEVER intercept React Server Component navigation payloads. They are
+  // build-specific: serving one cached from a previous deploy hands the new
+  // client a payload it cannot parse, and a long-lived PWA tab then freezes
+  // on client-side navigation after every deploy (observed 2026-08-20 on the
+  // accounts page). Same for Next internals outside /_next/static/.
+  if (
+    url.searchParams.has('_rsc') ||
+    event.request.headers.get('RSC') === '1' ||
+    event.request.headers.get('next-router-prefetch') !== null ||
+    event.request.headers.get('next-router-state-tree') !== null ||
+    (url.pathname.startsWith('/_next/') && !url.pathname.startsWith('/_next/static/'))
+  ) {
+    return;
+  }
 
   // Network-first for navigation requests
   if (event.request.mode === 'navigate') {
@@ -112,17 +127,13 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
+  // Catch-all for remaining same-origin GETs: network only, offline fallback
+  // limited to entries cached before v3. Deliberately NO cache.put here —
+  // caching arbitrary documents/payloads is how a previous deploy's responses
+  // outlived it and poisoned client-side navigation.
   if (url.origin === self.location.origin) {
     event.respondWith(
-      fetch(event.request)
-        .then(async (response) => {
-          if (response.ok && response.type === 'basic') {
-            const cache = await caches.open(CACHE_NAME);
-            await cache.put(event.request, response.clone());
-          }
-          return response;
-        })
-        .catch(() => caches.match(event.request))
+      fetch(event.request).catch(() => caches.match(event.request))
     );
   }
 });
