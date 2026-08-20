@@ -1688,6 +1688,59 @@ async function createExtensionTables() {
           ADD COLUMN IF NOT EXISTS tax_form VARCHAR(40);
         ALTER TABLE gnucash_web_entity_documents
           ADD COLUMN IF NOT EXISTS issuer VARCHAR(255);
+        ALTER TABLE gnucash_web_entity_documents
+          ADD COLUMN IF NOT EXISTS thumbnail_status VARCHAR(20);
+        ALTER TABLE gnucash_web_entity_documents
+          ADD COLUMN IF NOT EXISTS thumbnail_key VARCHAR(500);
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conname = 'ck_entity_documents_thumbnail_status'
+        ) THEN
+            ALTER TABLE gnucash_web_entity_documents
+              ADD CONSTRAINT ck_entity_documents_thumbnail_status
+              CHECK (
+                thumbnail_status IS NULL
+                OR thumbnail_status IN ('pending', 'complete', 'failed')
+              );
+        END IF;
+        END $$;
+    `;
+
+    // Document-vault tags reuse gnucash_web_tags; the join table mirrors
+    // gnucash_web_transaction_tags. Rules are book-scoped deterministic
+    // auto-tag matchers (filename/issuer/text substring -> tag name).
+    const documentVaultTagsDDL = `
+        DO $$
+        BEGIN
+            PERFORM pg_advisory_xact_lock(hashtext('gnucash_web_document_vault_tags_schema'));
+
+            CREATE TABLE IF NOT EXISTS gnucash_web_document_tags (
+                document_id INTEGER NOT NULL,
+                tag_id INTEGER NOT NULL REFERENCES gnucash_web_tags(id) ON DELETE CASCADE,
+                PRIMARY KEY (document_id, tag_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_document_tags_tag
+                ON gnucash_web_document_tags(tag_id);
+
+            CREATE TABLE IF NOT EXISTS gnucash_web_document_tag_rules (
+                id SERIAL PRIMARY KEY,
+                book_root_guid VARCHAR(32) NOT NULL,
+                match_field VARCHAR(20) NOT NULL,
+                match_value TEXT NOT NULL,
+                tag VARCHAR(100) NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_document_tag_rules_book
+                ON gnucash_web_document_tag_rules(book_root_guid);
+
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_constraint
+                WHERE conname = 'ck_document_tag_rules_match_field'
+            ) THEN
+                ALTER TABLE gnucash_web_document_tag_rules
+                  ADD CONSTRAINT ck_document_tag_rules_match_field
+                  CHECK (match_field IN ('filename', 'issuer', 'text'));
+            END IF;
         END $$;
     `;
 
@@ -2813,6 +2866,7 @@ async function createExtensionTables() {
         await query(tagsBookScopeDDL);
         await query(savedReportsBookScopeDDL);
         await query(smbTablesDDL);
+        await query(documentVaultTagsDDL);
         await query(invoiceSharesDDL);
         await query(estimatesTablesDDL);
         await query(dunningTablesDDL);

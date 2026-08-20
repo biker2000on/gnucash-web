@@ -37,6 +37,12 @@ vi.mock('@/lib/resilience/insurance-parse', () => ({
   extractInsurancePolicyDocument: mocks.insurance,
 }));
 vi.mock('@/lib/resilience/estate-parse', () => ({ extractEstateDocument: mocks.estate }));
+vi.mock('@/lib/queue/jobs/render-document-thumbnail', () => ({
+  enqueueDocumentThumbnail: vi.fn(async () => undefined),
+}));
+vi.mock('../document-tags', () => ({
+  applyDocumentTagRulesForDocument: vi.fn(async () => 0),
+}));
 
 import {
   buildTaxRecordSuggestionPrompt,
@@ -88,6 +94,14 @@ beforeEach(() => {
 });
 
 describe('parseGenericDocumentSuggestions', () => {
+  it('normalizes advisory tags and drops invalid names', () => {
+    const parsed = parseGenericDocumentSuggestions(JSON.stringify({
+      document_class: 'policy',
+      tags: ['Farm', '!!!', 'tax-year'],
+    }));
+    expect(parsed.tags).toEqual(['farm', 'tax-year']);
+  });
+
   it('bounds arrays and rejects malformed dates', () => {
     const parsed = parseGenericDocumentSuggestions(JSON.stringify({
       document_class: 'license',
@@ -97,6 +111,7 @@ describe('parseGenericDocumentSuggestions', () => {
     }));
     expect(parsed.effectiveDates).toEqual(['2026-01-10']);
     expect(parsed.parties).toHaveLength(20);
+    expect(parsed.tags).toEqual([]);
   });
 });
 
@@ -154,7 +169,10 @@ describe('tax record extraction pass', () => {
     expect(completed.status).toBe('completed');
     expect(completed.metadata.suggestionKind).toBe('tax_record');
     expect(completed.metadata.suggestions).toEqual({
-      taxForm: '1099_int', taxYear: 2024, issuer: 'Ally Bank',
+      taxForm: '1099_int',
+      taxYear: 2024,
+      issuer: 'Ally Bank',
+      suggestedTags: ['1099_int', 'ally-bank', 'tax'],
     });
   });
 });

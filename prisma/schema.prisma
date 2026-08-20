@@ -1204,6 +1204,10 @@ model gnucash_web_entity_documents {
   tax_form    String?   @db.VarChar(40)
   /// Issuing institution (free text; drives the year-completeness diff).
   issuer      String?   @db.VarChar(255)
+  /// pending | complete | failed - vault thumbnail pipeline (webp).
+  thumbnail_status String? @db.VarChar(20)
+  /// Storage key for the rasterized first-page webp thumbnail.
+  thumbnail_key    String? @db.VarChar(500)
   uploaded_at DateTime  @default(now())
 
   @@index([book_guid], map: "idx_entity_documents_book")

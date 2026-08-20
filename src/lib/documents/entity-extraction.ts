@@ -11,12 +11,16 @@ import {
   updateDocumentExtraction,
   upsertDocument,
 } from './service';
+import { withSuggestedTags } from './suggested-tags';
+import { isValidTagName, normalizeTagName } from '@/lib/tags';
 
 export interface GenericDocumentSuggestions {
   documentClass: string | null;
   effectiveDates: string[];
   parties: string[];
   referenceNumbers: string[];
+  /** Advisory AI labels — never written unless the user accepts them. */
+  tags: string[];
 }
 
 function cleanStrings(value: unknown, maxItems: number, maxLength: number): string[] {
@@ -35,12 +39,16 @@ export function parseGenericDocumentSuggestions(raw: string): GenericDocumentSug
   const documentClass = typeof value.document_class === 'string' && value.document_class.trim()
     ? value.document_class.trim().slice(0, 80)
     : null;
+  const tags = cleanStrings(value.tags, 8, 100)
+    .map((tag) => normalizeTagName(tag))
+    .filter((tag) => isValidTagName(tag));
   return {
     documentClass,
     effectiveDates: cleanStrings(value.effective_dates, 12, 10)
       .filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(date)),
     parties: cleanStrings(value.parties, 20, 160),
     referenceNumbers: cleanStrings(value.reference_numbers, 20, 80),
+    tags: [...new Set(tags)],
   };
 }
 
@@ -77,7 +85,29 @@ export function buildTaxRecordSuggestionPrompt(text: string): string {
 }
 
 export function buildGenericDocumentSuggestionPrompt(text: string): string {
-  return `Review the document text below and return ONLY JSON with: document_class (short string or null), effective_dates (array of YYYY-MM-DD strings), parties (array of people/organizations), and reference_numbers (array of identifiers). Do not infer values that are not present. Keep each array under 20 items.\n\n${text.slice(0, 20_000)}`;
+  return `Review the document text below and return ONLY JSON with: document_class (short string or null), effective_dates (array of YYYY-MM-DD strings), parties (array of people/organizations), reference_numbers (array of identifiers), and tags (array of short lowercase hyphenated labels that appear in the text, max 8, or empty). Do not infer values that are not present. Keep each array under 20 items. Tags are suggestions only.\n\n${text.slice(0, 20_000)}`;
+}
+
+async function applyAutoTagRulesQuietly(
+  logPrefix: string,
+  bookGuid: string,
+  documentId: number,
+  row: { file_name: string | null; title: string; issuer: string | null; notes: string | null },
+  text: string | null,
+): Promise<void> {
+  try {
+    const { applyDocumentTagRulesForDocument } = await import('./document-tags');
+    await applyDocumentTagRulesForDocument(bookGuid, documentId, {
+      filename: row.file_name ?? row.title,
+      issuer: row.issuer,
+      text,
+    });
+  } catch (error) {
+    console.warn(
+      `${logPrefix} Auto-tag rules failed for ${documentId}:`,
+      error instanceof Error ? error.message : error,
+    );
+  }
 }
 
 /**
@@ -98,6 +128,16 @@ export async function runEntityDocumentExtraction(
   if (!row) {
     console.warn(`${logPrefix} Entity document ${documentId} not found in book, skipping`);
     return;
+  }
+
+  try {
+    const { enqueueDocumentThumbnail } = await import('@/lib/queue/jobs/render-document-thumbnail');
+    await enqueueDocumentThumbnail(documentId, bookGuid);
+  } catch (thumbError) {
+    console.warn(
+      `${logPrefix} Thumbnail enqueue failed for ${documentId}:`,
+      thumbError instanceof Error ? thumbError.message : thumbError,
+    );
   }
 
   let canonical = await getDocumentBySource(bookGuid, 'entity_document', String(documentId));
@@ -209,6 +249,24 @@ export async function runEntityDocumentExtraction(
       }
     }
 
+    const suggestionKind = typeof suggestionMetadata.suggestionKind === 'string'
+      ? suggestionMetadata.suggestionKind
+      : row.doc_type === 'tax'
+        ? 'tax_record'
+        : row.doc_type === 'insurance'
+          ? 'insurance_policy'
+          : row.doc_type === 'estate'
+            ? 'estate_document'
+            : 'generic_document';
+    suggestionMetadata = {
+      ...suggestionMetadata,
+      suggestionKind: suggestionMetadata.suggestionKind ?? suggestionKind,
+      suggestions: withSuggestedTags(suggestionMetadata.suggestions ?? {}, {
+        suggestionKind,
+        docType: row.doc_type,
+      }),
+    };
+
     const extractedText = text.trim();
     const metadata = {
       ...(canonical.extractionMetadata ?? {}),
@@ -228,6 +286,7 @@ export async function runEntityDocumentExtraction(
         metadata,
         error: extractionError,
       });
+      await applyAutoTagRulesQuietly(logPrefix, bookGuid, documentId, row, row.notes);
       return;
     }
 
@@ -238,6 +297,7 @@ export async function runEntityDocumentExtraction(
       error: null,
       extractedAt: new Date(),
     });
+    await applyAutoTagRulesQuietly(logPrefix, bookGuid, documentId, row, extractedText);
   } catch (error) {
     await updateDocumentExtraction(bookGuid, canonical.id, {
       status: 'failed',

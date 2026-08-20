@@ -6,6 +6,9 @@ import {
     EntityDocumentValidationError,
     EXPIRY_WARNING_DAYS,
 } from '@/lib/services/entity-documents.service';
+import { getTagsForDocuments } from '@/lib/documents/document-tags';
+import { getDocumentThumbnailStatuses } from '@/lib/documents/thumbnail-store';
+import { enqueueDocumentThumbnail } from '@/lib/queue/jobs/render-document-thumbnail';
 
 /**
  * GET /api/business/documents — the book's document vault. `expiringSoon`
@@ -20,11 +23,25 @@ export async function GET() {
         const { bookGuid } = roleResult;
 
         const documents = await listEntityDocuments(bookGuid);
-        const expiringSoon = documents.filter(
+        const ids = documents.map((d) => d.id);
+        const [tagMap, thumbMap] = await Promise.all([
+            getTagsForDocuments(bookGuid, ids),
+            getDocumentThumbnailStatuses(bookGuid, ids),
+        ]);
+        const withSidecars = documents.map((d) => ({
+            ...d,
+            tags: tagMap.get(d.id) ?? [],
+            thumbnailStatus: thumbMap.get(d.id) ?? null,
+        }));
+        const expiringSoon = withSidecars.filter(
             (d) => d.daysUntilExpiry !== null && d.daysUntilExpiry <= EXPIRY_WARNING_DAYS
         );
 
-        return NextResponse.json({ documents, expiringSoon, warningDays: EXPIRY_WARNING_DAYS });
+        return NextResponse.json({
+            documents: withSidecars,
+            expiringSoon,
+            warningDays: EXPIRY_WARNING_DAYS,
+        });
     } catch (error) {
         console.error('Error listing entity documents:', error);
         return NextResponse.json({ error: 'Failed to list documents' }, { status: 500 });
@@ -70,6 +87,12 @@ export async function POST(request: Request) {
             ownerUserId: user.id,
             file: { buffer, filename: file.name },
         });
+
+        try {
+            await enqueueDocumentThumbnail(document.id, bookGuid);
+        } catch (thumbError) {
+            console.warn('Failed to enqueue document thumbnail:', thumbError);
+        }
 
         return NextResponse.json({ document }, { status: 201 });
     } catch (error) {

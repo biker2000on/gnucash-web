@@ -96,6 +96,7 @@ const JOB_LABELS: Record<string, string> = {
   'extract-payslip': 'Payslip extraction',
   'extract-statement': 'Statement extraction',
   'extract-entity-document': 'Document text extraction',
+  'render-document-thumbnail': 'Document thumbnail',
   'run-backups': 'Backup run',
   'check-price-alerts': 'Price alert check',
   'poll-email-ingest': 'Email ingest poll',
@@ -603,6 +604,11 @@ async function main() {
           await handleExtractEntityDocument(job);
           break;
         }
+        case 'render-document-thumbnail': {
+          const { handleRenderDocumentThumbnail } = await import('./src/lib/queue/jobs/render-document-thumbnail');
+          await handleRenderDocumentThumbnail(job);
+          break;
+        }
         case 'check-limit-coverage': {
           const { handleCheckLimitCoverage } = await import('./src/lib/queue/jobs/check-limit-coverage');
           await handleCheckLimitCoverage(job);
@@ -737,6 +743,20 @@ async function main() {
   worker.on('error', (err) => {
     console.error(`[${new Date().toISOString()}] BullMQ worker error:`, err);
   });
+
+  // Guarded one-shot: enqueue vault thumbnails for documents that predate
+  // the pipeline. Deterministic job ids keep a boot race from double-rendering.
+  void (async () => {
+    try {
+      const { enqueueMissingDocumentThumbnails } = await import('./src/lib/queue/jobs/render-document-thumbnail');
+      const enqueued = await enqueueMissingDocumentThumbnails();
+      if (enqueued > 0) {
+        console.log(`[${new Date().toISOString()}] Enqueued ${enqueued} document thumbnail backfill jobs`);
+      }
+    } catch (err) {
+      console.error('Document thumbnail backfill enqueue failed:', err);
+    }
+  })();
 
   // Schedule nightly thumbnail regeneration at 03:00 UTC
   setScheduleGeneric('thumbnail-regen', '03:00', async () => {

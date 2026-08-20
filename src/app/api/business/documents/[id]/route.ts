@@ -7,6 +7,9 @@ import {
     EntityDocumentValidationError,
     type UpdateEntityDocumentInput,
 } from '@/lib/services/entity-documents.service';
+import { deleteDocumentTags } from '@/lib/documents/document-tags';
+import { getDocumentThumbnail } from '@/lib/documents/thumbnail-store';
+import { getStorageBackend } from '@/lib/storage/storage-backend';
 
 type RouteParams = { params: Promise<{ id: string }> };
 
@@ -94,7 +97,21 @@ export async function DELETE(request: Request, { params }: RouteParams) {
             return NextResponse.json({ error: 'Invalid document ID' }, { status: 400 });
         }
 
+        const thumb = await getDocumentThumbnail(bookGuid, id);
+        try {
+            await deleteDocumentTags(bookGuid, id);
+        } catch (tagError) {
+            console.warn('Failed to clean up document tags:', tagError);
+        }
         await deleteEntityDocument(bookGuid, id);
+        if (thumb?.thumbnailKey) {
+            try {
+                const storage = await getStorageBackend();
+                await storage.delete(thumb.thumbnailKey);
+            } catch (thumbError) {
+                console.warn('Failed to delete document thumbnail:', thumbError);
+            }
+        }
         return NextResponse.json({ success: true });
     } catch (error) {
         if (error instanceof EntityDocumentNotFoundError) {

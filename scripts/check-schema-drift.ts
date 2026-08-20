@@ -55,6 +55,10 @@ const RAW_SQL_ONLY_TABLES = new Set<string>([
     'gnucash_web_calculation_traces',
     'gnucash_web_calendar_tokens',
     'gnucash_web_categorization_rules',
+    // Document-vault tags/rules are raw-SQL (queried via $queryRaw) so this
+    // worktree does not need `prisma generate` against the shared node_modules.
+    'gnucash_web_document_tag_rules',
+    'gnucash_web_document_tags',
     'gnucash_web_domain_commands',
     'gnucash_web_email_bills',
     'gnucash_web_financial_action_refresh',

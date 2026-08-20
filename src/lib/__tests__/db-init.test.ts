@@ -362,6 +362,20 @@ describe('initializeDatabase', () => {
         expect(ddl).toContain('ON DELETE CASCADE');
     });
 
+    it('installs document-vault tag tables and thumbnail columns under an advisory lock', async () => {
+        await initializeDatabase();
+        const sqls = mocks.query.mock.calls.map((call) => String(call[0]));
+        const thumbs = sqls.find((sql) => sql.includes('thumbnail_status') && sql.includes('gnucash_web_entity_documents'));
+        const tags = sqls.find((sql) => sql.includes('gnucash_web_document_vault_tags_schema'));
+
+        expect(thumbs).toContain('ADD COLUMN IF NOT EXISTS thumbnail_status');
+        expect(thumbs).toContain('ADD COLUMN IF NOT EXISTS thumbnail_key');
+        expect(tags).toContain('CREATE TABLE IF NOT EXISTS gnucash_web_document_tags');
+        expect(tags).toContain('CREATE TABLE IF NOT EXISTS gnucash_web_document_tag_rules');
+        expect(tags).toContain('book_root_guid');
+        expect(tags).toContain("pg_advisory_xact_lock(hashtext('gnucash_web_document_vault_tags_schema'))");
+    });
+
     it('installs and non-destructively backfills the canonical document platform', async () => {
         await initializeDatabase();
         const sqls = mocks.query.mock.calls.map((call) => String(call[0]));

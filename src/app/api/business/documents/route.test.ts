@@ -8,6 +8,15 @@ vi.mock('@/lib/services/entity-documents.service', () => ({
   EntityDocumentValidationError: class EntityDocumentValidationError extends Error {},
   EXPIRY_WARNING_DAYS: 60,
 }));
+vi.mock('@/lib/documents/document-tags', () => ({
+  getTagsForDocuments: vi.fn(async () => new Map()),
+}));
+vi.mock('@/lib/documents/thumbnail-store', () => ({
+  getDocumentThumbnailStatuses: vi.fn(async () => new Map()),
+}));
+vi.mock('@/lib/queue/jobs/render-document-thumbnail', () => ({
+  enqueueDocumentThumbnail: vi.fn(async () => undefined),
+}));
 
 import { POST } from './route';
 
