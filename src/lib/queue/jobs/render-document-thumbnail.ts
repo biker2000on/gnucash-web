@@ -84,30 +84,61 @@ export async function handleRenderDocumentThumbnail(job: Job): Promise<void> {
   await renderEntityDocumentThumbnail(documentId, bookGuid);
 }
 
-/** Enqueue (or run inline when Redis is down). Deterministic jobId dedupes. */
+export interface EnqueueDocumentThumbnailOptions {
+  /**
+   * Run the render inline when the queue is unavailable.
+   *
+   * MUST stay false on any request path. Rasterizing page 1 of a PDF is
+   * seconds of CPU and hundreds of MB of peak memory; doing it inside the
+   * upload handler turns a Redis outage into an upload timeout (and lets an
+   * unauthenticated-adjacent burst of uploads pin the web process). With the
+   * fallback off the row simply stays `pending` and the boot backfill —
+   * `enqueueMissingDocumentThumbnails()` — picks it up. Only a caller that is
+   * already running inside the worker may pass true.
+   */
+  allowInline?: boolean;
+}
+
+/** Enqueue a render. Deterministic jobId dedupes. */
 export async function enqueueDocumentThumbnail(
   documentId: number,
   bookGuid: string,
+  options: EnqueueDocumentThumbnailOptions = {},
 ): Promise<void> {
   const jobId = await enqueueJob(
     'render-document-thumbnail',
     { documentId, bookGuid },
     { jobId: jobIdFor(documentId) },
   );
-  if (!jobId) {
+  if (jobId) return;
+  if (options.allowInline) {
     await renderEntityDocumentThumbnail(documentId, bookGuid);
+    return;
   }
+  console.warn(
+    `[render-document-thumbnail] Queue unavailable; document ${documentId} left pending for the boot backfill`,
+  );
 }
 
 /**
- * One-shot backfill: enqueue a render job for every stored document that has
- * no usable thumbnail. Guarded so app+worker boot races don't double-scan.
+ * Backfill pass: enqueue a render job for a BOUNDED slice of the documents
+ * with no usable thumbnail. Guarded so app+worker boot races don't double-scan.
+ *
+ * Deliberately not exhaustive — `listDocumentsNeedingThumbnails()` caps its
+ * listing, so a vault with tens of thousands of un-rendered documents does not
+ * materialize the whole set (or flood the queue) on a single boot. The next
+ * boot/pass picks up where this one stopped; the remaining count is logged.
  */
 export async function enqueueMissingDocumentThumbnails(): Promise<number> {
   const result = await tryWithDatabaseAdvisoryLock(
     'gnucash-web:entity-document-thumbnail-backfill',
     async () => {
-      const pending = await listDocumentsNeedingThumbnails();
+      const { documents: pending, remaining } = await listDocumentsNeedingThumbnails();
+      if (remaining > 0) {
+        console.log(
+          `[render-document-thumbnail] Backfill pass covers ${pending.length} document(s); ${remaining} still pending for a later pass`,
+        );
+      }
       let enqueued = 0;
       for (const doc of pending) {
         const jobId = await enqueueJob(
