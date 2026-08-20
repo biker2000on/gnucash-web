@@ -286,8 +286,14 @@ export function TransactionDetailContent({
                 </div>
             </div>
 
-            {/* Comments + change history, same feed as the edit modal. */}
-            <TransactionActivityFeed transactionGuid={transaction.guid} />
+            {/* Comments + change history — same feed, and the same "Activity"
+              * heading and separator, as the edit modal. */}
+            <section className="mt-6 border-t border-border pt-4">
+                <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-foreground-secondary">
+                    Activity
+                </h3>
+                <TransactionActivityFeed transactionGuid={transaction.guid} />
+            </section>
 
             {actions}
         </div>

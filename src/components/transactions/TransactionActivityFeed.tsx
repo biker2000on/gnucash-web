@@ -66,6 +66,22 @@ export function buildActivityFeed(events: HistoryEvent[], threads: CommentThread
     return items.sort((a, b) => (a.at === b.at ? a.key.localeCompare(b.key) : a.at.localeCompare(b.at)));
 }
 
+/**
+ * Feed entries rendered before "Show earlier activity".
+ *
+ * A long-lived transaction can carry hundreds of audit entries and comments,
+ * and the modal opens on the newest of them; mounting the whole history to
+ * show the last few is work nobody asked for.
+ */
+const INITIAL_VISIBLE_ITEMS = 50;
+
+/** Entries revealed per click of "Show earlier activity". */
+const VISIBLE_ITEMS_STEP = 50;
+
+function messageOf(reason: unknown, fallback: string): string {
+    return reason instanceof Error && reason.message ? reason.message : fallback;
+}
+
 function formatTimestamp(iso: string): string {
     const date = new Date(iso);
     if (Number.isNaN(date.getTime())) return iso;
@@ -98,7 +114,15 @@ export function TransactionActivityFeed({
     const [threads, setThreads] = useState<CommentThread[]>([]);
     const [viewer, setViewer] = useState<Viewer | null>(null);
     const [loading, setLoading] = useState(true);
+    /** An action (post/edit/resolve/delete) that failed. */
     const [error, setError] = useState<string | null>(null);
+    /** Load failures, kept apart so one half's failure never hides the other. */
+    const [historyError, setHistoryError] = useState<string | null>(null);
+    const [commentsError, setCommentsError] = useState<string | null>(null);
+    /** Server said it returned only a window of the change history / comments. */
+    const [historyTruncated, setHistoryTruncated] = useState(false);
+    const [commentsTruncated, setCommentsTruncated] = useState(false);
+    const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE_ITEMS);
     const [draft, setDraft] = useState('');
     const [replyTo, setReplyTo] = useState<number | null>(null);
     const [replyDraft, setReplyDraft] = useState('');
@@ -114,27 +138,48 @@ export function TransactionActivityFeed({
         return body;
     }, []);
 
+    /**
+     * Load both halves independently.
+     *
+     * They used to be awaited in sequence off one `Promise.all`, so a history
+     * failure — a 404 on a transaction outside the book, or one deleted while
+     * the modal was open — threw before the comments (already fetched, already
+     * fine) were ever applied: the reader got an error banner and no
+     * discussion at all. Each half now lands or fails on its own.
+     */
     const load = useCallback(async () => {
         requestedGuid.current = transactionGuid;
         setLoading(true);
         setError(null);
-        try {
-            const [historyResponse, commentsResponse] = await Promise.all([
-                fetch(`/api/transactions/${transactionGuid}/history`),
-                fetch(`/api/transactions/${transactionGuid}/comments`),
-            ]);
-            const history = await readJson(historyResponse, 'Failed to load transaction history');
-            const comments = await readJson(commentsResponse, 'Failed to load comments');
-            if (requestedGuid.current !== transactionGuid) return;
-            setEvents(history.events ?? []);
-            setThreads(comments.threads ?? []);
-            setViewer(comments.viewer ?? null);
-        } catch (err) {
-            if (requestedGuid.current !== transactionGuid) return;
-            setError(err instanceof Error ? err.message : 'Failed to load activity');
-        } finally {
-            if (requestedGuid.current === transactionGuid) setLoading(false);
+        const [history, comments] = await Promise.allSettled([
+            fetch(`/api/transactions/${transactionGuid}/history`)
+                .then(response => readJson(response, 'Failed to load transaction history')),
+            fetch(`/api/transactions/${transactionGuid}/comments`)
+                .then(response => readJson(response, 'Failed to load comments')),
+        ]);
+        if (requestedGuid.current !== transactionGuid) return;
+
+        if (history.status === 'fulfilled') {
+            setEvents(history.value.events ?? []);
+            setHistoryTruncated(!!history.value.hasMore);
+            setHistoryError(null);
+        } else {
+            setEvents([]);
+            setHistoryTruncated(false);
+            setHistoryError(messageOf(history.reason, 'Failed to load transaction history'));
         }
+
+        if (comments.status === 'fulfilled') {
+            setThreads(comments.value.threads ?? []);
+            setViewer(comments.value.viewer ?? null);
+            setCommentsTruncated(!!comments.value.hasMore);
+            setCommentsError(null);
+        } else {
+            setThreads([]);
+            setCommentsTruncated(false);
+            setCommentsError(messageOf(comments.reason, 'Failed to load comments'));
+        }
+        setLoading(false);
     }, [transactionGuid, readJson]);
 
     useEffect(() => {
@@ -203,6 +248,9 @@ export function TransactionActivityFeed({
     ), [mutate, transactionGuid]);
 
     const feed = useMemo(() => buildActivityFeed(events, threads), [events, threads]);
+    // Newest last, so the window is the tail.
+    const hiddenCount = Math.max(0, feed.length - visibleCount);
+    const visibleFeed = hiddenCount === 0 ? feed : feed.slice(hiddenCount);
     const canComment = viewer !== null && (viewer.role === 'edit' || viewer.role === 'admin');
 
     const canEdit = (comment: TransactionComment) =>
@@ -353,22 +401,46 @@ export function TransactionActivityFeed({
 
     return (
         <div className={className}>
-            <ErrorLiveRegion message={error} />
-            {error && (
-                <div className="mb-3 rounded-lg border border-error/30 bg-error/10 p-3">
-                    <p className="text-sm text-error">{error}</p>
+            <ErrorLiveRegion message={error ?? historyError ?? commentsError} />
+            {[error, historyError, commentsError].filter((message): message is string => !!message).map(message => (
+                <div key={message} className="mb-3 rounded-lg border border-error/30 bg-error/10 p-3">
+                    <p className="text-sm text-error">{message}</p>
                 </div>
-            )}
+            ))}
 
             {loading ? (
                 <p className="py-6 text-center text-sm text-foreground-secondary">Loading activity…</p>
             ) : feed.length === 0 ? (
                 <p className="py-6 text-center text-sm text-foreground-muted">
-                    No recorded changes or comments yet.
+                    {historyError && !commentsError
+                        ? 'No comments yet.'
+                        : 'No recorded changes or comments yet.'}
                 </p>
             ) : (
                 <ol className="space-y-3">
-                    {feed.map(item => (
+                    {(historyTruncated || commentsTruncated || hiddenCount > 0) && (
+                        <li className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                            {hiddenCount > 0 && (
+                                <button
+                                    type="button"
+                                    onClick={() => setVisibleCount(count => count + VISIBLE_ITEMS_STEP)}
+                                    className="rounded-md border border-border px-3 py-1.5 text-xs text-foreground-secondary transition-colors hover:bg-surface-hover"
+                                >
+                                    Show earlier activity ({hiddenCount} more)
+                                </button>
+                            )}
+                            {(historyTruncated || commentsTruncated) && (
+                                <span className="text-xs text-foreground-muted">
+                                    {historyTruncated && commentsTruncated
+                                        ? 'Older changes and comments are not shown.'
+                                        : historyTruncated
+                                            ? 'Older changes are not shown.'
+                                            : 'Older comments are not shown.'}
+                                </span>
+                            )}
+                        </li>
+                    )}
+                    {visibleFeed.map(item => (
                         <li key={item.key} className="space-y-3">
                             {item.kind === 'event' ? (
                                 <>
