@@ -31,6 +31,7 @@
  * document hits without knowing this module's result shape.
  */
 
+import { Prisma } from '@prisma/client';
 import prisma from '@/lib/prisma';
 import { ensureStatementTables } from '@/lib/services/statement.service';
 import { ensureCanonicalDocumentPlatform } from '@/lib/documents';
@@ -62,6 +63,16 @@ export interface DocSearchHit {
     href: string;
     /** Secondary context line (filename, amount, ...). */
     meta?: string;
+    /**
+     * Canonical-document provenance, present only on `documents` hits.
+     * `id` is the canonical `gnucash_web_documents.id`; `sourceId` is the
+     * specialised row it indexes (e.g. the `gnucash_web_entity_documents.id`
+     * for `sourceKind === 'entity_document'`). Consumers MUST reconcile a hit
+     * to a vault row through `sourceId` — a canonical id and an entity-document
+     * id are different key spaces and collide freely.
+     */
+    sourceKind?: string;
+    sourceId?: string | null;
 }
 
 export interface DocSearchResults {
@@ -243,6 +254,13 @@ interface TransactionRow {
 export interface SearchDocumentsOptions {
     /** Per-group result cap. Clamped to 1..MAX_GROUP_RESULTS. */
     limit?: number;
+    /**
+     * Vault tag names the `documents` group must ALL carry (AND). Applied
+     * inside the SQL, BEFORE the per-group LIMIT — filtering the truncated
+     * 20-row sample afterwards silently loses matches that sort below the cap.
+     * Names are expected pre-normalized (see `parseTagsQueryParam`).
+     */
+    tags?: string[];
 }
 
 export async function searchDocuments(
@@ -258,6 +276,25 @@ export async function searchDocuments(
     const q = validation.query;
     const cap = Math.min(Math.max(1, Math.floor(options.limit ?? MAX_GROUP_RESULTS)), MAX_GROUP_RESULTS);
     const pattern = `%${escapeLike(q)}%`;
+    const filterTags = [...new Set((options.tags ?? []).filter((name) => typeof name === 'string' && name.length > 0))];
+
+    // AND-semantics tag predicate, pushed into the canonical-document query so
+    // it runs before LIMIT. Only entity-document rows can carry vault tags, so
+    // a tag filter implicitly narrows the group to those.
+    const tagFilterSql = filterTags.length === 0
+        ? Prisma.empty
+        : Prisma.sql`
+              AND source_kind = 'entity_document'
+              AND source_id ~ '^[0-9]+$'
+              AND (
+                SELECT COUNT(DISTINCT t.name)
+                FROM gnucash_web_document_tags dt
+                JOIN gnucash_web_tags t ON t.id = dt.tag_id
+                WHERE dt.document_id = source_id::integer
+                  AND t.book_guid = ${bookGuid}
+                  AND t.name = ANY(${filterTags})
+              ) = ${filterTags.length}
+          `;
 
     // Create the lazy statement tables before the canonical one-process
     // backfill so statement batches can be indexed during the same bootstrap.
@@ -300,7 +337,7 @@ export async function searchDocuments(
             ORDER BY pay_date DESC
             LIMIT ${cap}
         `,
-        prisma.$queryRaw<CanonicalDocumentRow[]>`
+        prisma.$queryRaw<CanonicalDocumentRow[]>(Prisma.sql`
             SELECT id, title, filename, mime_type, extracted_text,
                    source_kind, source_id, created_at
             FROM gnucash_web_documents
@@ -312,9 +349,10 @@ export async function searchDocuments(
                 OR filename ILIKE ${pattern}
                 OR extracted_text ILIKE ${pattern}
               )
+              ${tagFilterSql}
             ORDER BY created_at DESC NULLS LAST
             LIMIT ${cap}
-        `,
+        `),
         prisma.$queryRaw<TransactionRow[]>`
             SELECT t.guid, t.description, t.post_date,
                    (
@@ -392,6 +430,10 @@ export async function searchDocuments(
                 ? '/home/inventory'
                 : '/business/documents',
             meta: row.mime_type ? `Document · ${row.mime_type}` : 'Document',
+            // Provenance so a consumer can resolve the hit to the exact
+            // underlying row instead of guessing from title/date.
+            sourceKind: row.source_kind,
+            sourceId: row.source_id,
         };
     });
 

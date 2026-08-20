@@ -135,6 +135,18 @@ describe('fallbackSnippet', () => {
 // searchDocuments — grouping and caps (mocked prisma)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Flatten whatever $queryRaw was handed: a tagged-template `strings` array, or
+ * a `Prisma.sql` object (which the canonical-document query uses so the tag
+ * predicate can be composed into the WHERE clause).
+ */
+function sqlTextOf(arg: unknown): string {
+    if (Array.isArray(arg)) return arg.join('?');
+    const strings = (arg as { strings?: unknown })?.strings;
+    if (Array.isArray(strings)) return strings.join('?');
+    return String(arg);
+}
+
 /** Route the mocked $queryRaw by the table referenced in the SQL template. */
 function installQueryRouter(data: {
     receipts?: unknown[];
@@ -143,8 +155,8 @@ function installQueryRouter(data: {
     documents?: unknown[];
     transactions?: unknown[];
 }) {
-    mockQueryRaw.mockImplementation((strings: TemplateStringsArray) => {
-        const sql = Array.isArray(strings) ? strings.join('?') : String(strings);
+    mockQueryRaw.mockImplementation((strings: unknown) => {
+        const sql = sqlTextOf(strings);
         if (sql.includes('gnucash_web_receipts')) return Promise.resolve(data.receipts ?? []);
         if (sql.includes('gnucash_web_statement_lines')) return Promise.resolve(data.statements ?? []);
         if (sql.includes('gnucash_web_payslips')) return Promise.resolve(data.payslips ?? []);
@@ -259,10 +271,59 @@ describe('searchDocuments', () => {
         expect(results.documents[0].href).toBe('/home/inventory');
 
         const canonicalCall = mockQueryRaw.mock.calls.find(([strings]) =>
-            Array.isArray(strings) && strings.join('?').includes('gnucash_web_documents'));
+            sqlTextOf(strings).includes('gnucash_web_documents'));
         expect(canonicalCall).toBeDefined();
-        expect((canonicalCall![0] as TemplateStringsArray).join('?'))
+        expect(sqlTextOf(canonicalCall![0]))
             .toContain("source_kind NOT IN ('receipt', 'statement_batch', 'payslip')");
+    });
+
+    it('carries sourceKind/sourceId on document hits so a client can resolve the right row', async () => {
+        installQueryRouter({
+            documents: [
+                { id: 81, title: 'Costco warranty', filename: 'w.pdf', mime_type: 'application/pdf', extracted_text: null, source_kind: 'entity_document', source_id: '5', created_at: null },
+            ],
+        });
+        const results = await searchDocuments(['a1'], 'book1', 'costco');
+        expect(results.documents[0]).toMatchObject({
+            id: '81',
+            sourceKind: 'entity_document',
+            sourceId: '5',
+        });
+    });
+
+    describe('tag filtering', () => {
+        it('does not touch the canonical query when no tags are requested', async () => {
+            installQueryRouter({});
+            await searchDocuments(['a1'], 'book1', 'costco');
+            const call = mockQueryRaw.mock.calls.find(([s]) => sqlTextOf(s).includes('gnucash_web_documents'));
+            expect(sqlTextOf(call![0])).not.toContain('gnucash_web_document_tags');
+        });
+
+        it('pushes the AND tag predicate into the SQL BEFORE the LIMIT', async () => {
+            // 25 documents match the text; only the 21st carries the tag. A
+            // post-filter over the 20-row sample would find nothing.
+            const tagged = {
+                id: 921, title: 'Deep match', filename: 'deep.pdf', mime_type: 'application/pdf',
+                extracted_text: 'costco', source_kind: 'entity_document', source_id: '21', created_at: null,
+            };
+            mockQueryRaw.mockImplementation((arg: unknown) => {
+                const sql = sqlTextOf(arg);
+                if (!sql.includes('gnucash_web_documents')) return Promise.resolve([]);
+                // The SQL carries the predicate, so the DB returns the tagged row.
+                return Promise.resolve(sql.includes('gnucash_web_document_tags') ? [tagged] : []);
+            });
+
+            const results = await searchDocuments(['a1'], 'book1', 'costco', { tags: ['tax'] });
+            expect(results.documents).toHaveLength(1);
+            expect(results.documents[0].id).toBe('921');
+
+            const call = mockQueryRaw.mock.calls.find(([s]) => sqlTextOf(s).includes('gnucash_web_documents'));
+            const sql = sqlTextOf(call![0]);
+            expect(sql).toContain('gnucash_web_document_tags');
+            expect(sql).toContain("source_kind = 'entity_document'");
+            // Predicate ahead of the cap, not applied to the truncated sample.
+            expect(sql.indexOf('gnucash_web_document_tags')).toBeLessThan(sql.indexOf('LIMIT'));
+        });
     });
 
     it('flattens grouped results into palette entries', async () => {
