@@ -154,7 +154,7 @@ describe('enqueueMissingDocumentThumbnails', () => {
     expect(mocks.enqueue).toHaveBeenCalledWith(
       'render-document-thumbnail',
       { documentId: 1, bookGuid: BOOK },
-      { jobId: 'render-document-thumbnail:1' },
+      { jobId: 'render-document-thumbnail-1' },
     );
   });
 

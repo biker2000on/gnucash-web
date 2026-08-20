@@ -25,7 +25,9 @@ export interface RenderDocumentThumbnailJobData {
 }
 
 function jobIdFor(documentId: number): string {
-  return `render-document-thumbnail:${documentId}`;
+  // BullMQ forbids ':' in custom job ids (it is the key separator), so the
+  // deterministic dedupe id uses '-'.
+  return `render-document-thumbnail-${documentId}`;
 }
 
 export async function renderEntityDocumentThumbnail(
