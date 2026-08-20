@@ -53,16 +53,27 @@ export interface CommentThread extends TransactionComment {
  */
 const MENTION_PATTERN = /(^|[^\w@.-])@([A-Za-z0-9][A-Za-z0-9._-]{0,63})/g;
 
-/** Usernames mentioned in a body, lower-cased and de-duplicated, in order. */
+/**
+ * Usernames mentioned in a body, lower-cased and de-duplicated, in order.
+ *
+ * A trailing dot/dash/underscore is usually punctuation ("ask @dana."), but it
+ * is also a legal trailing character in a username, so both readings are
+ * returned — the exact match first — and the caller keeps whichever one is a
+ * real member. Trimming unconditionally made a user named `data_`
+ * unmentionable.
+ */
 export function parseMentions(body: string): string[] {
     const seen = new Set<string>();
     const found: string[] = [];
-    for (const match of body.matchAll(MENTION_PATTERN)) {
-        // A trailing dot/dash is punctuation, not part of the name.
-        const name = match[2].replace(/[._-]+$/, '').toLowerCase();
-        if (name === '' || seen.has(name)) continue;
+    const push = (name: string) => {
+        if (name === '' || seen.has(name)) return;
         seen.add(name);
         found.push(name);
+    };
+    for (const match of body.matchAll(MENTION_PATTERN)) {
+        const exact = match[2].toLowerCase();
+        push(exact);
+        push(exact.replace(/[._-]+$/, ''));
     }
     return found;
 }

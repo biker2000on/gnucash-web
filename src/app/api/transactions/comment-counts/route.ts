@@ -10,6 +10,9 @@ import {
 /** A ledger page is 50-200 rows; the cap is what one request may ask about. */
 const MAX_GUIDS = 500;
 
+/** GnuCash guids are exactly 32 lowercase hex characters — nothing else is one. */
+const GUID_PATTERN = /^[0-9a-f]{32}$/;
+
 /**
  * POST /api/transactions/comment-counts
  * Body: `{ txnGuids: string[] }` → `{ counts: { [guid]: number } }`
@@ -37,7 +40,21 @@ export async function POST(request: Request) {
                 message: `txnGuids may contain at most ${MAX_GUIDS} guids (received ${rawGuids.length})`,
             }]);
         }
-        const txnGuids = [...new Set(rawGuids.filter((guid): guid is string => typeof guid === 'string' && guid !== ''))];
+        // Every element must be a guid before anything is queried. Silently
+        // dropping the malformed ones would let a client send arbitrary
+        // strings — including a 4000-character one — straight into the
+        // `= ANY(…)` array, and answer 200 as though the request were fine.
+        const malformed = rawGuids
+            .map((guid, index) => ({ guid, index }))
+            .filter(({ guid }) => typeof guid !== 'string' || !GUID_PATTERN.test(guid))
+            .slice(0, 5);
+        if (malformed.length > 0) {
+            return validationErrorResponse(malformed.map(({ index }) => ({
+                path: ['txnGuids', index],
+                message: 'Each guid must be 32 lowercase hexadecimal characters',
+            })));
+        }
+        const txnGuids = [...new Set(rawGuids as string[])];
 
         const context = await buildCommentContext(roleResult);
         // Scoped by book_root_guid alone: a guid from another book simply has

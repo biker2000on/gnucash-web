@@ -11,6 +11,9 @@ function LedgerContent() {
     const { startDate, endDate, setDateFilter, isInitialized } = useDateFilter();
     const searchParams = useSearchParams();
     const initialSearch = searchParams.get('search') ?? undefined;
+    // `?transaction=<guid>` — where a comment notification and an unresolved
+    // comment-thread action point. Opens that transaction's detail modal.
+    const initialTransactionGuid = searchParams.get('transaction') ?? undefined;
     const [transactions, setTransactions] = useState<Transaction[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -73,6 +76,7 @@ function LedgerContent() {
                     startDate={startDate}
                     endDate={endDate}
                     initialSearch={initialSearch}
+                    initialTransactionGuid={initialTransactionGuid}
                 />
             )}
         </div>

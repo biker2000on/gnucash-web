@@ -38,6 +38,7 @@ import {
     buildCommentContext,
     commentCountsForTransactions,
     createTransactionComment,
+    deleteCommentsForTransaction,
     deleteTransactionComment,
     listTransactionComments,
     setThreadResolved,
@@ -77,6 +78,8 @@ let splitsByTx: Record<string, boolean> = { [TX]: true };
 let members: Array<{ id: number; username: string }> = [];
 let insertedId = 99;
 let lastInsertValues: unknown[] = [];
+/** Audit ids the fake `gnucash_web_audit` table holds for each transaction. */
+let auditIdsByTx: Record<string, number[]> = { [TX]: [42] };
 
 function sqlOf(strings: TemplateStringsArray | string): string {
     return typeof strings === 'string' ? strings : strings.join(' ');
@@ -89,10 +92,15 @@ beforeEach(() => {
     members = [];
     insertedId = 99;
     lastInsertValues = [];
+    auditIdsByTx = { [TX]: [42] };
     findUniqueBook.mockResolvedValue({ root_account_guid: ROOT });
 
     queryRaw.mockImplementation(async (strings: TemplateStringsArray, ...values: unknown[]) => {
         const sql = sqlOf(strings);
+        if (sql.includes('FROM gnucash_web_audit')) {
+            const [auditId, txGuid] = values as [number, string];
+            return (auditIdsByTx[txGuid] ?? []).includes(auditId) ? [{ one: 1 }] : [];
+        }
         if (sql.includes('FROM splits')) {
             const [txGuid, accountGuids] = values as [string, string[]];
             expect(accountGuids).toEqual(ACCOUNTS);
@@ -116,8 +124,9 @@ beforeEach(() => {
         }
         if (sql.includes('FROM gnucash_web_book_permissions')) return members;
         if (sql.includes('COUNT(*)::bigint AS count')) {
-            const [bookRootGuid, guids] = values as [string, string[]];
+            const [bookRootGuid, entityType, guids] = values as [string, string, string[]];
             expect(bookRootGuid).toBe(ROOT);
+            expect(entityType).toBe('transaction');
             return guids.includes(TX) ? [{ txn_guid: TX, count: 3n }] : [];
         }
         return [];
@@ -125,21 +134,39 @@ beforeEach(() => {
 
     queryRawUnsafe.mockImplementation(async (sql: string, ...params: unknown[]) => {
         if (sql.includes('WHERE c.id = $1')) {
-            const [id, bookRootGuid] = params as [number, string];
+            const [id, bookRootGuid, entityType] = params as [number, string, string];
             expect(bookRootGuid).toBe(ROOT);
+            // Every read names the entity type this module owns (L3).
+            expect(entityType).toBe('transaction');
             const row = rows.get(id);
             return row ? [row] : [];
         }
         if (sql.includes('WHERE c.txn_guid = $1')) {
-            const [txGuid, bookRootGuid] = params as [string, string];
+            const [txGuid, bookRootGuid, entityType, limit] = params as [string, string, string, number];
             expect(bookRootGuid).toBe(ROOT);
-            return [...rows.values()].filter(row => row.txn_guid === txGuid);
+            expect(entityType).toBe('transaction');
+            // Newest first, capped at limit+1 so the service can see "more".
+            return [...rows.values()]
+                .filter(row => row.txn_guid === txGuid)
+                .sort((a, b) => (b.created_at as Date).getTime() - (a.created_at as Date).getTime()
+                    || (b.id as number) - (a.id as number))
+                .slice(0, limit);
         }
         return [];
     });
 
     executeRaw.mockImplementation(async (strings: TemplateStringsArray, ...values: unknown[]) => {
         const sql = sqlOf(strings);
+        if (sql.includes('DELETE FROM gnucash_web_transaction_comments')) {
+            const [txGuid, bookRootGuid, entityType] = values as [string, string, string];
+            expect(bookRootGuid).toBe(ROOT);
+            expect(entityType).toBe('transaction');
+            let removed = 0;
+            for (const [id, row] of [...rows]) {
+                if (row.txn_guid === txGuid) { rows.delete(id); removed += 1; }
+            }
+            return removed;
+        }
         const id = values[values.length - 2] as number;
         const bookRootGuid = values[values.length - 1] as string;
         expect(bookRootGuid).toBe(ROOT);
@@ -237,6 +264,26 @@ describe('createTransactionComment', () => {
         expect(createNotification).toHaveBeenCalledWith(expect.objectContaining({ userId: 9 }));
     });
 
+    it('sends one notification for a member mentioned twice (CODEX-6c)', async () => {
+        members = [{ id: 9, username: 'dana' }];
+        await createTransactionComment({ txnGuid: TX, body: '@dana and again @dana' }, context());
+        expect(createNotification).toHaveBeenCalledTimes(1);
+    });
+
+    it('never notifies the author, even for a self-mention on their own reply', async () => {
+        members = [{ id: 7, username: 'justin' }];
+        rows.set(1, storedRow({ id: 1, user_id: 7 }));
+        await createTransactionComment({ txnGuid: TX, body: '@justin note to self', parentId: 1 }, context('edit', 7));
+        expect(createNotification).not.toHaveBeenCalled();
+    });
+
+    it('collapses a mention of the parent author into the one reply notification', async () => {
+        members = [{ id: 9, username: 'dana' }];
+        rows.set(1, storedRow({ id: 1, user_id: 9 }));
+        await createTransactionComment({ txnGuid: TX, body: '@dana yes', parentId: 1 }, context());
+        expect(createNotification).toHaveBeenCalledTimes(1);
+    });
+
     it('does not fail the comment when notification delivery fails', async () => {
         members = [{ id: 9, username: 'dana' }];
         createNotification.mockRejectedValueOnce(new Error('notifications down'));
@@ -248,26 +295,58 @@ describe('createTransactionComment', () => {
 describe('updateTransactionComment', () => {
     it('lets the author rewrite their own comment', async () => {
         rows.set(1, storedRow({ id: 1 }));
-        const updated = await updateTransactionComment(1, 'clarified', context('edit', 7));
+        const updated = await updateTransactionComment(TX, 1, 'clarified', context('edit', 7));
         expect(updated.body).toBe('clarified');
         expect(updated.editedAt).not.toBeNull();
     });
 
     it('refuses a non-author, admin included', async () => {
         rows.set(1, storedRow({ id: 1 }));
-        await expect(updateTransactionComment(1, 'nope', context('edit', 9))).rejects.toMatchObject({ status: 403 });
-        await expect(updateTransactionComment(1, 'nope', context('admin', 9))).rejects.toMatchObject({ status: 403 });
+        await expect(updateTransactionComment(TX, 1, 'nope', context('edit', 9))).rejects.toMatchObject({ status: 403 });
+        await expect(updateTransactionComment(TX, 1, 'nope', context('admin', 9))).rejects.toMatchObject({ status: 403 });
     });
 
     it('404s on a comment from another book', async () => {
-        await expect(updateTransactionComment(1234, 'x', context())).rejects.toMatchObject({ status: 404 });
+        await expect(updateTransactionComment(TX, 1234, 'x', context())).rejects.toMatchObject({ status: 404 });
+    });
+});
+
+describe('the URL transaction must own the comment (CODEX-9)', () => {
+    // /api/transactions/{A}/comments/{id-on-B} used to check only the id, so
+    // A's path could rewrite or delete B's comment.
+    beforeEach(() => {
+        splitsByTx = { [TX]: true, [OTHER_TX]: true };
+        rows.set(1, storedRow({ id: 1, txn_guid: OTHER_TX }));
+    });
+
+    it('refuses an edit routed through the wrong transaction', async () => {
+        await expect(updateTransactionComment(TX, 1, 'hijacked', context('edit', 7)))
+            .rejects.toMatchObject({ status: 404 });
+        expect(rows.get(1)!.body).toBe('Why did this change?');
+    });
+
+    it('refuses a delete routed through the wrong transaction', async () => {
+        await expect(deleteTransactionComment(TX, 1, context('admin', 9)))
+            .rejects.toMatchObject({ status: 404 });
+        expect(rows.get(1)!.deleted_at).toBeNull();
+    });
+
+    it('refuses a resolve routed through the wrong transaction', async () => {
+        await expect(setThreadResolved(TX, 1, true, context('edit', 9)))
+            .rejects.toMatchObject({ status: 404 });
+        expect(rows.get(1)!.resolved).toBe(false);
+    });
+
+    it('still works through the comment\'s own transaction', async () => {
+        await expect(updateTransactionComment(OTHER_TX, 1, 'fine', context('edit', 7)))
+            .resolves.toMatchObject({ body: 'fine' });
     });
 });
 
 describe('deleteTransactionComment', () => {
     it('soft-deletes and hides the body while keeping the row', async () => {
         rows.set(1, storedRow({ id: 1 }));
-        const deleted = await deleteTransactionComment(1, context('edit', 7));
+        const deleted = await deleteTransactionComment(TX, 1, context('edit', 7));
         expect(deleted.deleted).toBe(true);
         expect(deleted.body).not.toContain('Why did this change?');
         expect(rows.get(1)!.deleted_at).not.toBeNull();
@@ -275,8 +354,8 @@ describe('deleteTransactionComment', () => {
 
     it('lets an admin delete someone else, but not a plain editor', async () => {
         rows.set(1, storedRow({ id: 1 }));
-        await expect(deleteTransactionComment(1, context('edit', 9))).rejects.toMatchObject({ status: 403 });
-        await expect(deleteTransactionComment(1, context('admin', 9))).resolves.toMatchObject({ deleted: true });
+        await expect(deleteTransactionComment(TX, 1, context('edit', 9))).rejects.toMatchObject({ status: 403 });
+        await expect(deleteTransactionComment(TX, 1, context('admin', 9))).resolves.toMatchObject({ deleted: true });
     });
 });
 
@@ -284,7 +363,7 @@ describe('setThreadResolved', () => {
     it('resolves the root when called from a reply', async () => {
         rows.set(1, storedRow({ id: 1 }));
         rows.set(2, storedRow({ id: 2, parent_id: 1, user_id: 9 }));
-        const thread = await setThreadResolved(2, true, context('edit', 9));
+        const thread = await setThreadResolved(TX, 2, true, context('edit', 9));
         expect(thread.id).toBe(1);
         expect(rows.get(1)!.resolved).toBe(true);
         expect(rows.get(2)!.resolved).toBe(false);
@@ -292,8 +371,54 @@ describe('setThreadResolved', () => {
 
     it('reopens a resolved thread', async () => {
         rows.set(1, storedRow({ id: 1, resolved: true }));
-        await setThreadResolved(1, false, context('edit', 9));
+        await setThreadResolved(TX, 1, false, context('edit', 9));
         expect(rows.get(1)!.resolved).toBe(false);
+    });
+
+    it('refuses a soft-deleted root (L4)', async () => {
+        // Resolving a deleted thread would keep raising an Action Center item
+        // that opens onto "This comment was deleted."
+        rows.set(1, storedRow({ id: 1, deleted_at: new Date('2026-08-20T09:00:00.000Z') }));
+        await expect(setThreadResolved(TX, 1, true, context('edit', 9)))
+            .rejects.toMatchObject({ status: 403 });
+        expect(rows.get(1)!.resolved).toBe(false);
+    });
+
+    it('refuses a reply whose thread root was deleted (L4)', async () => {
+        rows.set(1, storedRow({ id: 1, deleted_at: new Date('2026-08-20T09:00:00.000Z') }));
+        rows.set(2, storedRow({ id: 2, parent_id: 1, user_id: 9 }));
+        await expect(setThreadResolved(TX, 2, true, context('edit', 9)))
+            .rejects.toMatchObject({ status: 403 });
+    });
+});
+
+describe('auditId anchoring (M6)', () => {
+    it('rejects an audit id that does not exist', async () => {
+        await expect(createTransactionComment({ txnGuid: TX, body: 'x', auditId: 12345 }, context()))
+            .rejects.toMatchObject({ status: 400, field: 'auditId' });
+        expect(lastInsertValues).toEqual([]);
+    });
+
+    it('rejects an audit id belonging to another transaction', async () => {
+        auditIdsByTx = { [TX]: [42], [OTHER_TX]: [77] };
+        await expect(createTransactionComment({ txnGuid: TX, body: 'x', auditId: 77 }, context()))
+            .rejects.toMatchObject({ status: 400, field: 'auditId' });
+    });
+
+    it('accepts an audit id for this transaction', async () => {
+        await expect(createTransactionComment({ txnGuid: TX, body: 'x', auditId: 42 }, context()))
+            .resolves.toMatchObject({ id: 99 });
+    });
+});
+
+describe('deleteCommentsForTransaction (L2)', () => {
+    it('hard-deletes every comment on the transaction', async () => {
+        rows.set(1, storedRow({ id: 1 }));
+        rows.set(2, storedRow({ id: 2, parent_id: 1 }));
+        rows.set(3, storedRow({ id: 3, txn_guid: OTHER_TX }));
+        const removed = await deleteCommentsForTransaction(TX, ROOT);
+        expect(removed).toBe(2);
+        expect([...rows.keys()]).toEqual([3]);
     });
 });
 
@@ -313,8 +438,23 @@ describe('listTransactionComments', () => {
     it('assembles threads for the transaction', async () => {
         rows.set(1, storedRow({ id: 1 }));
         rows.set(2, storedRow({ id: 2, parent_id: 1, body: 'reply', created_at: new Date('2026-08-19T15:00:00.000Z') }));
-        const threads = await listTransactionComments(TX, context('readonly'));
+        const { threads, hasMore } = await listTransactionComments(TX, context('readonly'));
         expect(threads).toHaveLength(1);
         expect(threads[0].replies.map(reply => reply.body)).toEqual(['reply']);
+        expect(hasMore).toBe(false);
+    });
+
+    it('caps the window and reports that older comments exist (CODEX-6b)', async () => {
+        for (let id = 1; id <= 5; id += 1) {
+            rows.set(id, storedRow({
+                id,
+                body: `comment ${id}`,
+                created_at: new Date(Date.UTC(2026, 7, 19, 14, id)),
+            }));
+        }
+        const { threads, hasMore } = await listTransactionComments(TX, context('readonly'), 3);
+        expect(hasMore).toBe(true);
+        // The newest three, in reading order.
+        expect(threads.map(thread => thread.body)).toEqual(['comment 3', 'comment 4', 'comment 5']);
     });
 });

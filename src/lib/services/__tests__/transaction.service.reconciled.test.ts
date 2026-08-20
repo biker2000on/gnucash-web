@@ -13,6 +13,8 @@ const {
     recordImpliedPricesMock,
     generateGuidMock,
     getBookAccountGuidsMock,
+    getActiveBookRootGuidMock,
+    deleteCommentsForTransactionMock,
 } = vi.hoisted(() => ({
     prismaMock: {
         transactions: { findUnique: vi.fn(), update: vi.fn(), create: vi.fn(), delete: vi.fn() },
@@ -25,6 +27,8 @@ const {
     recordImpliedPricesMock: vi.fn(),
     generateGuidMock: vi.fn(() => 'g'.repeat(32)),
     getBookAccountGuidsMock: vi.fn(),
+    getActiveBookRootGuidMock: vi.fn(),
+    deleteCommentsForTransactionMock: vi.fn(),
 }));
 
 vi.mock('@/lib/prisma', () => ({ default: prismaMock }));
@@ -43,6 +47,12 @@ vi.mock('@/lib/services/period-lock.service', () => ({
 // book's rows.
 vi.mock('@/lib/book-scope', () => ({
     getBookAccountGuids: getBookAccountGuidsMock,
+    getActiveBookRootGuid: getActiveBookRootGuidMock,
+}));
+// Comments are app-owned rows about the transaction; the delete takes them
+// with it inside the same database transaction (L2).
+vi.mock('@/lib/services/transaction-comments.service', () => ({
+    deleteCommentsForTransaction: deleteCommentsForTransactionMock,
 }));
 
 import { TransactionService, TransactionNotFoundError } from '../transaction.service';
@@ -53,6 +63,7 @@ const ACCOUNT_A = 'a'.repeat(32);
 const ACCOUNT_B = 'b'.repeat(32);
 const CURRENCY = 'c'.repeat(32);
 const SPLIT_1 = 's1'.padEnd(32, '0');
+const BOOK_ROOT = 'r'.repeat(32);
 
 const updateInput = {
     guid: TX_GUID,
@@ -87,6 +98,8 @@ beforeEach(() => {
     vi.clearAllMocks();
     assertAccountNotLockedMock.mockResolvedValue(undefined);
     getBookAccountGuidsMock.mockResolvedValue([ACCOUNT_A, ACCOUNT_B]);
+    getActiveBookRootGuidMock.mockResolvedValue(BOOK_ROOT);
+    deleteCommentsForTransactionMock.mockResolvedValue(0);
     recordImpliedPricesMock.mockResolvedValue(undefined);
     prismaMock.$transaction.mockImplementation(
         async (cb: (tx: unknown) => unknown) => cb(prismaMock),
@@ -152,6 +165,24 @@ describe('TransactionService.delete', () => {
             success: true, guid: TX_GUID,
         });
         expect(prismaMock.transactions.delete).toHaveBeenCalledWith({ where: { guid: TX_GUID } });
+    });
+
+    it('takes the transaction\'s comments with it, in the same transaction (L2)', async () => {
+        prismaMock.transactions.findUnique.mockResolvedValue(existing('n'));
+
+        await TransactionService.delete(TX_GUID);
+
+        // Same client the splits/transaction deletes used, so a rollback takes
+        // the comment delete with it.
+        expect(deleteCommentsForTransactionMock).toHaveBeenCalledWith(TX_GUID, BOOK_ROOT, prismaMock);
+    });
+
+    it('does not touch comments when the delete is refused', async () => {
+        prismaMock.transactions.findUnique.mockResolvedValue(existing('y'));
+
+        await expect(TransactionService.delete(TX_GUID)).rejects.toBeInstanceOf(ReconciledSplitError);
+
+        expect(deleteCommentsForTransactionMock).not.toHaveBeenCalled();
     });
 });
 

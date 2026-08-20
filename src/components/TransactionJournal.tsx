@@ -48,13 +48,22 @@ interface TransactionJournalProps {
     startDate?: string | null;
     endDate?: string | null;
     initialSearch?: string;
+    /**
+     * Transaction to open on arrival, from `/ledger?transaction=<guid>`.
+     *
+     * This is what a comment notification and an unresolved-thread action link
+     * to. The detail modal fetches by guid on its own, so the row does not have
+     * to be on the loaded page (or inside the current date filter) for the deep
+     * link to land on the right transaction.
+     */
+    initialTransactionGuid?: string;
 }
 
 interface JournalTransaction extends Transaction {
     receipt_count?: number;
 }
 
-export default function TransactionJournal({ initialTransactions, startDate, endDate, initialSearch }: TransactionJournalProps) {
+export default function TransactionJournal({ initialTransactions, startDate, endDate, initialSearch, initialTransactionGuid }: TransactionJournalProps) {
     const router = useRouter();
     const { success, error } = useToast();
     const { isReadonly } = useCurrentUser();
@@ -151,6 +160,16 @@ export default function TransactionJournal({ initialTransactions, startDate, end
         setIsModalOpen(false);
         setSelectedTxGuid(null);
     };
+
+    // Deep link: `/ledger?transaction=<guid>` opens that transaction's detail
+    // modal. Keyed on the guid so a second notification for a different
+    // transaction re-opens, while closing the modal does not immediately
+    // re-open it for the same one.
+    useEffect(() => {
+        if (!initialTransactionGuid) return;
+        setSelectedTxGuid(initialTransactionGuid);
+        setIsModalOpen(true);
+    }, [initialTransactionGuid]);
 
     // Reset when initialTransactions change (e.g., date filter changed)
     useEffect(() => {

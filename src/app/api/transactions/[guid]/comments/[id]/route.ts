@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server';
+import prisma from '@/lib/prisma';
 import { requireRole } from '@/lib/auth';
 import { validationErrorResponse } from '@/lib/api-validation';
 import { publishDataChange } from '@/lib/data-events';
-import { validateCommentBody } from '@/lib/transaction-comments';
+import { validateCommentBody, type TransactionComment } from '@/lib/transaction-comments';
 import {
     CommentAccessError,
     buildCommentContext,
@@ -12,6 +13,9 @@ import {
 } from '@/lib/services/transaction-comments.service';
 
 function accessResponse(error: CommentAccessError): NextResponse {
+    if (error.status === 400) {
+        return validationErrorResponse([{ path: error.field ? [error.field] : [], message: error.message }]);
+    }
     return NextResponse.json({ error: error.message }, { status: error.status });
 }
 
@@ -25,6 +29,11 @@ function parseId(raw: string): number | null {
  * Body: `{ body }` to edit (author only), `{ resolved }` to resolve or reopen
  * the thread (any editor — the person who answers a question is usually not
  * the person who asked it).
+ *
+ * Both together are one atomic write. They used to be two sequential calls, so
+ * a failed resolve left an edit committed, and the response was whichever ran
+ * last — an "edit my reply and resolve the thread" PATCH answered with the
+ * *root* comment, which is not the comment the caller edited.
  */
 export async function PATCH(
     request: Request,
@@ -34,7 +43,7 @@ export async function PATCH(
         const roleResult = await requireRole('edit');
         if (roleResult instanceof NextResponse) return roleResult;
 
-        const { id: rawId } = await params;
+        const { guid, id: rawId } = await params;
         const id = parseId(rawId);
         if (id === null) {
             return validationErrorResponse([{ path: ['id'], message: 'Comment id must be a positive integer' }]);
@@ -52,20 +61,33 @@ export async function PATCH(
             return validationErrorResponse([{ path: ['resolved'], message: 'resolved must be a boolean' }]);
         }
 
-        const context = await buildCommentContext(roleResult);
-        let comment = null;
+        let validBody: string | undefined;
         if (rawBody !== undefined) {
             const body = validateCommentBody(rawBody);
             if (!body.ok) return validationErrorResponse(body.issues);
-            comment = await updateTransactionComment(id, body.value!, context);
-        }
-        if (resolved !== undefined) {
-            comment = await setThreadResolved(id, resolved, context);
+            validBody = body.value!;
         }
 
-        const { guid } = await params;
+        const context = await buildCommentContext(roleResult);
+        const { comment, threadResolved } = await prisma.$transaction(async tx => {
+            let edited: TransactionComment | null = null;
+            let root: TransactionComment | null = null;
+            if (validBody !== undefined) {
+                edited = await updateTransactionComment(guid, id, validBody, context, tx);
+            }
+            if (resolved !== undefined) {
+                root = await setThreadResolved(guid, id, resolved, context, tx);
+            }
+            // The edited comment is the answer whenever there is one: it is the
+            // row the caller changed, and the thread's resolved state rides
+            // alongside it.
+            return { comment: edited ?? root, threadResolved: root?.resolved };
+        });
+
         void publishDataChange(roleResult.bookGuid, 'transactions', { guid, action: 'update' });
-        return NextResponse.json(comment);
+        return NextResponse.json(
+            threadResolved === undefined ? comment : { ...comment, threadResolved },
+        );
     } catch (error) {
         if (error instanceof CommentAccessError) return accessResponse(error);
         console.error('Error updating transaction comment:', error);
@@ -93,7 +115,7 @@ export async function DELETE(
         }
 
         const context = await buildCommentContext(roleResult);
-        const comment = await deleteTransactionComment(id, context);
+        const comment = await deleteTransactionComment(guid, id, context);
         void publishDataChange(roleResult.bookGuid, 'transactions', { guid, action: 'update' });
         return NextResponse.json(comment);
     } catch (error) {

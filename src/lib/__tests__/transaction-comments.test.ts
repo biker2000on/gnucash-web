@@ -75,8 +75,10 @@ describe('parseMentions', () => {
         expect(parseMentions('mail bob@example.com about it')).toEqual([]);
     });
 
-    it('drops trailing punctuation from the name', () => {
-        expect(parseMentions('ping @dana.')).toEqual(['dana']);
+    it('offers the punctuation-trimmed name as well as the literal one (L7)', () => {
+        // Trailing `.`/`-`/`_` is usually punctuation but is also legal in a
+        // username, so both readings are offered and the member list decides.
+        expect(parseMentions('ping @dana.')).toEqual(['dana.', 'dana']);
     });
 
     it('returns nothing for a body with no mentions', () => {
@@ -98,6 +100,16 @@ describe('resolveMentionedMembers', () => {
         // Notifying a non-member would tell them about a book they cannot open
         // and would confirm to the author that the account exists.
         expect(resolveMentionedMembers('hey @stranger', members)).toEqual([]);
+    });
+
+    it('mentions a member whose username really does end in punctuation (L7)', () => {
+        const withUnderscore = [{ id: 11, username: 'data_' }];
+        expect(resolveMentionedMembers('ask @data_ about it', withUnderscore))
+            .toEqual([{ id: 11, username: 'data_' }]);
+    });
+
+    it('still reads trailing punctuation as punctuation when no such member exists', () => {
+        expect(resolveMentionedMembers('ping @dana.', members)).toEqual([{ id: 9, username: 'dana' }]);
     });
 
     it('never returns the author', () => {

@@ -17,7 +17,8 @@ import {
   assertNoReconciledSplits,
   assertSplitsNotProtected,
 } from '@/lib/services/reconciled-split.service';
-import { getBookAccountGuids } from '@/lib/book-scope';
+import { getActiveBookRootGuid, getBookAccountGuids } from '@/lib/book-scope';
+import { deleteCommentsForTransaction } from '@/lib/services/transaction-comments.service';
 import { Prisma } from '@prisma/client';
 
 // Validation schemas - using num/denom format for API compatibility
@@ -288,6 +289,7 @@ export class TransactionService {
 
     // Book scope for the reconciled-split guard (see update() above).
     const bookAccountGuids = await requireBookScope(guid);
+    const bookRootGuid = await getActiveBookRootGuid();
 
     // Delete transaction and splits atomically
     await prisma.$transaction(async (tx) => {
@@ -307,6 +309,13 @@ export class TransactionService {
       await tx.transactions.delete({
         where: { guid },
       });
+
+      // App-owned discussion about a row that no longer exists. Comments
+      // carry no GnuCash meaning, so they go with the transaction rather
+      // than being orphaned against a guid nothing resolves — where their
+      // unresolved threads would keep raising Action Center items that
+      // open onto nothing.
+      await deleteCommentsForTransaction(guid, bookRootGuid, tx);
     });
 
     return { success: true, guid };

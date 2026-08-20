@@ -5,6 +5,7 @@ import { publishDataChange } from '@/lib/data-events';
 import { validateCommentBody } from '@/lib/transaction-comments';
 import {
     CommentAccessError,
+    MAX_COMMENTS_PER_TRANSACTION,
     buildCommentContext,
     createTransactionComment,
     listTransactionComments,
@@ -12,12 +13,19 @@ import {
 
 /** Map a service access failure onto its HTTP answer. */
 function accessResponse(error: CommentAccessError): NextResponse {
+    // A 400 is a bad field, so it answers in the same `{ error, errors }`
+    // shape every other validation failure on this route uses.
+    if (error.status === 400) {
+        return validationErrorResponse([{ path: error.field ? [error.field] : [], message: error.message }]);
+    }
     return NextResponse.json({ error: error.message }, { status: error.status });
 }
 
 /**
  * GET /api/transactions/{guid}/comments
- * Threaded comments on a transaction. Viewers may read.
+ *
+ * Threaded comments on a transaction. Viewers may read. Capped at the newest
+ * `MAX_COMMENTS_PER_TRANSACTION`; `hasMore` says whether older ones exist.
  */
 export async function GET(
     request: Request,
@@ -29,8 +37,11 @@ export async function GET(
 
         const { guid } = await params;
         const context = await buildCommentContext(roleResult);
+        const page = await listTransactionComments(guid, context);
         return NextResponse.json({
-            threads: await listTransactionComments(guid, context),
+            threads: page.threads,
+            hasMore: page.hasMore,
+            limit: MAX_COMMENTS_PER_TRANSACTION,
             viewer: { userId: context.viewer.userId, role: context.viewer.role },
         });
     } catch (error) {

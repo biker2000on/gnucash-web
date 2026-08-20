@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Tip } from '@/components/ui/Tooltip';
 
 /**
@@ -15,46 +15,71 @@ import { Tip } from '@/components/ui/Tooltip';
 /** Guids the endpoint accepts in one call (mirrors the route's own cap). */
 const MAX_BATCH = 500;
 
-/** Stable empty result, so an unfetched render does not churn identity. */
-const EMPTY_RESULT = { key: '', counts: {} as Record<string, number> };
-
 /**
  * Counts keyed by transaction guid. Only transactions that actually have
  * comments appear, so `counts[guid]` is `undefined` for the common case and
  * the badge renders exactly when a guid is present.
+ *
+ * Accumulating, and fetched by delta. Two behaviours depend on it:
+ *
+ *  - Infinite scroll appends rows, so the guid list grows on every page. Only
+ *    the guids never asked about are sent, and results are merged into what is
+ *    already known — the previous implementation re-fetched the whole list and
+ *    returned `{}` until it landed, which blanked every badge on screen and
+ *    then flashed them back on each page.
+ *  - A list longer than one batch is split across several calls instead of
+ *    being truncated at 500, where the rows past the cap silently never got a
+ *    badge at all.
  */
 export function useCommentCounts(txnGuids: string[]): Record<string, number> {
-    // Counts are stored WITH the guid set they were fetched for, so a page
-    // that has moved on renders no badges rather than the previous page's.
-    const [loaded, setLoaded] = useState<{ key: string; counts: Record<string, number> }>(EMPTY_RESULT);
+    const [counts, setCounts] = useState<Record<string, number>>({});
+    // Guids already asked about (whatever the answer). A guid with no comments
+    // is absent from `counts`, so this is the only record that it was fetched.
+    const asked = useRef<Set<string>>(new Set());
     // The guid list is a fresh array on every render of the parent; keying the
     // effect on its joined identity is what stops an endless fetch loop.
     const key = txnGuids.join(',');
 
     useEffect(() => {
-        const guids = key === '' ? [] : key.split(',').slice(0, MAX_BATCH);
-        if (guids.length === 0) return;
+        const pending = (key === '' ? [] : key.split(','))
+            .filter(guid => guid !== '' && !asked.current.has(guid));
+        if (pending.length === 0) return;
+        const unique = [...new Set(pending)];
+        // Claimed before the request so a re-render mid-flight does not ask again.
+        for (const guid of unique) asked.current.add(guid);
+
         let cancelled = false;
         void (async () => {
-            try {
-                const response = await fetch('/api/transactions/comment-counts', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ txnGuids: guids }),
-                });
-                if (!response.ok) return;
-                const body = await response.json();
-                if (cancelled) return;
-                setLoaded({ key, counts: body.counts ?? {} });
-            } catch {
-                // A decoration must never take the ledger down with it; the
-                // rows simply render without badges.
+            for (let start = 0; start < unique.length; start += MAX_BATCH) {
+                const batch = unique.slice(start, start + MAX_BATCH);
+                try {
+                    const response = await fetch('/api/transactions/comment-counts', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ txnGuids: batch }),
+                    });
+                    if (cancelled) return;
+                    if (!response.ok) {
+                        // Release the claim so a later render can retry.
+                        for (const guid of batch) asked.current.delete(guid);
+                        continue;
+                    }
+                    const body = await response.json();
+                    if (cancelled) return;
+                    const fresh = (body.counts ?? {}) as Record<string, number>;
+                    if (Object.keys(fresh).length === 0) continue;
+                    setCounts(previous => ({ ...previous, ...fresh }));
+                } catch {
+                    // A decoration must never take the ledger down with it; the
+                    // rows simply render without badges.
+                    for (const guid of batch) asked.current.delete(guid);
+                }
             }
         })();
         return () => { cancelled = true; };
     }, [key]);
 
-    return loaded.key === key ? loaded.counts : EMPTY_RESULT.counts;
+    return counts;
 }
 
 /**
