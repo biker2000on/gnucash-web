@@ -74,8 +74,22 @@ export interface HistoryResolvers {
     accountPath?: (guid: string) => string | undefined;
     /** User id → display name, or undefined when unknown. */
     userName?: (id: number) => string | undefined;
-    /** Currency mnemonic for money formatting. Defaults to USD. */
+    /**
+     * Currency mnemonic for money formatting — the *transaction's* currency,
+     * which is what `split.value` is denominated in. Defaults to USD only
+     * because a caller that supplies nothing has told us nothing; the route
+     * always resolves the real one.
+     */
     currency?: string;
+    /**
+     * Account guid → its commodity namespace (`CURRENCY`, `NASDAQ`, `FUND`, …).
+     *
+     * This is how a share leg is identified. It cannot be inferred from the
+     * split alone: `split.value` is in the transaction's currency while
+     * `split.quantity` is in the account's, so on any cross-currency
+     * transaction every *cash* split has value ≠ quantity too.
+     */
+    accountNamespace?: (guid: string) => string | undefined;
 }
 
 /**
@@ -185,13 +199,45 @@ function decimalOf(num: unknown, denom: unknown): number | null {
     }
 }
 
-/** A split whose quantity is a share count, not a mirror of its cash value. */
-function isShareLeg(split: SplitLike | undefined): boolean {
+/** Denominators a currency plausibly uses: JPY 1, most 100, a few 1000. */
+const CURRENCY_DENOMS = new Set([1, 5, 10, 100, 1000]);
+
+/**
+ * Heuristic used only when no `accountNamespace` resolver is supplied.
+ *
+ * A share quantity is either whole units (denom 1) or carried at a precision
+ * finer than any currency's minor unit (denom > 100 — brokerages store
+ * fractional shares at 1e6/1e8). A cross-currency *cash* split is a currency
+ * amount on both sides, so its quantity denominator is a currency denominator
+ * and it is rejected here. The one shape this cannot separate is a
+ * whole-unit currency (JPY) against a cents currency, which is why the route
+ * supplies the resolver rather than relying on this.
+ */
+function looksLikeShareQuantity(split: SplitLike): boolean {
+    const quantityDenom = Number(split.quantity_denom);
+    const valueDenom = Number(split.value_denom);
+    if (!Number.isFinite(quantityDenom) || quantityDenom <= 0) return false;
+    if (quantityDenom === valueDenom) return false;
+    return quantityDenom === 1 || !CURRENCY_DENOMS.has(quantityDenom);
+}
+
+/**
+ * A split whose quantity is a share count, not a mirror of its cash value.
+ *
+ * Keyed off the split's *account commodity* whenever the caller can resolve
+ * one: a non-CURRENCY commodity is a share (or unit) holding and nothing else.
+ */
+function isShareLeg(split: SplitLike | undefined, resolvers: HistoryResolvers): boolean {
     if (!split) return false;
     const value = decimalOf(split.value_num, split.value_denom);
     const quantity = decimalOf(split.quantity_num, split.quantity_denom);
     if (value === null || quantity === null) return false;
-    return value !== quantity;
+    if (value === quantity) return false;
+
+    const accountGuid = typeof split.account_guid === 'string' ? split.account_guid : null;
+    const namespace = accountGuid ? resolvers.accountNamespace?.(accountGuid) : undefined;
+    if (namespace !== undefined) return namespace.toUpperCase() !== 'CURRENCY';
+    return looksLikeShareQuantity(split);
 }
 
 function formatQuantity(num: unknown, denom: unknown): string | null {
@@ -207,9 +253,25 @@ function formatReconcile(state: unknown): string | null {
     return RECONCILE_LABELS[state.toLowerCase()] ?? state;
 }
 
+/** `2026-08-01`, optionally followed by a time — the shapes audit payloads hold. */
+const LEADING_DATE = /^(\d{4}-\d{2}-\d{2})(?:[T ].*)?$/;
+
+/**
+ * A post date rendered as its calendar day.
+ *
+ * The day is read off the string when the string already starts with one.
+ * Parsing first would be wrong: `new Date('2026-08-01 00:00:00')` is parsed as
+ * *local* time, and `toISOString()` then shifts it back a day for every viewer
+ * east of Greenwich — turning "no change" into "date 2026-07-31 → 2026-08-01".
+ */
 function formatDateish(value: unknown): string | null {
     if (value === null || value === undefined || value === '') return null;
-    const text = String(value);
+    if (value instanceof Date) {
+        return Number.isNaN(value.getTime()) ? null : value.toISOString().slice(0, 10);
+    }
+    const text = String(value).trim();
+    const leading = LEADING_DATE.exec(text);
+    if (leading) return leading[1];
     const parsed = new Date(text);
     if (Number.isNaN(parsed.getTime())) return text;
     return parsed.toISOString().slice(0, 10);
@@ -278,11 +340,11 @@ function diffOneSplit(
     after: SplitLike | undefined,
     resolvers: HistoryResolvers,
 ): HistoryChange[] {
-    const guid = String(after?.guid ?? before?.guid ?? '');
+    const guid = splitGuidOf(after) ?? splitGuidOf(before);
     const changes: HistoryChange[] = [];
     const push = (field: string, label: string, from: string | null, to: string | null) => {
         if (from === to) return;
-        changes.push({ field, label, before: from, after: to, splitGuid: guid || undefined });
+        changes.push({ field, label, before: from, after: to, splitGuid: guid });
     };
 
     push(
@@ -300,7 +362,7 @@ function diffOneSplit(
     // Share counts only matter on an investment leg, where the quantity is a
     // share count rather than a mirror of the cash value. Naming "shares" on a
     // plain currency split would say the same number twice in every sentence.
-    if (isShareLeg(before) || isShareLeg(after)) {
+    if (isShareLeg(before, resolvers) || isShareLeg(after, resolvers)) {
         push(
             'quantity',
             'shares',
@@ -320,28 +382,47 @@ function diffOneSplit(
     return changes;
 }
 
+/**
+ * The map key for one split.
+ *
+ * A guid when there is one; otherwise a positional key, because a snapshot
+ * written before split guids were carried (or a hand-built payload) has
+ * several guid-less splits and collapsing them all onto `''` would diff only
+ * the last one and silently drop the rest.
+ */
+function splitKey(split: SplitLike, index: number): string {
+    const guid = split.guid;
+    return typeof guid === 'string' && guid !== '' ? guid : `idx:${index}`;
+}
+
+/** The real guid of a split, for `HistoryChange.splitGuid` — never a positional key. */
+function splitGuidOf(split: SplitLike | undefined): string | undefined {
+    const guid = split?.guid;
+    return typeof guid === 'string' && guid !== '' ? guid : undefined;
+}
+
 function diffSplits(
     before: SplitLike[],
     after: SplitLike[],
     resolvers: HistoryResolvers,
 ): HistoryChange[] {
-    const beforeByGuid = new Map(before.map(s => [String(s.guid ?? ''), s]));
-    const afterByGuid = new Map(after.map(s => [String(s.guid ?? ''), s]));
+    const beforeByKey = new Map(before.map((s, i) => [splitKey(s, i), s]));
+    const afterByKey = new Map(after.map((s, i) => [splitKey(s, i), s]));
     const changes: HistoryChange[] = [];
 
-    // Guid order: everything present after, then anything only present before.
-    const guids = [...afterByGuid.keys(), ...[...beforeByGuid.keys()].filter(g => !afterByGuid.has(g))];
+    // Key order: everything present after, then anything only present before.
+    const keys = [...afterByKey.keys(), ...[...beforeByKey.keys()].filter(k => !afterByKey.has(k))];
 
-    for (const guid of guids) {
-        const from = beforeByGuid.get(guid);
-        const to = afterByGuid.get(guid);
+    for (const key of keys) {
+        const from = beforeByKey.get(key);
+        const to = afterByKey.get(key);
         if (from && !to) {
             changes.push({
                 field: 'split_removed',
                 label: 'removed line',
                 before: describeSplit(from, resolvers),
                 after: null,
-                splitGuid: guid || undefined,
+                splitGuid: splitGuidOf(from),
             });
             continue;
         }
@@ -351,7 +432,7 @@ function diffSplits(
                 label: 'added line',
                 before: null,
                 after: describeSplit(to, resolvers),
-                splitGuid: guid || undefined,
+                splitGuid: splitGuidOf(to),
             });
             continue;
         }

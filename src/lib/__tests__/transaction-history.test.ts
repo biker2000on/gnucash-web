@@ -285,6 +285,132 @@ describe('buildTransactionHistory', () => {
     });
 });
 
+describe('currency (H1)', () => {
+    it('renders amounts in the transaction currency the caller supplies', () => {
+        const after = snapshot({ splits: [split({ value_num: '10200' })] });
+        const event = renderAuditRow(
+            row({ old_values: snapshot({ splits: [split()] }), new_values: after }),
+            { ...RESOLVERS, currency: 'EUR' },
+        );
+        const amount = event.changes.find(change => change.field === 'amount')!;
+        expect(amount.before).toContain('€');
+        expect(amount.after).toContain('€');
+        expect(event.summary).not.toContain('$');
+    });
+
+    it('still defaults to USD when nothing is supplied', () => {
+        const after = snapshot({ splits: [split({ value_num: '10200' })] });
+        const event = renderAuditRow(row({ old_values: snapshot({ splits: [split()] }), new_values: after }), RESOLVERS);
+        expect(event.changes[0].after).toBe('$102.00');
+    });
+});
+
+describe('share legs vs cross-currency cash legs (H2)', () => {
+    const ACCT_BROKERAGE = '4'.repeat(32);
+
+    /** value ≠ quantity on both: one is shares, the other is EUR cash. */
+    const shareLeg = (quantityNum: string) => split({
+        account_guid: ACCT_BROKERAGE,
+        value_num: '100000',
+        quantity_num: quantityNum,
+        quantity_denom: '1',
+    });
+    const euroCashLeg = (quantityNum: string) => split({
+        account_guid: ACCT_CHECKING,
+        value_num: '12000',
+        value_denom: '100',
+        quantity_num: quantityNum,
+        quantity_denom: '100',
+    });
+
+    const namespaces = {
+        ...RESOLVERS,
+        accountNamespace: (guid: string) => ({
+            [ACCT_BROKERAGE]: 'NASDAQ',
+            [ACCT_CHECKING]: 'CURRENCY',
+            [ACCT_FOOD]: 'CURRENCY',
+        }[guid]),
+    };
+
+    it('names shares on a non-CURRENCY account', () => {
+        const event = renderAuditRow(row({
+            old_values: snapshot({ splits: [shareLeg('10')] }),
+            new_values: snapshot({ splits: [shareLeg('12')] }),
+        }), namespaces);
+        expect(event.changes).toEqual([
+            { field: 'quantity', label: 'shares', before: '10', after: '12', splitGuid: SPLIT_A },
+        ]);
+    });
+
+    it('never names shares on a cross-currency CASH split', () => {
+        // The regression: value is in the transaction currency and quantity in
+        // the account's, so value ≠ quantity on every FX cash leg.
+        const event = renderAuditRow(row({
+            old_values: snapshot({ splits: [euroCashLeg('10500')] }),
+            new_values: snapshot({ splits: [euroCashLeg('10600')] }),
+        }), namespaces);
+        expect(event.changes.map(change => change.field)).not.toContain('quantity');
+    });
+
+    it('without a namespace resolver, still refuses an FX cash split', () => {
+        const event = renderAuditRow(row({
+            old_values: snapshot({ splits: [euroCashLeg('10500')] }),
+            new_values: snapshot({ splits: [euroCashLeg('10600')] }),
+        }), RESOLVERS);
+        expect(event.changes.map(change => change.field)).not.toContain('quantity');
+    });
+
+    it('without a namespace resolver, still names a whole-share change', () => {
+        const event = renderAuditRow(row({
+            old_values: snapshot({ splits: [shareLeg('10')] }),
+            new_values: snapshot({ splits: [shareLeg('12')] }),
+        }), RESOLVERS);
+        expect(event.changes.map(change => change.field)).toContain('quantity');
+    });
+});
+
+describe('post-date rendering (L5)', () => {
+    it('does not shift the day for a space-form timestamp at a positive UTC offset', () => {
+        // `new Date('2026-08-01 00:00:00')` parses as LOCAL time; converting it
+        // back through toISOString() lands on 2026-07-31 anywhere east of UTC.
+        const event = renderAuditRow(row({
+            old_values: snapshot({ post_date: '2026-08-01 00:00:00' }),
+            new_values: snapshot({ post_date: '2026-08-02 00:00:00' }),
+        }), RESOLVERS);
+        expect(event.changes).toEqual([
+            { field: 'post_date', label: 'date', before: '2026-08-01', after: '2026-08-02' },
+        ]);
+    });
+
+    it('reports no change when the same day is written two ways', () => {
+        const event = renderAuditRow(row({
+            old_values: snapshot({ post_date: '2026-08-01 00:00:00' }),
+            new_values: snapshot({ post_date: '2026-08-01T00:00:00.000Z' }),
+        }), RESOLVERS);
+        expect(event.changes).toEqual([]);
+    });
+});
+
+describe('guid-less splits (L6)', () => {
+    it('diffs every split when none of them carry a guid', () => {
+        const bare = (overrides: Record<string, unknown>) => {
+            const { guid: _guid, ...rest } = split(overrides);
+            void _guid;
+            return rest;
+        };
+        const event = renderAuditRow(row({
+            old_values: snapshot({ splits: [bare({ value_num: '12000' }), bare({ account_guid: ACCT_CHECKING, value_num: '-12000' })] }),
+            new_values: snapshot({ splits: [bare({ value_num: '10200' }), bare({ account_guid: ACCT_CHECKING, value_num: '-10200' })] }),
+        }), RESOLVERS);
+        // Both lines diff; keyed on '' they collapsed onto one another and only
+        // the last survived.
+        expect(event.changes).toEqual([
+            { field: 'amount', label: 'amount', before: '$120.00', after: '$102.00', splitGuid: undefined },
+            { field: 'amount', label: 'amount', before: '-$120.00', after: '-$102.00', splitGuid: undefined },
+        ]);
+    });
+});
+
 describe('joinPhrases', () => {
     it('joins one, two and many', () => {
         expect(joinPhrases([])).toBe('');
