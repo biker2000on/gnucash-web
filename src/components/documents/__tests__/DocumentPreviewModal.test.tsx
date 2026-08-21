@@ -1,4 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+vi.mock('@/components/documents/PdfCanvasPreview', () => ({
+    PdfCanvasPreview: ({ src, heading }: { src: string; heading: string }) => (
+        <div data-testid="pdf-canvas-preview" data-src={src} data-heading={heading} />
+    ),
+}));
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { DocumentPreviewModal } from '@/components/documents/DocumentPreviewModal';
 
@@ -40,23 +45,15 @@ const open = (props: Partial<React.ComponentProps<typeof DocumentPreviewModal>> 
     );
 
 describe('DocumentPreviewModal', () => {
-    it('frames a PDF at the inline URL', async () => {
+    it('renders a PDF through the pdf.js canvas preview at the inline URL', async () => {
         installProbe({ contentType: 'application/pdf' });
         open();
 
-        const frame = await screen.findByTitle('Preview of Homeowners policy');
-        expect(frame.tagName).toBe('IFRAME');
-        expect(frame.getAttribute('src')).toBe('/api/business/documents/12/download?disposition=inline&v=2');
-    });
-
-    it('leaves the iframe sandbox attribute off, which Chrome needs for its PDF viewer', async () => {
-        installProbe({ contentType: 'application/pdf' });
-        open();
-
-        const frame = await screen.findByTitle('Preview of Homeowners policy');
-        // Isolation is provided by the response CSP `sandbox; default-src 'none'`
-        // instead — see the note in DocumentPreviewModal.
-        expect(frame.hasAttribute('sandbox')).toBe(false);
+        const pdfPreview = await screen.findByTestId('pdf-canvas-preview');
+        expect(pdfPreview.getAttribute('data-src')).toBe('/api/business/documents/12/download?disposition=inline&v=2');
+        // Never the built-in viewer: under the response's CSP sandbox Chrome
+        // downloads instead of rendering (native save dialog over the app).
+        expect(document.querySelector('iframe')).toBeNull();
     });
 
     it('renders an image document as an img', async () => {
@@ -90,8 +87,10 @@ describe('DocumentPreviewModal', () => {
         installProbe('network-error');
         open();
 
-        const frame = await screen.findByTitle('Preview of Homeowners policy');
-        expect(frame.tagName).toBe('IFRAME');
+        // The probe failing open still previews: kind comes from the caller's
+        // mimeType/fileName, and the canvas renderer surfaces any real error.
+        const pdfPreview = await screen.findByTestId('pdf-canvas-preview');
+        expect(pdfPreview.getAttribute('data-heading')).toBe('Homeowners policy');
     });
 
     it('always exposes a download action in the header', async () => {

@@ -66,11 +66,11 @@ describe('buildDocumentServeHeaders', () => {
     });
 
     it('sends the isolation headers only on inline responses', () => {
-        // PDF: no `sandbox` — Chrome's PDF viewer refuses to run in a CSP-
-        // sandboxed document and downloads the file instead (native save
-        // dialog over the app). Images keep the full sandbox.
+        // Sandbox on EVERY inline type, PDFs included: previews render via
+        // pdf.js from a fetched ArrayBuffer, so the browser never interprets
+        // the response as a document and the strictest policy costs nothing.
         const inline = serve('application/pdf', 'inline');
-        expect(inline['Content-Security-Policy']).toBe("default-src 'none'");
+        expect(inline['Content-Security-Policy']).toBe("sandbox; default-src 'none'");
         expect(inline['X-Content-Type-Options']).toBe('nosniff');
 
         const image = serve('image/png', 'inline');

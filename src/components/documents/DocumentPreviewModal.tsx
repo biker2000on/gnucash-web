@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { PdfCanvasPreview } from '@/components/documents/PdfCanvasPreview';
 import { Modal } from '@/components/ui/Modal';
 import {
     documentDownloadUrl,
@@ -34,18 +35,12 @@ type KeyedProbe = ProbeState & { key: number | null };
 /**
  * In-browser preview for a vault document.
  *
- * PDFs render in an iframe pointed at `?disposition=inline`; images render as an
- * `<img>`. Anything else (or a document whose type we cannot determine) shows a
- * download prompt rather than an empty frame, so every caller degrades cleanly.
- *
- * Note on the iframe `sandbox` attribute: it is deliberately NOT set. Measured in
- * Chrome 141 — any `sandbox` value on the element, including
- * `allow-scripts allow-same-origin`, stops the built-in PDF viewer from
- * initialising at all (blank frame), while the response-level
- * `Content-Security-Policy: sandbox; default-src 'none'` sent by the download
- * route renders fine and provides the same opaque-origin isolation. The
- * server-sent policy is also the stronger of the two: it applies even when the
- * URL is opened directly, not just when embedded here.
+ * PDFs render via pdf.js onto canvases (PdfCanvasPreview) — never the
+ * browser's built-in viewer, whose plugin refuses to run under the response's
+ * CSP `sandbox` and makes Chrome download the file instead (a native save
+ * dialog popping over the app). Images render as an `<img>`. Anything else
+ * (or a document whose type we cannot determine) shows a download prompt
+ * rather than an empty frame, so every caller degrades cleanly.
  */
 export function DocumentPreviewModal({
     documentId,
@@ -135,14 +130,11 @@ export function DocumentPreviewModal({
                 )}
 
                 {probe.status === 'ready' && kind === 'pdf' && (
-                    // No `sandbox` attribute here on purpose — it breaks Chrome's PDF
-                    // viewer; the response CSP `sandbox; default-src 'none'` isolates it.
-                    <iframe
-                        src={documentInlineUrl(documentId)}
-                        title={`Preview of ${heading}`}
-                        referrerPolicy="no-referrer"
-                        className="h-full min-h-[60vh] w-full flex-1 rounded-lg border border-border bg-background-tertiary"
-                    />
+                    // Rendered with pdf.js, NOT the browser's built-in viewer:
+                    // the plugin refuses to run under the response's CSP
+                    // sandbox and Chrome downloads the file instead (a native
+                    // save dialog over the app). See PdfCanvasPreview.
+                    <PdfCanvasPreview src={documentInlineUrl(documentId)} heading={heading} />
                 )}
 
                 {probe.status === 'ready' && kind === 'image' && !imageFailed && (
