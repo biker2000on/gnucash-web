@@ -11,6 +11,13 @@
  * CustomEvent so pages (e.g. the connections page) can consume untracked
  * events, matching the repo's CustomEvent bus convention.
  *
+ * Connection policy: the stream is opened ON DEMAND — by trackJob(), or by a
+ * page that calls connect() because it renders live progress for work it did
+ * not start (the connections page). It is deliberately NOT opened from the
+ * shell: an idle tab held a permanent socket for events it never consumed,
+ * and under HTTP/1.1 (direct :3004 access, no h2) three such streams eat half
+ * the six-connection budget.
+ *
  * Resilience: a 7s poll of /api/jobs/[id] backstops tracked queue jobs when
  * the SSE stream drops (inline-* synthetic ids have no queue entry and rely
  * on SSE alone).
@@ -346,15 +353,6 @@ export function useJobProgress() {
     throw new Error('useJobProgress must be used within a JobProgressProvider');
   }
   return context;
-}
-
-/** Mounted inside the authenticated shell — opens the SSE stream. */
-export function JobProgressStream() {
-  const { connect } = useJobProgress();
-  useEffect(() => {
-    connect();
-  }, [connect]);
-  return null;
 }
 
 /** Floating progress cards for jobs the user kicked off this session. */
