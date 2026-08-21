@@ -173,14 +173,14 @@ describe('Folio service-worker cache lifecycle', () => {
   it('installs the exact Folio offline shell into the versioned cache', async () => {
     const worker = createWorkerHarness();
 
-    expect(source).toContain("const CACHE_NAME = 'folio-pwa-v2'");
+    expect(source).toContain("const CACHE_NAME = 'folio-pwa-v3'");
     expect(worker.workerExports.PRECACHE_URLS).toEqual(EXPECTED_PRECACHE_URLS);
 
     const install = worker.dispatch('install');
     await install.waitUntil();
 
     expect(worker.addAllCalls).toEqual([EXPECTED_PRECACHE_URLS]);
-    expect(worker.stores.has('folio-pwa-v2')).toBe(true);
+    expect(worker.stores.has('folio-pwa-v3')).toBe(true);
     expect(worker.skipWaiting).toHaveBeenCalledOnce();
   });
 
@@ -189,14 +189,14 @@ describe('Folio service-worker cache lifecycle', () => {
       'third-party-cache',
       'gnucash-web-v1',
       'folio-pwa-v1',
-      'folio-pwa-v2',
+      'folio-pwa-v3',
     ]);
     const { isRetiredAppCache } = worker.workerExports;
 
     expect(isRetiredAppCache('third-party-cache')).toBe(false);
     expect(isRetiredAppCache('gnucash-web-v1')).toBe(true);
     expect(isRetiredAppCache('folio-pwa-v1')).toBe(true);
-    expect(isRetiredAppCache('folio-pwa-v2')).toBe(false);
+    expect(isRetiredAppCache('folio-pwa-v3')).toBe(false);
 
     const activate = worker.dispatch('activate');
     await activate.waitUntil();
@@ -207,13 +207,13 @@ describe('Folio service-worker cache lifecycle', () => {
     ]);
     expect(await worker.cacheStorage.keys()).toEqual([
       'third-party-cache',
-      'folio-pwa-v2',
+      'folio-pwa-v3',
     ]);
     expect(worker.claim).toHaveBeenCalledOnce();
   });
 
   it('updates the root shell only from a successful public root navigation', async () => {
-    const worker = createWorkerHarness(['folio-pwa-v2']);
+    const worker = createWorkerHarness(['folio-pwa-v3']);
     worker.fetchMock.mockResolvedValue(
       new Response('fresh Folio shell', { status: 200 })
     );
@@ -224,7 +224,7 @@ describe('Folio service-worker cache lifecycle', () => {
     const response = await navigation.response();
 
     expect(await response?.text()).toBe('fresh Folio shell');
-    const cache = await worker.cacheStorage.open('folio-pwa-v2');
+    const cache = await worker.cacheStorage.open('folio-pwa-v3');
     expect(await (await cache.match('/'))?.text()).toBe('fresh Folio shell');
 
     await cache.put('/', new Response('known-good shell', { status: 200 }));
@@ -242,8 +242,8 @@ describe('Folio service-worker cache lifecycle', () => {
   it.each(['/accounts', '/share/public-token'])(
     'never replaces the root shell with a successful %s navigation',
     async (path) => {
-      const worker = createWorkerHarness(['folio-pwa-v2']);
-      const cache = await worker.cacheStorage.open('folio-pwa-v2');
+      const worker = createWorkerHarness(['folio-pwa-v3']);
+      const cache = await worker.cacheStorage.open('folio-pwa-v3');
       await cache.put('/', new Response('known-good shell', { status: 200 }));
       worker.fetchMock.mockResolvedValue(
         new Response(`page response for ${path}`, { status: 200 })
@@ -263,9 +263,9 @@ describe('Folio service-worker cache lifecycle', () => {
     const worker = createWorkerHarness([
       'third-party-cache',
       'gnucash-web-v1',
-      'folio-pwa-v2',
+      'folio-pwa-v3',
     ]);
-    const currentCache = await worker.cacheStorage.open('folio-pwa-v2');
+    const currentCache = await worker.cacheStorage.open('folio-pwa-v3');
     await currentCache.put(
       '/',
       new Response('upgraded Folio shell', { status: 200 })
@@ -285,7 +285,7 @@ describe('Folio service-worker cache lifecycle', () => {
   });
 
   it('bypasses API requests and retains safe static-asset caching', async () => {
-    const worker = createWorkerHarness(['folio-pwa-v2']);
+    const worker = createWorkerHarness(['folio-pwa-v3']);
 
     const api = worker.dispatch('fetch', {
       request: {
@@ -308,7 +308,56 @@ describe('Folio service-worker cache lifecycle', () => {
     const staticAsset = worker.dispatch('fetch', { request: iconRequest });
     expect(await (await staticAsset.response())?.text()).toBe('icon bytes');
 
-    const cache = await worker.cacheStorage.open('folio-pwa-v2');
+    const cache = await worker.cacheStorage.open('folio-pwa-v3');
     expect(await (await cache.match(iconRequest.url))?.text()).toBe('icon bytes');
+  });
+
+  it('never intercepts RSC navigation payloads (v3 — stale payloads froze tabs after deploys)', async () => {
+    const worker = createWorkerHarness(['folio-pwa-v3']);
+
+    const rsc = worker.dispatch('fetch', {
+      request: {
+        method: 'GET',
+        mode: 'cors',
+        url: 'https://folio.test/accounts?_rsc=abc123',
+      },
+    });
+    expect(rsc.response()).toBeUndefined();
+    expect(worker.fetchMock).not.toHaveBeenCalled();
+
+    const headerTagged = worker.dispatch('fetch', {
+      request: {
+        method: 'GET',
+        mode: 'cors',
+        url: 'https://folio.test/accounts',
+        headers: new Headers({ RSC: '1' }),
+      },
+    });
+    expect(headerTagged.response()).toBeUndefined();
+
+    const nextInternal = worker.dispatch('fetch', {
+      request: {
+        method: 'GET',
+        mode: 'cors',
+        url: 'https://folio.test/_next/data/build-id/accounts.json',
+      },
+    });
+    expect(nextInternal.response()).toBeUndefined();
+  });
+
+  it('does not cache catch-all same-origin responses (v3 — a previous deploy must not outlive itself)', async () => {
+    const worker = createWorkerHarness(['folio-pwa-v3']);
+    worker.fetchMock.mockResolvedValue(new Response('page bytes', { status: 200 }));
+
+    const request = {
+      method: 'GET',
+      mode: 'cors',
+      url: 'https://folio.test/reports/balance-sheet',
+    };
+    const result = worker.dispatch('fetch', { request });
+    expect(await (await result.response())?.text()).toBe('page bytes');
+
+    const cache = await worker.cacheStorage.open('folio-pwa-v3');
+    expect(await cache.match(request.url)).toBeUndefined();
   });
 });

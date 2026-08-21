@@ -55,11 +55,12 @@ self.addEventListener('fetch', (event) => {
   // client a payload it cannot parse, and a long-lived PWA tab then freezes
   // on client-side navigation after every deploy (observed 2026-08-20 on the
   // accounts page). Same for Next internals outside /_next/static/.
+  const headers = event.request.headers;
   if (
     url.searchParams.has('_rsc') ||
-    event.request.headers.get('RSC') === '1' ||
-    event.request.headers.get('next-router-prefetch') !== null ||
-    event.request.headers.get('next-router-state-tree') !== null ||
+    (headers && headers.get('RSC') === '1') ||
+    (headers && headers.get('next-router-prefetch') !== null) ||
+    (headers && headers.get('next-router-state-tree') !== null) ||
     (url.pathname.startsWith('/_next/') && !url.pathname.startsWith('/_next/static/'))
   ) {
     return;

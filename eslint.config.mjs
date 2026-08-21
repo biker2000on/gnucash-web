@@ -21,6 +21,9 @@ const eslintConfig = defineConfig([
     // Coverage output (test:coverage runs before lint in CI).
     "coverage/",
     "playwright-report/",
+    // Vendored pdf.js runtime (native-imported, bypasses the bundler).
+    "public/pdf.min.mjs",
+    "public/pdf.worker.min.mjs",
   ]),
   {
     rules: {
