@@ -43,7 +43,7 @@ interface SyncResult {
 
 export default function ConnectionsPage() {
   const { success, error: showError } = useToast();
-  const { trackJob } = useJobProgress();
+  const { trackJob, connect: connectJobStream } = useJobProgress();
   const [sfLiveProgress, setSfLiveProgress] = useState<string | null>(null);
   const isMobile = useIsMobile();
 
@@ -257,6 +257,10 @@ export default function ConnectionsPage() {
   // show here while the page is open; toasts for manual runs come from the
   // global JobProgressToasts).
   useEffect(() => {
+    // The shell no longer holds the jobs stream open, and a scheduled sync is
+    // never trackJob()'d — this page must open it itself to see those events.
+    connectJobStream();
+
     const onProgress = (e: Event) => {
       const event = (e as CustomEvent<JobProgressEventPayload>).detail;
       if (!event || event.kind !== 'sync-simplefin') return;

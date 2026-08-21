@@ -6,7 +6,6 @@ import { ReactNode, ReactElement, useState, useEffect, useCallback, useRef, useS
 import { useBooks } from '@/contexts/BookContext';
 import { UserMenu } from './UserMenu';
 import { NotificationBell } from './NotificationBell';
-import { JobProgressStream } from '@/contexts/JobProgressContext';
 import { DataEventsProvider } from '@/components/DataEventsProvider';
 import BookSwitcher from './BookSwitcher';
 import { KeyboardShortcutHelp } from './KeyboardShortcutHelp';
@@ -1025,7 +1024,6 @@ export default function Layout({ children }: { children: ReactNode }) {
                         <div className="flex items-center gap-2">
                             <ContextualHelpLink />
                             <NotificationBell />
-                            <JobProgressStream />
                             <DataEventsProvider />
                             <UserMenu />
                         </div>
