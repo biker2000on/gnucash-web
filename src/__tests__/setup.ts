@@ -1,3 +1,15 @@
+import { vi } from 'vitest';
+
+// The vault preview's pdf.js loader natively imports the vendored runtime at
+// the URL '/pdf.min.mjs' (a webpackIgnore literal — see src/lib/pdfjs-client.ts).
+// Vite's import analysis refuses literal public/ asset imports, so the module
+// is mocked GLOBALLY and never transformed under Vitest. Tests that exercise
+// rendering re-mock '@/lib/pdfjs-client' locally with their own doubles.
+vi.mock('@/lib/pdfjs-client', () => ({
+  loadPdfJs: async () => {
+    throw new Error('pdf.js is unavailable under Vitest — mock @/lib/pdfjs-client in this test.');
+  },
+}));
 /**
  * Vitest Test Setup
  *
