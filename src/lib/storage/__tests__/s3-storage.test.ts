@@ -1,7 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const send = vi.fn();
-const S3ClientMock = vi.fn(function S3Client(this: unknown) {
+interface S3ClientConfigLike {
+  requestHandler?: { connectionTimeout?: number; requestTimeout?: number };
+}
+
+const S3ClientMock = vi.fn(function S3Client(
+  this: unknown,
+  _config: S3ClientConfigLike,
+) {
+  void _config;
   Object.assign(this as object, { send });
 });
 
@@ -28,10 +36,10 @@ const {
   S3_REQUEST_TIMEOUT_MS,
 } = await import('@/lib/storage/s3-storage');
 
-function clientConfig() {
-  return S3ClientMock.mock.calls.at(-1)?.[0] as {
-    requestHandler?: { connectionTimeout?: number; requestTimeout?: number };
-  };
+function clientConfig(): S3ClientConfigLike {
+  const config = S3ClientMock.mock.calls.at(-1)?.[0];
+  if (!config) throw new Error('S3Client was never constructed');
+  return config;
 }
 
 describe('S3Storage client configuration', () => {

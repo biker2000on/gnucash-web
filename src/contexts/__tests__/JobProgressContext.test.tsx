@@ -4,6 +4,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { useEffect } from 'react';
 import { act, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -35,7 +36,10 @@ class FakeEventSource {
 let captured: ReturnType<typeof useJobProgress> | null = null;
 
 function Probe() {
-  captured = useJobProgress();
+  const context = useJobProgress();
+  useEffect(() => {
+    captured = context;
+  }, [context]);
   return null;
 }
 
