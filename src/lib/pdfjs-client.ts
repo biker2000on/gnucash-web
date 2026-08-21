@@ -45,10 +45,16 @@ let modulePromise: Promise<PdfJsModule> | null = null;
 
 export function loadPdfJs(): Promise<PdfJsModule> {
     if (!modulePromise) {
-        // The specifier is a runtime URL, not a module path — keep TS from
-        // trying to resolve it while webpack passes it through untouched.
-        const specifier = '/pdf.min.mjs';
-        modulePromise = (import(/* webpackIgnore: true */ specifier) as Promise<PdfJsModule>).then((pdfjs) => {
+        modulePromise = (
+            // The literal specifier is REQUIRED: webpack honours the
+            // webpackIgnore magic comment only on a literal import() and then
+            // emits a true native import. With a variable the comment is
+            // dropped and the production build compiles this into an
+            // expression shim that cannot load the file at all (dev happened
+            // to work, prod froze the vault preview).
+            // @ts-expect-error -- runtime URL served from public/, not a module path
+            import(/* webpackIgnore: true */ '/pdf.min.mjs') as Promise<PdfJsModule>
+        ).then((pdfjs) => {
             if (!pdfjs.GlobalWorkerOptions.workerSrc) {
                 pdfjs.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
             }
