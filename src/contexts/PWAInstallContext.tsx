@@ -12,6 +12,11 @@ import {
 } from 'react';
 import { usePathname } from 'next/navigation';
 import { product } from '@/lib/product';
+import {
+    hasRecentControllerReload,
+    markControllerReload,
+    shouldReloadOnControllerChange,
+} from '@/lib/pwa-controller-reload';
 
 const LOGIN_INSTALL_PENDING_KEY = 'pwa-install-pending-after-login';
 const LOGIN_INSTALL_DISMISSED_KEY = 'pwa-install-auto-prompt-dismissed';
@@ -195,13 +200,31 @@ export function PWAInstallProvider({ children }: { children: React.ReactNode }) 
         }
 
         let intervalId: number | null = null;
+        // Captured BEFORE any controller change. sw.js calls skipWaiting() at
+        // install time, so the page frequently never sees registration.waiting
+        // and reloadOnControllerChangeRef stays false — the old behaviour then
+        // skipped the reload and left the previous deploy's JS running under a
+        // brand-new controller. Having had a controller at all is the reliable
+        // signal that the runtime underneath us was swapped.
+        let hadController = Boolean(navigator.serviceWorker.controller);
 
         const handleControllerChange = () => {
-            if (!reloadOnControllerChangeRef.current) {
+            const reloadRequested = reloadOnControllerChangeRef.current;
+            reloadOnControllerChangeRef.current = false;
+
+            const reload = shouldReloadOnControllerChange({
+                hadController,
+                reloadRequested,
+                alreadyReloaded: hasRecentControllerReload(),
+            });
+
+            hadController = true;
+
+            if (!reload) {
                 return;
             }
 
-            reloadOnControllerChangeRef.current = false;
+            markControllerReload();
             window.location.reload();
         };
 
