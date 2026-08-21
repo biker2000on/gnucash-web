@@ -43,9 +43,26 @@ export interface PdfJsModule {
 
 let modulePromise: Promise<PdfJsModule> | null = null;
 
+/**
+ * A module import that stalls (flaky network, proxy wedge) neither resolves
+ * nor rejects — and a pending memo would poison every later preview in the
+ * tab. Racing a rejection turns the stall into the visible error state and
+ * lets the reset below arm a retry.
+ */
+const MODULE_LOAD_DEADLINE_MS = 15_000;
+
+function withDeadline<T>(promise: Promise<T>, ms: number): Promise<T> {
+    return Promise.race([
+        promise,
+        new Promise<never>((_, reject) => {
+            setTimeout(() => reject(new Error('The PDF renderer took too long to load. Check the connection and try again.')), ms);
+        }),
+    ]);
+}
+
 export function loadPdfJs(): Promise<PdfJsModule> {
     if (!modulePromise) {
-        modulePromise = (
+        modulePromise = withDeadline((
             // The literal specifier is REQUIRED: webpack honours the
             // webpackIgnore magic comment only on a literal import() and then
             // emits a true native import. With a variable the comment is
@@ -54,7 +71,7 @@ export function loadPdfJs(): Promise<PdfJsModule> {
             // to work, prod froze the vault preview).
             // @ts-expect-error -- runtime URL served from public/, not a module path
             import(/* webpackIgnore: true */ '/pdf.min.mjs') as Promise<PdfJsModule>
-        ).then((pdfjs) => {
+        ), MODULE_LOAD_DEADLINE_MS).then((pdfjs) => {
             if (!pdfjs.GlobalWorkerOptions.workerSrc) {
                 pdfjs.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
             }

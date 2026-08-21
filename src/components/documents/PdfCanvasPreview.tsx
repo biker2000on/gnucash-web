@@ -24,6 +24,9 @@ import { loadPdfJs } from '@/lib/pdfjs-client';
 /** Pages rendered at most — a bound on memory for pathological documents. */
 const MAX_RENDERED_PAGES = 100;
 
+/** Byte-fetch deadline; a stalled storage read must surface, not hang the modal. */
+const BYTE_FETCH_DEADLINE_MS = 30_000;
+
 /** Cap the backing-store scale so a huge monitor cannot demand giant bitmaps. */
 const MAX_PIXEL_RATIO = 2;
 
@@ -43,12 +46,20 @@ export function PdfCanvasPreview({ src, heading }: { src: string; heading: strin
         let cancelled = false;
         // Track the document so unmount can free the worker's memory.
         let loadedDoc: { destroy: () => Promise<unknown> } | null = null;
+        // Abort the byte fetch on unmount AND on the deadline: an unbounded
+        // request behind the modal is exactly the freeze this component was
+        // built to eliminate.
+        const controller = new AbortController();
+        const deadline = setTimeout(
+            () => controller.abort(new DOMException('Preview timed out', 'TimeoutError')),
+            BYTE_FETCH_DEADLINE_MS,
+        );
 
         void (async () => {
             try {
                 const pdfjs = await loadPdfJs();
 
-                const response = await fetch(src);
+                const response = await fetch(src, { signal: controller.signal });
                 if (!response.ok) {
                     throw new Error(
                         response.status === 404
@@ -57,6 +68,7 @@ export function PdfCanvasPreview({ src, heading }: { src: string; heading: strin
                     );
                 }
                 const data = await response.arrayBuffer();
+                clearTimeout(deadline);
                 if (cancelled) return;
 
                 const doc = await pdfjs.getDocument({ data }).promise;
@@ -98,16 +110,23 @@ export function PdfCanvasPreview({ src, heading }: { src: string; heading: strin
                     page.cleanup();
                 }
             } catch (caught) {
+                clearTimeout(deadline);
                 if (cancelled) return;
+                const timedOut = caught instanceof DOMException &&
+                    (caught.name === 'TimeoutError' || caught.name === 'AbortError');
                 setState({
                     status: 'error',
-                    message: caught instanceof Error ? caught.message : 'The PDF could not be rendered.',
+                    message: timedOut
+                        ? 'The document is taking too long to load.'
+                        : caught instanceof Error ? caught.message : 'The PDF could not be rendered.',
                 });
             }
         })();
 
         return () => {
             cancelled = true;
+            clearTimeout(deadline);
+            controller.abort();
             container.replaceChildren();
             void loadedDoc?.destroy().catch(() => undefined);
         };

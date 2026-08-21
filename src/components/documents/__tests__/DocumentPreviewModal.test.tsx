@@ -75,12 +75,19 @@ describe('DocumentPreviewModal', () => {
         expect(link.getAttribute('href')).toBe('/api/business/documents/12/download');
     });
 
-    it('explains a deleted document rather than showing an empty frame', async () => {
-        installProbe({ status: 404 });
+    it('renders the preview immediately without any probe request', async () => {
+        // The old HEAD probe ran the GET handler server-side and read the whole
+        // object from storage with no deadline — the 2026-08-21 freeze. The
+        // modal now renders optimistically from the caller's MIME/filename and
+        // the byte fetch inside the renderer surfaces 404s itself.
+        installProbe({ contentType: 'application/pdf' });
         open();
 
-        expect(await screen.findByText(/no longer in the vault/i)).toBeTruthy();
-        expect(screen.queryByTitle(/^Preview of/)).toBeNull();
+        await screen.findByTestId('pdf-canvas-preview');
+        expect(globalThis.fetch).not.toHaveBeenCalledWith(
+            expect.stringContaining('/download'),
+            expect.objectContaining({ method: 'HEAD' }),
+        );
     });
 
     it('falls back to the caller-supplied file name when the probe fails', async () => {

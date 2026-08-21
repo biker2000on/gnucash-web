@@ -288,6 +288,15 @@ describe('DocumentVaultBrowser', () => {
 
     // CODEX-2 / MED
     it('fetches a thumbnail only for complete rows and shows a terminal failed state', async () => {
+        // Thumbnails are additionally gated on viewport proximity; simulate an
+        // observer that immediately reports every card as visible.
+        vi.stubGlobal('IntersectionObserver', class {
+            constructor(private cb: IntersectionObserverCallback) {}
+            observe() { this.cb([{ isIntersecting: true } as IntersectionObserverEntry], this as unknown as IntersectionObserver); }
+            disconnect() {}
+            unobserve() {}
+            takeRecords() { return []; }
+        });
         const handler = installFetch();
         renderBrowser([
             documents[0],

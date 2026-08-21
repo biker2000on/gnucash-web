@@ -46,7 +46,10 @@ describe('PdfCanvasPreview', () => {
         await waitFor(() => {
             expect(screen.getByTestId('pdf-canvas-pages').querySelectorAll('canvas')).toHaveLength(3);
         });
-        expect(fetch).toHaveBeenCalledWith('/api/business/documents/7/download?disposition=inline&v=2');
+        expect(fetch).toHaveBeenCalledWith(
+            '/api/business/documents/7/download?disposition=inline&v=2',
+            expect.objectContaining({ signal: expect.any(AbortSignal) }),
+        );
         expect(screen.getByLabelText('Page 1 of Policy')).toBeTruthy();
         expect(screen.queryByRole('alert')).toBeNull();
     });

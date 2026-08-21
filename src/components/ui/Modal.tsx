@@ -65,15 +65,20 @@ export function Modal({
         return () => document.removeEventListener('keydown', handleKeyDown);
     }, [isOpen, closeOnEscape, onClose]);
 
-    // Lock body scroll when modal is open
+    // Lock scrolling while the modal is open. The app shell is a fixed
+    // `h-screen` flex column whose scrolling happens on `<main>` (see
+    // Layout.tsx), so locking `body` alone locks nothing — the page behind the
+    // backdrop kept scrolling while every click was swallowed, which read as
+    // "frozen" (2026-08-21 review, F3). Lock every scroll container the shell
+    // uses, plus body for standalone pages.
     useEffect(() => {
-        if (isOpen) {
-            const previousOverflow = document.body.style.overflow;
-            document.body.style.overflow = 'hidden';
-            return () => {
-                document.body.style.overflow = previousOverflow;
-            };
-        }
+        if (!isOpen) return;
+        const targets: HTMLElement[] = [document.body, ...Array.from(document.querySelectorAll<HTMLElement>('main'))];
+        const previous = targets.map(el => el.style.overflow);
+        for (const el of targets) el.style.overflow = 'hidden';
+        return () => {
+            targets.forEach((el, i) => { el.style.overflow = previous[i]; });
+        };
     }, [isOpen]);
 
     // Reset before paint and once more after async content has laid out. The

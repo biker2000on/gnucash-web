@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { PdfCanvasPreview } from '@/components/documents/PdfCanvasPreview';
 import { Modal } from '@/components/ui/Modal';
 import {
@@ -24,14 +24,6 @@ interface DocumentPreviewModalProps extends Omit<Partial<DocumentPreviewTarget>,
     onClose: () => void;
 }
 
-type ProbeState =
-    | { status: 'probing' }
-    | { status: 'ready'; mimeType: string | null }
-    | { status: 'error'; message: string };
-
-/** Probe result tagged with the document it belongs to, so a new target reads as loading. */
-type KeyedProbe = ProbeState & { key: number | null };
-
 /**
  * In-browser preview for a vault document.
  *
@@ -41,6 +33,16 @@ type KeyedProbe = ProbeState & { key: number | null };
  * dialog popping over the app). Images render as an `<img>`. Anything else
  * (or a document whose type we cannot determine) shows a download prompt
  * rather than an empty frame, so every caller degrades cleanly.
+ *
+ * The preview renders OPTIMISTICALLY from the caller-supplied MIME type and
+ * file name. There used to be a HEAD "probe" of the inline URL first, and it
+ * was the direct cause of the 2026-08-21 "preview freezes everything" bug:
+ * the download route only exports GET, so Next served the HEAD by running the
+ * GET handler — authenticating and reading the ENTIRE object from storage —
+ * with no timeout and no abort. One stalled storage read left the modal
+ * showing nothing but its backdrop forever. The probe carried no information
+ * the preview needs: the vault already knows the MIME/name, and the real byte
+ * fetch surfaces 404/403 with better copy anyway.
  */
 export function DocumentPreviewModal({
     documentId,
@@ -50,52 +52,16 @@ export function DocumentPreviewModal({
     isOpen,
     onClose,
 }: DocumentPreviewModalProps) {
-    const [probeResult, setProbeResult] = useState<KeyedProbe>({ key: null, status: 'probing' });
     const [imageFailedFor, setImageFailedFor] = useState<number | null>(null);
-
-    useEffect(() => {
-        if (!isOpen || documentId === null) return;
-        let cancelled = false;
-
-        // Confirms the document still exists (it may have been deleted in another
-        // tab) and reports the stored MIME type, which several callers do not have.
-        // A HEAD that fails outright is not treated as fatal — we fall back to the
-        // caller-supplied hints rather than blocking the preview.
-        fetch(documentInlineUrl(documentId), { method: 'HEAD' })
-            .then((response) => {
-                if (cancelled) return;
-                if (response.status === 404) {
-                    setProbeResult({ key: documentId, status: 'error', message: 'This document is no longer in the vault.' });
-                } else if (response.status === 401 || response.status === 403) {
-                    setProbeResult({ key: documentId, status: 'error', message: 'You do not have access to this document.' });
-                } else if (!response.ok) {
-                    setProbeResult({ key: documentId, status: 'ready', mimeType: null });
-                } else {
-                    setProbeResult({ key: documentId, status: 'ready', mimeType: response.headers.get('content-type') });
-                }
-            })
-            .catch(() => {
-                if (!cancelled) setProbeResult({ key: documentId, status: 'ready', mimeType: null });
-            });
-
-        return () => {
-            cancelled = true;
-        };
-    }, [isOpen, documentId]);
 
     const handleClose = useCallback(() => onClose(), [onClose]);
 
     if (documentId === null) return null;
 
-    // A result for a different document reads as "still loading" rather than
-    // flashing the previous file's preview.
-    const probe: ProbeState = probeResult.key === documentId ? probeResult : { status: 'probing' };
     const imageFailed = imageFailedFor === documentId;
     const setImageFailed = () => setImageFailedFor(documentId);
 
-    const serverMime = probe.status === 'ready' ? probe.mimeType : null;
-    const kind: DocumentPreviewKind | null =
-        probe.status === 'ready' ? resolvePreviewKind(serverMime ?? mimeType, fileName) : null;
+    const kind: DocumentPreviewKind | null = resolvePreviewKind(mimeType, fileName);
     const heading = title?.trim() || fileName?.trim() || `Document #${documentId}`;
 
     const downloadAction = (
@@ -117,19 +83,7 @@ export function DocumentPreviewModal({
             resetKey={documentId}
         >
             <div className="flex h-full min-h-[60vh] w-full min-w-0 flex-col p-4">
-                {probe.status === 'probing' && (
-                    <p className="m-auto text-sm text-foreground-secondary">Loading preview…</p>
-                )}
-
-                {probe.status === 'error' && (
-                    <PreviewNotice
-                        documentId={documentId}
-                        heading="Preview unavailable"
-                        body={probe.message}
-                    />
-                )}
-
-                {probe.status === 'ready' && kind === 'pdf' && (
+                {kind === 'pdf' && (
                     // Rendered with pdf.js, NOT the browser's built-in viewer:
                     // the plugin refuses to run under the response's CSP
                     // sandbox and Chrome downloads the file instead (a native
@@ -137,7 +91,7 @@ export function DocumentPreviewModal({
                     <PdfCanvasPreview src={documentInlineUrl(documentId)} heading={heading} />
                 )}
 
-                {probe.status === 'ready' && kind === 'image' && !imageFailed && (
+                {kind === 'image' && !imageFailed && (
                     <div className="flex h-full min-h-0 w-full min-w-0 flex-1 items-start justify-center overflow-auto rounded-lg border border-border bg-background-tertiary p-3">
                         {/* eslint-disable-next-line @next/next/no-img-element -- user-uploaded bytes streamed from our own API; next/image cannot optimise them. */}
                         <img
@@ -149,7 +103,7 @@ export function DocumentPreviewModal({
                     </div>
                 )}
 
-                {probe.status === 'ready' && (kind === null || imageFailed) && (
+                {(kind === null || (kind === 'image' && imageFailed)) && (
                     <PreviewNotice
                         documentId={documentId}
                         heading="Preview isn’t available for this file type"

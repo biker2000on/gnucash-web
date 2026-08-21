@@ -552,6 +552,27 @@ export interface EntityDocumentFile {
 }
 
 /** Fetch the stored file for a book-owned document (receipts serve pattern). */
+/**
+ * Metadata for serving headers WITHOUT touching the storage backend. HEAD
+ * requests must answer from the database row alone: routing a HEAD through
+ * getEntityDocumentFile reads the entire object from S3/MinIO, and a stalled
+ * storage read with no deadline is what froze the vault preview (2026-08-21).
+ */
+export async function getEntityDocumentFileMeta(
+    bookGuid: string,
+    id: number,
+): Promise<{ fileName: string; mimeType: string; sizeBytes: number | null }> {
+    const row = await getOwnedDocument(bookGuid, id);
+    if (!row.file_key) {
+        throw new EntityDocumentNotFoundError('Document has no stored file');
+    }
+    return {
+        fileName: row.file_name ?? 'document',
+        mimeType: row.mime_type ?? 'application/octet-stream',
+        sizeBytes: typeof row.size_bytes === 'number' ? row.size_bytes : row.size_bytes ? Number(row.size_bytes) : null,
+    };
+}
+
 export async function getEntityDocumentFile(
     bookGuid: string,
     id: number,

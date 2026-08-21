@@ -186,19 +186,64 @@ function HighlightedSnippet({ snippet }: { snippet: SearchSnippet }) {
  * without touching the network, and they render *different* states — a failed
  * render is terminal, and showing it as "Preview pending" forever was a lie.
  */
+/**
+ * At most this many thumbnail requests in flight at once. The vault used to
+ * fire one unbounded fetch per card on mount — N concurrent storage reads on a
+ * pool prone to IO storms, which is exactly the load that made the preview's
+ * own reads stall (2026-08-21 review, F2).
+ */
+const THUMBNAIL_MAX_CONCURRENT = 6;
+let thumbnailInFlight = 0;
+const thumbnailWaiters: Array<() => void> = [];
+
+async function acquireThumbnailSlot(): Promise<() => void> {
+    if (thumbnailInFlight >= THUMBNAIL_MAX_CONCURRENT) {
+        await new Promise<void>((resolve) => thumbnailWaiters.push(resolve));
+    }
+    thumbnailInFlight += 1;
+    let released = false;
+    return () => {
+        if (released) return;
+        released = true;
+        thumbnailInFlight -= 1;
+        thumbnailWaiters.shift()?.();
+    };
+}
+
 function DocumentThumbnail({ document }: { document: VaultDocumentRow }) {
     const [src, setSrc] = useState<string | null>(null);
+    const [nearViewport, setNearViewport] = useState(false);
+    const rootRef = useRef<HTMLDivElement>(null);
     const status = document.thumbnailStatus;
-    const shouldFetch = status === 'complete';
+    const shouldFetch = status === 'complete' && nearViewport;
+
+    // Fetch only when the card is on (or near) screen; a multi-year archive
+    // must not fire hundreds of storage reads for rows nobody scrolled to.
+    useEffect(() => {
+        const el = rootRef.current;
+        if (!el || nearViewport) return;
+        if (typeof IntersectionObserver !== 'function') {
+            setNearViewport(true);
+            return;
+        }
+        const observer = new IntersectionObserver((entries) => {
+            if (entries.some(entry => entry.isIntersecting)) setNearViewport(true);
+        }, { rootMargin: '400px' });
+        observer.observe(el);
+        return () => observer.disconnect();
+    }, [nearViewport]);
 
     useEffect(() => {
         if (!shouldFetch) return;
         let cancelled = false;
         let objectUrl: string | null = null;
         const controller = new AbortController();
+        let release: (() => void) | null = null;
 
         void (async () => {
             try {
+                release = await acquireThumbnailSlot();
+                if (cancelled) return;
                 const response = await fetch(`/api/business/documents/${document.id}/thumbnail`, {
                     signal: controller.signal,
                 });
@@ -212,18 +257,21 @@ function DocumentThumbnail({ document }: { document: VaultDocumentRow }) {
             } catch {
                 // A thumbnail that disappeared between list and fetch falls back
                 // to the placeholder rather than breaking the card.
+            } finally {
+                release?.();
             }
         })();
 
         return () => {
             cancelled = true;
             controller.abort();
+            release?.();
             if (objectUrl && typeof URL.revokeObjectURL === 'function') URL.revokeObjectURL(objectUrl);
         };
     }, [document.id, shouldFetch]);
 
     return (
-        <div className="flex aspect-[4/3] items-center justify-center overflow-hidden border-b border-border bg-background-tertiary">
+        <div ref={rootRef} className="flex aspect-[4/3] items-center justify-center overflow-hidden border-b border-border bg-background-tertiary">
             {shouldFetch && src ? (
                 // The byte route is accepted only after its image/webp response is verified above.
                 // eslint-disable-next-line @next/next/no-img-element
@@ -863,6 +911,9 @@ export function DocumentVaultBrowser({
 
     return (
         <section className="space-y-4" aria-label="Document browser">
+            {/* Preload the pdf.js runtime so a Preview click does not pay the
+                module download on the critical path (React hoists this link). */}
+            <link rel="modulepreload" href="/pdf.min.mjs" />
             <div className="flex flex-wrap items-end gap-3 rounded-lg border border-border bg-background-secondary/30 p-3">
                 <label className="min-w-64 flex-1 text-xs font-medium text-foreground-secondary">
                     Search document text
