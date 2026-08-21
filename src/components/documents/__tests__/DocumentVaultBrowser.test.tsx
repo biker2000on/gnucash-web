@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { Profiler } from 'react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import {
     DocumentVaultBrowser,
     type VaultDocumentRow,
@@ -208,6 +209,44 @@ describe('DocumentVaultBrowser', () => {
 
         await waitFor(() => expect(screen.getByTestId('document-card-view')).toBeInTheDocument());
         expect(screen.getByLabelText('Group by')).toHaveValue('category');
+    });
+
+    /**
+     * Regression: the browser once re-rendered FOREVER (2026-08-21). The
+     * `state.grouping` array fed to TanStack was rebuilt every render; each
+     * identity change busted the grouped-row-model memo, which queued
+     * `_autoResetPageIndex`, whose `resetPageIndex()` spread a never-equal
+     * state object — an infinite DefaultLane loop pegging a CPU core in prod.
+     * This pins "commits settle after mount": any revival of that loop keeps
+     * committing during the settle window and trips the second sample.
+     */
+    it('settles after mount instead of re-rendering forever', async () => {
+        installFetch();
+        let commits = 0;
+        render(
+            <Profiler id="vault" onRender={() => { commits += 1; }}>
+                <DocumentVaultBrowser
+                    documents={documents}
+                    categoryOptions={categoryOptions}
+                    onPreview={vi.fn()}
+                    onEdit={vi.fn()}
+                    onDelete={vi.fn()}
+                    onRequestDelete={vi.fn()}
+                />
+            </Profiler>
+        );
+
+        // Let mount effects, the tag-vocabulary fetch, and any queued
+        // table-core auto-resets fully flush.
+        for (let i = 0; i < 20; i++) {
+            await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+        }
+        const settled = commits;
+
+        for (let i = 0; i < 20; i++) {
+            await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+        }
+        expect(commits).toBe(settled);
     });
 
     // HIGH-A

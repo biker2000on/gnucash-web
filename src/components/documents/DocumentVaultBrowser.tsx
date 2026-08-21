@@ -557,6 +557,10 @@ function DocumentActions({
 
 const columnHelper = createColumnHelper<VaultRow>();
 
+/** The three group-key columns exist only for grouping — never shown. Module
+ * constant so the identity fed into table state never changes. */
+const GROUPING_COLUMN_VISIBILITY = { groupCategory: false, taxYearGroup: false, issuerGroup: false } as const;
+
 export function DocumentVaultBrowser({
     documents,
     categoryOptions,
@@ -822,13 +826,19 @@ export function DocumentVaultBrowser({
         }),
     ], [confirmDeleteId, handleTagsSaved, onDelete, onEdit, onPreview, onRequestDelete, tagVocabulary, tagsAvailable, tagsByDocument]);
 
-    const tableGrouping = grouping === 'category'
+    // Identity-stable: every value fed into `state` below must keep its
+    // identity across renders. TanStack's grouped-row-model memo keys on
+    // `state.grouping`; a fresh array here busted it every render, each bust
+    // queued `_autoResetPageIndex`, and the queued `resetPageIndex()` set a
+    // freshly-spread (never-equal) state object — an infinite DefaultLane
+    // re-render loop that pegged a full core on this page (2026-08-21).
+    const tableGrouping = useMemo(() => grouping === 'category'
         ? ['groupCategory']
         : grouping === 'taxYear'
           ? ['taxYearGroup']
           : grouping === 'issuer'
             ? ['issuerGroup']
-            : [];
+            : [], [grouping]);
 
     const table = useReactTable({
         data: rows,
@@ -840,11 +850,14 @@ export function DocumentVaultBrowser({
             // group used to render every table group empty (and persist it).
             expanded: tableExpanded,
             grouping: tableGrouping,
-            columnVisibility: { groupCategory: false, taxYearGroup: false, issuerGroup: false },
+            columnVisibility: GROUPING_COLUMN_VISIBILITY,
         },
         onSortingChange: setSorting,
         onExpandedChange: setTableExpanded,
         autoResetExpanded: false,
+        // There is no pagination; without this, any row-model recompute queues
+        // a resetPageIndex() whose state spread re-renders unconditionally.
+        autoResetPageIndex: false,
         getCoreRowModel: getCoreRowModel(),
         getSortedRowModel: getSortedRowModel(),
         getGroupedRowModel: getGroupedRowModel(),
