@@ -24,6 +24,7 @@ type WorkerEvent = {
     method: string;
     mode: string;
     url: string;
+    headers?: Headers;
   };
   data?: unknown;
   waitUntil: (promise: Promise<unknown>) => void;
