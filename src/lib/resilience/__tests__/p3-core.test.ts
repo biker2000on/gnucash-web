@@ -84,6 +84,58 @@ describe('P3 integrated feature calculations', () => {
     'Billing details - Taxes  Sales Tax For Utility   $10.93  Total Taxes   $10.93',
   ].join('  ');
 
+  // Shape taken from a real municipal water bill (Caldwell County) after OCR
+  // flattens the page (identifiers replaced). There is no "N gallons" prose
+  // anywhere — only the meter table row "WATER <amount> <days> <prev>
+  // <present> <consumption>" — and no "$" before any total, so both the prose
+  // usage patterns and the stated-total fallback come up empty on it.
+  const MUNICIPAL_WATER_BILL = [
+    'Example County Water Department  4 Example Avenue Sometown, NC 00000',
+    'BILLS DUE UPON RECEIPT - PAYMENT MUST BE RECEIVED BY 5:00 PM ON THE DUE DATE',
+    'PLEASE MAKE CHECK PAYABLE: 30.34 35 04/24/2025 03/20/2025 05/01/2025',
+    'RETAIN THIS PORTION FOR YOUR RECORDS',
+    '30.34 PREV DUE: CURRENT DUE:   39.81  BILLED IN HUNDRED GALLONS',
+    'WATER   39.81 35 202300   207200   4900',
+    'Public Utilities Bill  05/26/2025 05/01/2025 70.15  AMOUNT PAID  70.15',
+    'PREVIOUS READING   PRESENT READING   DAYS   TOTAL CONSUMPTION   AMOUNT',
+    '70.15 TOTAL DUE:',
+  ].join('  ');
+
+  it('parses a municipal water bill meter table (no prose usage, no $ totals)', () => {
+    const bill = parseUtilityBillText({
+      receiptId: 43,
+      date: '2026-08-24',
+      provider: 'Caldwell County Water Department',
+      text: MUNICIPAL_WATER_BILL,
+    })!;
+    expect(bill).toMatchObject({
+      id: 'receipt-43-water',
+      type: 'water',
+      unit: 'gallons',
+      // present − previous = 207200 − 202300; the invariant confirms the
+      // column mapping before anything is trusted.
+      usage: 4900,
+      // The WATER row amount is this period's cost of service — NOT the
+      // 70.15 TOTAL DUE, which includes the 30.34 unpaid prior balance.
+      totalCost: 39.81,
+      // The one printed date pair exactly 35 days apart.
+      periodStart: '2025-03-20',
+      periodEnd: '2025-04-24',
+      receiptId: 43,
+    });
+    expect(bill.date).toBe('2025-04-24');
+  });
+
+  it('ignores a meter row whose readings do not reconcile with consumption', () => {
+    const bill = parseUtilityBillText({
+      receiptId: 44,
+      date: '2026-08-24',
+      provider: 'Example Water',
+      text: 'WATER   39.81 35 202300   207200   9999',
+    });
+    expect(bill).toBeNull();
+  });
+
   it('reads the service period rather than the upload date', () => {
     const bill = parseUtilityBillText({
       receiptId: 7,

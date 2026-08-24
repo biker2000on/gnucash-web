@@ -1236,7 +1236,9 @@ async function loadUtilityBillSuggestions(bookGuid: string, profile: UtilitiesPr
   const existingReceiptIds = new Set(profile.bills.flatMap(bill => bill.receiptId ? [bill.receiptId] : []));
   const result = await query(
     `SELECT r.id, COALESCE(t.post_date::date, r.created_at::date)::text AS bill_date,
-            COALESCE(t.description, 'Utility provider') AS provider, r.ocr_text
+            t.description AS tx_description, r.ocr_text,
+            r.extracted_data->>'vendor' AS extracted_vendor,
+            r.extracted_data->>'date' AS extracted_date
        FROM gnucash_web_receipts r
        LEFT JOIN transactions t ON t.guid = r.transaction_guid
       WHERE r.book_guid = $1
@@ -1249,13 +1251,26 @@ async function loadUtilityBillSuggestions(bookGuid: string, profile: UtilitiesPr
       LIMIT 500`,
     [bookGuid],
   );
-  const parsed = (result.rows as Array<{ id: number; bill_date: string; provider: string; ocr_text: string }>)
+  const parsed = (result.rows as Array<{
+    id: number;
+    bill_date: string;
+    tx_description: string | null;
+    ocr_text: string;
+    extracted_vendor: string | null;
+    extracted_date: string | null;
+  }>)
     .filter(row => !existingReceiptIds.has(row.id))
     .flatMap(row => {
+      // An unlinked receipt has no transaction to name/date it — but the AI
+      // extraction usually captured the vendor and bill date. Without this a
+      // freshly-uploaded bill surfaced as "Utility provider" dated today.
+      const extractedDate = row.extracted_date && /^\d{4}-\d{2}-\d{2}/.test(row.extracted_date)
+        ? row.extracted_date.slice(0, 10)
+        : null;
       const bill = parseUtilityBillText({
         receiptId: row.id,
-        date: row.bill_date,
-        provider: row.provider,
+        date: (row.tx_description ? row.bill_date : extractedDate ?? row.bill_date),
+        provider: row.tx_description ?? row.extracted_vendor?.trim() ?? 'Utility provider',
         text: row.ocr_text,
       });
       return bill ? [bill] : [];

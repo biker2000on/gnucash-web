@@ -237,6 +237,62 @@ function parseChargeLines(region: string, sectionCategory: UtilityChargeCategory
   return charges;
 }
 
+/**
+ * Municipal water bills print a meter TABLE instead of prose — no
+ * "N gallons" phrase anywhere, so `parseUsage` cannot see them. Once OCR
+ * flattens the columns the row reads:
+ *
+ *   "WATER   39.81 35 202300   207200   4900"
+ *    service amount days previous present consumption
+ *
+ * The column mapping is confirmed by the meter invariant
+ * `present − previous = consumption`; a row that fails it is ignored rather
+ * than guessed at. The row's amount is this period's cost of service —
+ * deliberately not "TOTAL DUE", which carries any unpaid prior balance.
+ * The service period is recovered by finding the pair of printed dates
+ * exactly `days` apart.
+ */
+export function parseMunicipalWaterBill(text: string): {
+  amount: number;
+  days: number;
+  usage: number;
+  periodStart: string | null;
+  periodEnd: string | null;
+} | null {
+  const rowRe = /\bWATER\b\s+([\d,]+\.\d{2})\s+(\d{1,3})\s+([\d,]{2,12})\s+([\d,]{2,12})\s+([\d,]{1,10})\b/gi;
+  let row: RegExpExecArray | null;
+  while ((row = rowRe.exec(text)) !== null) {
+    const amount = Number(row[1].replaceAll(',', ''));
+    const days = Number(row[2]);
+    const previous = Number(row[3].replaceAll(',', ''));
+    const present = Number(row[4].replaceAll(',', ''));
+    const consumption = Number(row[5].replaceAll(',', ''));
+    if (!Number.isFinite(amount) || amount <= 0) continue;
+    if (!Number.isFinite(consumption) || consumption <= 0) continue;
+    if (present - previous !== consumption) continue;
+
+    // Service period: the printed date pair exactly `days` apart (billing
+    // date and period start sit next to each other on these bills).
+    let periodStart: string | null = null;
+    let periodEnd: string | null = null;
+    const dates = [...text.matchAll(/\b(\d{1,2})\/(\d{1,2})\/(\d{4})\b/g)]
+      .map(m => new Date(Date.UTC(Number(m[3]), Number(m[1]) - 1, Number(m[2]))))
+      .filter(d => !Number.isNaN(d.getTime()));
+    outer: for (const a of dates) {
+      for (const b of dates) {
+        if ((b.getTime() - a.getTime()) / 86400000 === days) {
+          periodStart = a.toISOString().slice(0, 10);
+          periodEnd = b.toISOString().slice(0, 10);
+          break outer;
+        }
+      }
+    }
+
+    return { amount, days, usage: consumption, periodStart, periodEnd };
+  }
+  return null;
+}
+
 function parseUsage(text: string): { usage: number; unit: string } | null {
   const patterns = [
     /energy used\s*[:\s]\s*([\d,]+(?:\.\d+)?)\s*(kwh|therms?|gallons?|gal|ccf)\b/i,
@@ -262,7 +318,29 @@ export function parseUtilityBillText(input: {
   text: string;
 }): UtilityBill | null {
   const parsedUsage = parseUsage(input.text);
-  if (!parsedUsage) return null;
+  if (!parsedUsage) {
+    // Prose patterns found nothing — try the municipal meter-table layout.
+    const municipal = parseMunicipalWaterBill(input.text);
+    if (!municipal) return null;
+    return {
+      id: `receipt-${input.receiptId}-water`,
+      date: (municipal.periodEnd ?? input.date).slice(0, 10),
+      type: 'water',
+      provider: input.provider,
+      usage: municipal.usage,
+      unit: 'gallons',
+      totalCost: municipal.amount,
+      periodStart: municipal.periodStart,
+      periodEnd: municipal.periodEnd,
+      charges: [{ label: 'Water service', amount: municipal.amount, category: 'supply' }],
+      supplyCost: municipal.amount,
+      feeCost: 0,
+      taxCost: 0,
+      otherCost: 0,
+      transactionGuid: null,
+      receiptId: input.receiptId,
+    };
+  }
 
   const charges = parseUtilityCharges(input.text);
   const sumOf = (category: UtilityChargeCategory) =>

@@ -304,7 +304,29 @@ describe('Edge cases', () => {
     expect(result!.confidence).toBe('medium');
   });
 
-  it('should handle boundary: 3.01 days offset does not match', () => {
+  it('windows on CALENDAR days: time-of-day cannot push 3 days over the edge', () => {
+    // Regression (2026-08-24): the feed's raw afternoon timestamp vs the
+    // candidate's midnight-normalized post_date computed 8/21↔8/24 as 3.6
+    // days, failed the 3-day window, and imported a duplicate instead of
+    // matching. Both sides truncate to their calendar date now.
+    const sfTxn = {
+      posted: new Date('2026-03-23T18:32:00Z').getTime() / 1000, // 3 calendar days out, mid-afternoon Eastern
+      amount: '-10.00',
+      description: 'CHASE CREDIT CRD AUTOPAY',
+    };
+
+    const result = selectManualReconciliationMatch(sfTxn, [{
+      transaction_guid: 'a'.repeat(32),
+      post_date: new Date('2026-03-20T00:00:00Z'),
+      description: 'Chase Amazon Prime Card Payment Cara',
+      has_meta: true,
+    }]);
+
+    expect(result).not.toBeNull();
+    expect(result!.confidence).toBe('medium');
+  });
+
+  it('should handle boundary: 4 calendar days offset does not match', () => {
     const sfTxn = {
       posted: new Date('2026-03-20T12:00:00Z').getTime() / 1000,
       amount: '-10.00',
@@ -313,12 +335,30 @@ describe('Edge cases', () => {
 
     const result = selectManualReconciliationMatch(sfTxn, [{
       transaction_guid: 'a'.repeat(32),
-      post_date: new Date('2026-03-23T12:15:00Z'),
+      post_date: new Date('2026-03-24T12:15:00Z'),
       description: 'Test',
       has_meta: true,
     }]);
 
     expect(result).toBeNull();
+  });
+
+  it('transfer dedup also windows on calendar days (the 8/21↔8/24 payment pair)', () => {
+    const sfTxn = {
+      posted: new Date('2026-08-24T18:32:00Z').getTime() / 1000,
+      amount: '-1113.73',
+      description: 'CHASE CREDIT CRD AUTOPAY',
+    };
+
+    const result = selectTransferDedupMatch(sfTxn, [{
+      transaction_guid: 'a'.repeat(32),
+      post_date: new Date('2026-08-21T00:00:00Z'),
+      split_account_guid: 'b'.repeat(32),
+      dest_split_guid: 'c'.repeat(32),
+      dest_account_guid: 'd'.repeat(32),
+    }]);
+
+    expect(result).not.toBeNull();
   });
 });
 

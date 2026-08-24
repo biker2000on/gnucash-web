@@ -5,7 +5,7 @@
  * bytes, one canvas per page, bounded page count, error fallback), not the
  * library's rasterization.
  */
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const getDocumentMock = vi.hoisted(() => vi.fn());
@@ -62,6 +62,32 @@ describe('PdfCanvasPreview', () => {
             expect(screen.getByTestId('pdf-canvas-pages').querySelectorAll('canvas')).toHaveLength(100);
         }, { timeout: 10_000 });
         expect(screen.getByText(/first 100 pages/)).toBeTruthy();
+    });
+
+    it('re-renders every page larger when zooming in, and Fit resets', async () => {
+        getDocumentMock.mockReturnValue({ promise: Promise.resolve(fakeDoc(2)) });
+        render(<PdfCanvasPreview src="/x" heading="Zoomable" />);
+
+        await waitFor(() => {
+            expect(screen.getByTestId('pdf-canvas-pages').querySelectorAll('canvas')).toHaveLength(2);
+        });
+        expect(screen.getByText('100%')).toBeTruthy();
+        const widthAtFit = (screen.getByTestId('pdf-canvas-pages').querySelector('canvas') as HTMLCanvasElement).width;
+
+        fireEvent.click(screen.getByRole('button', { name: 'Zoom in' }));
+        await waitFor(() => expect(screen.getByText('125%')).toBeTruthy());
+        await waitFor(() => {
+            const canvases = screen.getByTestId('pdf-canvas-pages').querySelectorAll('canvas');
+            expect(canvases).toHaveLength(2);
+            expect((canvases[0] as HTMLCanvasElement).width).toBeGreaterThan(widthAtFit);
+        });
+
+        fireEvent.click(screen.getByRole('button', { name: 'Fit width' }));
+        await waitFor(() => expect(screen.getByText('100%')).toBeTruthy());
+        await waitFor(() => {
+            const canvases = screen.getByTestId('pdf-canvas-pages').querySelectorAll('canvas');
+            expect((canvases[0] as HTMLCanvasElement).width).toBe(widthAtFit);
+        });
     });
 
     it('shows the error fallback when the bytes cannot be fetched', async () => {

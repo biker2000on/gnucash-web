@@ -61,6 +61,27 @@ function normalizePostDate(postedUnixSeconds: number): Date {
   return new Date(`${year}-${month}-${day}T00:00:00.000Z`);
 }
 
+/**
+ * Calendar-day distance between a feed transaction's posting date and a
+ * candidate's stored post_date.
+ *
+ * Both sides are truncated to their calendar date (the feed timestamp via the
+ * same Eastern-time normalization imports store with) BEFORE differencing.
+ * Comparing the raw posted timestamp against midnight-normalized stored dates
+ * inflated the gap by the time of day: a payment posting at Chase on 8/21 and
+ * clearing at the bank on 8/24 14:32 computed as 3.6 days, failed the 3-day
+ * window, and imported as a duplicate instead of transfer-dedup matching.
+ */
+function calendarDayOffset(feedPostedUnixSeconds: number, candidatePostDate: Date): number {
+  const feedDay = normalizePostDate(feedPostedUnixSeconds).getTime();
+  const candidateDay = Date.UTC(
+    candidatePostDate.getUTCFullYear(),
+    candidatePostDate.getUTCMonth(),
+    candidatePostDate.getUTCDate(),
+  );
+  return Math.abs(feedDay - candidateDay) / 86400000;
+}
+
 export interface SyncResult {
   status: 'success' | 'failed' | 'revoked';
   fatal: boolean;
@@ -1188,12 +1209,11 @@ export function selectManualReconciliationMatch(
   candidates: ReconciliationCandidate[],
   matchWindowDays: number = getSimpleFinMatchWindowDays(),
 ): { transaction_guid: string; confidence: 'high' | 'medium'; has_meta: boolean } | null {
-  const sfDate = new Date(sfTxn.posted * 1000);
   const sfDesc = (sfTxn.description || '').trim().toLowerCase();
 
   const scored = candidates
     .map(c => {
-      const dayOffset = Math.abs(sfDate.getTime() - c.post_date.getTime()) / (1000 * 60 * 60 * 24);
+      const dayOffset = calendarDayOffset(sfTxn.posted, c.post_date);
       if (dayOffset > matchWindowDays) return null;
 
       const cDesc = (c.description || '').trim().toLowerCase();
@@ -1260,11 +1280,9 @@ export function selectTransferDedupMatch(
   candidates: TransferDedupCandidate[],
   matchWindowDays: number = getSimpleFinMatchWindowDays(),
 ): TransferDedupCandidate | null {
-  const sfDate = new Date(sfTxn.posted * 1000);
-
   const scored = candidates
     .map(c => {
-      const dayOffset = Math.abs(sfDate.getTime() - c.post_date.getTime()) / (1000 * 60 * 60 * 24);
+      const dayOffset = calendarDayOffset(sfTxn.posted, c.post_date);
       if (dayOffset > matchWindowDays) return null;
       return { ...c, dayOffset };
     })
@@ -1289,8 +1307,13 @@ async function findAndLinkManualMatch(
   const amount = parseFloat(sfTxn.amount);
   if (isNaN(amount) || amount === 0) return false;
 
-  const postDate = new Date(sfTxn.posted * 1000);
+  // Bound the SQL on the CALENDAR date the import pipeline would store, one
+  // day wider than the window each side; the selector applies the exact
+  // calendar-day cutoff. Raw-timestamp bounds silently excluded candidates at
+  // the window's edge (see calendarDayOffset).
+  const postDate = normalizePostDate(sfTxn.posted);
   const matchWindowDays = getSimpleFinMatchWindowDays();
+  const sqlWindowMs = (matchWindowDays + 1) * 86400000;
   // Use the account's commodity_scu for correct precision (e.g., 100 for USD, 1 for JPY, 1000 for KWD)
   const scuPrecision = Math.round(Math.log10(accountScu));
   const { num: absNum, denom } = toNumDenom(Math.abs(amount), scuPrecision);
@@ -1309,8 +1332,8 @@ async function findAndLinkManualMatch(
     LEFT JOIN gnucash_web_transaction_meta m ON m.transaction_guid = t.guid
     WHERE s.value_num = ${BigInt(valueNum)}
       AND s.value_denom = ${BigInt(denom)}
-      AND t.post_date BETWEEN ${new Date(postDate.getTime() - matchWindowDays * 86400000)}
-                          AND ${new Date(postDate.getTime() + matchWindowDays * 86400000)}
+      AND t.post_date BETWEEN ${new Date(postDate.getTime() - sqlWindowMs)}
+                          AND ${new Date(postDate.getTime() + sqlWindowMs)}
       AND (m.simplefin_transaction_id IS NULL)
       AND (m.deleted_at IS NULL OR m.id IS NULL)
     ORDER BY t.post_date ASC, t.enter_date ASC
@@ -1367,8 +1390,10 @@ async function findAndLinkTransferDedupMatch(
   const amount = parseFloat(sfTxn.amount);
   if (isNaN(amount) || amount === 0) return false;
 
-  const postDate = new Date(sfTxn.posted * 1000);
+  // Same calendar-date bounds rationale as findAndLinkManualMatch.
+  const postDate = normalizePostDate(sfTxn.posted);
   const matchWindowDays = getSimpleFinMatchWindowDays();
+  const sqlWindowMs = (matchWindowDays + 1) * 86400000;
   // Use the account's commodity_scu for correct precision
   const scuPrecision = Math.round(Math.log10(accountScu));
   const { num: absNum, denom } = toNumDenom(Math.abs(amount), scuPrecision);
@@ -1401,8 +1426,8 @@ async function findAndLinkTransferDedupMatch(
       AND m.simplefin_transaction_id IS NOT NULL
       AND m.simplefin_transaction_id != ${sfTxn.id}
       AND m.simplefin_transaction_id_2 IS NULL
-      AND t.post_date BETWEEN ${new Date(postDate.getTime() - matchWindowDays * 86400000)}
-                          AND ${new Date(postDate.getTime() + matchWindowDays * 86400000)}
+      AND t.post_date BETWEEN ${new Date(postDate.getTime() - sqlWindowMs)}
+                          AND ${new Date(postDate.getTime() + sqlWindowMs)}
       AND (m.deleted_at IS NULL)
       AND (SELECT COUNT(*) FROM splits WHERE tx_guid = t.guid) = 2
     ORDER BY t.guid, t.post_date ASC
