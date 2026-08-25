@@ -20,9 +20,12 @@
  *  - **Book root currency only.** v1 writes `amountCents/100`, which is a
  *    currency amount. Stock, multi-currency, and foreign-denominated accounts
  *    are refused rather than approximated.
- *  - **Reconciled work is not ours to move.** A split marked 'y' is pinned to a
- *    bank statement; replacing or deleting it silently would break an agreement
- *    a human made.
+ *  - **Reconciled work is not ours to move.** A split marked 'y' (reconciled) or
+ *    'f' (frozen) is pinned to a bank statement; replacing or deleting it
+ *    silently would break an agreement a human made. The rule lives in
+ *    src/lib/services/reconciled-split.service.ts and this file defers to it —
+ *    a second, narrower spelling of "protected" here is exactly how 'f' got
+ *    missed once already.
  *  - **Evidence.** Every mutation writes an audit row (TODOS.md: "evidence is
  *    part of the result") and stamps `gnucash_web_transaction_meta` with
  *    source='beez-trackz'.
@@ -38,6 +41,10 @@ import { cacheInvalidateFrom } from '@/lib/cache';
 import { publishDataChange } from '@/lib/data-events';
 import { assertNotLocked } from '@/lib/services/period-lock.service';
 import {
+    assertSplitsNotProtected,
+    ReconciledSplitError,
+} from '@/lib/services/reconciled-split.service';
+import {
     claimWebhookIdempotency,
     completeWebhookIdempotency,
     lockWebhookIdempotencyAttempt,
@@ -49,6 +56,7 @@ import {
     BEEZ_META_SOURCE,
     BEEZ_SOURCE,
     CENTS_DENOM,
+    ENTER_DATE_PG_FORMAT,
     decodeChangesCursor,
     encodeChangesCursor,
     postDateToTimestamp,
@@ -214,6 +222,9 @@ async function assertAccountsUsable(
         throw new BeezSyncError(404, 'account_not_found', 'One or more accounts were not found in this book');
     }
 
+    // Deliberately the global client, not the caller's transaction client: this
+    // reads the chart of accounts, which no beez write touches, so it needs
+    // neither that snapshot nor a lock.
     const accounts = await prisma.accounts.findMany({
         where: { guid: { in: unique } },
         select: { guid: true, name: true, commodity_guid: true, placeholder: true },
@@ -261,8 +272,12 @@ interface LinkRow {
  * there is no path by which a link in one book can reference a transaction in
  * another. Any future writer of this table must preserve that.
  */
-async function findLinkByExternalId(bookGuid: string, externalId: string): Promise<LinkRow | null> {
-    const row = await prisma.gnucash_web_external_links.findUnique({
+async function findLinkByExternalId(
+    bookGuid: string,
+    externalId: string,
+    database: DbClient = prisma,
+): Promise<LinkRow | null> {
+    const row = await database.gnucash_web_external_links.findUnique({
         where: {
             book_guid_source_external_id: {
                 book_guid: bookGuid, source: BEEZ_SOURCE, external_id: externalId,
@@ -274,6 +289,94 @@ async function findLinkByExternalId(bookGuid: string, externalId: string): Promi
     // future entity type must not be answered as if it were a transaction.
     if (!row || row.entity_type !== 'transaction') return null;
     return { external_id: row.external_id, entity_guid: row.entity_guid };
+}
+
+// ---------------------------------------------------------------------------
+// Reconciled / frozen guard
+// ---------------------------------------------------------------------------
+
+/**
+ * Refuse the write when any split of the locked transaction is pinned to a
+ * statement, in the SAME sense the rest of the codebase means it.
+ *
+ * The rule is `assertSplitsNotProtected`, not a local `state === 'y'` test.
+ * Reconciled ('y') and frozen ('f') are both agreements with an external
+ * statement, and a second spelling of the rule here is precisely how 'f' slipped
+ * through: a frozen split could be replaced or deleted through this API while
+ * every browser path refused it.
+ *
+ * PRECONDITION: the caller already holds `SELECT … FOR UPDATE` on the parent
+ * transaction row and read `rows` after taking it — otherwise a reconcile
+ * committed a moment ago slips past. Both call sites do exactly that.
+ *
+ * The `ReconciledSplitError` is translated to this API's own 409/`reconciled`
+ * rather than the browser API's 423: the wire contract beez was built against
+ * names 409, and its message is the one this module already writes.
+ */
+function assertBeezSplitsWritable(
+    verb: 'replaced' | 'deleted',
+    rows: ReadonlyArray<{ guid: string; tx_guid?: string | null; account_guid?: string | null; reconcile_state: string | null }>,
+): void {
+    try {
+        assertSplitsNotProtected(
+            verb === 'replaced' ? 'replace this transaction' : 'delete this transaction',
+            rows,
+        );
+    } catch (error) {
+        if (error instanceof ReconciledSplitError) {
+            throw new BeezSyncError(
+                409,
+                'reconciled',
+                `This transaction has splits reconciled or frozen against a statement and cannot be ${verb} from beez. `
+                    + error.message,
+            );
+        }
+        throw error;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// enter_date stamping
+// ---------------------------------------------------------------------------
+
+/**
+ * Set `enter_date` on a transaction from the DATABASE clock, as late in the
+ * write as possible, and return the microsecond string the change feed will
+ * render it as.
+ *
+ * The clock choice is not a detail. `enter_date` is the change feed's ordering
+ * key, and this repository writes it from two different clocks: most paths use
+ * a JavaScript `new Date()` (the app host), while a few — lot-assignment.ts,
+ * reconcile.ts, statement-reconcile-data.ts — use SQL `NOW()` (the database
+ * host). App and database are separate machines in every real deployment, so
+ * their clocks differ. When the database clock runs ahead, a DB-stamped row
+ * pushes the feed watermark into the app clock's future, and every app-stamped
+ * transaction written for the next few hundred milliseconds sorts BEHIND that
+ * cursor and is never delivered. That is silent, permanent loss of exactly the
+ * kind this feed's cursor rules exist to rule out, and it is reproducible: the
+ * integration suite catches it whenever the test database's clock leads.
+ *
+ * Reading the clock the ordering key is compared against removes the skew
+ * entirely. `clock_timestamp()` — not `now()`, which is frozen at transaction
+ * start and would land BEFORE the idempotency claim and row locks this attempt
+ * waited on — is read at the moment of the UPDATE, which is the latest point
+ * the writer controls. What remains is the commit-order window documented on
+ * `getBeezChanges`, and nothing stamped before COMMIT can close that.
+ *
+ * The value is returned in {@link ENTER_DATE_PG_FORMAT}, so the API response
+ * and the feed payload are byte-identical for the same row — no Date round trip
+ * to truncate the microseconds off one of them.
+ */
+async function stampEnterDate(database: DbClient, txGuid: string): Promise<string> {
+    const stamped = await database.$queryRaw<Array<{ enter_date: string }>>`
+        UPDATE transactions SET enter_date = clock_timestamp()
+        WHERE guid = ${txGuid}
+        RETURNING to_char(enter_date, ${ENTER_DATE_PG_FORMAT}::text) AS enter_date
+    `;
+    if (stamped.length === 0) {
+        throw new BeezSyncError(500, 'internal', 'Transaction vanished while stamping enter_date');
+    }
+    return stamped[0].enter_date;
 }
 
 // ---------------------------------------------------------------------------
@@ -426,9 +529,20 @@ function auditSnapshot(externalId: string, input: BeezTransactionInput) {
 
 export interface BeezCreateResult {
     transactionGuid: string;
-    enterDate: string;
+    /**
+     * Microsecond timestamp with a `Z` marker — the same spelling the change
+     * feed uses. Null only on an `alreadyLinked` replay whose transaction has a
+     * NULL `enter_date`; a freshly created one always carries a stamp.
+     */
+    enterDate: string | null;
     externalId: string;
     alreadyLinked?: true;
+}
+
+/** What a create attempt stores under its Idempotency-Key, verbatim. */
+interface BeezCreateOutcome {
+    result: BeezCreateResult;
+    status: 200 | 201;
 }
 
 /**
@@ -440,9 +554,16 @@ export interface BeezCreateResult {
  *   - the external-id link answers "is this the same beez record again?", which
  *     is still true a week later from a different client with a fresh key.
  * Both end at 200 with `alreadyLinked: true` rather than a second ledger entry.
- * The link check runs FIRST, so a well-behaved client — one key per record —
- * only ever sees the second mechanism; the key path is what catches a retry
- * that arrives while the first attempt is still in flight.
+ *
+ * ORDER MATTERS, and it is the opposite of the obvious one. The Idempotency-Key
+ * claim is taken FIRST, and every precondition — link lookup, account
+ * usability, period lock — runs inside the claimed attempt. A key that has
+ * already completed replays its stored response without re-reading anything, so
+ * a retry cannot be turned into an error by state that changed after the
+ * original succeeded: an account made a placeholder, a period locked, a link
+ * since removed. Checking first and claiming second made a successful write
+ * answer its own retry with a 404 or 422, which is the failure mode idempotency
+ * exists to prevent.
  */
 export async function createBeezTransaction(
     context: BeezBookContext,
@@ -455,24 +576,26 @@ export async function createBeezTransaction(
         throw new BeezSyncError(422, 'validation', 'externalId is required');
     }
 
-    const existing = await findLinkByExternalId(context.bookGuid, externalId);
-    if (existing) {
-        return { result: await describeExistingLink(context, existing), status: 200 };
-    }
-
-    await assertAccountsUsable(context, input.splits.map(split => split.accountGuid));
-
     const txGuid = generateGuid();
     const postDate = postDateToTimestamp(input.postDate);
-    const enterDate = new Date();
+    let created = false;
 
-    let written: BeezCreateResult;
     try {
         const outcome = await withIdempotency(
             context.bookGuid,
             'beez-transaction-create',
             idempotencyKey,
-            async (database) => {
+            async (database): Promise<BeezCreateOutcome> => {
+                // Read through the transaction client: the link this looks for
+                // is the one the insert below writes, so both must see one
+                // snapshot.
+                const existing = await findLinkByExternalId(context.bookGuid, externalId, database);
+                if (existing) {
+                    return { result: await describeExistingLink(context, existing, database), status: 200 };
+                }
+
+                await assertAccountsUsable(context, input.splits.map(split => split.accountGuid));
+
                 // Authoritative period-lock check, in-transaction and with the
                 // cache bypassed, so a lock set between the request arriving
                 // and the write starting still holds.
@@ -484,7 +607,10 @@ export async function createBeezTransaction(
                         currency_guid: context.rootCommodityGuid,
                         num: input.num,
                         post_date: postDate,
-                        enter_date: enterDate,
+                        // Placeholder only. The authoritative value is stamped
+                        // from the database clock below, once every write this
+                        // attempt can fail on is behind it.
+                        enter_date: new Date(0),
                         description: input.description,
                     },
                 });
@@ -514,23 +640,35 @@ export async function createBeezTransaction(
                     },
                 });
 
+                // Last write of the attempt, so the feed watermark this row
+                // takes is the latest one this writer can honestly claim.
+                const enterDate = await stampEnterDate(database, txGuid);
+
+                created = true;
                 return {
-                    transactionGuid: txGuid,
-                    enterDate: enterDate.toISOString(),
-                    externalId,
-                } satisfies BeezCreateResult;
+                    result: {
+                        transactionGuid: txGuid,
+                        enterDate: `${enterDate}Z`,
+                        externalId,
+                    },
+                    status: 201,
+                };
             },
         );
 
         if (outcome.replayed) {
-            // The stored 201 body, marked so the caller can tell a replay from
-            // a fresh write without inspecting the status code alone.
-            return {
-                result: { ...(outcome.result as BeezCreateResult), alreadyLinked: true },
-                status: 200,
-            };
+            // The stored body, marked so the caller can tell a replay from a
+            // fresh write without inspecting the status code alone.
+            const stored = outcome.result as BeezCreateOutcome;
+            return { result: { ...stored.result, alreadyLinked: true }, status: 200 };
         }
-        written = outcome.result;
+
+        if (created) {
+            await recordAndInvalidate(
+                context, actor, 'CREATE', txGuid, null, auditSnapshot(externalId, input), [postDate],
+            );
+        }
+        return outcome.result;
     } catch (error) {
         // A concurrent request for the same external id lost the race on
         // uq_external_links_external_id. That is the mechanism working: answer
@@ -543,12 +681,6 @@ export async function createBeezTransaction(
         }
         throw error;
     }
-
-    await recordAndInvalidate(
-        context, actor, 'CREATE', txGuid, null, auditSnapshot(externalId, input), [postDate],
-    );
-
-    return { result: written, status: 201 };
 }
 
 /**
@@ -564,11 +696,18 @@ export async function createBeezTransaction(
 async function describeExistingLink(
     context: BeezBookContext,
     link: LinkRow,
+    database: DbClient = prisma,
 ): Promise<BeezCreateResult> {
-    const transaction = await prisma.transactions.findUnique({
-        where: { guid: link.entity_guid },
-        select: { guid: true, enter_date: true },
-    });
+    // Rendered by the database in the feed's own microsecond format, so the
+    // `enterDate` a replay reports is byte-identical to the one the change feed
+    // reports for the same row. A `Date` here would answer `…123Z` for a row the
+    // feed calls `…123456Z`, and a client that compares the two would conclude
+    // the transaction had changed.
+    const found = await database.$queryRaw<Array<{ guid: string; enter_date: string | null }>>`
+        SELECT guid, to_char(enter_date, ${ENTER_DATE_PG_FORMAT}::text) AS enter_date
+        FROM transactions WHERE guid = ${link.entity_guid}
+    `;
+    const transaction = found[0] ?? null;
     if (!transaction) {
         throw new BeezSyncError(
             409,
@@ -579,7 +718,7 @@ async function describeExistingLink(
     }
     return {
         transactionGuid: transaction.guid,
-        enterDate: (transaction.enter_date ?? new Date(0)).toISOString(),
+        enterDate: transaction.enter_date ? `${transaction.enter_date}Z` : null,
         externalId: link.external_id,
         alreadyLinked: true,
     };
@@ -604,6 +743,10 @@ export interface BeezReplaceResult {
  * serializes writers, and bumping `enter_date` invalidates every browser tab's
  * token so a human editing the same row in folio gets the 409 they would have
  * got from another human.
+ *
+ * As with POST, the Idempotency-Key claim is taken BEFORE the link lookup and
+ * every other precondition, so a completed attempt replays its stored result
+ * rather than being re-judged against state that has since moved.
  */
 export async function replaceBeezTransaction(
     context: BeezBookContext,
@@ -612,23 +755,25 @@ export async function replaceBeezTransaction(
     input: BeezTransactionInput,
     idempotencyKey: IdempotencyKey,
 ): Promise<BeezReplaceResult> {
-    const link = await findLinkByExternalId(context.bookGuid, externalId);
-    if (!link) {
-        throw new BeezSyncError(404, 'unknown_external_id', `No folio transaction is linked to "${externalId}"`);
-    }
-
-    await assertAccountsUsable(context, input.splits.map(split => split.accountGuid));
-
-    const txGuid = link.entity_guid;
     const postDate = postDateToTimestamp(input.postDate);
-    const enterDate = new Date();
     let previousPostDate: Date | null = null;
+    let replacedTxGuid: string | null = null;
 
     const outcome = await withIdempotency(
         context.bookGuid,
         'beez-transaction-update',
         idempotencyKey,
         async (database) => {
+            const link = await findLinkByExternalId(context.bookGuid, externalId, database);
+            if (!link) {
+                throw new BeezSyncError(
+                    404, 'unknown_external_id', `No folio transaction is linked to "${externalId}"`,
+                );
+            }
+            const txGuid = link.entity_guid;
+
+            await assertAccountsUsable(context, input.splits.map(split => split.accountGuid));
+
             const locked = await database.$queryRaw<Array<{ guid: string; post_date: Date | null }>>`
                 SELECT guid, post_date FROM transactions WHERE guid = ${txGuid} FOR UPDATE
             `;
@@ -643,17 +788,12 @@ export async function replaceBeezTransaction(
 
             const existingSplits = await database.splits.findMany({
                 where: { tx_guid: txGuid },
-                select: { guid: true, reconcile_state: true },
+                select: { guid: true, tx_guid: true, account_guid: true, reconcile_state: true },
             });
-            // Read inside the transaction on the locked row, so a reconcile
-            // committed a millisecond ago cannot slip past this guard.
-            if (existingSplits.some(split => split.reconcile_state === 'y')) {
-                throw new BeezSyncError(
-                    409,
-                    'reconciled',
-                    'This transaction has reconciled splits and cannot be replaced from beez',
-                );
-            }
+            // Read inside the transaction and AFTER the parent FOR UPDATE, which
+            // is the precondition the shared guard documents: a reconcile
+            // committed a millisecond ago cannot slip past it.
+            assertBeezSplitsWritable('replaced', existingSplits);
 
             await assertNotLocked(
                 context.bookGuid,
@@ -667,9 +807,6 @@ export async function replaceBeezTransaction(
                     currency_guid: context.rootCommodityGuid,
                     num: input.num,
                     post_date: postDate,
-                    // Always a fresh timestamp: it is both the change-feed
-                    // ordering key and every other writer's version token.
-                    enter_date: enterDate,
                     description: input.description,
                 },
             });
@@ -698,19 +835,28 @@ export async function replaceBeezTransaction(
                 data: { updated_at: new Date() },
             });
 
+            // Always a fresh timestamp: it is both the change-feed ordering key
+            // and every other writer's version token, so a browser tab holding
+            // the old one gets the 409 it would have got from another human.
+            // Stamped last, after the lock wait and every dependent write.
+            const enterDate = await stampEnterDate(database, txGuid);
+
+            replacedTxGuid = txGuid;
             return {
                 transactionGuid: txGuid,
-                enterDate: enterDate.toISOString(),
+                enterDate: `${enterDate}Z`,
             } satisfies BeezReplaceResult;
         },
     );
 
     if (outcome.replayed) return outcome.result as BeezReplaceResult;
 
-    await recordAndInvalidate(
-        context, actor, 'UPDATE', txGuid, { external_id: externalId }, auditSnapshot(externalId, input),
-        [postDate, previousPostDate],
-    );
+    if (replacedTxGuid) {
+        await recordAndInvalidate(
+            context, actor, 'UPDATE', replacedTxGuid, { external_id: externalId },
+            auditSnapshot(externalId, input), [postDate, previousPostDate],
+        );
+    }
     return outcome.result;
 }
 
@@ -730,6 +876,12 @@ export interface BeezDeleteResult {
  * A link whose transaction is already gone is NOT an error: it is the tombstone
  * the change feed emitted, and this call is beez acknowledging it. Removing the
  * row is the whole point — it is what makes the tombstone stop repeating.
+ *
+ * The Idempotency-Key claim is taken BEFORE the link lookup, and that ordering
+ * is the entire point of the key here. A DELETE that succeeded and then timed
+ * out on the wire is retried by beez; with the lookup first, the retry found no
+ * link — because the first call removed it — and answered 404 for a deletion
+ * that had in fact happened. Claim-first replays the stored `{ deleted: true }`.
  */
 export async function deleteBeezTransaction(
     context: BeezBookContext,
@@ -737,20 +889,23 @@ export async function deleteBeezTransaction(
     externalId: string,
     idempotencyKey: IdempotencyKey,
 ): Promise<BeezDeleteResult> {
-    const link = await findLinkByExternalId(context.bookGuid, externalId);
-    if (!link) {
-        throw new BeezSyncError(404, 'unknown_external_id', `No folio transaction is linked to "${externalId}"`);
-    }
-
-    const txGuid = link.entity_guid;
     let deletedPostDate: Date | null = null;
-    let wasOrphan = false;
+    let deletedTxGuid: string | null = null;
 
     const outcome = await withIdempotency(
         context.bookGuid,
         'beez-transaction-delete',
         idempotencyKey,
         async (database) => {
+            const link = await findLinkByExternalId(context.bookGuid, externalId, database);
+            if (!link) {
+                throw new BeezSyncError(
+                    404, 'unknown_external_id', `No folio transaction is linked to "${externalId}"`,
+                );
+            }
+            const txGuid = link.entity_guid;
+            let wasOrphan = false;
+
             const locked = await database.$queryRaw<Array<{ guid: string; post_date: Date | null }>>`
                 SELECT guid, post_date FROM transactions WHERE guid = ${txGuid} FOR UPDATE
             `;
@@ -760,15 +915,10 @@ export async function deleteBeezTransaction(
 
                 const existingSplits = await database.splits.findMany({
                     where: { tx_guid: txGuid },
-                    select: { guid: true, reconcile_state: true },
+                    select: { guid: true, tx_guid: true, account_guid: true, reconcile_state: true },
                 });
-                if (existingSplits.some(split => split.reconcile_state === 'y')) {
-                    throw new BeezSyncError(
-                        409,
-                        'reconciled',
-                        'This transaction has reconciled splits and cannot be deleted from beez',
-                    );
-                }
+                // After the parent FOR UPDATE above, as the shared guard requires.
+                assertBeezSplitsWritable('deleted', existingSplits);
 
                 await assertNotLocked(
                     context.bookGuid, [locked[0].post_date], { bypassCache: true, client: database },
@@ -784,6 +934,7 @@ export async function deleteBeezTransaction(
                 });
                 await database.splits.deleteMany({ where: { tx_guid: txGuid } });
                 await database.transactions.delete({ where: { guid: txGuid } });
+                deletedTxGuid = txGuid;
             } else {
                 wasOrphan = true;
             }
@@ -805,9 +956,9 @@ export async function deleteBeezTransaction(
 
     if (outcome.replayed) return outcome.result as BeezDeleteResult;
 
-    if (!wasOrphan) {
+    if (deletedTxGuid) {
         await recordAndInvalidate(
-            context, actor, 'DELETE', txGuid,
+            context, actor, 'DELETE', deletedTxGuid,
             { source: BEEZ_SOURCE, external_id: externalId, post_date: timestampToPostDate(deletedPostDate) },
             null, [deletedPostDate],
         );
@@ -850,7 +1001,12 @@ export interface BeezChanges {
 interface ChangeTxRow {
     guid: string;
     post_date: Date | null;
-    enter_date: Date | null;
+    /**
+     * The raw microsecond string PostgreSQL rendered, NOT a JS Date, and null
+     * only for the always-emitted NULL-enter_date set. A Date here would
+     * silently drop the microseconds the cursor is built from.
+     */
+    enter_date: string | null;
     description: string | null;
 }
 
@@ -864,22 +1020,55 @@ interface ChangeSplitRow {
 }
 
 /**
- * Transactions entered after the cursor, oldest first, plus tombstones.
+ * Transactions entered after the cursor, oldest first, plus two always-emitted
+ * sets: NULL-enter_date rows and deletion tombstones.
  *
  * ORDERING. `(enter_date, guid)` is the only total order that stays stable
  * while rows are being written: post_date has ties and moves backwards on an
- * edit, and `guid` breaks the remaining ties deterministically. Rows whose
- * `enter_date` is NULL — GnuCash permits it — sort last, matching PostgreSQL's
- * default NULLS LAST for the ascending index this pages on, so they are
- * delivered rather than silently dropped from the feed forever.
+ * edit, and `guid` breaks the remaining ties deterministically. The cursor
+ * therefore encodes ONLY a non-NULL `(enter_date, guid)` watermark, and the
+ * comparison is the tuple one — `enter_date` greater, or equal with a greater
+ * guid. Comparing `enter_date` alone with `>` would skip every other row minted
+ * in the same microsecond.
+ *
+ * PRECISION. `enter_date` is read with `to_char(…, 'YYYY-MM-DD"T"HH24:MI:SS.US')`
+ * and travels through the cursor as that exact string. Nothing on this path
+ * builds a JS `Date`: a Date holds milliseconds, so a row stored at `…56.123456`
+ * would produce a `…56.123` cursor, still compare greater than it on the next
+ * poll, and re-emit itself forever.
+ *
+ * NULL enter_date. GnuCash permits it, and such a row has no position in the
+ * order above at all. The older design gave it one — a cursor that said "NULL
+ * tail" — and that lost data: once a client consumed a NULL row, every LATER
+ * transaction with a normal enter_date sorted before the cursor and was skipped
+ * permanently. They are therefore carried like tombstones instead: a separate
+ * set, ordered by guid, bounded by `limit`, emitted on EVERY response, never
+ * touching `nextCursor`. Bounded repetition is the price; silent loss is not on
+ * the menu.
  *
  * TOMBSTONES. A link row whose transaction is gone is emitted as
  * `{ externalId, deleted: true }` on EVERY page until beez acknowledges it with
- * DELETE. They live outside the enter_date ordering (a deleted row has no
- * enter_date to sort by), so there is nowhere in the cursor stream to put them;
+ * DELETE. Same reasoning: a deleted row has no enter_date to sort by, so
  * repeating a bounded, self-draining set is the honest alternative to inventing
- * a position for it. They do not count towards `limit` for the transaction page
- * and never advance `nextCursor`.
+ * a position for it. Neither always-emitted set counts towards `limit` for the
+ * transaction page or advances `nextCursor`.
+ *
+ * ONE CLOCK. `enter_date` is read from the DATABASE via `clock_timestamp()`
+ * (see `stampEnterDate`), never from the app host's `new Date()`. The app and
+ * the database are different machines, this repository writes `enter_date` from
+ * both, and a database clock running ahead would push the watermark past every
+ * app-stamped row written in the skew window — losing them permanently.
+ *
+ * STALENESS WINDOW (known, bounded, and documented on the route). The stamp is
+ * taken as late as a writer can take it — after every idempotency claim and row
+ * lock that attempt can block on, and after its dependent writes — but still
+ * before COMMIT. Two writers can therefore commit out of timestamp order: A
+ * stamps T1, B stamps T2 > T1 and commits first, a poll advances the cursor
+ * past T2, then A commits at T1 and sits behind the watermark. Nothing stamped
+ * before COMMIT can close that window; taking it last shrinks it to the
+ * remaining transaction duration. A client that needs certainty re-polls from
+ * an older cursor — this feed's items are keyed by `transactionGuid` /
+ * `externalId` and are safe to apply twice.
  */
 export async function getBeezChanges(
     context: BeezBookContext,
@@ -905,32 +1094,38 @@ export async function getBeezChanges(
         WHERE s.tx_guid = t.guid AND s.account_guid = ANY(${bookAccountGuids}::text[])
     )`;
 
-    let afterCursor: Prisma.Sql;
-    if (!cursor) {
-        afterCursor = Prisma.sql`TRUE`;
-    } else if (cursor.enterDate === null) {
-        // Already inside the NULL-enter_date tail: only later guids remain.
-        afterCursor = Prisma.sql`(t.enter_date IS NULL AND t.guid > ${cursor.guid})`;
-    } else {
-        afterCursor = Prisma.sql`(
-            (t.enter_date IS NOT NULL AND (t.enter_date, t.guid) > (${new Date(cursor.enterDate)}, ${cursor.guid}))
-            OR t.enter_date IS NULL
-        )`;
-    }
+    // The cursor string is compared as a timestamp, not as text: `::timestamp`
+    // parses the microseconds, where a text comparison would depend on the
+    // rendering being byte-identical.
+    const afterCursor: Prisma.Sql = cursor
+        ? Prisma.sql`(t.enter_date, t.guid) > (${cursor.enterDate}::timestamp, ${cursor.guid})`
+        : Prisma.sql`TRUE`;
 
     // One extra row is the cheapest honest hasMore: it answers "is there a
     // next page?" without a second COUNT over the same predicate.
     const rows = await prisma.$queryRaw<ChangeTxRow[]>`
-        SELECT t.guid, t.post_date, t.enter_date, t.description
+        SELECT t.guid, t.post_date, t.description,
+               to_char(t.enter_date, ${ENTER_DATE_PG_FORMAT}::text) AS enter_date
         FROM transactions t
-        WHERE ${inBook} AND ${afterCursor}
-        ORDER BY (t.enter_date IS NULL) ASC, t.enter_date ASC, t.guid ASC
+        WHERE ${inBook} AND t.enter_date IS NOT NULL AND ${afterCursor}
+        ORDER BY t.enter_date ASC, t.guid ASC
         LIMIT ${options.limit + 1}
     `;
     const hasMore = rows.length > options.limit;
     const page = hasMore ? rows.slice(0, options.limit) : rows;
 
-    const guids = page.map(row => row.guid);
+    // The always-emitted NULL set. Ordered and bounded so one pathological book
+    // cannot make every response unbounded.
+    const nullEnterDateRows = await prisma.$queryRaw<ChangeTxRow[]>`
+        SELECT t.guid, t.post_date, t.description, NULL::text AS enter_date
+        FROM transactions t
+        WHERE ${inBook} AND t.enter_date IS NULL
+        ORDER BY t.guid ASC
+        LIMIT ${options.limit}
+    `;
+
+    const delivered = [...page, ...nullEnterDateRows];
+    const guids = delivered.map(row => row.guid);
     const [splitRows, linkRows] = await Promise.all([
         guids.length > 0
             ? prisma.$queryRaw<ChangeSplitRow[]>`
@@ -958,7 +1153,7 @@ export async function getBeezChanges(
     }
     const externalIdByTx = new Map(linkRows.map(row => [row.entity_guid, row.external_id]));
 
-    const items: BeezChangeItem[] = page.map((row) => {
+    const items: BeezChangeItem[] = delivered.map((row) => {
         const rawSplits = splitsByTx.get(row.guid) ?? [];
         const converted = rawSplits.map(split => ({
             split,
@@ -969,7 +1164,11 @@ export async function getBeezChanges(
             transactionGuid: row.guid,
             externalId: externalIdByTx.get(row.guid) ?? null,
             postDate: timestampToPostDate(row.post_date),
-            enterDate: row.enter_date ? row.enter_date.toISOString() : null,
+            // The database's own microsecond rendering, with the UTC marker the
+            // column's convention implies. NOT a Date round trip, which would
+            // truncate to milliseconds and desynchronize the payload from the
+            // cursor built out of the same string.
+            enterDate: row.enter_date ? `${row.enter_date}Z` : null,
             description: row.description,
             deleted: false,
         };
@@ -1006,12 +1205,11 @@ export async function getBeezChanges(
         items.push({ externalId: tombstone.external_id, deleted: true });
     }
 
+    // Only the ordered page advances the watermark. The NULL set has no
+    // position to advance to, which is exactly why it is emitted every time.
     const last = page[page.length - 1];
-    const nextCursor = last
-        ? encodeChangesCursor({
-            enterDate: last.enter_date ? last.enter_date.toISOString() : null,
-            guid: last.guid,
-        })
+    const nextCursor = last && last.enter_date
+        ? encodeChangesCursor({ enterDate: last.enter_date, guid: last.guid })
         // An empty page must not reset the client to the beginning of the feed:
         // hand back the cursor it sent, so the next poll resumes where it was.
         : (options.since || null);

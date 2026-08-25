@@ -5,9 +5,10 @@
 // trusted with) a folio GUID.
 //
 // Two guards apply to both verbs and neither is negotiable:
-//   - a split marked reconciled ('y') pins the transaction to a bank statement
-//     a human agreed to, so the request is refused with 409 rather than
-//     silently breaking that agreement;
+//   - a split marked reconciled ('y') or frozen ('f') pins the transaction to a
+//     bank statement a human agreed to, so the request is refused with 409
+//     rather than silently breaking that agreement. Both states are the
+//     codebase-wide rule in src/lib/services/reconciled-split.service.ts;
 //   - a closed period is closed, so a post date on or before the book's lock
 //     date is refused the same way it is for a browser.
 
@@ -82,7 +83,7 @@ import { deleteBeezTransaction, replaceBeezTransaction } from '@/lib/services/be
  *       404:
  *         description: No transaction is linked to this external id, or an account was not found in this book.
  *       409:
- *         description: "`{ error: 'reconciled' }` when a split is reconciled, or an identical Idempotency-Key is still in flight."
+ *         description: "`{ error: 'reconciled' }` when a split is reconciled ('y') or frozen ('f'), or an identical Idempotency-Key is still in flight."
  *       422:
  *         description: Validation failed, the splits do not sum to zero, or an account is a placeholder or foreign-currency.
  */
@@ -129,6 +130,12 @@ export async function PUT(
  *       feed reports — only the stale link is removed, and the response carries
  *       `orphanLinkRemoved: true`. That is how a client acknowledges a deletion
  *       made in folio.
+ *
+ *
+ *       Send an `Idempotency-Key` if you retry on timeout. The key is claimed
+ *       before the link is looked up, so a retry of a call that already
+ *       succeeded replays the stored `{ deleted: true }` instead of 404-ing on
+ *       the link its own first attempt removed.
  *     security:
  *       - bearerAuth: []
  *     parameters:
@@ -157,7 +164,7 @@ export async function PUT(
  *       404:
  *         description: No transaction is linked to this external id.
  *       409:
- *         description: "`{ error: 'reconciled' }` when a split is reconciled, or an identical Idempotency-Key is still in flight."
+ *         description: "`{ error: 'reconciled' }` when a split is reconciled ('y') or frozen ('f'), or an identical Idempotency-Key is still in flight."
  */
 export async function DELETE(
     request: Request,

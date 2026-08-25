@@ -307,11 +307,11 @@ const GROUPS: EndpointGroup[] = [
                     { name: 'splits', description: '2+ entries of { accountGuid, amountCents, memo? } summing to 0' },
                 ],
                 example:
-                    `curl -X POST -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" \\n` +
-                    `  -H "Idempotency-Key: beez-8412-attempt-1" \\n` +
+                    `curl -X POST -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" \\\n` +
+                    `  -H "Idempotency-Key: beez-8412-attempt-1" \\\n` +
                     `  -d '{"externalId":"beez-8412","postDate":"2026-08-25","description":"Frames",` +
                     `"splits":[{"accountGuid":"<expense-guid>","amountCents":1250},` +
-                    `{"accountGuid":"<checking-guid>","amountCents":-1250}]}' \\n` +
+                    `{"accountGuid":"<checking-guid>","amountCents":-1250}]}' \\\n` +
                     `  ${BASE}/api/integrations/beez/transactions`,
             },
             {
@@ -343,7 +343,7 @@ const GROUPS: EndpointGroup[] = [
                     { name: 'limit', description: 'default 100, maximum 500' },
                 ],
                 example:
-                    `curl -H "Authorization: Bearer ${TOKEN}" \\n` +
+                    `curl -H "Authorization: Bearer ${TOKEN}" \\\n` +
                     `  "${BASE}/api/integrations/beez/changes?limit=100"`,
             },
         ],

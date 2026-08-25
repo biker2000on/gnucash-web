@@ -20,6 +20,7 @@ import {
     decodeChangesCursor,
     encodeChangesCursor,
     isCalendarDate,
+    isEnterDateStamp,
     parseBeezTransactionInput,
     parseChangesLimit,
     postDateToTimestamp,
@@ -219,6 +220,50 @@ describe('parseBeezTransactionInput', () => {
             if (!parsed.ok) expect(parsed.detail).toContain('1');
         });
 
+        it('catches an unbalanced set whose float sum rounds to exactly zero', () => {
+            // Each term is a safe integer, so each one passes the per-split
+            // check — but the RUNNING TOTAL is not bounded by that. Summed as
+            // JavaScript numbers these four reduce to 0; the exact sum is 1.
+            // Accepting them would persist a transaction that is off by a cent
+            // while every reader believes it balances.
+            const adversarial = [
+                9007199254740991,
+                9007199254740990,
+                -9007199254740991,
+                -9007199254740989,
+            ];
+            expect(adversarial.reduce((sum, cents) => sum + cents, 0)).toBe(0);
+            expect(adversarial.reduce((sum, cents) => sum + BigInt(cents), 0n)).toBe(1n);
+
+            const parsed = parseBeezTransactionInput(
+                validBody({
+                    splits: adversarial.map((amountCents, index) => ({
+                        accountGuid: index % 2 === 0 ? ACCOUNT_A : ACCOUNT_B,
+                        amountCents,
+                    })),
+                }),
+                { requireExternalId: true },
+            );
+            expect(parsed).toMatchObject({ ok: false, error: 'unbalanced' });
+            // The reported total is the exact one, not the rounded one.
+            if (!parsed.ok) expect(parsed.detail).toContain('got 1');
+        });
+
+        it('still accepts a genuinely balanced set of near-limit amounts', () => {
+            // The BigInt sum must not become its own false negative: these do
+            // balance exactly, and their float sum happens to as well.
+            const parsed = parseBeezTransactionInput(
+                validBody({
+                    splits: [
+                        { accountGuid: ACCOUNT_A, amountCents: 9007199254740991 },
+                        { accountGuid: ACCOUNT_B, amountCents: -9007199254740991 },
+                    ],
+                }),
+                { requireExternalId: true },
+            );
+            expect(parsed.ok).toBe(true);
+        });
+
         it('rejects a non-integer, non-finite, or unsafe amount', () => {
             for (const amountCents of [12.5, '1250', Number.NaN, Number.POSITIVE_INFINITY, 2 ** 53]) {
                 const parsed = parseBeezTransactionInput(
@@ -340,28 +385,32 @@ describe('allSplitsRepresentable', () => {
 
 describe('change cursor', () => {
     const GUID = 'c'.repeat(32);
+    const STAMP = '2026-08-25T10:11:12.345678';
 
-    it('round-trips a dated position', () => {
-        const encoded = encodeChangesCursor({ enterDate: '2026-08-25T10:11:12.345Z', guid: GUID });
-        expect(decodeChangesCursor(encoded)).toEqual({
-            enterDate: '2026-08-25T10:11:12.345Z',
-            guid: GUID,
-        });
+    it('round-trips a microsecond position byte for byte', () => {
+        const encoded = encodeChangesCursor({ enterDate: STAMP, guid: GUID });
+        expect(decodeChangesCursor(encoded)).toEqual({ enterDate: STAMP, guid: GUID });
     });
 
-    it('round-trips the NULL-enter_date tail', () => {
-        const encoded = encodeChangesCursor({ enterDate: null, guid: GUID });
-        expect(decodeChangesCursor(encoded)).toEqual({ enterDate: null, guid: GUID });
+    it('keeps the microseconds a JS Date would have thrown away', () => {
+        // This is the whole defect the format exists to prevent: a Date holds
+        // milliseconds, so `…12.345678` would come back as `…12.345`, still
+        // compare greater than the row it names, and re-emit that row on every
+        // single poll for the life of the client.
+        const decoded = decodeChangesCursor(encodeChangesCursor({ enterDate: STAMP, guid: GUID }));
+        expect(decoded?.enterDate).toBe(STAMP);
+        expect(decoded?.enterDate).not.toBe(new Date(`${STAMP}Z`).toISOString());
+        expect(isEnterDateStamp(decoded?.enterDate ?? '')).toBe(true);
     });
 
     it('is base64url, so it survives a query string untouched', () => {
-        const encoded = encodeChangesCursor({ enterDate: '2026-08-25T00:00:00.000Z', guid: GUID });
+        const encoded = encodeChangesCursor({ enterDate: '2026-08-25T00:00:00.000000', guid: GUID });
         expect(encoded).toMatch(/^[A-Za-z0-9_-]+$/);
         expect(encodeURIComponent(encoded)).toBe(encoded);
     });
 
     it('normalizes the guid so a shouted cursor still matches stored rows', () => {
-        const encoded = encodeChangesCursor({ enterDate: null, guid: 'C'.repeat(32) });
+        const encoded = encodeChangesCursor({ enterDate: STAMP, guid: 'C'.repeat(32) });
         expect(decodeChangesCursor(encoded)?.guid).toBe(GUID);
     });
 
@@ -370,12 +419,37 @@ describe('change cursor', () => {
             'not-base64!!',
             Buffer.from('not json', 'utf8').toString('base64url'),
             Buffer.from('[]', 'utf8').toString('base64url'),
-            Buffer.from(JSON.stringify({ e: null }), 'utf8').toString('base64url'),
-            Buffer.from(JSON.stringify({ e: null, g: 'short' }), 'utf8').toString('base64url'),
+            Buffer.from(JSON.stringify({ e: STAMP }), 'utf8').toString('base64url'),
+            Buffer.from(JSON.stringify({ e: STAMP, g: 'short' }), 'utf8').toString('base64url'),
             Buffer.from(JSON.stringify({ e: 'never', g: GUID }), 'utf8').toString('base64url'),
             Buffer.from(JSON.stringify({ e: 5, g: GUID }), 'utf8').toString('base64url'),
+            // Millisecond precision is not this cursor's spelling — accepting it
+            // would reintroduce the truncation the format exists to rule out.
+            Buffer.from(JSON.stringify({ e: '2026-08-25T10:11:12.345Z', g: GUID }), 'utf8').toString('base64url'),
+            // The retired NULL-tail encoding. Resuming it would resume a
+            // position from which every later normal row is unreachable.
+            Buffer.from(JSON.stringify({ e: null, g: GUID }), 'utf8').toString('base64url'),
         ]) {
             expect(decodeChangesCursor(raw), raw).toBeNull();
+        }
+    });
+});
+
+describe('isEnterDateStamp', () => {
+    it('accepts exactly the format the feed reads enter_date with', () => {
+        expect(isEnterDateStamp('2026-08-25T10:11:12.345678')).toBe(true);
+        expect(isEnterDateStamp('2026-08-25T10:11:12.000000')).toBe(true);
+    });
+
+    it('rejects every lossier spelling of the same instant', () => {
+        for (const raw of [
+            '2026-08-25T10:11:12.345',
+            '2026-08-25T10:11:12.345678Z',
+            '2026-08-25 10:11:12.345678',
+            '2026-08-25T10:11:12',
+            '',
+        ]) {
+            expect(isEnterDateStamp(raw), raw).toBe(false);
         }
     });
 });

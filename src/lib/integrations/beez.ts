@@ -213,12 +213,18 @@ export function parseBeezTransactionInput(
         });
     }
 
-    // Sum in a plain number: every term is a safe integer and MAX_SPLITS caps
-    // the count at 200, so the total cannot leave the safe-integer range unless
-    // an individual term was already near it — and 200 × 2^53 cents is money
-    // nobody has.
-    const total = splits.reduce((sum, split) => sum + split.amountCents, 0);
-    if (total !== 0) {
+    // Sum in BigInt, never in a plain number. Every TERM is a safe integer, but
+    // the running TOTAL is not bounded by that: with 200 splits allowed, the
+    // intermediate can leave the safe-integer range and round, and a rounded
+    // total can land on 0 for a set whose exact sum is not 0. Concretely,
+    //   [9007199254740991, 9007199254740990, -9007199254740991, -9007199254740989]
+    // float-reduces to 0 while the exact sum is 1 — an off-by-one-cent
+    // unbalanced transaction that would persist as if it balanced. BigInt has
+    // no such range, so the check is exact for every input the loop above
+    // accepted.
+    let total = 0n;
+    for (const split of splits) total += BigInt(split.amountCents);
+    if (total !== 0n) {
         return fail(`splits: must sum to exactly 0 cents, got ${total}`, 'unbalanced');
     }
 
@@ -268,17 +274,41 @@ export function allSplitsRepresentable(
 // ---------------------------------------------------------------------------
 
 /**
+ * The `to_char` format the feed reads `enter_date` with, and the only spelling
+ * a cursor ever carries: `YYYY-MM-DDTHH:MM:SS.uuuuuu`, microseconds included.
+ *
+ * The precision is the whole point. `transactions.enter_date` is
+ * `TIMESTAMP(6)`, so a row can sit at `…:56.123456`. A cursor that round-tripped
+ * through a JavaScript `Date` would truncate to `…:56.123`, and the row would
+ * then satisfy `enter_date > cursor` on every single poll — an item that
+ * re-emits forever. Reading and writing the raw database string keeps the
+ * comparison exact, so a row is delivered once and then falls behind the
+ * watermark for good.
+ */
+export const ENTER_DATE_PG_FORMAT = 'YYYY-MM-DD"T"HH24:MI:SS.US';
+
+/** `2026-08-25T12:34:56.123456` — exactly what {@link ENTER_DATE_PG_FORMAT} emits. */
+const ENTER_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}$/;
+
+/** True for a microsecond timestamp string in the feed's own spelling. */
+export function isEnterDateStamp(value: string): boolean {
+    return ENTER_DATE_PATTERN.test(value);
+}
+
+/**
  * Position in the `(enter_date, guid)` stream.
  *
- * `enterDate` is null for the tail of transactions whose `enter_date` column is
- * NULL — GnuCash allows it, and a feed that quietly skipped those rows would
- * lose data permanently rather than visibly. They sort last, matching
- * PostgreSQL's default NULLS LAST for an ascending btree, so the same index
- * serves both phases.
+ * `enterDate` is NEVER null. Rows whose `enter_date` column is NULL — GnuCash
+ * permits it — have no position in this order at all, so the feed carries them
+ * as a separate always-emitted set (see `getBeezChanges`) instead of trying to
+ * seat them inside the watermark. Encoding a NULL position was the older
+ * design, and it lost data: once a client consumed a NULL-enter_date row the
+ * cursor said "NULL tail", and every subsequent transaction with a normal
+ * enter_date sorted BEFORE that cursor and was skipped forever.
  */
 export interface ChangesCursor {
-    /** ISO-8601 with milliseconds, or null for the NULL-enter_date tail. */
-    enterDate: string | null;
+    /** Microsecond timestamp, exactly as PostgreSQL rendered it. */
+    enterDate: string;
     guid: string;
 }
 
@@ -300,7 +330,9 @@ export function encodeChangesCursor(cursor: ChangesCursor): string {
  *
  * A malformed cursor is a 422 at the call site, never a silent restart from the
  * beginning of the feed: replaying the entire ledger into a sync client because
- * one character was dropped in transit is exactly the failure this rejects.
+ * one character was dropped in transit is exactly the failure this rejects. A
+ * cursor from the older NULL-tail encoding is malformed by this rule too, and
+ * that is deliberate — resuming it would resume a position that skips rows.
  */
 export function decodeChangesCursor(raw: string): ChangesCursor | null {
     let parsed: unknown;
@@ -313,12 +345,11 @@ export function decodeChangesCursor(raw: string): ChangesCursor | null {
     const candidate = parsed as { e?: unknown; g?: unknown };
 
     if (typeof candidate.g !== 'string' || !isValidGuid(candidate.g)) return null;
-    if (candidate.e === null) return { enterDate: null, guid: candidate.g.toLowerCase() };
-    if (typeof candidate.e !== 'string') return null;
-    const enterDate = new Date(candidate.e);
-    if (Number.isNaN(enterDate.getTime())) return null;
+    // No `new Date(...)` anywhere on this path: constructing one would discard
+    // the microseconds this cursor exists to preserve.
+    if (typeof candidate.e !== 'string' || !isEnterDateStamp(candidate.e)) return null;
 
-    return { enterDate: enterDate.toISOString(), guid: candidate.g.toLowerCase() };
+    return { enterDate: candidate.e, guid: candidate.g.toLowerCase() };
 }
 
 export type LimitParseResult =

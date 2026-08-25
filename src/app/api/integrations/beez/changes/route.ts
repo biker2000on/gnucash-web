@@ -10,6 +10,15 @@
 // beez side — rounding here would invent money. Deleted transactions surface as
 // `{ externalId, deleted: true }` tombstones that repeat until the client
 // acknowledges them with DELETE.
+//
+// The cursor is a `(enter_date, guid)` watermark carried at the database's full
+// microsecond precision — never through a millisecond JS Date, which would make
+// a row stored at `.123456` re-emit on every poll. Rows whose `enter_date` is
+// NULL have no place in that order, so they are delivered as a separate
+// always-emitted set instead of being seated in the cursor stream, where they
+// used to make every later transaction unreachable. Apply items idempotently by
+// `transactionGuid` / `externalId`: this endpoint guarantees no loss, and
+// bounded repetition is how it pays for that.
 
 import { NextResponse } from 'next/server';
 import { parseChangesLimit } from '@/lib/integrations/beez';
@@ -24,9 +33,25 @@ import { getBeezChanges } from '@/lib/services/beez-sync.service';
  *     summary: Transactions entered since a cursor, plus deletion tombstones.
  *     description: >
  *       Pages transactions in `(enter_date, guid)` order — the only total order
- *       that stays stable while rows are still being written. Store
- *       `nextCursor` and send it back as `since` on the next poll; an empty
- *       page returns the cursor you sent, so polling never rewinds.
+ *       that stays stable while rows are still being written — at the database's
+ *       full microsecond precision. Store `nextCursor` and send it back as
+ *       `since` on the next poll; an empty page returns the cursor you sent, so
+ *       polling never rewinds.
+ *
+ *
+ *       DUPLICATES ARE POSSIBLE; LOSS IS NOT. Apply every item idempotently,
+ *       keyed by `transactionGuid` (or `externalId`). Two sets are re-sent on
+ *       every response by design because they have no position in the cursor
+ *       order: items with `enterDate: null` (GnuCash allows a NULL enter_date)
+ *       and `deleted: true` tombstones. Separately, `enter_date` is read from
+ *       the database clock just before the write rather than at commit, so two
+ *       concurrent writers can commit slightly out of timestamp order; a
+ *       transaction that commits
+ *       behind an already-advanced cursor can be missed by a client that only
+ *       ever moves forward. The window is bounded by one write's duration. If
+ *       your book cannot tolerate it, re-poll periodically from a cursor a few
+ *       minutes old — repeated items are safe, which is the whole point of the
+ *       idempotent-apply rule above.
  *
  *
  *       An item with `unrepresentable: true` has at least one split whose
