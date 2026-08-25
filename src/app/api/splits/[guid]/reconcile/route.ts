@@ -4,6 +4,7 @@ import { serializeBigInts } from '@/lib/gnucash';
 import { requireRole } from '@/lib/auth';
 import { isAccountInActiveBook, getBookAccountGuids } from '@/lib/book-scope';
 import { publishDataChange } from '@/lib/data-events';
+import { stampEnterDate, stampEnterDates } from '@/lib/enter-date';
 
 interface ReconcileBody {
     reconcile_state: 'n' | 'c' | 'y';
@@ -107,10 +108,9 @@ export async function PATCH(
                     account: true,
                 },
             });
-            await tx.transactions.update({
-                where: { guid: existingSplit.tx_guid },
-                data: { enter_date: new Date() },
-            });
+            // Shared stamper, not `new Date()` — src/lib/enter-date.ts explains
+            // why the app host's clock cannot own this column.
+            await stampEnterDate(tx, existingSplit.tx_guid);
             return split;
         });
 
@@ -212,10 +212,9 @@ export async function POST(
                     reconcile_date: date,
                 },
             });
-            await tx.transactions.updateMany({
-                where: { guid: { in: parentTxGuids } },
-                data: { enter_date: new Date() },
-            });
+            // Shared stamper, not `new Date()` — src/lib/enter-date.ts explains
+            // why the app host's clock cannot own this column.
+            await stampEnterDates(tx, parentTxGuids);
             return updated;
         });
 

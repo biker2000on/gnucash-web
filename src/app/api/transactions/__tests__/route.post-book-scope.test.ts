@@ -14,6 +14,9 @@ const {
         transactions: { create: vi.fn(), findUnique: vi.fn() },
         splits: { create: vi.fn() },
         $transaction: vi.fn(),
+        // enter_date is stamped by the database through the shared helper
+        // (src/lib/enter-date.ts), never by an app-clock literal.
+        $queryRaw: vi.fn(),
     },
     requireRoleMock: vi.fn(),
     getAccountGuidsForBookMock: vi.fn(),
@@ -99,6 +102,7 @@ beforeEach(() => {
         isMultiCurrency: false,
     }));
     prismaMock.$transaction.mockImplementation(async (callback: (tx: typeof prismaMock) => unknown) => callback(prismaMock));
+    prismaMock.$queryRaw.mockResolvedValue([{ enter_date: '2026-08-25T12:00:00.000000' }]);
     prismaMock.transactions.create.mockResolvedValue({});
     prismaMock.splits.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
         createdSplits.push({

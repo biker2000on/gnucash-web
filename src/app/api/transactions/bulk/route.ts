@@ -4,6 +4,7 @@ import { requireRole } from '@/lib/auth';
 import { getActiveBookGuid, getBookAccountGuids } from '@/lib/book-scope';
 import { cacheInvalidateFrom } from '@/lib/cache';
 import { publishDataChange } from '@/lib/data-events';
+import { stampEnterDates } from '@/lib/enter-date';
 import {
     withPeriodLockCheck,
     assertNotLocked,
@@ -234,7 +235,14 @@ export async function PATCH(request: Request) {
         let updated = 0;
         let recategorized = false;
         const touchedDates: Date[] = [];
-        const bulkEditTimestamp = new Date();
+        // Guids whose optimistic-lock token must be bumped. Collected, then
+        // stamped in ONE statement at the end of the write transaction rather
+        // than written as a `new Date()` literal per row: enter_date is the
+        // beez change feed's ordering key as well as this app's lock token, and
+        // the app host's clock owns neither (src/lib/enter-date.ts). One
+        // statement also keeps the batch on a single timestamp, which is what
+        // the literal gave it.
+        const stampGuids: string[] = [];
 
         // Live reconcile state of every split in the targeted transactions,
         // populated inside the DB transaction below when a recategorize is
@@ -348,8 +356,9 @@ export async function PATCH(request: Request) {
                     // enter_date bump invalidates other editors' optimistic locks
                     await dbTx.transactions.update({
                         where: { guid },
-                        data: { description, enter_date: bulkEditTimestamp },
+                        data: { description },
                     });
+                    stampGuids.push(guid);
                     changed = true;
                     coreChanged = true;
                 } else if (replaceOp) {
@@ -358,8 +367,9 @@ export async function PATCH(request: Request) {
                     if (next !== current) {
                         await dbTx.transactions.update({
                             where: { guid },
-                            data: { description: next, enter_date: bulkEditTimestamp },
+                            data: { description: next },
                         });
+                        stampGuids.push(guid);
                         changed = true;
                         coreChanged = true;
                     }
@@ -369,10 +379,7 @@ export async function PATCH(request: Request) {
                         // Bump the version token so stale editors 409. The
                         // parent row lock was already taken for the whole
                         // batch at the top of this transaction.
-                        await dbTx.transactions.update({
-                            where: { guid },
-                            data: { enter_date: bulkEditTimestamp },
-                        });
+                        stampGuids.push(guid);
                         coreChanged = true;
                     }
                     // Belt and braces on top of the lock + guard above: the
@@ -417,6 +424,10 @@ export async function PATCH(request: Request) {
                 results.push({ guid, ok: true });
                 if (changed) updated++;
             }
+
+            // One stamp for the whole batch, inside the same transaction and on
+            // rows this transaction already locked.
+            await stampEnterDates(dbTx, [...new Set(stampGuids)]);
         });
 
         // Recategorizing splits changes account-scoped dashboard metrics;

@@ -240,20 +240,30 @@ describe('PUT /api/transactions/[guid] optimistic concurrency', () => {
             .map((call: unknown[]) => (call[0] as TemplateStringsArray).join('?'))
             .join('\n');
         expect(lockSql).toContain('FOR UPDATE');
-        // enter_date is always bumped, and by the DATABASE clock rather than
-        // this host's. It is the ordering key the beez change feed pages on, and
-        // a fast app host stamping it into the future would push that feed's
-        // watermark past every database-stamped write in the skew window. So the
-        // Prisma update must NOT carry an enter_date literal...
+        // enter_date is always bumped, and through the shared stamper in
+        // src/lib/enter-date.ts rather than this host's clock. It is BOTH the
+        // token compared above and the ordering key the beez change feed pages
+        // on: a fast app host stamping it into the future would push that
+        // feed's watermark past every database-stamped write in the skew
+        // window, and a same-millisecond stamp would leave a stale tab's token
+        // still matching. So the Prisma update must NOT carry an enter_date
+        // literal...
         const updateData = prismaMock.transactions.update.mock.calls[0][0].data;
         expect(updateData.enter_date).toBeUndefined();
-        // ...and a raw statement inside the same transaction sets it from
-        // clock_timestamp() instead.
-        const rawSql = prismaMock.$executeRaw.mock.calls
-            .map((call: unknown[]) => (call[0] as TemplateStringsArray).join('?'))
-            .join('\n');
-        expect(rawSql).toContain('clock_timestamp()');
-        expect(rawSql).toContain('SET enter_date');
+        // ...and a raw statement inside the same transaction sets it instead.
+        const stampCalls = prismaMock.$queryRaw.mock.calls.filter(
+            (call: unknown[]) => (call[0] as TemplateStringsArray).join('?').includes('SET enter_date'),
+        );
+        expect(stampCalls).toHaveLength(1);
+        expect((stampCalls[0][0] as TemplateStringsArray).join('?')).toContain('UPDATE transactions');
+        // The stamp expression itself is a composed Prisma.Sql fragment, so it
+        // arrives as an interpolation rather than in the template text. All
+        // three floors have to be in it: the database clock, the previous value
+        // plus a whole millisecond, and the feed's watermark.
+        const expression = (stampCalls[0][1] as { sql: string }).sql;
+        expect(expression).toContain('clock_timestamp()');
+        expect(expression).toContain("interval '1 millisecond'");
+        expect(expression).toContain('max(m.enter_date)');
         // New enter_date returned so the client can chain edits
         expect(body.enter_date).toBe('2026-07-28T00:00:00.000Z');
         // Authoritative period-lock check ran with the cache bypassed
@@ -279,10 +289,10 @@ describe('PUT /api/transactions/[guid] optimistic concurrency', () => {
         // The edit path must never write gnucash_web_transaction_meta:
         // original_description is set once at import time, and a rename
         // (description edit) has to leave it intact. The prisma mock has no
-        // meta model at all, so any model access would throw; the raw writes it
-        // DOES make (the database-clock enter_date bump) are inspected here to
-        // prove none of them names the meta table.
-        const rawSql = prismaMock.$executeRaw.mock.calls
+        // meta model at all, so any model access would throw; the raw
+        // statements it DOES make (the row lock and the enter_date stamp) are
+        // inspected here to prove none of them names the meta table.
+        const rawSql = [...prismaMock.$executeRaw.mock.calls, ...prismaMock.$queryRaw.mock.calls]
             .map((call: unknown[]) => (call[0] as TemplateStringsArray).join('?'))
             .join('\n');
         expect(rawSql).not.toContain('gnucash_web_transaction_meta');

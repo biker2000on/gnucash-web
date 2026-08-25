@@ -4,6 +4,7 @@ import { requireRole } from '@/lib/auth';
 import { isAccountInActiveBook } from '@/lib/book-scope';
 import { generateGuid } from '@/lib/gnucash';
 import { publishDataChange } from '@/lib/data-events';
+import { stampEnterDate } from '@/lib/enter-date';
 
 export async function PATCH(
   request: Request,
@@ -93,11 +94,12 @@ export async function PATCH(
       }
 
       // Canonical lock order: parent transaction row FIRST, then its splits
-      // — matching PUT/DELETE/bulk paths so no ABBA deadlock is possible.
-      await tx.transactions.update({
-        where: { guid: split.tx_guid },
-        data: { enter_date: new Date() },
-      });
+      // — matching PUT/DELETE/bulk paths so no ABBA deadlock is possible. The
+      // stamp goes through the shared helper (src/lib/enter-date.ts) so this
+      // bump cannot land below a cursor the beez feed already issued, or inside
+      // the millisecond a stale editor's token still names; the UPDATE takes
+      // the same row lock the Prisma update it replaced did.
+      await stampEnterDate(tx, split.tx_guid);
 
       await tx.splits.update({
         where: { guid: splitGuid },

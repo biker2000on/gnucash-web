@@ -46,6 +46,10 @@ const {
         transactions: { updateMany: vi.fn() },
         $transaction: vi.fn(),
         $queryRaw: vi.fn(),
+        // The enter_date bump is raw SQL through the shared stamper
+        // (src/lib/enter-date.ts), not a Prisma model write: the value has to
+        // be computed by the database, above the change feed's watermark.
+        $executeRaw: vi.fn(),
     },
     requireRoleMock: vi.fn(),
     getAccountGuidsForBookMock: vi.fn(),
@@ -146,6 +150,7 @@ beforeEach(() => {
         async (cb: (tx: unknown) => unknown) => cb(prismaMock),
     );
     prismaMock.$queryRaw.mockResolvedValue([]);
+    prismaMock.$executeRaw.mockResolvedValue(2);
     prismaMock.splits.updateMany.mockResolvedValue({ count: 3 });
     prismaMock.transactions.updateMany.mockResolvedValue({ count: 2 });
     cacheInvalidateFromMock.mockResolvedValue(undefined);
@@ -177,15 +182,23 @@ describe('POST /api/splits/bulk/move canonical lock order', () => {
         // Ordering: transactions-row lock → splits write → enter_date bump.
         const lockOrder = prismaMock.$queryRaw.mock.invocationCallOrder[0];
         const splitsWriteOrder = prismaMock.splits.updateMany.mock.invocationCallOrder[0];
-        const bumpOrder = prismaMock.transactions.updateMany.mock.invocationCallOrder[0];
+        const bumpOrder = prismaMock.$executeRaw.mock.invocationCallOrder[0];
         expect(lockOrder).toBeLessThan(splitsWriteOrder);
         expect(splitsWriteOrder).toBeLessThan(bumpOrder);
 
-        // The bump targets exactly the locked transactions.
-        expect(prismaMock.transactions.updateMany).toHaveBeenCalledWith({
-            where: { guid: { in: [TX_A, TX_B] } },
-            data: { enter_date: expect.any(Date) },
-        });
+        // The bump targets exactly the locked transactions, and it is NOT a
+        // `new Date()` literal: enter_date is the beez change feed's ordering
+        // key, and a stamp from the app host's clock can land below a cursor
+        // that feed already issued (src/lib/enter-date.ts).
+        expect(prismaMock.transactions.updateMany).not.toHaveBeenCalled();
+        const bumpCall = prismaMock.$executeRaw.mock.calls[0];
+        const bumpSql = sqlText(bumpCall);
+        expect(bumpSql).toContain('UPDATE transactions');
+        expect(bumpSql).toContain('SET enter_date');
+        // The value is a composed Prisma.Sql fragment, so it arrives as an
+        // interpolation rather than in the template text.
+        expect((bumpCall[1] as { sql: string }).sql).toContain('clock_timestamp()');
+        expect(bumpCall[2]).toEqual([TX_A, TX_B]);
     });
 
     it.each([

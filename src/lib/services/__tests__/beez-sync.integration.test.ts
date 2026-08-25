@@ -53,6 +53,18 @@ let userId = 0;
 let service: typeof import('../beez-sync.service');
 let bookScope: typeof import('@/lib/book-scope');
 let beez: typeof import('@/lib/integrations/beez');
+/**
+ * The shared enter_date stamper. Every feed-visible writer in the app goes
+ * through it — the beez mutations, `PUT /api/transactions/[guid]`, the bulk
+ * edit, and the reconcile/lot split paths — so calling it directly here
+ * exercises the EXACT statement those routes issue. Driving the Next route
+ * handlers themselves is not possible from this tier (they need a request
+ * scope, auth, and the book-scope cache); what the routes are separately held
+ * to is that they issue this statement and no `new Date()` literal, which their
+ * own route tests assert.
+ */
+let enterDate: typeof import('@/lib/enter-date');
+let db: typeof import('@/lib/prisma').default;
 let context: import('../beez-sync.service').BeezBookContext;
 
 /** Two-split body helper: money out of checking into an expense. */
@@ -212,6 +224,8 @@ describe.skipIf(!HAS_TEST_DATABASE)('beez-trackz sync round trip', () => {
         service = await import('../beez-sync.service');
         bookScope = await import('@/lib/book-scope');
         beez = await import('@/lib/integrations/beez');
+        enterDate = await import('@/lib/enter-date');
+        db = (await import('@/lib/prisma')).default;
         await seed();
         refreshBookScope();
         context = await service.getBeezBookContext(BOOK_GUID);
@@ -883,19 +897,29 @@ describe.skipIf(!HAS_TEST_DATABASE)('beez-trackz sync round trip', () => {
             // compare greater, and it would come back on every poll forever.
             const txGuid = testGuid();
             const pool = getTestPool();
-            const stamp = '2027-03-04 05:06:07.123456';
-            await pool.query(
+            // Five minutes ahead — comfortably inside the skew horizon, so the
+            // row is ORDERED rather than quarantined (src/lib/enter-date.ts),
+            // which is what puts the cursor exactly on it. A fixed far-future
+            // literal would be quarantined and re-emitted by design, proving
+            // nothing about the cursor.
+            const inserted = await pool.query<{ enter_date: string }>(
                 `INSERT INTO transactions (guid, currency_guid, num, post_date, enter_date, description)
-                 VALUES ($1, $2, '', NOW(), $3::timestamp, 'Microsecond boundary')`,
-                [txGuid, USD_GUID, stamp],
+                 VALUES ($1, $2, '', NOW(),
+                         date_trunc('second', (clock_timestamp() AT TIME ZONE 'UTC'))
+                            + interval '5 minutes' + interval '123456 microseconds',
+                         'Microsecond boundary')
+                 RETURNING to_char(enter_date, 'YYYY-MM-DD"T"HH24:MI:SS.US') AS enter_date`,
+                [txGuid, USD_GUID],
             );
+            const stamp = inserted.rows[0].enter_date;
+            expect(stamp).toMatch(/\.123456$/);
             await insertBalancedSplits(txGuid, 100);
 
             const feed = await service.getBeezChanges(context, { since: null, limit: 500 });
             const item = feed.items.find(entry => entry.transactionGuid === txGuid);
             expect(item).toBeDefined();
             // The payload carries the microseconds too, not a truncated Date.
-            expect(item?.enterDate).toBe('2027-03-04T05:06:07.123456Z');
+            expect(item?.enterDate).toBe(`${stamp}Z`);
 
             const again = await service.getBeezChanges(context, { since: feed.nextCursor, limit: 500 });
             expect(again.items.map(i => i.transactionGuid)).not.toContain(txGuid);
@@ -932,7 +956,7 @@ describe.skipIf(!HAS_TEST_DATABASE)('beez-trackz sync round trip', () => {
                 // The always-emitted sets ride along on every page and are
                 // identified by a null enterDate or the deleted flag; only the
                 // ordered page is bounded by `limit`.
-                const ordered = response.items.filter(item => !item.deleted && item.enterDate !== null);
+                const ordered = response.items.filter(item => !item.deleted && !item.quarantined);
                 expect(ordered.length, `page ${page}`).toBe(page < 2 ? 2 : 1);
                 seen.push(...ordered.map(item => item.transactionGuid as string));
                 cursor = response.nextCursor;
@@ -946,7 +970,7 @@ describe.skipIf(!HAS_TEST_DATABASE)('beez-trackz sync round trip', () => {
             expect([...seen].sort()).toEqual([...expected].sort());
 
             const after = await service.getBeezChanges(context, { since: cursor, limit: 2 });
-            expect(after.items.filter(i => !i.deleted && i.enterDate !== null)).toEqual([]);
+            expect(after.items.filter(i => !i.deleted && !i.quarantined)).toEqual([]);
         });
 
         it('emits a tombstone for a link whose transaction was deleted in folio, until DELETE clears it', async () => {
@@ -1014,8 +1038,11 @@ describe.skipIf(!HAS_TEST_DATABASE)('beez-trackz sync round trip', () => {
             let polls = 0;
             for (; polls < 20; polls += 1) {
                 const response = await service.getBeezChanges(context, { since: cursor, limit: PAGE });
+                // NULL rows are the subset of the quarantine set with no
+                // enter_date at all; rows stamped past the horizon are the
+                // other subset and carry one (see the horizon tests below).
                 const nullItems = response.items.filter(
-                    item => !item.deleted && item.enterDate === null,
+                    item => !item.deleted && item.quarantined && item.enterDate === null,
                 );
                 nullItems.forEach(item => seen.add(item.transactionGuid as string));
                 cursor = response.nextCursor;
@@ -1037,7 +1064,7 @@ describe.skipIf(!HAS_TEST_DATABASE)('beez-trackz sync round trip', () => {
             for (let poll = 0; poll < 20; poll += 1) {
                 const response = await service.getBeezChanges(context, { since: cursor, limit: PAGE });
                 response.items
-                    .filter(item => !item.deleted && item.enterDate === null)
+                    .filter(item => !item.deleted && item.quarantined && item.enterDate === null)
                     .forEach(item => seenAfter.add(item.transactionGuid as string));
                 cursor = response.nextCursor;
                 if (seenAfter.has(late)) break;
@@ -1150,12 +1177,245 @@ describe.skipIf(!HAS_TEST_DATABASE)('beez-trackz sync round trip', () => {
             const all = await service.getBeezChanges(context, { since: null, limit: 500 });
             expect(all.hasMore).toBe(false);
             const empty = await service.getBeezChanges(context, { since: all.nextCursor, limit: 500 });
-            // The ordered stream is exhausted. The always-emitted sets — NULL
-            // enter_date rows and tombstones — ride along regardless, which is
+            // The ordered stream is exhausted. The always-emitted sets — the
+            // quarantine set and tombstones — ride along regardless, which is
             // what keeps them from being lost, so they are excluded here.
-            expect(empty.items.filter(item => !item.deleted && item.enterDate !== null)).toEqual([]);
+            expect(empty.items.filter(item => !item.deleted && !item.quarantined)).toEqual([]);
             expect(empty.nextCursor).toBe(all.nextCursor);
             expect(empty.hasMore).toBe(false);
+        });
+    });
+
+    /**
+     * The writer half of the cursor contract, exercised through the shared
+     * stamper every feed-visible route now uses (src/lib/enter-date.ts).
+     *
+     * The invariant under test: EVERY CURSOR THE FEED CAN ISSUE IS <= EVERY
+     * SUBSEQUENT WRITER'S FLOOR. There are two independent ways to break it:
+     *
+     *   - a writer that reads the wall clock and nothing else stamps below a
+     *     cursor issued from a row a fast host put in the future;
+     *   - a feed that orders a row no writer's watermark can reach — a
+     *     year-3000 row — issues a cursor no later write can climb above.
+     */
+    describe('enter_date monotonicity', () => {
+        /** A transaction with an enter_date this test dictates, plus splits. */
+        async function insertAt(expression: string, description: string): Promise<string> {
+            const txGuid = testGuid();
+            await getTestPool().query(
+                `INSERT INTO transactions (guid, currency_guid, num, post_date, enter_date, description)
+                 VALUES ($1, $2, '', NOW(), ${expression}, $3)`,
+                [txGuid, USD_GUID, description],
+            );
+            await insertBalancedSplits(txGuid, 100);
+            return txGuid;
+        }
+
+        /** What the browser's optimistic-lock token compares: milliseconds. */
+        const asBrowserToken = (stamp: string) => new Date(`${stamp.replace(/Z$/, '')}Z`).getTime();
+
+        it('emits a later edit even after a cursor was issued on a future-clock row', async () => {
+            // The defect, exactly: `PUT /api/transactions/[guid]` used to stamp
+            // a bare clock_timestamp(). An app host running fast writes a row
+            // five minutes ahead; a poll advances the cursor onto it; the next
+            // edit stamps at the wall clock, lands BELOW that cursor, and is
+            // never delivered. The edit is not late — it is gone.
+            const id = `${RUN_ID}-put-after-future`;
+            const created = await service.createBeezTransaction(context, actor(), parsed(id, 3100), null);
+            const futureGuid = await insertAt(
+                `(clock_timestamp() AT TIME ZONE 'UTC') + interval '5 minutes'`,
+                'Stamped by a fast app clock',
+            );
+
+            const drained = await service.getBeezChanges(context, { since: null, limit: 500 });
+            expect(drained.hasMore).toBe(false);
+            // The cursor really is sitting on the future row — otherwise this
+            // test proves nothing about writing behind it.
+            expect(drained.items.map(item => item.transactionGuid)).toContain(futureGuid);
+            const watermark = beez.decodeChangesCursor(drained.nextCursor as string);
+            expect(watermark?.guid).toBe(futureGuid);
+
+            // The statement the PUT route issues, on a row stamped minutes ago.
+            const stamped = await enterDate.stampEnterDate(db, created.result.transactionGuid);
+            expect(asBrowserToken(stamped))
+                .toBeGreaterThan(asBrowserToken(watermark?.enterDate as string));
+
+            const next = await service.getBeezChanges(context, { since: drained.nextCursor, limit: 500 });
+            const item = next.items.find(entry => entry.transactionGuid === created.result.transactionGuid);
+            expect(item).toBeDefined();
+            expect(item?.enterDate).toBe(`${stamped}Z`);
+
+            await service.deleteBeezTransaction(context, actor(), id, null);
+            await dropTransaction(futureGuid);
+        });
+
+        it('leaves a stale millisecond token behind, even from an exact millisecond boundary', async () => {
+            // The other half of the same stamp. `enterDateMatches` in
+            // src/app/api/transactions/[guid]/route.ts compares JS Dates, so it
+            // sees MILLISECONDS. A stamp that stays inside the millisecond it
+            // replaced leaves a stale tab's token matching, and that tab
+            // overwrites this write with a 200 instead of a 409.
+            const id = `${RUN_ID}-put-ms-bump`;
+            const created = await service.createBeezTransaction(context, actor(), parsed(id, 3200), null);
+            const txGuid = created.result.transactionGuid;
+
+            // Pinned to an exact millisecond boundary 30 seconds ahead, so the
+            // wall clock cannot supply the separation by accident: what this
+            // asserts, it asserts about the bump.
+            const pinned = await getTestPool().query<{ enter_date: string }>(
+                `UPDATE transactions
+                 SET enter_date = date_trunc('millisecond',
+                        (clock_timestamp() AT TIME ZONE 'UTC') + interval '30 seconds')
+                 WHERE guid = $1
+                 RETURNING to_char(enter_date, 'YYYY-MM-DD"T"HH24:MI:SS.US') AS enter_date`,
+                [txGuid],
+            );
+            const before = pinned.rows[0].enter_date;
+            expect(before).toMatch(/\.\d{3}000$/);
+
+            const after = await enterDate.stampEnterDate(db, txGuid);
+
+            // A full millisecond clear, which is what makes the stale token stop
+            // matching — a microsecond-only bump would pass the first of these
+            // assertions and fail the second.
+            expect(after).not.toBe(before);
+            expect(asBrowserToken(after)).toBeGreaterThan(asBrowserToken(before));
+
+            await service.deleteBeezTransaction(context, actor(), id, null);
+        });
+
+        it('quarantines a row past the horizon instead of ordering a cursor no writer can reach', async () => {
+            // A row dated the year 3000 is not skew, it is corruption. Ordering
+            // it would issue a cursor a whole millennium above every writer's
+            // floor, and every write until then would sort behind it. So it is
+            // excluded from the ORDER — and delivered, on every poll, by the
+            // always-emitted quarantine set instead. Not sequenced, not lost.
+            const farGuid = await insertAt(`TIMESTAMP '3000-01-01 00:00:00'`, 'Year 3000');
+
+            const drained = await service.getBeezChanges(context, { since: null, limit: 500 });
+            const quarantined = drained.items.find(item => item.transactionGuid === farGuid);
+            expect(quarantined?.quarantined).toBe(true);
+            // It keeps its real enter_date in the payload — the client is told
+            // the truth about the row, it just gets no position from it.
+            expect(quarantined?.enterDate).toBe('3000-01-01T00:00:00.000000Z');
+            expect(quarantined?.splits).toHaveLength(2);
+
+            // The cursor did NOT land on it.
+            const watermark = beez.decodeChangesCursor(drained.nextCursor as string);
+            expect(watermark?.guid).not.toBe(farGuid);
+            expect(watermark?.enterDate ?? '').not.toContain('3000-');
+
+            // Which is the whole point: an ordinary write afterwards is still
+            // delivered rather than buried a thousand years behind the cursor.
+            const id = `${RUN_ID}-after-far-future`;
+            const created = await service.createBeezTransaction(context, actor(), parsed(id, 3300), null);
+            const next = await service.getBeezChanges(context, { since: drained.nextCursor, limit: 500 });
+            expect(next.items.map(item => item.transactionGuid))
+                .toContain(created.result.transactionGuid);
+            // And the quarantined row is still being delivered, because it has
+            // no position to fall behind.
+            expect(next.items.map(item => item.transactionGuid)).toContain(farGuid);
+
+            await service.deleteBeezTransaction(context, actor(), id, null);
+            await dropTransaction(farGuid);
+        });
+
+        it('pages a quarantine set larger than one page, over repeated polls', async () => {
+            // Same budget and guid watermark the NULL half of the set uses: a
+            // set that is re-sent whole on every poll and truncated at `limit`
+            // would strand its tail forever.
+            const PAGE = 1;
+            const far = [
+                await insertAt(`TIMESTAMP '3000-02-01 00:00:00'`, 'far 1'),
+                await insertAt(`TIMESTAMP '3000-02-02 00:00:00'`, 'far 2'),
+                await insertAt(`TIMESTAMP '3000-02-03 00:00:00'`, 'far 3'),
+            ];
+
+            const seen = new Set<string>();
+            let cursor: string | null = null;
+            for (let poll = 0; poll < 40 && far.some(guid => !seen.has(guid)); poll += 1) {
+                const response = await service.getBeezChanges(context, { since: cursor, limit: PAGE });
+                response.items
+                    .filter(item => item.quarantined)
+                    .forEach(item => seen.add(item.transactionGuid as string));
+                cursor = response.nextCursor;
+            }
+            for (const guid of far) expect([...seen]).toContain(guid);
+
+            for (const guid of far) await dropTransaction(guid);
+        });
+
+        it('strands neither row when two are written back to back', async () => {
+            // Sequential stamps must be strictly increasing, not merely
+            // non-decreasing: two writes inside one clock tick that landed on
+            // the same value could leave the second at or below the cursor the
+            // first one issued.
+            const idA = `${RUN_ID}-rapid-a`;
+            const idB = `${RUN_ID}-rapid-b`;
+            const a = await service.createBeezTransaction(context, actor(), parsed(idA, 3400), null);
+            const b = await service.createBeezTransaction(context, actor(), parsed(idB, 3500), null);
+
+            const drained = await service.getBeezChanges(context, { since: null, limit: 500 });
+            expect(drained.hasMore).toBe(false);
+
+            // Back to back, nothing between them but the statements themselves
+            // — the tightest sequence a caller can produce.
+            const stampA = await enterDate.stampEnterDate(db, a.result.transactionGuid);
+            const stampB = await enterDate.stampEnterDate(db, b.result.transactionGuid);
+            expect(stampB > stampA).toBe(true);
+
+            const next = await service.getBeezChanges(context, { since: drained.nextCursor, limit: 500 });
+            const guids = next.items.map(item => item.transactionGuid);
+            expect(guids).toContain(a.result.transactionGuid);
+            expect(guids).toContain(b.result.transactionGuid);
+
+            // And a client that consumed only the first page of that pair still
+            // reaches the second: the cursor from a one-row page is below B.
+            const firstOnly = await service.getBeezChanges(context, { since: drained.nextCursor, limit: 1 });
+            const rest = await service.getBeezChanges(context, { since: firstOnly.nextCursor, limit: 500 });
+            const covered = new Set([
+                ...firstOnly.items.map(item => item.transactionGuid),
+                ...rest.items.map(item => item.transactionGuid),
+            ]);
+            expect(covered.has(a.result.transactionGuid)).toBe(true);
+            expect(covered.has(b.result.transactionGuid)).toBe(true);
+
+            await service.deleteBeezTransaction(context, actor(), idA, null);
+            await service.deleteBeezTransaction(context, actor(), idB, null);
+        });
+
+        it('stamps a whole bulk set above the watermark in one statement', async () => {
+            // The bulk paths (PATCH /api/transactions/bulk, the split reconcile
+            // and move routes) stamp many rows at once. One statement, one
+            // value, and that value still above everything the feed could have
+            // issued — including a row a fast host put in the future.
+            const idA = `${RUN_ID}-bulk-a`;
+            const idB = `${RUN_ID}-bulk-b`;
+            const a = await service.createBeezTransaction(context, actor(), parsed(idA, 3600), null);
+            const b = await service.createBeezTransaction(context, actor(), parsed(idB, 3700), null);
+            const futureGuid = await insertAt(
+                `(clock_timestamp() AT TIME ZONE 'UTC') + interval '5 minutes'`,
+                'Fast app clock, bulk case',
+            );
+
+            const drained = await service.getBeezChanges(context, { since: null, limit: 500 });
+            expect(drained.hasMore).toBe(false);
+            const watermark = beez.decodeChangesCursor(drained.nextCursor as string);
+            expect(watermark?.guid).toBe(futureGuid);
+
+            const count = await enterDate.stampEnterDates(
+                db, [a.result.transactionGuid, b.result.transactionGuid],
+            );
+            expect(count).toBe(2);
+
+            const next = await service.getBeezChanges(context, { since: drained.nextCursor, limit: 500 });
+            const guids = next.items.map(item => item.transactionGuid);
+            expect(guids).toContain(a.result.transactionGuid);
+            expect(guids).toContain(b.result.transactionGuid);
+
+            await service.deleteBeezTransaction(context, actor(), idA, null);
+            await service.deleteBeezTransaction(context, actor(), idB, null);
+            await dropTransaction(futureGuid);
         });
     });
 });

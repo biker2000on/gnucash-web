@@ -45,6 +45,9 @@ const {
         $transaction: vi.fn(),
         // Canonical parent-transaction FOR UPDATE lock.
         $queryRaw: vi.fn(),
+        // The batch's enter_date stamp, computed by the database above the
+        // beez change feed's watermark (src/lib/enter-date.ts).
+        $executeRaw: vi.fn(),
     },
     requireRoleMock: vi.fn(),
     getBookAccountGuidsMock: vi.fn(),
@@ -165,6 +168,7 @@ beforeEach(() => {
     prismaMock.splits.update.mockResolvedValue({});
     prismaMock.splits.updateMany.mockResolvedValue({ count: 1 });
     prismaMock.$queryRaw.mockResolvedValue([]);
+    prismaMock.$executeRaw.mockResolvedValue(1);
     withPeriodLockCheckMock.mockResolvedValue(null);
     assertNotLockedMock.mockResolvedValue(undefined);
     cacheInvalidateFromMock.mockResolvedValue(undefined);
@@ -299,9 +303,20 @@ describe('PATCH /api/transactions/bulk reconciled-split guard', () => {
         }));
 
         expect(response.status).toBe(200);
+        // No app-clock enter_date literal rides along with the description:
+        // that column is the beez change feed's ordering key AND this app's
+        // optimistic-lock token, and a `new Date()` from this host can land
+        // below a cursor the feed already issued or inside the millisecond a
+        // stale editor still names (src/lib/enter-date.ts).
         expect(prismaMock.transactions.update).toHaveBeenCalledWith({
             where: { guid: TX_GUID },
-            data: { description: 'King Soopers', enter_date: expect.any(Date) },
+            data: { description: 'King Soopers' },
         });
+        // The stamp is one database-side statement for the whole batch.
+        expect(prismaMock.$executeRaw).toHaveBeenCalledTimes(1);
+        const stampCall = prismaMock.$executeRaw.mock.calls[0];
+        expect((stampCall[0] as TemplateStringsArray).join('?')).toContain('SET enter_date');
+        expect((stampCall[1] as { sql: string }).sql).toContain('clock_timestamp()');
+        expect(stampCall[2]).toEqual([TX_GUID]);
     });
 });

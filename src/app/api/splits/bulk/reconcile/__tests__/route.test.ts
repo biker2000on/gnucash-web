@@ -11,6 +11,10 @@ const {
         splits: { findMany: vi.fn(), updateMany: vi.fn() },
         transactions: { updateMany: vi.fn() },
         $transaction: vi.fn(),
+        // The enter_date bump is raw SQL through the shared stamper
+        // (src/lib/enter-date.ts), because the value has to be computed by the
+        // database above the beez change feed's watermark.
+        $executeRaw: vi.fn(),
     },
     requireRoleMock: vi.fn(),
     getAccountGuidsForBookMock: vi.fn(),
@@ -84,7 +88,7 @@ beforeEach(() => {
         for (const row of matches) Object.assign(row, data);
         return { count: matches.length };
     });
-    prismaMock.transactions.updateMany.mockResolvedValue({ count: 1 });
+    prismaMock.$executeRaw.mockResolvedValue(1);
     lockTransactionsForUpdateMock.mockResolvedValue(undefined);
 });
 
@@ -99,6 +103,11 @@ describe('POST /api/splits/bulk/reconcile book scope', () => {
         expect(prismaMock.splits.updateMany).toHaveBeenCalledWith(expect.objectContaining({
             where: { guid: { in: [SPLIT_A] }, account_guid: { in: [ACCOUNT_A] } },
         }));
+        // enter_date is bumped by the database, not by an app-clock literal.
+        expect(prismaMock.transactions.updateMany).not.toHaveBeenCalled();
+        const bumpCall = prismaMock.$executeRaw.mock.calls[0];
+        expect((bumpCall[0] as TemplateStringsArray).join('?')).toContain('SET enter_date');
+        expect((bumpCall[1] as { sql: string }).sql).toContain('clock_timestamp()');
     });
 
     it('fails closed when the caller book resolves to no accounts', async () => {

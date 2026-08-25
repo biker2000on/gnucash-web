@@ -10,6 +10,7 @@ import { processMultiCurrencySplits } from '@/lib/trading-accounts';
 import { getAccountGuidsForBook, getBookAccountGuids, getActiveBookGuid } from '@/lib/book-scope';
 import { cacheInvalidateFrom } from '@/lib/cache';
 import { publishDataChange } from '@/lib/data-events';
+import { stampEnterDate } from '@/lib/enter-date';
 import { requireRole } from '@/lib/auth';
 import { buildAccountPathMap } from '@/lib/reports/utils';
 import { parseSearchQuery } from '@/lib/tags';
@@ -501,7 +502,6 @@ export async function POST(request: Request) {
 
         // Use client-provided GUID or generate one (validate format if provided)
         const txGuid = (body.guid && isValidGuid(body.guid)) ? body.guid : generateGuid();
-        const now = new Date();
 
         // Track multi-currency status for audit log
         let isMultiCurrency = false;
@@ -536,7 +536,12 @@ export async function POST(request: Request) {
                     currency_guid: body.currency_guid,
                     num: body.num || '',
                     post_date: new Date(body.post_date),
-                    enter_date: now,
+                    // Placeholder only. The authoritative stamp is taken below,
+                    // from the database clock and above the change feed's
+                    // watermark — see src/lib/enter-date.ts. A NOT NULL column
+                    // needs *something* on the INSERT, and this value never
+                    // survives the transaction.
+                    enter_date: new Date(0),
                     description: body.description,
                 },
             });
@@ -564,6 +569,12 @@ export async function POST(request: Request) {
 
             // Transaction-level notes (slots, name='notes')
             await writeTransactionNotes(tx, txGuid, body.notes);
+
+            // The real enter_date, stamped as late in the write as possible and
+            // from the DATABASE clock. A new row is as feed-visible as an edit:
+            // stamped from the app host's clock it could land below a cursor the
+            // beez change feed already issued and never be delivered at all.
+            await stampEnterDate(tx, txGuid);
 
             // Return the created transaction with splits
             return await tx.transactions.findUnique({

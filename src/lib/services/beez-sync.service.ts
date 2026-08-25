@@ -41,6 +41,11 @@ import { cacheInvalidateFrom } from '@/lib/cache';
 import { publishDataChange } from '@/lib/data-events';
 import { assertNotLocked } from '@/lib/services/period-lock.service';
 import {
+    EnterDateStampError,
+    enterDateHorizonSql,
+    stampEnterDate,
+} from '@/lib/enter-date';
+import {
     assertSplitsNotProtected,
     ReconciledSplitError,
 } from '@/lib/services/reconciled-split.service';
@@ -340,103 +345,23 @@ function assertBeezSplitsWritable(
 // ---------------------------------------------------------------------------
 
 /**
- * Set `enter_date` on a transaction from the DATABASE clock, as late in the
- * write as possible, and return the microsecond string the change feed will
- * render it as.
+ * Stamp `enter_date` on a transaction, mapping the shared helper's only failure
+ * onto this contract's wire vocabulary.
  *
- * The clock choice is not a detail. `enter_date` is the change feed's ordering
- * key, and this repository writes it from two different clocks: most paths use
- * a JavaScript `new Date()` (the app host), while a few — lot-assignment.ts,
- * reconcile.ts, statement-reconcile-data.ts — use SQL `NOW()` (the database
- * host). App and database are separate machines in every real deployment, so
- * their clocks differ. When the database clock runs ahead, a DB-stamped row
- * pushes the feed watermark into the app clock's future, and every app-stamped
- * transaction written for the next few hundred milliseconds sorts BEHIND that
- * cursor and is never delivered. That is silent, permanent loss of exactly the
- * kind this feed's cursor rules exist to rule out, and it is reproducible: the
- * integration suite catches it whenever the test database's clock leads.
- *
- * Reading the clock the ordering key is compared against removes the skew
- * entirely. `clock_timestamp()` — not `now()`, which is frozen at transaction
- * start and would land BEFORE the idempotency claim and row locks this attempt
- * waited on — is read at the moment of the UPDATE, which is the latest point
- * the writer controls. What remains is the commit-order window documented on
- * `getBeezChanges`, and nothing stamped before COMMIT can close that.
- *
- * The value is returned in {@link ENTER_DATE_PG_FORMAT}, so the API response
- * and the feed payload are byte-identical for the same row — no Date round trip
- * to truncate the microseconds off one of them.
+ * The stamping RULE itself is not defined here on purpose — it lives in
+ * src/lib/enter-date.ts, because this feed's ordering key is written by a dozen
+ * routes across the app and a rule that only the beez path obeyed would leave
+ * exactly the hole it was written to close. See that module for the invariant.
  */
-/**
- * How far ahead of the database clock a stored `enter_date` is still treated as
- * a real position the feed must stay above, rather than as corrupt data.
- *
- * Host clock skew is measured in seconds in any deployment that runs NTP, so an
- * hour is generously past every honest case. Beyond it lies data that a broken
- * writer produced — a row dated the year 3000 — and chasing THAT would drag
- * every later `enter_date` in the book into the year 3000 with it, permanently.
- * The bound is the line between absorbing skew and inheriting corruption.
- */
-const ENTER_DATE_SKEW_TOLERANCE = '1 hour';
-
-/**
- * Stamp `enter_date` from the DATABASE clock, strictly above every position the
- * feed can already have handed out, and by at least a full millisecond.
- *
- * Three guarantees, one expression, because they are three faces of the same
- * requirement: the value written must be greater than anything a reader could
- * already be holding.
- *
- * 1. DATABASE CLOCK. `clock_timestamp()`, never the app host's `new Date()`.
- *    The two are different machines. It is rendered `AT TIME ZONE 'UTC'` so it
- *    lands on the same scale as every Prisma writer in this repository, which
- *    serializes a JS `Date` as UTC into this `timestamp(6)` column; a database
- *    session on a non-UTC `TimeZone` would otherwise put the two families of
- *    writers hours apart.
- *
- * 2. ABOVE THE FEED. A cursor only ever names a row that exists, so stamping
- *    above the greatest `enter_date` in the table makes this row unmissable by
- *    any cursor issued before it. This is what closes the inverse-skew hole:
- *    if an app-clock writer running fast stamped a row in the future and a poll
- *    advanced the cursor onto it, a plain `clock_timestamp()` here would land
- *    BELOW that cursor and the write would never be delivered. The maximum is
- *    read through `idx_transactions_enter_date_guid`, so it is a one-row
- *    backward index scan, and it is bounded by {@link ENTER_DATE_SKEW_TOLERANCE}
- *    so one corrupt future row cannot poison the column forever.
- *
- * 3. A MILLISECOND CLEAR OF THE PREVIOUS VALUE. The browser's optimistic-lock
- *    token is a JS `Date` and compares at MILLISECOND precision
- *    (src/app/api/transactions/[guid]/route.ts). A microsecond-only bump —
- *    `…123000` to `…123456` — leaves a stale browser token still matching, and
- *    that tab would then overwrite this write without ever seeing a conflict.
- *    Truncating to the millisecond and adding one guarantees the new value
- *    falls in a strictly later millisecond than the old one, so the stale token
- *    stops matching. (The `GREATEST` cannot undo it: any term that wins is
- *    larger still, and the max term already dominates this row's own value.)
- *
- * The remaining, documented window is unchanged and unrelated to clocks: the
- * stamp is taken before COMMIT, so two writers can still commit out of stamp
- * order. See `getBeezChanges`.
- */
-async function stampEnterDate(database: DbClient, txGuid: string): Promise<string> {
-    const stamped = await database.$queryRaw<Array<{ enter_date: string }>>`
-        UPDATE transactions t
-        SET enter_date = GREATEST(
-                (clock_timestamp() AT TIME ZONE 'UTC'),
-                date_trunc('millisecond', t.enter_date) + interval '1 millisecond',
-                date_trunc('millisecond', (
-                    SELECT max(m.enter_date) FROM transactions m
-                    WHERE m.enter_date <= (clock_timestamp() AT TIME ZONE 'UTC')
-                                        + ${ENTER_DATE_SKEW_TOLERANCE}::interval
-                )) + interval '1 millisecond'
-            )
-        WHERE t.guid = ${txGuid}
-        RETURNING to_char(t.enter_date, ${ENTER_DATE_PG_FORMAT}::text) AS enter_date
-    `;
-    if (stamped.length === 0) {
-        throw new BeezSyncError(500, 'internal', 'Transaction vanished while stamping enter_date');
+async function stampBeezEnterDate(database: DbClient, txGuid: string): Promise<string> {
+    try {
+        return await stampEnterDate(database, txGuid);
+    } catch (error) {
+        if (error instanceof EnterDateStampError) {
+            throw new BeezSyncError(500, 'internal', error.message);
+        }
+        throw error;
     }
-    return stamped[0].enter_date;
 }
 
 // ---------------------------------------------------------------------------
@@ -702,7 +627,7 @@ export async function createBeezTransaction(
 
                 // Last write of the attempt, so the feed watermark this row
                 // takes is the latest one this writer can honestly claim.
-                const enterDate = await stampEnterDate(database, txGuid);
+                const enterDate = await stampBeezEnterDate(database, txGuid);
 
                 created = true;
                 return {
@@ -899,7 +824,7 @@ export async function replaceBeezTransaction(
             // and every other writer's version token, so a browser tab holding
             // the old one gets the 409 it would have got from another human.
             // Stamped last, after the lock wait and every dependent write.
-            const enterDate = await stampEnterDate(database, txGuid);
+            const enterDate = await stampBeezEnterDate(database, txGuid);
 
             replacedTxGuid = txGuid;
             return {
@@ -1050,6 +975,15 @@ export interface BeezChangeItem {
      * is then empty — see the cents discipline in src/lib/integrations/beez.ts.
      */
     unrepresentable?: true;
+    /**
+     * Set on an item from the always-emitted quarantine set: a row with no
+     * `enter_date` at all, or one stamped beyond the skew horizon
+     * (src/lib/enter-date.ts). Such a row has no position in the feed's time
+     * order, so it is re-delivered on every poll instead of being sequenced —
+     * apply it idempotently by `transactionGuid` and it costs nothing. It is
+     * NOT a data problem the client must surface, unlike `unrepresentable`.
+     */
+    quarantined?: true;
 }
 
 export interface BeezChanges {
@@ -1112,8 +1046,10 @@ interface ChangeSplitRow {
  * would produce a `…56.123` cursor, still compare greater than it on the next
  * poll, and re-emit itself forever.
  *
- * NULL enter_date. GnuCash permits it, and such a row has no position in the
- * order above at all. Two earlier designs lost data here and both are worth
+ * ROWS WITH NO POSITION. Two kinds: `enter_date IS NULL` (GnuCash permits it,
+ * and the desktop client writes them) and `enter_date` beyond the writers'
+ * skew horizon (src/lib/enter-date.ts). Neither has a position in the order
+ * above at all. Two earlier designs lost data here and both are worth
  * naming, because the fix is shaped by them. Seating a NULL row in the time
  * watermark — a cursor that said "NULL tail" — meant that once a client
  * consumed one, every LATER transaction with a normal enter_date sorted before
@@ -1123,9 +1059,19 @@ interface ChangeSplitRow {
  * unreachable, while `hasMore` — computed from the ordered stream alone — said
  * there was nothing left to fetch.
  *
- * So the NULL set is its own paged stream, with its own watermark in the
+ * So the quarantine set is its own paged stream, with its own watermark in the
  * cursor (`nullGuid`), ordered by guid, bounded by `limit`, and NOT counted
- * against the ordered page's budget. It advances while rows remain and RESETS
+ * against the ordered page's budget. Its items are flagged `quarantined: true`.
+ *
+ * THE HORIZON IS WHY THE FUTURE ROW IS IN THAT SET. A writer's floor is the
+ * greatest `enter_date` within one hour of the database clock; ordering a row
+ * beyond that would issue a cursor no writer could ever climb above, and every
+ * later write would sort behind it — permanently, for a row dated the year
+ * 3000. Excluding it from the ORDER costs nothing: it is delivered on every
+ * poll while it is out there, and rejoins the ordered stream the moment the
+ * clock reaches it. Reader and writer read the same horizon expression, which
+ * is what makes "every issued cursor <= every writer's floor" true rather than
+ * hoped for. It advances while rows remain and RESETS
  * to the start the moment it drains, which is what keeps a NULL row inserted
  * behind an advanced watermark reachable: a row with no timestamp gives no
  * "after" to scan from, the drain always terminates because the watermark
@@ -1140,17 +1086,19 @@ interface ChangeSplitRow {
  * a position for it. Tombstones do not count towards `limit` for the
  * transaction page or advance `nextCursor`.
  *
- * ONE CLOCK. The ordering key is DATABASE-owned. `stampEnterDate` writes
- * `clock_timestamp()` and additionally never lands below the greatest
- * `enter_date` already in the table, and the browser's own edit path
- * (`PUT /api/transactions/[guid]`) now writes the database clock too rather
- * than the app host's `new Date()`. That combination is what closes the
- * inverse-skew hole: an app host running fast could otherwise stamp a row in
- * the future, a poll would advance the watermark onto it, and every
- * database-clock write for the next few seconds would sort behind the cursor
- * and be lost. Older rows minted by a fast clock, and the remaining app-clock
- * writers elsewhere in the repository, stay safe for the same reason — the
- * stamp climbs above them rather than assuming they do not exist.
+ * ONE CLOCK, ONE HELPER. The ordering key is DATABASE-owned, and every
+ * feed-visible writer in the app — the beez mutations, the transaction editor's
+ * PUT, the bulk edit, and the reconcile/lot split paths — stamps through
+ * `stampEnterDate`/`stampEnterDates` in src/lib/enter-date.ts rather than
+ * writing `new Date()` from the app host. That helper writes
+ * `clock_timestamp()` and never lands below the greatest admitted `enter_date`
+ * already in the table, which is what closes the inverse-skew hole: an app host
+ * running fast could otherwise stamp a row in the future, a poll would advance
+ * the watermark onto it, and every database-clock write for the next few
+ * seconds would sort behind the cursor and be lost. Rows minted by a fast clock
+ * outside the app (the GnuCash desktop client, a DBA) stay safe for the same
+ * reason — the stamp climbs above them rather than assuming they do not
+ * exist.
  *
  * STALENESS WINDOW (known, bounded, and documented on the route). The stamp is
  * taken as late as a writer can take it — after every idempotency claim and row
@@ -1204,7 +1152,8 @@ export async function getBeezChanges(
             SELECT t.guid, t.post_date, t.description,
                    to_char(t.enter_date, ${ENTER_DATE_PG_FORMAT}::text) AS enter_date
             FROM transactions t
-            WHERE ${inBook} AND t.enter_date IS NOT NULL AND ${afterCursor}
+            WHERE ${inBook} AND t.enter_date IS NOT NULL
+              AND t.enter_date <= ${enterDateHorizonSql} AND ${afterCursor}
             ORDER BY t.enter_date ASC, t.guid ASC
             LIMIT ${options.limit + 1}
         `;
@@ -1221,30 +1170,43 @@ export async function getBeezChanges(
     const orderedHasMore = rows.length > options.limit;
     const page = orderedHasMore ? rows.slice(0, options.limit) : rows;
 
-    // The NULL set, paged on its own guid watermark and its own budget. The
-    // extra row answers "is this set drained?" — and the answer decides between
-    // advancing the watermark and restarting the set (see the header).
+    // The QUARANTINE set, paged on its own guid watermark and its own budget.
+    // The extra row answers "is this set drained?" — and the answer decides
+    // between advancing the watermark and restarting the set (see the header).
+    //
+    // Two kinds of row have no position in the time order and so land here:
+    // `enter_date IS NULL`, and `enter_date` beyond the writers' horizon. The
+    // second is what keeps the reader and the writers honest with each other:
+    // ordering a year-3000 row would issue a cursor no writer's watermark could
+    // ever reach, and every later write would sort behind it forever. Excluding
+    // it from the ORDER is not dropping it — it is delivered here, on every
+    // poll, until the clock catches up and it rejoins the ordered stream.
     const afterNullCursor: Prisma.Sql = cursor && cursor.nullGuid !== null
         ? Prisma.sql`t.guid > ${cursor.nullGuid}`
         : Prisma.sql`TRUE`;
-    const nullRows = await prisma.$queryRaw<ChangeTxRow[]>`
-        SELECT t.guid, t.post_date, t.description, NULL::text AS enter_date
+    const quarantineRows = await prisma.$queryRaw<ChangeTxRow[]>`
+        SELECT t.guid, t.post_date, t.description,
+               to_char(t.enter_date, ${ENTER_DATE_PG_FORMAT}::text) AS enter_date
         FROM transactions t
-        WHERE ${inBook} AND t.enter_date IS NULL AND ${afterNullCursor}
+        WHERE ${inBook} AND ${afterNullCursor}
+          AND (t.enter_date IS NULL OR t.enter_date > ${enterDateHorizonSql})
         ORDER BY t.guid ASC
         LIMIT ${options.limit + 1}
     `;
-    const nullHasMore = nullRows.length > options.limit;
-    const nullEnterDateRows = nullHasMore ? nullRows.slice(0, options.limit) : nullRows;
-    // Advance while rows remain; reset on drain so a NULL row that appears
-    // behind the watermark is picked up by the next pass.
-    const nextNullGuid = nullHasMore
-        ? nullEnterDateRows[nullEnterDateRows.length - 1].guid
+    const quarantineHasMore = quarantineRows.length > options.limit;
+    const quarantinePage = quarantineHasMore
+        ? quarantineRows.slice(0, options.limit)
+        : quarantineRows;
+    // Advance while rows remain; reset on drain so a quarantined row that
+    // appears behind the watermark is picked up by the next pass.
+    const nextNullGuid = quarantineHasMore
+        ? quarantinePage[quarantinePage.length - 1].guid
         : null;
+    const quarantinedGuids = new Set(quarantinePage.map(row => row.guid));
 
-    const hasMore = orderedHasMore || nullHasMore;
+    const hasMore = orderedHasMore || quarantineHasMore;
 
-    const delivered = [...page, ...nullEnterDateRows];
+    const delivered = [...page, ...quarantinePage];
     const guids = delivered.map(row => row.guid);
     const [splitRows, linkRows] = await Promise.all([
         guids.length > 0
@@ -1291,6 +1253,7 @@ export async function getBeezChanges(
             enterDate: row.enter_date ? `${row.enter_date}Z` : null,
             description: row.description,
             deleted: false,
+            ...(quarantinedGuids.has(row.guid) ? { quarantined: true as const } : {}),
         };
 
         // All-or-nothing: a transaction with one 1/3 split is reported whole as

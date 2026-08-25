@@ -3,6 +3,7 @@ import prisma from '@/lib/prisma';
 import { requireRole } from '@/lib/auth';
 import { getAccountGuidsForBook } from '@/lib/book-scope';
 import { publishDataChange } from '@/lib/data-events';
+import { stampEnterDates } from '@/lib/enter-date';
 import { lockTransactionsForUpdate } from '@/lib/services/reconciled-split.service';
 
 interface BulkReconcileBody {
@@ -139,12 +140,10 @@ export async function POST(request: Request) {
             if (updated.count !== splitGuids.length) {
                 throw new SplitNotInBookError();
             }
-            if (parentTxGuids.length > 0) {
-                await tx.transactions.updateMany({
-                    where: { guid: { in: parentTxGuids } },
-                    data: { enter_date: new Date() },
-                });
-            }
+            // Shared stamper rather than `new Date()` — see src/lib/enter-date.ts
+            // for why the app host's clock cannot own this column. The rows are
+            // already locked by lockTransactionsForUpdate above.
+            await stampEnterDates(tx, parentTxGuids);
             return updated;
         });
 

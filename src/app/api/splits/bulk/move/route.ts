@@ -4,6 +4,7 @@ import { requireRole } from '@/lib/auth';
 import { getAccountGuidsForBook } from '@/lib/book-scope';
 import { cacheInvalidateFrom } from '@/lib/cache';
 import { publishDataChange } from '@/lib/data-events';
+import { stampEnterDates } from '@/lib/enter-date';
 import {
     withPeriodLockCheck,
     assertNotLocked,
@@ -290,12 +291,13 @@ export async function POST(request: Request) {
                 throw new OutOfBookError(SPLITS_NOT_IN_BOOK);
             }
 
-            if (parentTxGuids.length > 0) {
-                await tx.transactions.updateMany({
-                    where: { guid: { in: parentTxGuids } },
-                    data: { enter_date: new Date() },
-                });
-            }
+            // Through the shared stamper, not `new Date()`: enter_date is the
+            // beez change feed's ordering key as well as this app's
+            // optimistic-lock token, and an app-clock literal can land below a
+            // cursor the feed already issued (the edit is then never delivered)
+            // or inside the previous millisecond (a stale editor's token still
+            // matches). See src/lib/enter-date.ts. The rows are already locked.
+            await stampEnterDates(tx, parentTxGuids);
 
             return moved;
         });

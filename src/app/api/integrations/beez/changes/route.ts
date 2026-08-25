@@ -13,13 +13,15 @@
 //
 // The cursor is a `(enter_date, guid)` watermark carried at the database's full
 // microsecond precision — never through a millisecond JS Date, which would make
-// a row stored at `.123456` re-emit on every poll. Rows whose `enter_date` is
-// NULL have no place in that order, so the cursor carries a SECOND watermark
-// for them: a guid position in the NULL set, paged on its own budget and reset
-// to the start whenever that set drains, which is what keeps a NULL row that
-// appears later reachable. Apply items idempotently by `transactionGuid` /
-// `externalId`: this endpoint guarantees no loss, and bounded repetition is how
-// it pays for that.
+// a row stored at `.123456` re-emit on every poll. Two kinds of row have no
+// place in that order: one with a NULL `enter_date`, and one stamped further
+// ahead of the database clock than any writer's watermark will chase
+// (src/lib/enter-date.ts). Both go to the QUARANTINE set — flagged
+// `quarantined: true`, carried by a SECOND watermark in the cursor, paged on
+// its own budget and reset to the start whenever that set drains, which is what
+// keeps a row that appears later reachable. Apply items idempotently by
+// `transactionGuid` / `externalId`: this endpoint guarantees no loss, and
+// bounded repetition is how it pays for that.
 
 import { NextResponse } from 'next/server';
 import { parseChangesLimit } from '@/lib/integrations/beez';
@@ -41,15 +43,17 @@ import { getBeezChanges } from '@/lib/services/beez-sync.service';
  *
  *
  *       DUPLICATES ARE POSSIBLE; LOSS IS NOT. Apply every item idempotently,
- *       keyed by `transactionGuid` (or `externalId`). Items with
- *       `enterDate: null` (GnuCash allows a NULL enter_date) have no position in
- *       the time order, so they are paged separately by guid and that set is
- *       re-sent from its start each time it drains; `deleted: true` tombstones
- *       repeat until acknowledged. `hasMore` covers BOTH streams, so keep
- *       polling while it is true. Separately, `enter_date` is read from
- *       the database clock just before the write rather than at commit, so two
- *       concurrent writers can commit slightly out of timestamp order; a
- *       transaction that commits
+ *       keyed by `transactionGuid` (or `externalId`). Items flagged
+ *       `quarantined: true` have no position in the time order — either
+ *       `enterDate` is null (GnuCash allows it) or it is stamped more than an
+ *       hour ahead of the server clock, which is corruption rather than skew
+ *       and cannot be allowed to move the cursor. They are paged separately by
+ *       guid and that set is re-sent from its start each time it drains, so
+ *       expect them on most responses; `deleted: true` tombstones repeat until
+ *       acknowledged. `hasMore` covers BOTH streams, so keep polling while it
+ *       is true. Separately, `enter_date` is read from the database clock just
+ *       before the write rather than at commit, so two concurrent writers can
+ *       commit slightly out of timestamp order; a transaction that commits
  *       behind an already-advanced cursor can be missed by a client that only
  *       ever moves forward. The window is bounded by one write's duration. If
  *       your book cannot tolerate it, re-poll periodically from a cursor a few
@@ -98,6 +102,7 @@ import { getBeezChanges } from '@/lib/services/beez-sync.service';
  *                       description: { type: string, nullable: true }
  *                       deleted: { type: boolean }
  *                       unrepresentable: { type: boolean }
+ *                       quarantined: { type: boolean }
  *                       splits:
  *                         type: array
  *                         items:

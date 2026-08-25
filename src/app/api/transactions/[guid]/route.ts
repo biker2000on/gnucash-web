@@ -10,6 +10,7 @@ import { cacheInvalidateFrom } from '@/lib/cache';
 import { publishDataChange } from '@/lib/data-events';
 import { requireRole } from '@/lib/auth';
 import { readTransactionNotes, writeTransactionNotes } from '@/lib/transaction-notes';
+import { stampEnterDate } from '@/lib/enter-date';
 import {
     assertNotLocked,
     PeriodLockedError,
@@ -328,28 +329,27 @@ export async function PUT(
                 },
             });
 
-            // The enter_date bump comes from the DATABASE clock, not this
-            // host's, and so it is a separate statement: Prisma can only send a
-            // literal for a column value, and `clock_timestamp()` has to be
-            // evaluated server-side. The row is already locked by this
-            // transaction, so the second UPDATE costs a round trip and nothing
-            // else.
+            // The enter_date bump is a separate statement through the shared
+            // helper, not a literal in the update above: Prisma can only send a
+            // literal for a column value, and this stamp has to be evaluated
+            // server-side. The row is already locked by this transaction, so
+            // the second UPDATE costs a round trip and nothing else.
             //
-            // Why it matters: enter_date is the ordering key the beez change
-            // feed pages on (src/lib/services/beez-sync.service.ts), read by a
-            // client that only ever moves forward. An app host running even a
-            // second fast would stamp this row into the future, the feed's
-            // watermark would advance onto it, and every database-stamped write
-            // for the next second would sort behind that cursor and never be
-            // delivered. One clock owns the key. `AT TIME ZONE 'UTC'` puts it on
-            // the same scale as the Prisma writers that serialize a JS Date into
-            // this column, which a database session on a local TimeZone would
-            // otherwise shift by hours.
-            await tx.$executeRaw`
-                UPDATE transactions
-                SET enter_date = (clock_timestamp() AT TIME ZONE 'UTC')
-                WHERE guid = ${guid}
-            `;
+            // Why it goes through src/lib/enter-date.ts rather than
+            // `new Date()`: enter_date is BOTH the optimistic-lock token this
+            // route compares at millisecond precision (enterDateMatches, above)
+            // and the ordering key the beez change feed pages on
+            // (src/lib/services/beez-sync.service.ts), read by a client that
+            // only ever moves forward. A bare clock read satisfies neither. It
+            // can land inside the same millisecond as the value it replaces, so
+            // a stale tab's token still matches and that tab overwrites this
+            // edit without ever seeing a conflict; and it can land BELOW a
+            // cursor the feed already issued from a row stamped ahead of the
+            // wall clock, in which case this edit is never delivered at all.
+            // The helper writes GREATEST(database clock, prior + 1ms, feed
+            // watermark + 1ms) — the floor both properties need. One rule, one
+            // place, every writer.
+            await stampEnterDate(tx, guid);
 
             // Splits that disappear in this edit take their slots with them:
             // the slots table has no FK on obj_guid, so lot-engine markers
