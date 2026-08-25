@@ -41,6 +41,8 @@ services:
       - AI_BASE_URL=${AI_BASE_URL:-}
       - AI_MODEL=${AI_MODEL:-}
       - AI_API_KEY=${AI_API_KEY:-}
+      # Feed-vs-book match window in CALENDAR days (empty = code default 3)
+      - SIMPLEFIN_MATCH_WINDOW_DAYS=${SIMPLEFIN_MATCH_WINDOW_DAYS:-}
       - RECEIPT_STORAGE=${RECEIPT_STORAGE:-s3}
       - RECEIPT_S3_ENDPOINT=${RECEIPT_S3_ENDPOINT:-http://minio:9000}
       - RECEIPT_S3_BUCKET=${RECEIPT_S3_BUCKET:-gnucash-receipts}
@@ -100,6 +102,8 @@ services:
       - AI_BASE_URL=${AI_BASE_URL:-}
       - AI_MODEL=${AI_MODEL:-}
       - AI_API_KEY=${AI_API_KEY:-}
+      # The worker runs the scheduled syncs — it needs the same match window.
+      - SIMPLEFIN_MATCH_WINDOW_DAYS=${SIMPLEFIN_MATCH_WINDOW_DAYS:-}
       - RECEIPT_STORAGE=${RECEIPT_STORAGE:-s3}
       - RECEIPT_S3_ENDPOINT=${RECEIPT_S3_ENDPOINT:-http://minio:9000}
       - RECEIPT_S3_BUCKET=${RECEIPT_S3_BUCKET:-gnucash-receipts}
