@@ -287,29 +287,87 @@ export function allSplitsRepresentable(
  */
 export const ENTER_DATE_PG_FORMAT = 'YYYY-MM-DD"T"HH24:MI:SS.US';
 
-/** `2026-08-25T12:34:56.123456` — exactly what {@link ENTER_DATE_PG_FORMAT} emits. */
-const ENTER_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}$/;
+/**
+ * `2026-08-25T12:34:56.123456` — exactly what {@link ENTER_DATE_PG_FORMAT}
+ * emits, captured so the calendar fields can be range-checked individually.
+ */
+const ENTER_DATE_PATTERN =
+    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})\.\d{6}$/;
 
-/** True for a microsecond timestamp string in the feed's own spelling. */
-export function isEnterDateStamp(value: string): boolean {
-    return ENTER_DATE_PATTERN.test(value);
+/** Days in a month, proleptic-Gregorian, which is the calendar PostgreSQL uses. */
+function daysInMonth(year: number, month: number): number {
+    if (month === 2) {
+        const leap = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+        return leap ? 29 : 28;
+    }
+    return [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1];
 }
 
 /**
- * Position in the `(enter_date, guid)` stream.
+ * True for a microsecond timestamp string in the feed's own spelling AND a real
+ * instant on the calendar.
  *
- * `enterDate` is NEVER null. Rows whose `enter_date` column is NULL — GnuCash
- * permits it — have no position in this order at all, so the feed carries them
- * as a separate always-emitted set (see `getBeezChanges`) instead of trying to
- * seat them inside the watermark. Encoding a NULL position was the older
- * design, and it lost data: once a client consumed a NULL-enter_date row the
- * cursor said "NULL tail", and every subsequent transaction with a normal
- * enter_date sorted BEFORE that cursor and was skipped forever.
+ * Shape alone is not enough. `2026-99-99T99:99:99.999999` matches the digit
+ * layout perfectly, and a shape-only gate handed it straight to the
+ * `::timestamp` cast in the feed query, where PostgreSQL raised
+ * `date/time field value out of range` and the caller got a 500 for what is
+ * plainly a malformed cursor. So the fields are range-checked here, arithmetic
+ * only — deliberately NOT by round-tripping through `new Date()`, which would
+ * both accept the rollover spellings JavaScript tolerates and truncate the
+ * microseconds this format exists to preserve.
+ *
+ * Year 0 is rejected because PostgreSQL has no year zero either.
+ */
+export function isEnterDateStamp(value: string): boolean {
+    const match = ENTER_DATE_PATTERN.exec(value);
+    if (!match) return false;
+    const [year, month, day, hour, minute, second] = match.slice(1, 7).map(Number);
+    if (year < 1 || month < 1 || month > 12) return false;
+    if (day < 1 || day > daysInMonth(year, month)) return false;
+    // No leap seconds: PostgreSQL rejects :60 in a timestamp literal too.
+    return hour <= 23 && minute <= 59 && second <= 59;
+}
+
+/**
+ * Position in the change feed: a watermark in the `(enter_date, guid)` stream,
+ * plus a separate watermark in the guid-ordered set of NULL-`enter_date` rows.
+ *
+ * TWO STREAMS, because there are genuinely two. `enter_date` is nullable in
+ * GnuCash, and a row without one has no position in a time order at all. The
+ * original design seated it in the time watermark anyway — a cursor that said
+ * "NULL tail" — and that lost data: once a client consumed a NULL row, every
+ * subsequent transaction with a normal `enter_date` sorted BEFORE that cursor
+ * and was skipped forever. The second design made the NULL set always-emitted
+ * and unpaged, which lost data too, just more quietly: with more NULL rows than
+ * `limit`, the same guid-ordered prefix came back on every poll and the tail was
+ * never reachable.
+ *
+ * So both streams page, independently:
+ *
+ * - `enterDate`/`guid` — the time watermark. Both are set, or both are null,
+ *   and null means "the ordered stream has not started yet", NOT "the NULL
+ *   tail". They move forward only.
+ * - `nullGuid` — how far into the guid-ordered NULL set this client has read.
+ *   It advances while that set has more, and RESETS to null the moment the set
+ *   drains.
+ *
+ * WHY THE RESET. A NULL row carries no time information, so when one appears
+ * later its guid is as likely to sort below an advanced watermark as above it —
+ * there is no "after" to scan from. Restarting the set on every drained pass is
+ * what makes such a row reachable: the watermark strictly advances while rows
+ * remain, so the drain always terminates, and the pass after it starts from the
+ * beginning and sees whatever arrived behind it. The cost is that a fully
+ * drained NULL set is re-emitted on the next poll — bounded repetition, exactly
+ * the deal the deletion tombstones already make, and the reason the endpoint
+ * requires idempotent apply by `transactionGuid`.
  */
 export interface ChangesCursor {
-    /** Microsecond timestamp, exactly as PostgreSQL rendered it. */
-    enterDate: string;
-    guid: string;
+    /** Microsecond timestamp, exactly as PostgreSQL rendered it, or null before the stream starts. */
+    enterDate: string | null;
+    /** Tie-break guid at {@link ChangesCursor.enterDate}; null exactly when that is null. */
+    guid: string | null;
+    /** Position in the guid-ordered NULL-`enter_date` set, or null for its start. */
+    nullGuid: string | null;
 }
 
 /**
@@ -319,9 +377,12 @@ export interface ChangesCursor {
  * is free to change. It is deliberately NOT signed — it names a position in a
  * feed the caller is already authorized to read in full, so forging one buys
  * nothing that a different `since` value would not.
+ *
+ * All three keys are always written, so an unchanged position re-encodes to a
+ * byte-identical string and a client can compare cursors for equality.
  */
 export function encodeChangesCursor(cursor: ChangesCursor): string {
-    const json = JSON.stringify({ e: cursor.enterDate, g: cursor.guid });
+    const json = JSON.stringify({ e: cursor.enterDate, g: cursor.guid, n: cursor.nullGuid });
     return Buffer.from(json, 'utf8').toString('base64url');
 }
 
@@ -330,9 +391,14 @@ export function encodeChangesCursor(cursor: ChangesCursor): string {
  *
  * A malformed cursor is a 422 at the call site, never a silent restart from the
  * beginning of the feed: replaying the entire ledger into a sync client because
- * one character was dropped in transit is exactly the failure this rejects. A
- * cursor from the older NULL-tail encoding is malformed by this rule too, and
- * that is deliberate — resuming it would resume a position that skips rows.
+ * one character was dropped in transit is exactly the failure this rejects.
+ *
+ * `e` and `g` stand or fall together. That pairing is what still rejects the
+ * retired NULL-tail encoding (`{ e: null, g: <guid> }`), whose position skipped
+ * rows and must not be resumable, while admitting the new "NULL set only"
+ * position (`{ e: null, g: null, n: <guid> }`). A cursor naming no position at
+ * all is not one this endpoint issued, so it is refused rather than treated as
+ * the start of the feed.
  */
 export function decodeChangesCursor(raw: string): ChangesCursor | null {
     let parsed: unknown;
@@ -342,14 +408,30 @@ export function decodeChangesCursor(raw: string): ChangesCursor | null {
         return null;
     }
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
-    const candidate = parsed as { e?: unknown; g?: unknown };
+    const candidate = parsed as { e?: unknown; g?: unknown; n?: unknown };
+
+    let nullGuid: string | null = null;
+    if (candidate.n !== undefined && candidate.n !== null) {
+        if (typeof candidate.n !== 'string' || !isValidGuid(candidate.n)) return null;
+        nullGuid = candidate.n.toLowerCase();
+    }
+
+    const hasEnterDate = candidate.e !== undefined && candidate.e !== null;
+    const hasGuid = candidate.g !== undefined && candidate.g !== null;
+    if (hasEnterDate !== hasGuid) return null;
+
+    if (!hasEnterDate) {
+        if (nullGuid === null) return null;
+        return { enterDate: null, guid: null, nullGuid };
+    }
 
     if (typeof candidate.g !== 'string' || !isValidGuid(candidate.g)) return null;
     // No `new Date(...)` anywhere on this path: constructing one would discard
-    // the microseconds this cursor exists to preserve.
+    // the microseconds this cursor exists to preserve, and would accept
+    // out-of-range fields by rolling them over instead of refusing them.
     if (typeof candidate.e !== 'string' || !isEnterDateStamp(candidate.e)) return null;
 
-    return { enterDate: candidate.e, guid: candidate.g.toLowerCase() };
+    return { enterDate: candidate.e, guid: candidate.g.toLowerCase(), nullGuid };
 }
 
 export type LimitParseResult =

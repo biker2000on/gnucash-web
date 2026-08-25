@@ -385,11 +385,12 @@ describe('allSplitsRepresentable', () => {
 
 describe('change cursor', () => {
     const GUID = 'c'.repeat(32);
+    const NULL_GUID = 'd'.repeat(32);
     const STAMP = '2026-08-25T10:11:12.345678';
 
     it('round-trips a microsecond position byte for byte', () => {
-        const encoded = encodeChangesCursor({ enterDate: STAMP, guid: GUID });
-        expect(decodeChangesCursor(encoded)).toEqual({ enterDate: STAMP, guid: GUID });
+        const encoded = encodeChangesCursor({ enterDate: STAMP, guid: GUID, nullGuid: null });
+        expect(decodeChangesCursor(encoded)).toEqual({ enterDate: STAMP, guid: GUID, nullGuid: null });
     });
 
     it('keeps the microseconds a JS Date would have thrown away', () => {
@@ -397,21 +398,49 @@ describe('change cursor', () => {
         // milliseconds, so `…12.345678` would come back as `…12.345`, still
         // compare greater than the row it names, and re-emit that row on every
         // single poll for the life of the client.
-        const decoded = decodeChangesCursor(encodeChangesCursor({ enterDate: STAMP, guid: GUID }));
+        const decoded = decodeChangesCursor(
+            encodeChangesCursor({ enterDate: STAMP, guid: GUID, nullGuid: null }),
+        );
         expect(decoded?.enterDate).toBe(STAMP);
         expect(decoded?.enterDate).not.toBe(new Date(`${STAMP}Z`).toISOString());
         expect(isEnterDateStamp(decoded?.enterDate ?? '')).toBe(true);
     });
 
     it('is base64url, so it survives a query string untouched', () => {
-        const encoded = encodeChangesCursor({ enterDate: '2026-08-25T00:00:00.000000', guid: GUID });
+        const encoded = encodeChangesCursor({
+            enterDate: '2026-08-25T00:00:00.000000', guid: GUID, nullGuid: null,
+        });
         expect(encoded).toMatch(/^[A-Za-z0-9_-]+$/);
         expect(encodeURIComponent(encoded)).toBe(encoded);
     });
 
     it('normalizes the guid so a shouted cursor still matches stored rows', () => {
-        const encoded = encodeChangesCursor({ enterDate: STAMP, guid: 'C'.repeat(32) });
+        const encoded = encodeChangesCursor({
+            enterDate: STAMP, guid: 'C'.repeat(32), nullGuid: 'D'.repeat(32),
+        });
         expect(decodeChangesCursor(encoded)?.guid).toBe(GUID);
+        expect(decodeChangesCursor(encoded)?.nullGuid).toBe(NULL_GUID);
+    });
+
+    it('carries the NULL-set watermark alongside the time watermark', () => {
+        const encoded = encodeChangesCursor({ enterDate: STAMP, guid: GUID, nullGuid: NULL_GUID });
+        expect(decodeChangesCursor(encoded)).toEqual({
+            enterDate: STAMP, guid: GUID, nullGuid: NULL_GUID,
+        });
+    });
+
+    it('accepts a position that is only in the NULL set, for a book with no timed rows', () => {
+        // A book whose transactions ALL have a NULL enter_date still has to page
+        // its way through them, and there is no time watermark to pair with.
+        const encoded = encodeChangesCursor({ enterDate: null, guid: null, nullGuid: NULL_GUID });
+        expect(decodeChangesCursor(encoded)).toEqual({
+            enterDate: null, guid: null, nullGuid: NULL_GUID,
+        });
+    });
+
+    it('re-encodes an unchanged position byte for byte, so a client can compare cursors', () => {
+        const cursor = { enterDate: STAMP, guid: GUID, nullGuid: null };
+        expect(encodeChangesCursor(cursor)).toBe(encodeChangesCursor({ ...cursor }));
     });
 
     it('rejects anything it did not mint, rather than restarting the feed', () => {
@@ -426,9 +455,22 @@ describe('change cursor', () => {
             // Millisecond precision is not this cursor's spelling — accepting it
             // would reintroduce the truncation the format exists to rule out.
             Buffer.from(JSON.stringify({ e: '2026-08-25T10:11:12.345Z', g: GUID }), 'utf8').toString('base64url'),
-            // The retired NULL-tail encoding. Resuming it would resume a
-            // position from which every later normal row is unreachable.
+            // The retired NULL-tail encoding: a time watermark of "null" paired
+            // with a guid. Resuming it would resume a position from which every
+            // later normal row is unreachable, so `e` and `g` stand or fall
+            // together and this is refused — while `{e: null, g: null, n: guid}`,
+            // which means something else entirely, is accepted above.
             Buffer.from(JSON.stringify({ e: null, g: GUID }), 'utf8').toString('base64url'),
+            // Names no position in either stream.
+            Buffer.from(JSON.stringify({}), 'utf8').toString('base64url'),
+            Buffer.from(JSON.stringify({ e: null, g: null, n: null }), 'utf8').toString('base64url'),
+            // A NULL-set watermark that is not a guid.
+            Buffer.from(JSON.stringify({ e: STAMP, g: GUID, n: 'short' }), 'utf8').toString('base64url'),
+            Buffer.from(JSON.stringify({ e: STAMP, g: GUID, n: 7 }), 'utf8').toString('base64url'),
+            // Shape-valid but not a real instant. Before the calendar check
+            // these reached the feed's `::timestamp` cast and answered 500.
+            Buffer.from(JSON.stringify({ e: '2026-99-99T99:99:99.999999', g: GUID }), 'utf8').toString('base64url'),
+            Buffer.from(JSON.stringify({ e: '2026-02-30T00:00:00.000000', g: GUID }), 'utf8').toString('base64url'),
         ]) {
             expect(decodeChangesCursor(raw), raw).toBeNull();
         }
@@ -450,6 +492,40 @@ describe('isEnterDateStamp', () => {
             '',
         ]) {
             expect(isEnterDateStamp(raw), raw).toBe(false);
+        }
+    });
+
+    it('rejects a digit layout that is not a real instant', () => {
+        // Shape alone let these through to the feed's `::timestamp` cast, where
+        // PostgreSQL raised "date/time field value out of range" and the client
+        // got a 500 for a plainly malformed cursor.
+        for (const raw of [
+            '2026-99-99T99:99:99.999999',
+            '2026-00-15T00:00:00.000000',
+            '2026-13-01T00:00:00.000000',
+            '2026-01-00T00:00:00.000000',
+            '2026-01-32T00:00:00.000000',
+            '2026-04-31T00:00:00.000000',
+            '2026-02-29T00:00:00.000000',
+            '1900-02-29T00:00:00.000000',
+            '0000-01-01T00:00:00.000000',
+            '2026-01-01T24:00:00.000000',
+            '2026-01-01T00:60:00.000000',
+            // No leap seconds: PostgreSQL refuses :60 in a timestamp literal.
+            '2026-01-01T00:00:60.000000',
+        ]) {
+            expect(isEnterDateStamp(raw), raw).toBe(false);
+        }
+    });
+
+    it('accepts the calendar edges a naive check would trip over', () => {
+        for (const raw of [
+            '2024-02-29T23:59:59.999999',
+            '2000-02-29T00:00:00.000000',
+            '2026-12-31T23:59:59.999999',
+            '0001-01-01T00:00:00.000000',
+        ]) {
+            expect(isEnterDateStamp(raw), raw).toBe(true);
         }
     });
 });

@@ -324,10 +324,32 @@ export async function PUT(
                     currency_guid: body.currency_guid,
                     num: body.num || '',
                     post_date: new Date(body.post_date),
-                    enter_date: new Date(),
                     description: body.description,
                 },
             });
+
+            // The enter_date bump comes from the DATABASE clock, not this
+            // host's, and so it is a separate statement: Prisma can only send a
+            // literal for a column value, and `clock_timestamp()` has to be
+            // evaluated server-side. The row is already locked by this
+            // transaction, so the second UPDATE costs a round trip and nothing
+            // else.
+            //
+            // Why it matters: enter_date is the ordering key the beez change
+            // feed pages on (src/lib/services/beez-sync.service.ts), read by a
+            // client that only ever moves forward. An app host running even a
+            // second fast would stamp this row into the future, the feed's
+            // watermark would advance onto it, and every database-stamped write
+            // for the next second would sort behind that cursor and never be
+            // delivered. One clock owns the key. `AT TIME ZONE 'UTC'` puts it on
+            // the same scale as the Prisma writers that serialize a JS Date into
+            // this column, which a database session on a local TimeZone would
+            // otherwise shift by hours.
+            await tx.$executeRaw`
+                UPDATE transactions
+                SET enter_date = (clock_timestamp() AT TIME ZONE 'UTC')
+                WHERE guid = ${guid}
+            `;
 
             // Splits that disappear in this edit take their slots with them:
             // the slots table has no FK on obj_guid, so lot-engine markers

@@ -14,11 +14,12 @@
 // The cursor is a `(enter_date, guid)` watermark carried at the database's full
 // microsecond precision — never through a millisecond JS Date, which would make
 // a row stored at `.123456` re-emit on every poll. Rows whose `enter_date` is
-// NULL have no place in that order, so they are delivered as a separate
-// always-emitted set instead of being seated in the cursor stream, where they
-// used to make every later transaction unreachable. Apply items idempotently by
-// `transactionGuid` / `externalId`: this endpoint guarantees no loss, and
-// bounded repetition is how it pays for that.
+// NULL have no place in that order, so the cursor carries a SECOND watermark
+// for them: a guid position in the NULL set, paged on its own budget and reset
+// to the start whenever that set drains, which is what keeps a NULL row that
+// appears later reachable. Apply items idempotently by `transactionGuid` /
+// `externalId`: this endpoint guarantees no loss, and bounded repetition is how
+// it pays for that.
 
 import { NextResponse } from 'next/server';
 import { parseChangesLimit } from '@/lib/integrations/beez';
@@ -40,10 +41,12 @@ import { getBeezChanges } from '@/lib/services/beez-sync.service';
  *
  *
  *       DUPLICATES ARE POSSIBLE; LOSS IS NOT. Apply every item idempotently,
- *       keyed by `transactionGuid` (or `externalId`). Two sets are re-sent on
- *       every response by design because they have no position in the cursor
- *       order: items with `enterDate: null` (GnuCash allows a NULL enter_date)
- *       and `deleted: true` tombstones. Separately, `enter_date` is read from
+ *       keyed by `transactionGuid` (or `externalId`). Items with
+ *       `enterDate: null` (GnuCash allows a NULL enter_date) have no position in
+ *       the time order, so they are paged separately by guid and that set is
+ *       re-sent from its start each time it drains; `deleted: true` tombstones
+ *       repeat until acknowledged. `hasMore` covers BOTH streams, so keep
+ *       polling while it is true. Separately, `enter_date` is read from
  *       the database clock just before the write rather than at commit, so two
  *       concurrent writers can commit slightly out of timestamp order; a
  *       transaction that commits
@@ -111,7 +114,11 @@ import { getBeezChanges } from '@/lib/services/beez-sync.service';
  *       403:
  *         description: The token does not grant access to its book.
  *       422:
- *         description: "`limit` is malformed or out of range, or `since` is not a cursor this endpoint issued."
+ *         description: >
+ *           `limit` is malformed or out of range, or `since` is not a cursor
+ *           this endpoint issued — corrupted in transit, or naming an
+ *           impossible instant. Never a silent restart from the beginning of the
+ *           ledger: store `nextCursor` verbatim and send it back unchanged.
  */
 export async function GET(request: Request) {
     const authorized = await authorizeBeezRequest('readonly');

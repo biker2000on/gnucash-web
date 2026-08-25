@@ -367,11 +367,71 @@ function assertBeezSplitsWritable(
  * and the feed payload are byte-identical for the same row — no Date round trip
  * to truncate the microseconds off one of them.
  */
+/**
+ * How far ahead of the database clock a stored `enter_date` is still treated as
+ * a real position the feed must stay above, rather than as corrupt data.
+ *
+ * Host clock skew is measured in seconds in any deployment that runs NTP, so an
+ * hour is generously past every honest case. Beyond it lies data that a broken
+ * writer produced — a row dated the year 3000 — and chasing THAT would drag
+ * every later `enter_date` in the book into the year 3000 with it, permanently.
+ * The bound is the line between absorbing skew and inheriting corruption.
+ */
+const ENTER_DATE_SKEW_TOLERANCE = '1 hour';
+
+/**
+ * Stamp `enter_date` from the DATABASE clock, strictly above every position the
+ * feed can already have handed out, and by at least a full millisecond.
+ *
+ * Three guarantees, one expression, because they are three faces of the same
+ * requirement: the value written must be greater than anything a reader could
+ * already be holding.
+ *
+ * 1. DATABASE CLOCK. `clock_timestamp()`, never the app host's `new Date()`.
+ *    The two are different machines. It is rendered `AT TIME ZONE 'UTC'` so it
+ *    lands on the same scale as every Prisma writer in this repository, which
+ *    serializes a JS `Date` as UTC into this `timestamp(6)` column; a database
+ *    session on a non-UTC `TimeZone` would otherwise put the two families of
+ *    writers hours apart.
+ *
+ * 2. ABOVE THE FEED. A cursor only ever names a row that exists, so stamping
+ *    above the greatest `enter_date` in the table makes this row unmissable by
+ *    any cursor issued before it. This is what closes the inverse-skew hole:
+ *    if an app-clock writer running fast stamped a row in the future and a poll
+ *    advanced the cursor onto it, a plain `clock_timestamp()` here would land
+ *    BELOW that cursor and the write would never be delivered. The maximum is
+ *    read through `idx_transactions_enter_date_guid`, so it is a one-row
+ *    backward index scan, and it is bounded by {@link ENTER_DATE_SKEW_TOLERANCE}
+ *    so one corrupt future row cannot poison the column forever.
+ *
+ * 3. A MILLISECOND CLEAR OF THE PREVIOUS VALUE. The browser's optimistic-lock
+ *    token is a JS `Date` and compares at MILLISECOND precision
+ *    (src/app/api/transactions/[guid]/route.ts). A microsecond-only bump —
+ *    `…123000` to `…123456` — leaves a stale browser token still matching, and
+ *    that tab would then overwrite this write without ever seeing a conflict.
+ *    Truncating to the millisecond and adding one guarantees the new value
+ *    falls in a strictly later millisecond than the old one, so the stale token
+ *    stops matching. (The `GREATEST` cannot undo it: any term that wins is
+ *    larger still, and the max term already dominates this row's own value.)
+ *
+ * The remaining, documented window is unchanged and unrelated to clocks: the
+ * stamp is taken before COMMIT, so two writers can still commit out of stamp
+ * order. See `getBeezChanges`.
+ */
 async function stampEnterDate(database: DbClient, txGuid: string): Promise<string> {
     const stamped = await database.$queryRaw<Array<{ enter_date: string }>>`
-        UPDATE transactions SET enter_date = clock_timestamp()
-        WHERE guid = ${txGuid}
-        RETURNING to_char(enter_date, ${ENTER_DATE_PG_FORMAT}::text) AS enter_date
+        UPDATE transactions t
+        SET enter_date = GREATEST(
+                (clock_timestamp() AT TIME ZONE 'UTC'),
+                date_trunc('millisecond', t.enter_date) + interval '1 millisecond',
+                date_trunc('millisecond', (
+                    SELECT max(m.enter_date) FROM transactions m
+                    WHERE m.enter_date <= (clock_timestamp() AT TIME ZONE 'UTC')
+                                        + ${ENTER_DATE_SKEW_TOLERANCE}::interval
+                )) + interval '1 millisecond'
+            )
+        WHERE t.guid = ${txGuid}
+        RETURNING to_char(t.enter_date, ${ENTER_DATE_PG_FORMAT}::text) AS enter_date
     `;
     if (stamped.length === 0) {
         throw new BeezSyncError(500, 'internal', 'Transaction vanished while stamping enter_date');
@@ -998,6 +1058,21 @@ export interface BeezChanges {
     hasMore: boolean;
 }
 
+/**
+ * True for the PostgreSQL failures a `::timestamp` cast raises on a value whose
+ * fields are out of range (`22008`) or unparseable (`22007`).
+ *
+ * Prisma surfaces a raw-query failure as `P2010` and keeps the underlying
+ * SQLSTATE in `meta.code`; the message match is the fallback for a driver that
+ * does not, and both are cheap next to letting the caller see a 500.
+ */
+function isTimestampCastFailure(error: unknown): boolean {
+    const code = (error as { meta?: { code?: unknown } } | null)?.meta?.code;
+    if (code === '22007' || code === '22008') return true;
+    const message = error instanceof Error ? error.message : '';
+    return /date\/time field value out of range|invalid input syntax for type timestamp/i.test(message);
+}
+
 interface ChangeTxRow {
     guid: string;
     post_date: Date | null;
@@ -1038,26 +1113,44 @@ interface ChangeSplitRow {
  * poll, and re-emit itself forever.
  *
  * NULL enter_date. GnuCash permits it, and such a row has no position in the
- * order above at all. The older design gave it one — a cursor that said "NULL
- * tail" — and that lost data: once a client consumed a NULL row, every LATER
- * transaction with a normal enter_date sorted before the cursor and was skipped
- * permanently. They are therefore carried like tombstones instead: a separate
- * set, ordered by guid, bounded by `limit`, emitted on EVERY response, never
- * touching `nextCursor`. Bounded repetition is the price; silent loss is not on
- * the menu.
+ * order above at all. Two earlier designs lost data here and both are worth
+ * naming, because the fix is shaped by them. Seating a NULL row in the time
+ * watermark — a cursor that said "NULL tail" — meant that once a client
+ * consumed one, every LATER transaction with a normal enter_date sorted before
+ * the cursor and was skipped permanently. Emitting the NULL set unpaged on
+ * every response fixed that but lost the tail instead: with more NULL rows than
+ * `limit`, the same guid-ordered prefix came back forever and the rest was
+ * unreachable, while `hasMore` — computed from the ordered stream alone — said
+ * there was nothing left to fetch.
+ *
+ * So the NULL set is its own paged stream, with its own watermark in the
+ * cursor (`nullGuid`), ordered by guid, bounded by `limit`, and NOT counted
+ * against the ordered page's budget. It advances while rows remain and RESETS
+ * to the start the moment it drains, which is what keeps a NULL row inserted
+ * behind an advanced watermark reachable: a row with no timestamp gives no
+ * "after" to scan from, the drain always terminates because the watermark
+ * strictly advances, and the pass after it starts over and sees whatever
+ * arrived. `hasMore` is true when EITHER stream has more. Bounded repetition of
+ * a drained set is the price; silent loss is not on the menu.
  *
  * TOMBSTONES. A link row whose transaction is gone is emitted as
  * `{ externalId, deleted: true }` on EVERY page until beez acknowledges it with
  * DELETE. Same reasoning: a deleted row has no enter_date to sort by, so
  * repeating a bounded, self-draining set is the honest alternative to inventing
- * a position for it. Neither always-emitted set counts towards `limit` for the
- * transaction page or advances `nextCursor`.
+ * a position for it. Tombstones do not count towards `limit` for the
+ * transaction page or advance `nextCursor`.
  *
- * ONE CLOCK. `enter_date` is read from the DATABASE via `clock_timestamp()`
- * (see `stampEnterDate`), never from the app host's `new Date()`. The app and
- * the database are different machines, this repository writes `enter_date` from
- * both, and a database clock running ahead would push the watermark past every
- * app-stamped row written in the skew window — losing them permanently.
+ * ONE CLOCK. The ordering key is DATABASE-owned. `stampEnterDate` writes
+ * `clock_timestamp()` and additionally never lands below the greatest
+ * `enter_date` already in the table, and the browser's own edit path
+ * (`PUT /api/transactions/[guid]`) now writes the database clock too rather
+ * than the app host's `new Date()`. That combination is what closes the
+ * inverse-skew hole: an app host running fast could otherwise stamp a row in
+ * the future, a poll would advance the watermark onto it, and every
+ * database-clock write for the next few seconds would sort behind the cursor
+ * and be lost. Older rows minted by a fast clock, and the remaining app-clock
+ * writers elsewhere in the repository, stay safe for the same reason — the
+ * stamp climbs above them rather than assuming they do not exist.
  *
  * STALENESS WINDOW (known, bounded, and documented on the route). The stamp is
  * taken as late as a writer can take it — after every idempotency claim and row
@@ -1096,33 +1189,60 @@ export async function getBeezChanges(
 
     // The cursor string is compared as a timestamp, not as text: `::timestamp`
     // parses the microseconds, where a text comparison would depend on the
-    // rendering being byte-identical.
-    const afterCursor: Prisma.Sql = cursor
+    // rendering being byte-identical. A null `enterDate` means the ordered
+    // stream has not started yet (the client is only part-way through the NULL
+    // set), which is a scan from the beginning — never a skip.
+    const afterCursor: Prisma.Sql = cursor && cursor.enterDate !== null
         ? Prisma.sql`(t.enter_date, t.guid) > (${cursor.enterDate}::timestamp, ${cursor.guid})`
         : Prisma.sql`TRUE`;
 
     // One extra row is the cheapest honest hasMore: it answers "is there a
     // next page?" without a second COUNT over the same predicate.
-    const rows = await prisma.$queryRaw<ChangeTxRow[]>`
-        SELECT t.guid, t.post_date, t.description,
-               to_char(t.enter_date, ${ENTER_DATE_PG_FORMAT}::text) AS enter_date
-        FROM transactions t
-        WHERE ${inBook} AND t.enter_date IS NOT NULL AND ${afterCursor}
-        ORDER BY t.enter_date ASC, t.guid ASC
-        LIMIT ${options.limit + 1}
-    `;
-    const hasMore = rows.length > options.limit;
-    const page = hasMore ? rows.slice(0, options.limit) : rows;
+    let rows: ChangeTxRow[];
+    try {
+        rows = await prisma.$queryRaw<ChangeTxRow[]>`
+            SELECT t.guid, t.post_date, t.description,
+                   to_char(t.enter_date, ${ENTER_DATE_PG_FORMAT}::text) AS enter_date
+            FROM transactions t
+            WHERE ${inBook} AND t.enter_date IS NOT NULL AND ${afterCursor}
+            ORDER BY t.enter_date ASC, t.guid ASC
+            LIMIT ${options.limit + 1}
+        `;
+    } catch (error) {
+        // `decodeChangesCursor` already range-checks the timestamp, so reaching
+        // this is a bug in that gate rather than a normal path. Answering 422
+        // anyway keeps the failure attributable to the input the client sent
+        // instead of surfacing a 500 that reads like a server fault.
+        if (isTimestampCastFailure(error)) {
+            throw new BeezSyncError(422, 'validation', 'since: not a cursor issued by this endpoint');
+        }
+        throw error;
+    }
+    const orderedHasMore = rows.length > options.limit;
+    const page = orderedHasMore ? rows.slice(0, options.limit) : rows;
 
-    // The always-emitted NULL set. Ordered and bounded so one pathological book
-    // cannot make every response unbounded.
-    const nullEnterDateRows = await prisma.$queryRaw<ChangeTxRow[]>`
+    // The NULL set, paged on its own guid watermark and its own budget. The
+    // extra row answers "is this set drained?" — and the answer decides between
+    // advancing the watermark and restarting the set (see the header).
+    const afterNullCursor: Prisma.Sql = cursor && cursor.nullGuid !== null
+        ? Prisma.sql`t.guid > ${cursor.nullGuid}`
+        : Prisma.sql`TRUE`;
+    const nullRows = await prisma.$queryRaw<ChangeTxRow[]>`
         SELECT t.guid, t.post_date, t.description, NULL::text AS enter_date
         FROM transactions t
-        WHERE ${inBook} AND t.enter_date IS NULL
+        WHERE ${inBook} AND t.enter_date IS NULL AND ${afterNullCursor}
         ORDER BY t.guid ASC
-        LIMIT ${options.limit}
+        LIMIT ${options.limit + 1}
     `;
+    const nullHasMore = nullRows.length > options.limit;
+    const nullEnterDateRows = nullHasMore ? nullRows.slice(0, options.limit) : nullRows;
+    // Advance while rows remain; reset on drain so a NULL row that appears
+    // behind the watermark is picked up by the next pass.
+    const nextNullGuid = nullHasMore
+        ? nullEnterDateRows[nullEnterDateRows.length - 1].guid
+        : null;
+
+    const hasMore = orderedHasMore || nullHasMore;
 
     const delivered = [...page, ...nullEnterDateRows];
     const guids = delivered.map(row => row.guid);
@@ -1205,14 +1325,19 @@ export async function getBeezChanges(
         items.push({ externalId: tombstone.external_id, deleted: true });
     }
 
-    // Only the ordered page advances the watermark. The NULL set has no
-    // position to advance to, which is exactly why it is emitted every time.
+    // Each stream advances its own half of the cursor. An empty ordered page
+    // must not reset the client to the beginning of the feed, so the time
+    // watermark it sent is carried forward untouched.
     const last = page[page.length - 1];
-    const nextCursor = last && last.enter_date
-        ? encodeChangesCursor({ enterDate: last.enter_date, guid: last.guid })
-        // An empty page must not reset the client to the beginning of the feed:
-        // hand back the cursor it sent, so the next poll resumes where it was.
-        : (options.since || null);
+    const position = last && last.enter_date
+        ? { enterDate: last.enter_date, guid: last.guid }
+        : { enterDate: cursor?.enterDate ?? null, guid: cursor?.guid ?? null };
+
+    // Nothing to name in either stream — an empty book — so the client starts
+    // from the beginning next time, which is where it already is.
+    const nextCursor = position.enterDate !== null || nextNullGuid !== null
+        ? encodeChangesCursor({ ...position, nullGuid: nextNullGuid })
+        : null;
 
     return { items, nextCursor, hasMore };
 }

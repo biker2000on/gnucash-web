@@ -980,6 +980,172 @@ describe.skipIf(!HAS_TEST_DATABASE)('beez-trackz sync round trip', () => {
                 .rejects.toMatchObject({ status: 422, code: 'validation' });
         });
 
+        it('drains a NULL-enter_date set larger than one page, over repeated polls', async () => {
+            // The defect: the NULL set was emitted unpaged and bounded by
+            // `limit`, so with more NULL rows than fit on a page the SAME
+            // guid-ordered prefix came back on every poll and the tail was
+            // unreachable — while `hasMore`, computed from the ordered stream
+            // alone, cheerfully said there was nothing left to fetch.
+            const PAGE = 2;
+            const mine = [
+                await insertNullEnterDateTransaction('drain 1'),
+                await insertNullEnterDateTransaction('drain 2'),
+                await insertNullEnterDateTransaction('drain 3'),
+            ];
+
+            // Every NULL row in the book, not just this test's: the set is
+            // book-wide and earlier tests left theirs behind on purpose.
+            const allNullGuids = new Set(
+                (await getTestPool().query<{ guid: string }>(
+                    `SELECT t.guid FROM transactions t
+                     WHERE t.enter_date IS NULL AND EXISTS (
+                         SELECT 1 FROM splits s
+                         WHERE s.tx_guid = t.guid AND s.account_guid = ANY($1::text[])
+                     )`,
+                    [[CHECKING_GUID, EXPENSE_GUID]],
+                )).rows.map(row => row.guid),
+            );
+            expect(allNullGuids.size).toBeGreaterThan(PAGE);
+
+            // Poll until the NULL set drains. Bounded so a regression fails as a
+            // clean assertion rather than hanging the suite.
+            const seen = new Set<string>();
+            let cursor: string | null = null;
+            let polls = 0;
+            for (; polls < 20; polls += 1) {
+                const response = await service.getBeezChanges(context, { since: cursor, limit: PAGE });
+                const nullItems = response.items.filter(
+                    item => !item.deleted && item.enterDate === null,
+                );
+                nullItems.forEach(item => seen.add(item.transactionGuid as string));
+                cursor = response.nextCursor;
+                if (nullItems.length < PAGE) break;
+                // While rows remain, hasMore must say so even once the ordered
+                // stream is exhausted — that is the half of the bug that made
+                // the loss silent.
+                expect(response.hasMore, `poll ${polls}`).toBe(true);
+            }
+            expect(polls).toBeLessThan(20);
+            for (const guid of allNullGuids) expect([...seen]).toContain(guid);
+
+            // A NULL row that appears AFTER the watermark advanced past its guid
+            // still has to be delivered. It has no timestamp, so there is no
+            // "after" to scan from; the watermark resets on drain, and the next
+            // full pass picks it up.
+            const late = await insertNullEnterDateTransaction('drain 4, arrived late');
+            const seenAfter = new Set<string>();
+            for (let poll = 0; poll < 20; poll += 1) {
+                const response = await service.getBeezChanges(context, { since: cursor, limit: PAGE });
+                response.items
+                    .filter(item => !item.deleted && item.enterDate === null)
+                    .forEach(item => seenAfter.add(item.transactionGuid as string));
+                cursor = response.nextCursor;
+                if (seenAfter.has(late)) break;
+            }
+            expect([...seenAfter]).toContain(late);
+
+            for (const guid of [...mine, late]) await dropTransaction(guid);
+        });
+
+        it('stays reachable when an app-clock writer stamped a row into the future', async () => {
+            // Inverse skew, the case a plain clock_timestamp() stamp loses. Most
+            // of this repository writes enter_date from the APP host's clock. If
+            // that host runs fast, its row lands in the future, a poll advances
+            // the feed's watermark onto it, and every database-stamped write for
+            // the length of the skew sorts BEHIND the cursor — gone, silently
+            // and permanently.
+            const pool = getTestPool();
+            const futureGuid = testGuid();
+            await pool.query(
+                `INSERT INTO transactions (guid, currency_guid, num, post_date, enter_date, description)
+                 VALUES ($1, $2, '', NOW(), (clock_timestamp() AT TIME ZONE 'UTC') + interval '5 minutes',
+                         'Stamped by a fast app clock')`,
+                [futureGuid, USD_GUID],
+            );
+            await insertBalancedSplits(futureGuid, 900);
+
+            const drained = await service.getBeezChanges(context, { since: null, limit: 500 });
+            expect(drained.items.map(i => i.transactionGuid)).toContain(futureGuid);
+            expect(drained.hasMore).toBe(false);
+
+            const id = `${RUN_ID}-inverse-skew`;
+            const created = await service.createBeezTransaction(context, actor(), parsed(id, 1900), null);
+
+            const next = await service.getBeezChanges(context, { since: drained.nextCursor, limit: 500 });
+            expect(next.items.map(i => i.transactionGuid)).toContain(created.result.transactionGuid);
+
+            // Both rows are ahead of the wall clock; leaving them would drag
+            // every later stamp in this file forward with them.
+            await service.deleteBeezTransaction(context, actor(), id, null);
+            await dropTransaction(futureGuid);
+        });
+
+        it('bumps enter_date by a whole millisecond, so a stale browser token cannot still match', async () => {
+            // The browser's optimistic-lock token is a JS Date and compares at
+            // MILLISECOND precision (src/app/api/transactions/[guid]/route.ts).
+            // A microsecond-only bump — …123000 to …123456 — leaves a tab's
+            // stale token matching, and that tab then overwrites the beez write
+            // without ever seeing a conflict.
+            const pool = getTestPool();
+            const id = `${RUN_ID}-ms-bump`;
+            const created = await service.createBeezTransaction(context, actor(), parsed(id, 2100), null);
+
+            // Pin the row's enter_date to an exact millisecond boundary in the
+            // near future, so the wall clock cannot supply the separation by
+            // accident: whatever this asserts, it asserts about the bump.
+            const pinned = await pool.query<{ enter_date: string }>(
+                `UPDATE transactions
+                 SET enter_date = date_trunc('millisecond',
+                        (clock_timestamp() AT TIME ZONE 'UTC') + interval '30 seconds')
+                 WHERE guid = $1
+                 RETURNING to_char(enter_date, 'YYYY-MM-DD"T"HH24:MI:SS.US') AS enter_date`,
+                [created.result.transactionGuid],
+            );
+            const before = pinned.rows[0].enter_date;
+            expect(before).toMatch(/\.\d{3}000$/);
+
+            const replaced = await service.replaceBeezTransaction(
+                context, actor(), id, parsed(null, 2200), null,
+            );
+            const after = replaced.enterDate.replace(/Z$/, '');
+
+            // The microsecond strings differ...
+            expect(after).not.toBe(before);
+            // ...and so do the MILLISECONDS, which is the comparison the browser
+            // actually makes. This is the stale token going stale.
+            const asBrowserToken = (stamp: string) => new Date(`${stamp}Z`).getTime();
+            expect(asBrowserToken(after)).toBeGreaterThan(asBrowserToken(before));
+
+            await service.deleteBeezTransaction(context, actor(), id, null);
+        });
+
+        it('answers 422 for a cursor whose fields are not a real instant, not 500', async () => {
+            // Shape-only validation let this reach the feed query's
+            // `::timestamp` cast, where PostgreSQL raised "date/time field value
+            // out of range" and the client saw a server fault for its own bad
+            // input.
+            const impossible = Buffer.from(
+                JSON.stringify({ e: '2026-99-99T99:99:99.999999', g: 'a'.repeat(32) }),
+                'utf8',
+            ).toString('base64url');
+
+            await expect(service.getBeezChanges(context, { since: impossible, limit: 10 }))
+                .rejects.toMatchObject({ status: 422, code: 'validation' });
+
+            // And the route translates that into the documented 422 body rather
+            // than the shell's catch-all 500.
+            const { beezErrorResponse } = await import('@/lib/integrations/beez-route');
+            const caught = await service
+                .getBeezChanges(context, { since: impossible, limit: 10 })
+                .catch((error: unknown) => error);
+            const response = beezErrorResponse(caught);
+            expect(response.status).toBe(422);
+            expect(await response.json()).toEqual({
+                error: 'validation',
+                detail: 'since: not a cursor issued by this endpoint',
+            });
+        });
+
         it('returns the caller cursor unchanged when there is nothing new', async () => {
             const all = await service.getBeezChanges(context, { since: null, limit: 500 });
             expect(all.hasMore).toBe(false);

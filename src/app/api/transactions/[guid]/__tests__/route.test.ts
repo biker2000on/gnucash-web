@@ -240,10 +240,20 @@ describe('PUT /api/transactions/[guid] optimistic concurrency', () => {
             .map((call: unknown[]) => (call[0] as TemplateStringsArray).join('?'))
             .join('\n');
         expect(lockSql).toContain('FOR UPDATE');
-        // enter_date always bumped to a fresh timestamp
+        // enter_date is always bumped, and by the DATABASE clock rather than
+        // this host's. It is the ordering key the beez change feed pages on, and
+        // a fast app host stamping it into the future would push that feed's
+        // watermark past every database-stamped write in the skew window. So the
+        // Prisma update must NOT carry an enter_date literal...
         const updateData = prismaMock.transactions.update.mock.calls[0][0].data;
-        expect(updateData.enter_date).toBeInstanceOf(Date);
-        expect(updateData.enter_date.getTime()).toBeGreaterThan(CURRENT_ENTER_DATE.getTime());
+        expect(updateData.enter_date).toBeUndefined();
+        // ...and a raw statement inside the same transaction sets it from
+        // clock_timestamp() instead.
+        const rawSql = prismaMock.$executeRaw.mock.calls
+            .map((call: unknown[]) => (call[0] as TemplateStringsArray).join('?'))
+            .join('\n');
+        expect(rawSql).toContain('clock_timestamp()');
+        expect(rawSql).toContain('SET enter_date');
         // New enter_date returned so the client can chain edits
         expect(body.enter_date).toBe('2026-07-28T00:00:00.000Z');
         // Authoritative period-lock check ran with the cache bypassed
@@ -269,9 +279,13 @@ describe('PUT /api/transactions/[guid] optimistic concurrency', () => {
         // The edit path must never write gnucash_web_transaction_meta:
         // original_description is set once at import time, and a rename
         // (description edit) has to leave it intact. The prisma mock has no
-        // meta model at all, so any model access would throw; raw writes are
-        // asserted empty here.
-        expect(prismaMock.$executeRaw).not.toHaveBeenCalled();
+        // meta model at all, so any model access would throw; the raw writes it
+        // DOES make (the database-clock enter_date bump) are inspected here to
+        // prove none of them names the meta table.
+        const rawSql = prismaMock.$executeRaw.mock.calls
+            .map((call: unknown[]) => (call[0] as TemplateStringsArray).join('?'))
+            .join('\n');
+        expect(rawSql).not.toContain('gnucash_web_transaction_meta');
     });
 
     it('accepts an explicit null token when the row has no enter_date', async () => {
