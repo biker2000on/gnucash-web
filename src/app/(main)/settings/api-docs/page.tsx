@@ -20,8 +20,10 @@ interface Param {
     description: string;
 }
 
+type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE';
+
 interface Endpoint {
-    method: 'GET' | 'POST';
+    method: HttpMethod;
     path: string;
     role: 'readonly' | 'edit';
     description: string;
@@ -267,15 +269,98 @@ const GROUPS: EndpointGroup[] = [
             },
         ],
     },
+    {
+        title: 'beez-trackz Sync',
+        blurb:
+            'Two-way sync for a beez-trackz hive-management install. Amounts are integer cents in the '
+            + "book's base currency and every split set must sum to exactly zero. Each record is addressed "
+            + 'by the id beez already uses for it, so a repeated create is answered from the existing link '
+            + 'instead of posting a second ledger entry. All writes accept an optional Idempotency-Key header.',
+        endpoints: [
+            {
+                method: 'GET',
+                path: '/api/integrations/beez/status',
+                role: 'readonly',
+                description: 'Confirm the token and identify the book and base currency it writes into.',
+                example: `curl -H "Authorization: Bearer ${TOKEN}" ${BASE}/api/integrations/beez/status`,
+            },
+            {
+                method: 'GET',
+                path: '/api/integrations/beez/accounts',
+                role: 'readonly',
+                description:
+                    "Every account in the token's book with a colon-joined fullName, so beez can map its "
+                    + 'categories onto your chart of accounts.',
+            },
+            {
+                method: 'POST',
+                path: '/api/integrations/beez/transactions',
+                role: 'edit',
+                description:
+                    'Create the ledger entry for a beez record and link it. Repeating the call for an id '
+                    + 'that is already linked returns 200 with alreadyLinked: true and writes nothing.',
+                body: [
+                    { name: 'externalId', description: 'the id beez knows this record by (max 200 chars)' },
+                    { name: 'postDate', description: 'calendar date (YYYY-MM-DD)' },
+                    { name: 'description', description: 'transaction description' },
+                    { name: 'num', description: 'optional transaction number' },
+                    { name: 'splits', description: '2+ entries of { accountGuid, amountCents, memo? } summing to 0' },
+                ],
+                example:
+                    `curl -X POST -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" \\n` +
+                    `  -H "Idempotency-Key: beez-8412-attempt-1" \\n` +
+                    `  -d '{"externalId":"beez-8412","postDate":"2026-08-25","description":"Frames",` +
+                    `"splits":[{"accountGuid":"<expense-guid>","amountCents":1250},` +
+                    `{"accountGuid":"<checking-guid>","amountCents":-1250}]}' \\n` +
+                    `  ${BASE}/api/integrations/beez/transactions`,
+            },
+            {
+                method: 'PUT',
+                path: '/api/integrations/beez/transactions/{externalId}',
+                role: 'edit',
+                description:
+                    'Replace the description, date, num, and complete split set of a linked transaction. '
+                    + 'Refused with 409 reconciled when any split has been reconciled to a statement.',
+            },
+            {
+                method: 'DELETE',
+                path: '/api/integrations/beez/transactions/{externalId}',
+                role: 'edit',
+                description:
+                    'Delete the linked transaction and its link. Also how beez acknowledges a deletion made '
+                    + 'in folio: when only a stale link remains, this clears it.',
+            },
+            {
+                method: 'GET',
+                path: '/api/integrations/beez/changes',
+                role: 'readonly',
+                description:
+                    'Pull edits made in folio. Store nextCursor and send it back as since. Items marked '
+                    + 'unrepresentable carry no splits because their stored amounts are not a whole number '
+                    + 'of cents; items marked deleted repeat until acknowledged with DELETE.',
+                params: [
+                    { name: 'since', description: 'opaque cursor from a previous response' },
+                    { name: 'limit', description: 'default 100, maximum 500' },
+                ],
+                example:
+                    `curl -H "Authorization: Bearer ${TOKEN}" \\n` +
+                    `  "${BASE}/api/integrations/beez/changes?limit=100"`,
+            },
+        ],
+    },
 ];
 
-function MethodBadge({ method }: { method: 'GET' | 'POST' }) {
+function MethodBadge({ method }: { method: HttpMethod }) {
     return (
         <span
             className={`inline-block px-1.5 py-0.5 rounded text-xs font-mono font-semibold ${
                 method === 'GET'
                     ? 'bg-secondary-light text-secondary'
-                    : 'bg-primary-light text-primary'
+                    // DELETE is destructive, which DESIGN.md calls system
+                    // state — `--error`, never the money-only `--negative`.
+                    : method === 'DELETE'
+                        ? 'bg-error/10 text-error'
+                        : 'bg-primary-light text-primary'
             }`}
         >
             {method}

@@ -1,0 +1,402 @@
+/**
+ * Unit tests for the pure half of the beez-trackz sync contract.
+ *
+ * These are the rules a caller can violate, so they are asserted exhaustively
+ * and without a database. Two of them are worth naming because getting them
+ * wrong is silent rather than loud:
+ *
+ *   - a malformed input must be REJECTED, never defaulted. A dropped filter or
+ *     a coerced amount produces a wrong ledger entry that nobody notices.
+ *   - a stored fraction that is not exactly a whole number of cents must come
+ *     back as null. Rounding it invents money.
+ */
+import { describe, expect, it } from 'vitest';
+import {
+    allSplitsRepresentable,
+    DEFAULT_CHANGES_LIMIT,
+    MAX_CHANGES_LIMIT,
+    MAX_EXTERNAL_ID_LENGTH,
+    MAX_SPLITS,
+    decodeChangesCursor,
+    encodeChangesCursor,
+    isCalendarDate,
+    parseBeezTransactionInput,
+    parseChangesLimit,
+    postDateToTimestamp,
+    splitValueToCents,
+    timestampToPostDate,
+} from '../beez';
+
+const ACCOUNT_A = 'a'.repeat(32);
+const ACCOUNT_B = 'b'.repeat(32);
+
+function validBody(overrides: Record<string, unknown> = {}) {
+    return {
+        externalId: 'beez-1',
+        postDate: '2026-08-25',
+        description: 'Hive inspection supplies',
+        splits: [
+            { accountGuid: ACCOUNT_A, amountCents: 1250 },
+            { accountGuid: ACCOUNT_B, amountCents: -1250 },
+        ],
+        ...overrides,
+    };
+}
+
+describe('isCalendarDate', () => {
+    it('accepts a real day', () => {
+        expect(isCalendarDate('2026-08-25')).toBe(true);
+        expect(isCalendarDate('2024-02-29')).toBe(true);
+    });
+
+    it('rejects a day that only looks real', () => {
+        // Date parses this and hands back March 2nd; accepting it would post
+        // the transaction to a date the caller never asked for.
+        expect(isCalendarDate('2026-02-30')).toBe(false);
+        expect(isCalendarDate('2025-02-29')).toBe(false);
+        expect(isCalendarDate('2026-13-01')).toBe(false);
+    });
+
+    it('rejects anything that is not exactly YYYY-MM-DD', () => {
+        for (const value of ['2026-8-25', '25/08/2026', '2026-08-25T00:00:00Z', '', 'today']) {
+            expect(isCalendarDate(value), value).toBe(false);
+        }
+    });
+});
+
+describe('post date timestamps', () => {
+    it('stores midday UTC so no offset can move the day', () => {
+        expect(postDateToTimestamp('2026-08-25').toISOString()).toBe('2026-08-25T12:00:00.000Z');
+    });
+
+    it('round-trips back to the same calendar day', () => {
+        expect(timestampToPostDate(postDateToTimestamp('2026-01-01'))).toBe('2026-01-01');
+        expect(timestampToPostDate(postDateToTimestamp('2026-12-31'))).toBe('2026-12-31');
+    });
+
+    it('returns null for a missing or invalid timestamp', () => {
+        expect(timestampToPostDate(null)).toBeNull();
+        expect(timestampToPostDate(new Date('nope'))).toBeNull();
+    });
+});
+
+describe('parseBeezTransactionInput', () => {
+    it('accepts a well-formed create body', () => {
+        const parsed = parseBeezTransactionInput(validBody(), { requireExternalId: true });
+        expect(parsed.ok).toBe(true);
+        if (!parsed.ok) return;
+        expect(parsed.data.externalId).toBe('beez-1');
+        expect(parsed.data.postDate).toBe('2026-08-25');
+        expect(parsed.data.num).toBe('');
+        expect(parsed.data.splits).toEqual([
+            { accountGuid: ACCOUNT_A, amountCents: 1250, memo: '' },
+            { accountGuid: ACCOUNT_B, amountCents: -1250, memo: '' },
+        ]);
+    });
+
+    it('normalizes account guids to lowercase so lookups and inserts agree', () => {
+        const parsed = parseBeezTransactionInput(
+            validBody({
+                splits: [
+                    { accountGuid: 'A'.repeat(32), amountCents: 100 },
+                    { accountGuid: ACCOUNT_B, amountCents: -100 },
+                ],
+            }),
+            { requireExternalId: true },
+        );
+        expect(parsed.ok).toBe(true);
+        if (!parsed.ok) return;
+        expect(parsed.data.splits[0].accountGuid).toBe('a'.repeat(32));
+    });
+
+    it('rejects a non-object body', () => {
+        for (const body of [null, undefined, 'x', 42, []]) {
+            expect(parseBeezTransactionInput(body, { requireExternalId: true }).ok).toBe(false);
+        }
+    });
+
+    describe('externalId', () => {
+        it('is required on create', () => {
+            const parsed = parseBeezTransactionInput(
+                validBody({ externalId: undefined }), { requireExternalId: true },
+            );
+            expect(parsed).toMatchObject({ ok: false, error: 'validation' });
+        });
+
+        it('is trimmed and must not be blank', () => {
+            expect(parseBeezTransactionInput(validBody({ externalId: '   ' }), { requireExternalId: true }).ok)
+                .toBe(false);
+            const parsed = parseBeezTransactionInput(
+                validBody({ externalId: '  beez-9  ' }), { requireExternalId: true },
+            );
+            expect(parsed.ok).toBe(true);
+            if (parsed.ok) expect(parsed.data.externalId).toBe('beez-9');
+        });
+
+        it('is capped at the column width', () => {
+            const at = 'x'.repeat(MAX_EXTERNAL_ID_LENGTH);
+            expect(parseBeezTransactionInput(validBody({ externalId: at }), { requireExternalId: true }).ok)
+                .toBe(true);
+            expect(parseBeezTransactionInput(validBody({ externalId: at + 'x' }), { requireExternalId: true }).ok)
+                .toBe(false);
+        });
+
+        it('is refused rather than ignored on replace, where the path names the record', () => {
+            const parsed = parseBeezTransactionInput(validBody(), { requireExternalId: false });
+            expect(parsed).toMatchObject({ ok: false, error: 'validation' });
+        });
+
+        it('is absent from a well-formed replace body', () => {
+            const parsed = parseBeezTransactionInput(
+                validBody({ externalId: undefined }), { requireExternalId: false },
+            );
+            expect(parsed.ok).toBe(true);
+            if (parsed.ok) expect(parsed.data.externalId).toBeNull();
+        });
+    });
+
+    it('requires a calendar postDate', () => {
+        for (const postDate of [undefined, '', '2026-02-30', 20260825]) {
+            expect(parseBeezTransactionInput(validBody({ postDate }), { requireExternalId: true }).ok).toBe(false);
+        }
+    });
+
+    it('requires a string description but allows an empty one', () => {
+        expect(parseBeezTransactionInput(validBody({ description: undefined }), { requireExternalId: true }).ok)
+            .toBe(false);
+        expect(parseBeezTransactionInput(validBody({ description: 7 }), { requireExternalId: true }).ok)
+            .toBe(false);
+        expect(parseBeezTransactionInput(validBody({ description: '' }), { requireExternalId: true }).ok)
+            .toBe(true);
+    });
+
+    it('caps description and num at the column width', () => {
+        expect(parseBeezTransactionInput(
+            validBody({ description: 'd'.repeat(2049) }), { requireExternalId: true },
+        ).ok).toBe(false);
+        expect(parseBeezTransactionInput(
+            validBody({ num: 'n'.repeat(2049) }), { requireExternalId: true },
+        ).ok).toBe(false);
+    });
+
+    it('treats a missing num and memo as empty strings', () => {
+        const parsed = parseBeezTransactionInput(validBody({ num: null }), { requireExternalId: true });
+        expect(parsed.ok).toBe(true);
+        if (parsed.ok) {
+            expect(parsed.data.num).toBe('');
+            expect(parsed.data.splits[0].memo).toBe('');
+        }
+    });
+
+    describe('splits', () => {
+        it('needs at least two', () => {
+            const parsed = parseBeezTransactionInput(
+                validBody({ splits: [{ accountGuid: ACCOUNT_A, amountCents: 0 }] }),
+                { requireExternalId: true },
+            );
+            expect(parsed).toMatchObject({ ok: false, error: 'validation' });
+        });
+
+        it('is bounded so one request cannot queue unbounded work', () => {
+            const many = Array.from({ length: MAX_SPLITS + 1 }, () => ({
+                accountGuid: ACCOUNT_A, amountCents: 0,
+            }));
+            expect(parseBeezTransactionInput(validBody({ splits: many }), { requireExternalId: true }).ok)
+                .toBe(false);
+        });
+
+        it('must sum to exactly zero, and says so with its own code', () => {
+            const parsed = parseBeezTransactionInput(
+                validBody({
+                    splits: [
+                        { accountGuid: ACCOUNT_A, amountCents: 1250 },
+                        { accountGuid: ACCOUNT_B, amountCents: -1249 },
+                    ],
+                }),
+                { requireExternalId: true },
+            );
+            expect(parsed).toMatchObject({ ok: false, error: 'unbalanced' });
+            if (!parsed.ok) expect(parsed.detail).toContain('1');
+        });
+
+        it('rejects a non-integer, non-finite, or unsafe amount', () => {
+            for (const amountCents of [12.5, '1250', Number.NaN, Number.POSITIVE_INFINITY, 2 ** 53]) {
+                const parsed = parseBeezTransactionInput(
+                    validBody({
+                        splits: [
+                            { accountGuid: ACCOUNT_A, amountCents },
+                            { accountGuid: ACCOUNT_B, amountCents: 0 },
+                        ],
+                    }),
+                    { requireExternalId: true },
+                );
+                expect(parsed.ok, String(amountCents)).toBe(false);
+            }
+        });
+
+        it('rejects a malformed account guid', () => {
+            for (const accountGuid of ['not-a-guid', 'a'.repeat(31), 'g'.repeat(32), 42]) {
+                const parsed = parseBeezTransactionInput(
+                    validBody({
+                        splits: [
+                            { accountGuid, amountCents: 100 },
+                            { accountGuid: ACCOUNT_B, amountCents: -100 },
+                        ],
+                    }),
+                    { requireExternalId: true },
+                );
+                expect(parsed.ok, String(accountGuid)).toBe(false);
+            }
+        });
+
+        it('rejects a non-object split entry', () => {
+            const parsed = parseBeezTransactionInput(
+                validBody({ splits: ['a', 'b'] }), { requireExternalId: true },
+            );
+            expect(parsed.ok).toBe(false);
+        });
+
+        it('names the offending index so a client can point at it', () => {
+            const parsed = parseBeezTransactionInput(
+                validBody({
+                    splits: [
+                        { accountGuid: ACCOUNT_A, amountCents: 100 },
+                        { accountGuid: ACCOUNT_B, amountCents: -100 },
+                        { accountGuid: 'bad', amountCents: 0 },
+                    ],
+                }),
+                { requireExternalId: true },
+            );
+            expect(parsed.ok).toBe(false);
+            if (!parsed.ok) expect(parsed.detail).toContain('splits[2]');
+        });
+
+        it('accepts a many-sided balanced transaction', () => {
+            const parsed = parseBeezTransactionInput(
+                validBody({
+                    splits: [
+                        { accountGuid: ACCOUNT_A, amountCents: -5000, memo: 'jar sales' },
+                        { accountGuid: ACCOUNT_B, amountCents: 4500 },
+                        { accountGuid: ACCOUNT_A, amountCents: 500, memo: 'processor fee' },
+                    ],
+                }),
+                { requireExternalId: true },
+            );
+            expect(parsed.ok).toBe(true);
+            if (parsed.ok) expect(parsed.data.splits[0].memo).toBe('jar sales');
+        });
+    });
+});
+
+describe('splitValueToCents', () => {
+    it('converts the denominators that divide 100 exactly', () => {
+        expect(splitValueToCents(1250n, 100n)).toBe(1250);
+        expect(splitValueToCents(-1250n, 100n)).toBe(-1250);
+        expect(splitValueToCents(5n, 1n)).toBe(500);
+        expect(splitValueToCents(3n, 2n)).toBe(150);
+        expect(splitValueToCents(1n, 4n)).toBe(25);
+        expect(splitValueToCents(7n, 20n)).toBe(35);
+        expect(splitValueToCents(0n, 100n)).toBe(0);
+    });
+
+    it('refuses a denominator finer than cents, even for a value that happens to be round', () => {
+        // 1000/1000 IS one dollar, but 1234/1000 is not a whole number of cents.
+        // One fixed rule per denominator keeps an account from flipping between
+        // syncable and conflict from one transaction to the next.
+        expect(splitValueToCents(1234n, 1000n)).toBeNull();
+        expect(splitValueToCents(1000n, 1000n)).toBeNull();
+        expect(splitValueToCents(1n, 3n)).toBeNull();
+        expect(splitValueToCents(100000000n, 100000000n)).toBeNull();
+    });
+
+    it('refuses an undefined denominator instead of dividing by it', () => {
+        expect(splitValueToCents(1n, 0n)).toBeNull();
+        expect(splitValueToCents(1n, -100n)).toBeNull();
+    });
+
+    it('refuses a value that would not survive the trip through a JSON number', () => {
+        expect(splitValueToCents(9007199254740992n, 1n)).toBeNull();
+        expect(splitValueToCents(-9007199254740992n, 1n)).toBeNull();
+        expect(splitValueToCents(9007199254740991n, 100n)).toBe(9007199254740991);
+    });
+});
+
+describe('allSplitsRepresentable', () => {
+    it('is true only when every split converts exactly', () => {
+        expect(allSplitsRepresentable([
+            { value_num: 100n, value_denom: 100n },
+            { value_num: -100n, value_denom: 100n },
+        ])).toBe(true);
+        expect(allSplitsRepresentable([
+            { value_num: 100n, value_denom: 100n },
+            { value_num: -1n, value_denom: 3n },
+        ])).toBe(false);
+    });
+
+    it('is vacuously true for a transaction with no splits', () => {
+        expect(allSplitsRepresentable([])).toBe(true);
+    });
+});
+
+describe('change cursor', () => {
+    const GUID = 'c'.repeat(32);
+
+    it('round-trips a dated position', () => {
+        const encoded = encodeChangesCursor({ enterDate: '2026-08-25T10:11:12.345Z', guid: GUID });
+        expect(decodeChangesCursor(encoded)).toEqual({
+            enterDate: '2026-08-25T10:11:12.345Z',
+            guid: GUID,
+        });
+    });
+
+    it('round-trips the NULL-enter_date tail', () => {
+        const encoded = encodeChangesCursor({ enterDate: null, guid: GUID });
+        expect(decodeChangesCursor(encoded)).toEqual({ enterDate: null, guid: GUID });
+    });
+
+    it('is base64url, so it survives a query string untouched', () => {
+        const encoded = encodeChangesCursor({ enterDate: '2026-08-25T00:00:00.000Z', guid: GUID });
+        expect(encoded).toMatch(/^[A-Za-z0-9_-]+$/);
+        expect(encodeURIComponent(encoded)).toBe(encoded);
+    });
+
+    it('normalizes the guid so a shouted cursor still matches stored rows', () => {
+        const encoded = encodeChangesCursor({ enterDate: null, guid: 'C'.repeat(32) });
+        expect(decodeChangesCursor(encoded)?.guid).toBe(GUID);
+    });
+
+    it('rejects anything it did not mint, rather than restarting the feed', () => {
+        for (const raw of [
+            'not-base64!!',
+            Buffer.from('not json', 'utf8').toString('base64url'),
+            Buffer.from('[]', 'utf8').toString('base64url'),
+            Buffer.from(JSON.stringify({ e: null }), 'utf8').toString('base64url'),
+            Buffer.from(JSON.stringify({ e: null, g: 'short' }), 'utf8').toString('base64url'),
+            Buffer.from(JSON.stringify({ e: 'never', g: GUID }), 'utf8').toString('base64url'),
+            Buffer.from(JSON.stringify({ e: 5, g: GUID }), 'utf8').toString('base64url'),
+        ]) {
+            expect(decodeChangesCursor(raw), raw).toBeNull();
+        }
+    });
+});
+
+describe('parseChangesLimit', () => {
+    it('defaults when the parameter is absent or exactly empty', () => {
+        expect(parseChangesLimit(null)).toEqual({ ok: true, limit: DEFAULT_CHANGES_LIMIT });
+        expect(parseChangesLimit('')).toEqual({ ok: true, limit: DEFAULT_CHANGES_LIMIT });
+    });
+
+    it('accepts the documented range', () => {
+        expect(parseChangesLimit('1')).toEqual({ ok: true, limit: 1 });
+        expect(parseChangesLimit(' 250 ')).toEqual({ ok: true, limit: 250 });
+        expect(parseChangesLimit(String(MAX_CHANGES_LIMIT))).toEqual({ ok: true, limit: MAX_CHANGES_LIMIT });
+    });
+
+    it('rejects a present-but-malformed value instead of silently defaulting', () => {
+        // A client that asked for 1000 rows must learn it cannot have them,
+        // rather than get 100 and conclude it is caught up.
+        for (const raw of ['0', '-1', 'abc', '10.5', String(MAX_CHANGES_LIMIT + 1), '   ']) {
+            expect(parseChangesLimit(raw).ok, raw).toBe(false);
+        }
+    });
+});

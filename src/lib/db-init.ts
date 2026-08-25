@@ -2592,6 +2592,38 @@ async function createExtensionTables() {
         WHERE created_at < NOW() - INTERVAL '90 days';
     `;
 
+    // External-system identity map (src/lib/integrations/beez.ts and the
+    // /api/integrations/beez/* routes). The two UNIQUE indexes are what make
+    // the integration idempotent: a replayed POST loses the race on
+    // uq_external_links_external_id instead of writing a second ledger entry,
+    // and no folio transaction can end up owned by two external ids.
+    //
+    // No foreign key on entity_guid ON PURPOSE. The row must survive the
+    // transaction it points at so the change feed can report a deletion to a
+    // client that was offline when it happened; the client acknowledges the
+    // tombstone with DELETE, which is what removes the row.
+    const externalLinksTableDDL = `
+        CREATE TABLE IF NOT EXISTS gnucash_web_external_links (
+            id SERIAL PRIMARY KEY,
+            book_guid VARCHAR(32) NOT NULL,
+            source VARCHAR(64) NOT NULL,
+            external_id VARCHAR(200) NOT NULL,
+            entity_type VARCHAR(32) NOT NULL DEFAULT 'transaction',
+            entity_guid VARCHAR(32) NOT NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_external_links_external_id
+            ON gnucash_web_external_links (book_guid, source, external_id);
+
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_external_links_entity_guid
+            ON gnucash_web_external_links (book_guid, source, entity_guid);
+
+        CREATE INDEX IF NOT EXISTS idx_external_links_book_source
+            ON gnucash_web_external_links (book_guid, source, entity_type);
+    `;
+
     const importBatchesTableDDL = `
         CREATE TABLE IF NOT EXISTS gnucash_web_import_batches (
             id SERIAL PRIMARY KEY,
@@ -2906,6 +2938,7 @@ async function createExtensionTables() {
         await query(aiConfigTableDDL);
         await query(importBatchesTableDDL);
         await query(webhookIdempotencyTableDDL);
+        await query(externalLinksTableDDL);
         await query(notificationsTableDDL);
         await query(transactionCommentsTableDDL);
         await query(financialActionsTableDDL);
@@ -3020,6 +3053,13 @@ async function createPerformanceIndexes() {
             ON transactions (post_date DESC, enter_date DESC)`,
         `CREATE INDEX IF NOT EXISTS idx_transactions_currency_guid
             ON transactions (currency_guid)`,
+
+        // TRANSACTIONS - High for integrations: the beez change feed pages on
+        // (enter_date, guid), the only order that stays stable while rows are
+        // still being written. Without this every poll sequentially scanned
+        // the whole transactions table.
+        `CREATE INDEX IF NOT EXISTS idx_transactions_enter_date_guid
+            ON transactions (enter_date, guid)`,
 
         // TRANSACTIONS - High: covering index for the ubiquitous
         // splits -> transactions join that only needs the post_date filter

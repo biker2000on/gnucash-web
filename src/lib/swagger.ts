@@ -15,6 +15,20 @@ const options = {
                 description: 'Development server',
             },
         ],
+        components: {
+            securitySchemes: {
+                // The `gcw_` personal access tokens described in
+                // docs/api-tokens.md. Declared here rather than per-route so
+                // the `security: [{ bearerAuth: [] }]` annotations on the
+                // integration endpoints resolve to a real definition instead
+                // of a dangling reference.
+                bearerAuth: {
+                    type: 'http',
+                    scheme: 'bearer',
+                    description: 'Personal access token from Settings → API Tokens (gcw_…).',
+                },
+            },
+        },
     },
     apis: ['./src/app/api/**/*.ts', './src/lib/types.ts'], // Path to the API docs
 };

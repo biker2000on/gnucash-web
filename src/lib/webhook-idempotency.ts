@@ -42,8 +42,21 @@ export const WEBHOOK_CLAIM_STALE_MINUTES = 5;
  */
 export const WEBHOOK_MAX_ATTEMPTS = 3;
 
-/** Endpoints get their own key namespace so unrelated callers cannot collide. */
-export type WebhookEndpoint = 'transaction' | 'membership-payment';
+/**
+ * Endpoints get their own key namespace so unrelated callers cannot collide.
+ *
+ * The `beez-transaction-*` entries belong to the beez-trackz integration API
+ * (/api/integrations/beez/*). Create, replace, and delete are three separate
+ * namespaces on purpose: a client that reuses one key per synced record — which
+ * is the obvious thing to do — must not have its DELETE replayed as the stored
+ * result of the POST that created the same record.
+ */
+export type WebhookEndpoint =
+  | 'transaction'
+  | 'membership-payment'
+  | 'beez-transaction-create'
+  | 'beez-transaction-update'
+  | 'beez-transaction-delete';
 
 type WebhookIdempotencyExecutor = Pick<typeof prisma, '$executeRaw' | '$queryRaw'>;
 

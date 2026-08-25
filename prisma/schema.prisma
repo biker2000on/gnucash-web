@@ -69,6 +69,12 @@ model transactions {
   // index for the splits->transactions post_date join (INCLUDE not
   // expressible in prisma).
   @@index([post_date], map: "tx_post_date_index")
+  // The integration change feed (GET /api/integrations/beez/changes) pages on
+  // (enter_date, guid) — the only total order that stays stable while rows are
+  // still being written, since post_date has ties and moves backwards on an
+  // edit. enter_date carried no index at all before this, so every poll was a
+  // sequential scan of the whole transactions table.
+  @@index([enter_date, guid], map: "idx_transactions_enter_date_guid")
 }
 
 model splits {
@@ -914,6 +920,48 @@ model gnucash_web_transaction_meta {
   // WHERE simplefin_transaction_id IS NOT NULL. Skipped with a warning when
   // legacy duplicate imports exist.
   @@index([source], map: "idx_txn_meta_source")
+}
+
+// Identity map between a folio record and the id an external system uses for
+// the same record. It exists so an integration can be idempotent WITHOUT
+// putting its private identifiers into the GnuCash schema: `transactions` is a
+// desktop-compatible table and must keep the columns GnuCash itself writes.
+//
+// v1 stores only `entity_type = 'transaction'` rows for `source =
+// 'beez-trackz'`, but the shape is deliberately generic — a second integration
+// adds rows, not columns.
+//
+// The two unique keys are the whole contract:
+//   (book_guid, source, external_id)  one folio record per external id, which
+//                                     is what makes a replayed POST a no-op
+//                                     rather than a duplicate ledger entry;
+//   (book_guid, source, entity_guid)  one external id per folio record, so two
+//                                     external systems' ids can never fight
+//                                     over the same transaction.
+// Both are enforced by the database, never by an application read-then-write.
+//
+// `entity_guid` names `transactions.guid` but carries NO foreign key: the row
+// deliberately outlives the transaction it points at. A transaction deleted in
+// folio leaves the link behind as a tombstone, which is exactly what lets the
+// change feed report the deletion to a client that has been offline. The
+// client acknowledges it by calling DELETE, which is what finally removes the
+// row.
+model gnucash_web_external_links {
+  id          Int      @id @default(autoincrement())
+  book_guid   String   @db.VarChar(32)
+  source      String   @db.VarChar(64)
+  external_id String   @db.VarChar(200)
+  /// v1 always 'transaction'.
+  entity_type String   @default("transaction") @db.VarChar(32)
+  /// References transactions.guid logically; see the note above on why there
+  /// is no FK.
+  entity_guid String   @db.VarChar(32)
+  created_at  DateTime @default(now()) @db.Timestamp(6)
+  updated_at  DateTime @default(now()) @db.Timestamp(6)
+
+  @@unique([book_guid, source, external_id], map: "uq_external_links_external_id")
+  @@unique([book_guid, source, entity_guid], map: "uq_external_links_entity_guid")
+  @@index([book_guid, source, entity_type], map: "idx_external_links_book_source")
 }
 
 model gnucash_web_simplefin_connections {

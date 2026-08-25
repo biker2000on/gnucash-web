@@ -67,6 +67,7 @@ export const COVERED_BOOK_GUID_MODELS = [
     'gnucash_web_home_tasks',
     'gnucash_web_home_service_log',
     'gnucash_web_saved_reports',
+    'gnucash_web_external_links',
 ] as const;
 
 /**
@@ -376,6 +377,13 @@ export async function deleteBookExtensionRows(
 
         // Import history
         db.gnucash_web_import_batches.deleteMany({ where: { book_guid: bookGuid } }),
+
+        // External-system identity map (beez-trackz and any future
+        // integration). These rows deliberately outlive the transactions they
+        // point at — that is how the change feed reports a deletion — but they
+        // must NOT outlive the book: a guid can be reused, and a stale link
+        // would then claim a transaction in a book that never had one.
+        db.gnucash_web_external_links.deleteMany({ where: { book_guid: bookGuid } }),
 
         // SimpleFIN (account map → connections)
         db.gnucash_web_simplefin_account_map.deleteMany({

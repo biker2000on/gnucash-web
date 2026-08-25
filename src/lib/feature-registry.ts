@@ -245,6 +245,7 @@ export const FEATURES: Feature[] = [
     { id: 'nav-settings-commodities', title: 'Commodities', description: 'Securities, currencies, and price quote configuration.', href: '/settings/commodities', domain: 'settings', task: 'Configuration', kind: 'page', keywords: 'securities prices quotes', nav: true },
     { id: 'nav-settings-history', title: 'Change History', description: 'The audit trail — every mutation, with one-click undo.', href: '/settings/history', domain: 'settings', task: 'Configuration', kind: 'page', keywords: 'audit log undo restore trail', nav: true },
     { id: 'nav-settings-users', title: 'Users', description: 'Per-book roles: readonly, edit, admin.', href: '/settings/users', domain: 'settings', task: 'Configuration', kind: 'page', keywords: 'permissions roles', nav: true },
+    { id: 'integration-beez-sync', title: 'beez-trackz Sync', description: 'Two-way transaction sync with a beez-trackz hive-management install, addressed by its own record ids.', href: '/settings/api-docs', domain: 'settings', task: 'Configuration', kind: 'action', keywords: 'beez trackz beekeeping apiary hive integration sync api external link idempotent change feed token', nav: true },
 ];
 
 export function featuresByDomain(

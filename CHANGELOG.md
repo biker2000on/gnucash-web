@@ -251,6 +251,20 @@ Covers work landed since 0.23.2.0 (2026-07-29).
 
 ### Added
 
+- **beez-trackz sync:** a hive-management install can now keep its books in
+  folio automatically. Point it at `/api/integrations/beez/*` with a personal
+  access token and it can list your chart of accounts, post balanced
+  transactions, correct or delete them later, and pull back edits you made in
+  folio yourself. Each record is addressed by the id beez already uses for it,
+  so a call that times out and is retried can never leave you with the same
+  expense entered twice. Amounts are exchanged as whole cents in your book's
+  base currency: nothing is rounded on the way in or out, and a transaction
+  whose amounts are not a whole number of cents comes back flagged for a person
+  to look at rather than silently approximated. Transactions you have already
+  reconciled to a bank statement are protected — beez is refused, not obeyed —
+  and every change it makes lands in Change History under the token's owner.
+  Setup, the endpoint reference, and the error list are in Settings → API
+  Documentation.
 - **Tax:** OBBBA individual provisions; MFJ vs MFS breakeven analysis; filing
   status derived from the household profile; Form 2210 Schedule AI; farmer safe
   harbor with NIIT and carryover handling.
