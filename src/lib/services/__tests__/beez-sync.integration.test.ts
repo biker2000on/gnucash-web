@@ -1321,6 +1321,142 @@ describe.skipIf(!HAS_TEST_DATABASE)('beez-trackz sync round trip', () => {
             await dropTransaction(futureGuid);
             await dropTransaction(bareGuid);
         });
+
+        it('keeps a write made behind a live sweep position, however far that sweep later reads', async () => {
+            // THE MOVING-WATERMARK FINDING. A generation used to hand its
+            // successor a floor derived from the watermark it ENDED on, so
+            // anything it read late hoisted that floor. The sequence:
+            //
+            //   the generation's position sits at t+30m; a bare-clock writer
+            //   stamps t; the client polls slowly, over real hours; the
+            //   generation's last row is at t+3h; the next floor becomes
+            //   t+3h - 2h = t+1h — an hour ABOVE the write, which is then
+            //   never delivered.
+            //
+            // Real hours cannot pass inside a test, so the elapsed time is in
+            // the fixture instead: a generation whose base was pinned 200
+            // minutes ago, whose position reached 90 minutes ago, and which
+            // now reads on to a row 50 minutes in the future before draining.
+            // Those stamps are exactly what the sequence above produces.
+            const pool = getTestPool();
+            const stamp = async (expression: string): Promise<string> => {
+                const result = await pool.query<{ stamp: string }>(
+                    `SELECT to_char(${expression}, 'YYYY-MM-DD"T"HH24:MI:SS.US') AS stamp`,
+                );
+                return result.rows[0].stamp;
+            };
+            const clock = `(clock_timestamp() AT TIME ZONE 'UTC')`;
+
+            // The write made WHILE the generation was running: accurate to the
+            // wall clock at the time, 110 minutes ago, and therefore inside the
+            // one hour behind-true-time the contract promises to carry.
+            const bareGuid = testGuid();
+            await pool.query(
+                `INSERT INTO transactions (guid, currency_guid, num, post_date, enter_date, description)
+                 VALUES ($1, $2, '', NOW(), ${clock} - interval '110 minutes',
+                         'Bare-clock write behind a live sweep position')`,
+                [bareGuid, USD_GUID],
+            );
+            await insertBalancedSplits(bareGuid, 1300);
+
+            // The far-later row the generation finally reads before draining.
+            const lateGuid = testGuid();
+            await pool.query(
+                `INSERT INTO transactions (guid, currency_guid, num, post_date, enter_date, description)
+                 VALUES ($1, $2, '', NOW(), ${clock} + interval '50 minutes',
+                         'The row the slow generation ends on')`,
+                [lateGuid, USD_GUID],
+            );
+            await insertBalancedSplits(lateGuid, 1400);
+
+            // A generation in flight: base pinned when it started, position
+            // ABOVE the bare write — which is the whole point, the write landed
+            // behind where this generation had already read.
+            const base = await stamp(`${clock} - interval '200 minutes'`);
+            const swept = await stamp(`${clock} - interval '90 minutes'`);
+            const midGeneration = beez.encodeChangesCursor({
+                enterDate: swept, guid: testGuid(), nullGuid: null,
+                sweepEnterDate: swept, sweepGuid: testGuid(), sweepBase: base,
+            });
+
+            // It reads on to the far-future row and drains there.
+            const drained = await service.getBeezChanges(context, { since: midGeneration, limit: 2000 });
+            expect(drained.hasMore).toBe(false);
+            const drainedCursor = beez.decodeChangesCursor(drained.nextCursor as string);
+            expect(drainedCursor?.guid, 'the generation must really end on the far row')
+                .toBe(lateGuid);
+            // It did NOT deliver the bare write: that row is below the position
+            // this generation resumed from, exactly as the finding describes.
+            expect(drained.items.map(i => i.transactionGuid)).not.toContain(bareGuid);
+            // And the floor it hands on is its own BASE, not the far row it
+            // ended on. Deriving it from `enterDate` would give a floor of
+            // clock - 70 minutes, above the bare write.
+            expect(drainedCursor?.sweepBase).toBe(base);
+
+            // The next generation starts at base - 2 hours and picks it up.
+            const nextGeneration = await service.getBeezChanges(
+                context, { since: drained.nextCursor, limit: 2000 },
+            );
+            expect(
+                nextGeneration.items.map(i => i.transactionGuid),
+                'a write made behind a live sweep position must survive the drain',
+            ).toContain(bareGuid);
+
+            await dropTransaction(bareGuid);
+            await dropTransaction(lateGuid);
+        });
+
+        it('includes a row sitting exactly on the overlap floor', async () => {
+            // The contract is an INCLUSIVE bound — "no more than (overlap -
+            // horizon) behind true time" — and its worst case is reached, not
+            // merely approached: a base sitting the full horizon above the
+            // clock puts the floor exactly on the oldest stamp the contract
+            // carries. A strict `>` drops precisely that row, which is the one
+            // case the two hours were chosen to cover.
+            const pool = getTestPool();
+            const worstCaseBase = await pool.query<{ stamp: string }>(
+                `SELECT to_char((clock_timestamp() AT TIME ZONE 'UTC') + interval '1 hour',
+                                'YYYY-MM-DD"T"HH24:MI:SS.US') AS stamp`,
+            );
+            const base = worstCaseBase.rows[0].stamp;
+
+            // Exactly `base - 2 hours`, computed from the same string the feed
+            // will subtract from, so the two values are equal to the microsecond
+            // rather than merely close.
+            const onFloorGuid = testGuid();
+            await pool.query(
+                `INSERT INTO transactions (guid, currency_guid, num, post_date, enter_date, description)
+                 VALUES ($1, $2, '', NOW(), $3::timestamp - interval '2 hours',
+                         'Exactly on the overlap floor')`,
+                [onFloorGuid, USD_GUID, base],
+            );
+            await insertBalancedSplits(onFloorGuid, 1500);
+
+            const drainedGeneration = beez.encodeChangesCursor({
+                enterDate: base, guid: testGuid(), nullGuid: null,
+                sweepEnterDate: null, sweepGuid: null, sweepBase: base,
+            });
+            const feed = await service.getBeezChanges(context, { since: drainedGeneration, limit: 2000 });
+            expect(feed.items.map(i => i.transactionGuid)).toContain(onFloorGuid);
+
+            await dropTransaction(onFloorGuid);
+        });
+
+        it('pins a fresh client to the database clock so its next generation has a floor', async () => {
+            // A generation that begins with no watermark has nothing to floor
+            // down from, and its successor would have to re-scan the whole
+            // ledger to stay honest. The clock at the moment it started is a
+            // base with the same property a watermark has: nothing written from
+            // then on is more than (overlap - horizon) below it.
+            const before = await getTestPool().query<{ stamp: string }>(
+                `SELECT to_char((clock_timestamp() AT TIME ZONE 'UTC'),
+                                'YYYY-MM-DD"T"HH24:MI:SS.US') AS stamp`,
+            );
+            const fresh = await service.getBeezChanges(context, { since: null, limit: 2000 });
+            const cursor = beez.decodeChangesCursor(fresh.nextCursor as string);
+            expect(cursor?.sweepBase).toBeTruthy();
+            expect((cursor?.sweepBase ?? '') >= before.rows[0].stamp).toBe(true);
+        });
     });
 
     /**

@@ -392,7 +392,8 @@ describe('change cursor', () => {
 
     /** A drained-sweep cursor: a high watermark and nothing else. */
     const at = (enterDate: string, guid: string) => ({
-        enterDate, guid, nullGuid: null, sweepEnterDate: null, sweepGuid: null,
+        enterDate, guid, nullGuid: null,
+        sweepEnterDate: null, sweepGuid: null, sweepBase: null,
     });
 
     it('round-trips a microsecond position byte for byte', () => {
@@ -435,12 +436,44 @@ describe('change cursor', () => {
         // its way through them, and there is no time watermark to pair with.
         const encoded = encodeChangesCursor({
             enterDate: null, guid: null, nullGuid: NULL_GUID,
-            sweepEnterDate: null, sweepGuid: null,
+            sweepEnterDate: null, sweepGuid: null, sweepBase: null,
         });
         expect(decodeChangesCursor(encoded)).toEqual({
             enterDate: null, guid: null, nullGuid: NULL_GUID,
-            sweepEnterDate: null, sweepGuid: null,
+            sweepEnterDate: null, sweepGuid: null, sweepBase: null,
         });
+    });
+
+    it('carries a sweep base on a position that is only in the NULL set', () => {
+        // A brand new client whose ordered stream is still empty pins the
+        // database clock as its base, so its first drained generation has a
+        // floor to hand on. Refusing that pairing would strand the cursor.
+        const encoded = encodeChangesCursor({
+            enterDate: null, guid: null, nullGuid: NULL_GUID,
+            sweepEnterDate: null, sweepGuid: null, sweepBase: SWEEP_STAMP,
+        });
+        expect(decodeChangesCursor(encoded)?.sweepBase).toBe(SWEEP_STAMP);
+    });
+
+    it('carries the sweep base, which is what the next generation floors down from', () => {
+        // The base is fixed when a generation STARTS. Deriving the next floor
+        // from the watermark a generation ENDED on ages out any write that
+        // landed behind the sweep position while it ran.
+        const encoded = encodeChangesCursor({
+            ...at(STAMP, GUID), sweepBase: SWEEP_STAMP,
+        });
+        expect(decodeChangesCursor(encoded)).toEqual({
+            ...at(STAMP, GUID), sweepBase: SWEEP_STAMP,
+        });
+    });
+
+    it('refuses a sweep base that is not a real instant', () => {
+        // Same gate as every other stamp on this path: the value goes straight
+        // into a `::timestamp` cast, where a rollover spelling is a 500.
+        const forged = Buffer.from(JSON.stringify({
+            e: STAMP, g: GUID, n: null, se: null, sg: null, sb: '2026-99-99T99:99:99.999999',
+        }), 'utf8').toString('base64url');
+        expect(decodeChangesCursor(forged)).toBeNull();
     });
 
     it('re-encodes an unchanged position byte for byte, so a client can compare cursors', () => {
@@ -456,11 +489,11 @@ describe('change cursor', () => {
         // more rows than `limit`.
         const encoded = encodeChangesCursor({
             enterDate: STAMP, guid: GUID, nullGuid: null,
-            sweepEnterDate: SWEEP_STAMP, sweepGuid: SWEEP_GUID,
+            sweepEnterDate: SWEEP_STAMP, sweepGuid: SWEEP_GUID, sweepBase: null,
         });
         expect(decodeChangesCursor(encoded)).toEqual({
             enterDate: STAMP, guid: GUID, nullGuid: null,
-            sweepEnterDate: SWEEP_STAMP, sweepGuid: SWEEP_GUID,
+            sweepEnterDate: SWEEP_STAMP, sweepGuid: SWEEP_GUID, sweepBase: null,
         });
     });
 

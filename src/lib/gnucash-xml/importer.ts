@@ -10,6 +10,7 @@ import prisma from '@/lib/prisma';
 import { generateGuid } from '@/lib/gnucash';
 import { acquireBookLock, acquireNamedXactLock, commodityLockKey } from '@/lib/book-lock';
 import { createBudgetOwnership } from '@/lib/budget-ownership';
+import { stampEnterDates } from '@/lib/enter-date';
 import { slotsToDbRows, type DbSlotRow } from './slots';
 import { deleteAvgBasisHistoryForDeletedLots } from '../avg-basis-history';
 import {
@@ -996,6 +997,43 @@ export async function importGnuCashData(
     for (let i = 0; i < splitRows.length; i += CHUNK) {
       await tx.splits.createMany({ data: splitRows.slice(i, i + CHUNK) });
       emit({ phase: 'Writing splits', progress: 60 + Math.round((i / Math.max(splitRows.length, 1)) * 15), detail: `${Math.min(i + CHUNK, splitRows.length)}/${splitRows.length}` });
+    }
+
+    // 5b. OVERWRITE RE-STAMP. The rows above copied `enter_date` straight out
+    // of the XML snapshot, which is correct for a first import — the book is
+    // being reconstructed and its history is the point — but wrong the moment
+    // this is an OVERWRITE. An overwrite clears colliding transactions and
+    // re-inserts them while every beez artefact survives it: the tokens, the
+    // external links, and above all the cursors already in a sync client's
+    // hands. A re-inserted row whose `enter_date` is years old sits far below
+    // any of those cursors and below every overlap band there could ever be, so
+    // the change feed would never deliver it. The client would keep applying
+    // the payload it fetched before the overwrite, forever.
+    //
+    // It is also a dedup problem, not only an ordering one. The wire contract
+    // sells `(transactionGuid, enterDate)` as a dedup key, so a conforming
+    // consumer that has already seen this guid at this exact stamp is entitled
+    // to DISCARD the row — even though the payload underneath it just changed.
+    // A fresh stamp is what makes the changed payload look changed.
+    //
+    // So the overwrite path re-stamps through the shared monotonic stamper,
+    // the same statement `PUT /api/transactions/[guid]` and the audit undo
+    // restore use: `clock_timestamp()`, never below the greatest admitted
+    // `enter_date`, a whole millisecond clear of the previous value. Only real
+    // transactions — template transactions are not feed-visible, and the
+    // scheduled-transaction engine reads their dates.
+    //
+    // FRESH-BOOK IMPORTS KEEP THEIR HISTORY. No collision means no book here
+    // before this import, so no cursor can name one of these rows and there is
+    // nothing to be below.
+    if (isOverwrite) {
+      const overwrittenGuids = data.transactions.map((t) => t.id).filter(Boolean);
+      if (overwrittenGuids.length) {
+        emit({ phase: 'Stamping overwritten transactions', progress: 75, detail: `${overwrittenGuids.length} transactions` });
+        for (let i = 0; i < overwrittenGuids.length; i += CHUNK) {
+          await stampEnterDates(tx, overwrittenGuids.slice(i, i + CHUNK));
+        }
+      }
     }
 
     // 6. Scheduled transactions — after template accounts/transactions so

@@ -1054,27 +1054,48 @@ interface ChangeSplitRow {
  * forward watermark would skip it permanently. Auditing every writer forever is
  * not a design; it is a list that goes stale the next time somebody adds one.
  *
- * So the READER carries the burden. The cursor holds two positions:
+ * So the READER carries the burden. The cursor holds three things:
  *
  *  - the HIGH WATERMARK — the greatest `(enter_date, guid)` ever emitted to
  *    this client. Monotone; it never rewinds.
- *  - the SWEEP POSITION — how far the current pass has read. It advances while
- *    the pass has more, and is CLEARED when the pass drains.
+ *  - the SWEEP POSITION — how far the current GENERATION has read. It advances
+ *    while the generation has more, and is CLEARED when it drains.
+ *  - the SWEEP BASE — the watermark the current generation BEGAN with, fixed
+ *    for its whole life. The next generation's floor is measured down from it.
  *
- * A pass with no sweep position starts at `highWatermark - BEEZ_FEED_OVERLAP`
- * (two hours) and re-emits everything above that floor. The wire contract
+ * A generation with no sweep position starts at `sweepBase - BEEZ_FEED_OVERLAP`
+ * (two hours) and re-emits everything at or above that floor. The wire contract
  * already requires idempotent apply by `transactionGuid`, so re-emission costs
  * the client nothing; `enterDate` is byte-identical across the repeats, so the
  * pair is also a usable dedup key.
  *
+ * WHY THE FLOOR IS PINNED AT THE START AND NOT THE END. Deriving it from the
+ * watermark a generation ENDED on ages out writes that landed behind a live
+ * sweep position, and that is not hypothetical: a generation whose position had
+ * reached `t + 30m` when a bare-clock writer stamped `t`, and which then read
+ * on — slowly, over real hours — to a final row at `t + 3h` before draining,
+ * would hand its successor a floor of `t + 1h`. The row at `t` is below the
+ * successor's floor and above nothing the generation itself will read again: it
+ * is lost. A base fixed when the generation STARTED cannot be moved by what the
+ * generation subsequently reads, so one complete overlap generation is always
+ * retained and the write behind the live position is picked up next time round.
+ * A generation that starts with no watermark at all pins the database clock
+ * instead, which has the same property for every write from that moment on.
+ *
  * THE GUARANTEE, precisely. Let H be the horizon (1 hour) and V the overlap
  * (2 hours). The highest cursor the feed can ever issue is at most H ahead of
  * the database clock, because the horizon excludes everything above that from
- * the ORDER. So the floor of the pass a client starts at time p is at most
- * `p + H - V` — one hour BEHIND p. Therefore:
+ * the ORDER. A generation that starts at time p therefore pins a base of at
+ * most `p + H`, so its successor's floor is at most `p + H - V` — one hour
+ * BEHIND p. Every write made from p onwards is stamped at least `(V - H)` above
+ * that floor's worst case. Therefore:
  *
  *   A row is delivered if its stamp is no more than (V - H) behind true time
  *   at the moment it is written — one hour, at these values.
+ *
+ * The bound is INCLUSIVE, and the comparison in the query is `>=` to match:
+ * `p + H - V` is a floor a real row can land exactly on, and a strict `>` would
+ * drop the one case the contract is written around. A duplicate is the price.
  *
  * Every bare-clock writer above satisfies that on any host running NTP, which
  * is how they are covered without being touched. V > H is what makes the margin
@@ -1187,22 +1208,51 @@ export async function getBeezChanges(
     //
     //  1. MID-SWEEP — the client holds a sweep position, so continue strictly
     //     after it. This is the ordinary paging case and it never re-emits.
-    //  2. SWEEP DRAINED — no sweep position, but a high watermark. Restart
-    //     BEEZ_FEED_OVERLAP below that watermark and re-read the band, which is
-    //     what catches a bare-clock writer's row that landed underneath it. No
-    //     guid tie-break is needed or wanted here: the floor is a time, and
-    //     re-reading a row that sits exactly on it is harmless.
-    //  3. NEITHER — the stream has not started (a client only part-way through
-    //     the quarantine set, or a brand new one). Scan from the beginning.
+    //  2. GENERATION DRAINED — no sweep position, but a base to floor down
+    //     from. Restart BEEZ_FEED_OVERLAP below the base the DRAINED generation
+    //     began with and re-read the band, which is what catches a bare-clock
+    //     writer's row that landed underneath it. No guid tie-break is needed
+    //     or wanted here: the floor is a time, and re-reading a row that sits
+    //     exactly on it is harmless.
+    //  3. NEITHER — the stream has not started at all (a brand new client).
+    //     Scan from the beginning.
+    //
+    // THE FLOOR IS `>=`, NOT `>`. The contract this feed sells is inclusive: a
+    // write is delivered if its stamp is no more than (overlap - horizon)
+    // behind true time. That bound is REACHED in the worst case — a base
+    // sitting the full horizon ahead of the clock puts the floor exactly on the
+    // oldest stamp the contract promises to carry — and a strict comparison
+    // would drop precisely that row. An inclusive one costs a duplicate.
     //
     // The cursor strings are compared as timestamps, not as text: `::timestamp`
     // parses the microseconds, where a text comparison would depend on the
     // rendering being byte-identical.
+    const floorBase = cursor === null ? null : cursor.sweepBase ?? cursor.enterDate;
     const afterCursor: Prisma.Sql = cursor && cursor.sweepEnterDate !== null
         ? Prisma.sql`(t.enter_date, t.guid) > (${cursor.sweepEnterDate}::timestamp, ${cursor.sweepGuid})`
-        : cursor && cursor.enterDate !== null
-            ? Prisma.sql`t.enter_date > (${cursor.enterDate}::timestamp - ${BEEZ_FEED_OVERLAP}::interval)`
+        : floorBase !== null
+            ? Prisma.sql`t.enter_date >= (${floorBase}::timestamp - ${BEEZ_FEED_OVERLAP}::interval)`
             : Prisma.sql`TRUE`;
+
+    // THE BASE THIS GENERATION IS PINNED TO, decided before a single row is
+    // read so that nothing this pass reads can move it.
+    //
+    //  - mid-sweep: the generation already has one; carry it unchanged.
+    //  - a fresh generation with a watermark: the watermark, as it stands NOW.
+    //  - a fresh generation without one (a brand new client, or one still only
+    //    part-way through the quarantine set): the database clock. Nothing
+    //    written from this moment on can be more than (overlap - horizon)
+    //    below it, which is the same property a watermark has.
+    //
+    // The one case that still yields no base is a client mid-sweep on a cursor
+    // minted before this field existed. That generation drains with a null base
+    // and its successor falls back to the high watermark for one pass — the old
+    // behaviour, once, on upgrade — after which every generation is pinned.
+    const generationBase: string | null = cursor === null
+        ? await readDatabaseClockStamp()
+        : cursor.sweepEnterDate !== null
+            ? cursor.sweepBase
+            : cursor.enterDate ?? cursor.sweepBase ?? await readDatabaseClockStamp();
 
     // One extra row is the cheapest honest hasMore: it answers "is there a
     // next page?" without a second COUNT over the same predicate.
@@ -1363,10 +1413,20 @@ export async function getBeezChanges(
     const position = seen && isAfter(seen, held) ? seen : held;
 
     // The SWEEP POSITION advances while the pass has more to read and clears
-    // when it drains — the clear is what makes the NEXT pass start from
-    // `enterDate - BEEZ_FEED_OVERLAP` and pick up late-landing writes. Keeping
-    // it while `hasMore` is what makes each pass terminate.
+    // when it drains — the clear is what makes the NEXT generation start from
+    // `sweepBase - BEEZ_FEED_OVERLAP` and pick up late-landing writes. Keeping
+    // it while `hasMore` is what makes each generation terminate.
     const nextSweep = orderedHasMore && seen ? seen : null;
+
+    // The SWEEP BASE rides through unchanged either way. Mid-generation it is
+    // this generation's own pin; on the page that drains it becomes the floor
+    // the NEXT generation measures down from — the base this generation began
+    // with, deliberately NOT the watermark it ended on. A generation that ran
+    // for hours and finished on a far-future row would otherwise hoist the next
+    // floor above rows written while it was still reading, and those rows would
+    // never be delivered. Handing the base forward instead keeps one complete
+    // overlap generation of history in the floor at all times.
+    const nextCursorBase = generationBase;
 
     // Nothing to name in any stream — an empty book — so the client starts
     // from the beginning next time, which is where it already is.
@@ -1376,10 +1436,32 @@ export async function getBeezChanges(
             nullGuid: nextNullGuid,
             sweepEnterDate: nextSweep?.enterDate ?? null,
             sweepGuid: nextSweep?.guid ?? null,
+            sweepBase: nextCursorBase,
         })
         : null;
 
     return { items, nextCursor, hasMore };
+}
+
+/**
+ * The database clock, rendered in {@link ENTER_DATE_PG_FORMAT}.
+ *
+ * It is the sweep base for a generation that begins with no high watermark: a
+ * brand new client, or one still only part-way through the quarantine set.
+ * Without it such a generation would have no floor to hand its successor and
+ * the successor would have to re-scan the whole ledger to stay honest.
+ *
+ * The DATABASE clock, not `new Date()`, for the same reason every other writer
+ * on this column reads it there: the app host and the database are different
+ * machines, and a base derived from the wrong one would be off by their skew in
+ * a comparison that is supposed to bound exactly that. `AT TIME ZONE 'UTC'`
+ * matches the scale `enter_date` is stored on.
+ */
+async function readDatabaseClockStamp(): Promise<string> {
+    const rows = await prisma.$queryRaw<Array<{ stamp: string }>>`
+        SELECT to_char((clock_timestamp() AT TIME ZONE 'UTC'), ${ENTER_DATE_PG_FORMAT}::text) AS stamp
+    `;
+    return rows[0].stamp;
 }
 
 /**

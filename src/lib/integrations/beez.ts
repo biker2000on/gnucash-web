@@ -346,6 +346,12 @@ export function isEnterDateStamp(value: string): boolean {
  * terminates — while the pass after it still starts low enough to catch a
  * late-landing write.
  *
+ * A THIRD FIELD FIXES THE FLOOR. The floor is measured down from the watermark
+ * the generation STARTED with ({@link ChangesCursor.sweepBase}), never from the
+ * one it ended on. Measuring from the end lets a long generation's own reading
+ * raise the next generation's floor above a row written while it ran — see that
+ * field for the sequence.
+ *
  * TWO STREAMS, because there are genuinely two. `enter_date` is nullable in
  * GnuCash, and a row without one has no position in a time order at all. The
  * original design seated it in the time watermark anyway — a cursor that said
@@ -388,8 +394,8 @@ export interface ChangesCursor {
     nullGuid: string | null;
     /**
      * The SWEEP POSITION: how far the current pass has read, or null when the
-     * last pass drained and the next one starts fresh from
-     * `enterDate - BEEZ_FEED_OVERLAP`.
+     * last pass drained and the next generation starts fresh from
+     * `sweepBase - BEEZ_FEED_OVERLAP`.
      *
      * Paired with {@link ChangesCursor.sweepGuid} exactly as `enterDate` is
      * with `guid`.
@@ -397,6 +403,31 @@ export interface ChangesCursor {
     sweepEnterDate: string | null;
     /** Tie-break guid at {@link ChangesCursor.sweepEnterDate}; null exactly when that is null. */
     sweepGuid: string | null;
+    /**
+     * The SWEEP BASE: the high watermark as it stood when the CURRENT sweep
+     * generation began — and, once that generation drains, the value the NEXT
+     * generation measures its overlap floor down from.
+     *
+     * WHY IT IS NOT THE FINAL WATERMARK. Deriving the next floor from the high
+     * watermark a generation ENDED on ages out writes that landed behind a
+     * live sweep position. A generation whose position sat at `t + 30m` when a
+     * bare-clock writer stamped `t`, and which later read a row at `t + 3h`
+     * before draining, would set the next floor to `t + 1h` — an hour ABOVE the
+     * row that was written while it ran, which is then never delivered. The
+     * base is a value fixed at the START of the generation, so it cannot be
+     * dragged upwards by whatever that generation happens to read afterwards,
+     * and one complete overlap generation is always retained.
+     *
+     * A generation that began with no watermark at all (a brand new client)
+     * records the database clock at that moment instead: it is a position no
+     * write made during the generation can be more than the overlap below, for
+     * exactly the same reason a watermark is.
+     *
+     * Null only on a cursor minted before this field existed, which decodes to
+     * the older "floor down from the high watermark" behaviour for one
+     * generation — bounded re-reading on upgrade, never a skip.
+     */
+    sweepBase: string | null;
 }
 
 /**
@@ -407,7 +438,7 @@ export interface ChangesCursor {
  * feed the caller is already authorized to read in full, so forging one buys
  * nothing that a different `since` value would not.
  *
- * All five keys are always written, so an unchanged position re-encodes to a
+ * All six keys are always written, so an unchanged position re-encodes to a
  * byte-identical string and a client can compare cursors for equality.
  */
 export function encodeChangesCursor(cursor: ChangesCursor): string {
@@ -417,6 +448,7 @@ export function encodeChangesCursor(cursor: ChangesCursor): string {
         n: cursor.nullGuid,
         se: cursor.sweepEnterDate,
         sg: cursor.sweepGuid,
+        sb: cursor.sweepBase,
     });
     return Buffer.from(json, 'utf8').toString('base64url');
 }
@@ -443,7 +475,9 @@ export function decodeChangesCursor(raw: string): ChangesCursor | null {
         return null;
     }
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
-    const candidate = parsed as { e?: unknown; g?: unknown; n?: unknown; se?: unknown; sg?: unknown };
+    const candidate = parsed as {
+        e?: unknown; g?: unknown; n?: unknown; se?: unknown; sg?: unknown; sb?: unknown;
+    };
 
     let nullGuid: string | null = null;
     if (candidate.n !== undefined && candidate.n !== null) {
@@ -458,6 +492,15 @@ export function decodeChangesCursor(raw: string): ChangesCursor | null {
     const sweep = readPosition(candidate.se, candidate.sg);
     if (sweep === null) return null;
 
+    // The sweep base is a bare instant with no tie-break guid: it names a FLOOR
+    // in time, not a row, so there is nothing for a guid to break a tie
+    // against. Absent on a cursor minted before the field existed.
+    let sweepBase: string | null = null;
+    if (candidate.sb !== undefined && candidate.sb !== null) {
+        if (typeof candidate.sb !== 'string' || !isEnterDateStamp(candidate.sb)) return null;
+        sweepBase = candidate.sb;
+    }
+
     const hasEnterDate = candidate.e !== undefined && candidate.e !== null;
     const hasGuid = candidate.g !== undefined && candidate.g !== null;
     if (hasEnterDate !== hasGuid) return null;
@@ -466,7 +509,13 @@ export function decodeChangesCursor(raw: string): ChangesCursor | null {
         // No high watermark means no floor to sweep down from, so a sweep
         // position here names nothing this endpoint could have issued.
         if (nullGuid === null || sweep.enterDate !== null) return null;
-        return { enterDate: null, guid: null, nullGuid, sweepEnterDate: null, sweepGuid: null };
+        // A sweep base without a watermark IS one this endpoint mints: a brand
+        // new client whose ordered stream is still empty records the clock it
+        // started at, so its first drained generation still has a floor.
+        return {
+            enterDate: null, guid: null, nullGuid,
+            sweepEnterDate: null, sweepGuid: null, sweepBase,
+        };
     }
 
     if (typeof candidate.g !== 'string' || !isValidGuid(candidate.g)) return null;
@@ -481,6 +530,7 @@ export function decodeChangesCursor(raw: string): ChangesCursor | null {
         nullGuid,
         sweepEnterDate: sweep.enterDate,
         sweepGuid: sweep.guid,
+        sweepBase,
     };
 }
 
