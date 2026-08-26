@@ -27,6 +27,13 @@ export const metadata: Metadata = {
   title: product.brand,
   description: product.description,
   manifest: '/manifest.webmanifest',
+  icons: {
+    icon: [
+      { url: '/favicon.svg', type: 'image/svg+xml' },
+      { url: '/favicon.ico', sizes: '32x32' },
+    ],
+    apple: '/icons/folio-apple-touch-icon-180.png',
+  },
   appleWebApp: {
     capable: true,
     statusBarStyle: 'black-translucent',
@@ -43,7 +50,6 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <head>
         <ThemeScript />
-        <link rel="apple-touch-icon" href="/icons/folio-apple-touch-icon-180.png" />
       </head>
       <body className={`${dmSans.variable} ${jetBrainsMono.variable} antialiased`}>
         <ThemeProvider>
