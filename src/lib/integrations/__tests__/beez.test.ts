@@ -386,11 +386,18 @@ describe('allSplitsRepresentable', () => {
 describe('change cursor', () => {
     const GUID = 'c'.repeat(32);
     const NULL_GUID = 'd'.repeat(32);
+    const SWEEP_GUID = 'e'.repeat(32);
     const STAMP = '2026-08-25T10:11:12.345678';
+    const SWEEP_STAMP = '2026-08-25T09:00:00.000000';
+
+    /** A drained-sweep cursor: a high watermark and nothing else. */
+    const at = (enterDate: string, guid: string) => ({
+        enterDate, guid, nullGuid: null, sweepEnterDate: null, sweepGuid: null,
+    });
 
     it('round-trips a microsecond position byte for byte', () => {
-        const encoded = encodeChangesCursor({ enterDate: STAMP, guid: GUID, nullGuid: null });
-        expect(decodeChangesCursor(encoded)).toEqual({ enterDate: STAMP, guid: GUID, nullGuid: null });
+        const encoded = encodeChangesCursor(at(STAMP, GUID));
+        expect(decodeChangesCursor(encoded)).toEqual(at(STAMP, GUID));
     });
 
     it('keeps the microseconds a JS Date would have thrown away', () => {
@@ -398,49 +405,74 @@ describe('change cursor', () => {
         // milliseconds, so `…12.345678` would come back as `…12.345`, still
         // compare greater than the row it names, and re-emit that row on every
         // single poll for the life of the client.
-        const decoded = decodeChangesCursor(
-            encodeChangesCursor({ enterDate: STAMP, guid: GUID, nullGuid: null }),
-        );
+        const decoded = decodeChangesCursor(encodeChangesCursor(at(STAMP, GUID)));
         expect(decoded?.enterDate).toBe(STAMP);
         expect(decoded?.enterDate).not.toBe(new Date(`${STAMP}Z`).toISOString());
         expect(isEnterDateStamp(decoded?.enterDate ?? '')).toBe(true);
     });
 
     it('is base64url, so it survives a query string untouched', () => {
-        const encoded = encodeChangesCursor({
-            enterDate: '2026-08-25T00:00:00.000000', guid: GUID, nullGuid: null,
-        });
+        const encoded = encodeChangesCursor(at('2026-08-25T00:00:00.000000', GUID));
         expect(encoded).toMatch(/^[A-Za-z0-9_-]+$/);
         expect(encodeURIComponent(encoded)).toBe(encoded);
     });
 
     it('normalizes the guid so a shouted cursor still matches stored rows', () => {
         const encoded = encodeChangesCursor({
-            enterDate: STAMP, guid: 'C'.repeat(32), nullGuid: 'D'.repeat(32),
+            ...at(STAMP, 'C'.repeat(32)), nullGuid: 'D'.repeat(32),
         });
         expect(decodeChangesCursor(encoded)?.guid).toBe(GUID);
         expect(decodeChangesCursor(encoded)?.nullGuid).toBe(NULL_GUID);
     });
 
     it('carries the NULL-set watermark alongside the time watermark', () => {
-        const encoded = encodeChangesCursor({ enterDate: STAMP, guid: GUID, nullGuid: NULL_GUID });
-        expect(decodeChangesCursor(encoded)).toEqual({
-            enterDate: STAMP, guid: GUID, nullGuid: NULL_GUID,
-        });
+        const encoded = encodeChangesCursor({ ...at(STAMP, GUID), nullGuid: NULL_GUID });
+        expect(decodeChangesCursor(encoded)).toEqual({ ...at(STAMP, GUID), nullGuid: NULL_GUID });
     });
 
     it('accepts a position that is only in the NULL set, for a book with no timed rows', () => {
         // A book whose transactions ALL have a NULL enter_date still has to page
         // its way through them, and there is no time watermark to pair with.
-        const encoded = encodeChangesCursor({ enterDate: null, guid: null, nullGuid: NULL_GUID });
+        const encoded = encodeChangesCursor({
+            enterDate: null, guid: null, nullGuid: NULL_GUID,
+            sweepEnterDate: null, sweepGuid: null,
+        });
         expect(decodeChangesCursor(encoded)).toEqual({
             enterDate: null, guid: null, nullGuid: NULL_GUID,
+            sweepEnterDate: null, sweepGuid: null,
         });
     });
 
     it('re-encodes an unchanged position byte for byte, so a client can compare cursors', () => {
-        const cursor = { enterDate: STAMP, guid: GUID, nullGuid: null };
+        const cursor = at(STAMP, GUID);
         expect(encodeChangesCursor(cursor)).toBe(encodeChangesCursor({ ...cursor }));
+    });
+
+    it('carries the sweep position alongside the high watermark', () => {
+        // Two positions, not one: the high watermark is the greatest row ever
+        // sent, the sweep position is how far the current pass has read. A
+        // single field cannot express both, and re-deriving the sweep floor
+        // from the watermark alone deadlocks the moment the overlap band holds
+        // more rows than `limit`.
+        const encoded = encodeChangesCursor({
+            enterDate: STAMP, guid: GUID, nullGuid: null,
+            sweepEnterDate: SWEEP_STAMP, sweepGuid: SWEEP_GUID,
+        });
+        expect(decodeChangesCursor(encoded)).toEqual({
+            enterDate: STAMP, guid: GUID, nullGuid: null,
+            sweepEnterDate: SWEEP_STAMP, sweepGuid: SWEEP_GUID,
+        });
+    });
+
+    it('reads a pre-overlap cursor as a drained sweep rather than refusing it', () => {
+        // Cursors minted before the sweep position existed carry only `e`, `g`
+        // and `n`. Treating one as "no sweep in progress" costs a client one
+        // re-read of the overlap band on upgrade; refusing it would strand
+        // every deployed client on a 422.
+        const legacy = Buffer.from(
+            JSON.stringify({ e: STAMP, g: GUID, n: null }), 'utf8',
+        ).toString('base64url');
+        expect(decodeChangesCursor(legacy)).toEqual(at(STAMP, GUID));
     });
 
     it('rejects anything it did not mint, rather than restarting the feed', () => {
@@ -464,6 +496,17 @@ describe('change cursor', () => {
             // Names no position in either stream.
             Buffer.from(JSON.stringify({}), 'utf8').toString('base64url'),
             Buffer.from(JSON.stringify({ e: null, g: null, n: null }), 'utf8').toString('base64url'),
+            // The sweep position obeys the same pairing rule as the high
+            // watermark: half of it is not a position this endpoint issued.
+            Buffer.from(JSON.stringify({ e: STAMP, g: GUID, se: SWEEP_STAMP }), 'utf8').toString('base64url'),
+            Buffer.from(JSON.stringify({ e: STAMP, g: GUID, sg: SWEEP_GUID }), 'utf8').toString('base64url'),
+            Buffer.from(JSON.stringify({ e: STAMP, g: GUID, se: 'never', sg: SWEEP_GUID }), 'utf8').toString('base64url'),
+            Buffer.from(JSON.stringify({ e: STAMP, g: GUID, se: SWEEP_STAMP, sg: 'short' }), 'utf8').toString('base64url'),
+            // A sweep with no high watermark to rewind below names nothing.
+            Buffer.from(
+                JSON.stringify({ e: null, g: null, n: NULL_GUID, se: SWEEP_STAMP, sg: SWEEP_GUID }),
+                'utf8',
+            ).toString('base64url'),
             // A NULL-set watermark that is not a guid.
             Buffer.from(JSON.stringify({ e: STAMP, g: GUID, n: 'short' }), 'utf8').toString('base64url'),
             Buffer.from(JSON.stringify({ e: STAMP, g: GUID, n: 7 }), 'utf8').toString('base64url'),

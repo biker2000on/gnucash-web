@@ -219,6 +219,39 @@ function refreshBookScope(): void {
     bookScope.invalidateBookAccountGuidsCache();
 }
 
+/**
+ * Poll one complete SWEEP: from `from` until `hasMore` goes false, which is
+ * where the ordered stream drains and the next sweep would rewind by the
+ * overlap.
+ *
+ * Within a sweep the feed is strictly forward — that is the property worth
+ * asserting, and the one the overlap must not have cost. The 60-poll ceiling
+ * turns a stalled sweep into a failed assertion instead of a hung suite.
+ */
+async function sweepFrom(
+    from: string | null,
+    limit: number,
+): Promise<{ ordered: string[]; cursor: string | null; polls: number }> {
+    const ordered: string[] = [];
+    let cursor = from;
+    let polls = 0;
+    while (polls < 60) {
+        const response = await service.getBeezChanges(context, { since: cursor, limit });
+        // The always-emitted sets ride along on every page and are identified
+        // by the quarantined/deleted flags; only the ordered stream is bounded
+        // by `limit` and only it is the sweep.
+        ordered.push(
+            ...response.items
+                .filter(item => !item.deleted && !item.quarantined)
+                .map(item => item.transactionGuid as string),
+        );
+        cursor = response.nextCursor;
+        polls += 1;
+        if (!response.hasMore) return { ordered, cursor, polls };
+    }
+    throw new Error('sweep did not drain within 60 polls');
+}
+
 describe.skipIf(!HAS_TEST_DATABASE)('beez-trackz sync round trip', () => {
     beforeAll(async () => {
         service = await import('../beez-sync.service');
@@ -920,14 +953,25 @@ describe.skipIf(!HAS_TEST_DATABASE)('beez-trackz sync round trip', () => {
             expect(item).toBeDefined();
             // The payload carries the microseconds too, not a truncated Date.
             expect(item?.enterDate).toBe(`${stamp}Z`);
+            // Once per sweep, never twice on one page.
+            expect(feed.items.filter(entry => entry.transactionGuid === txGuid)).toHaveLength(1);
 
-            const again = await service.getBeezChanges(context, { since: feed.nextCursor, limit: 500 });
-            expect(again.items.map(i => i.transactionGuid)).not.toContain(txGuid);
+            // The cursor kept every microsecond too — a Date round trip here
+            // would have written `…56.123`, which still compares GREATER than
+            // the row and re-emits it on every poll for the life of the client.
+            const issued = beez.decodeChangesCursor(feed.nextCursor as string);
+            expect(issued?.enterDate).toBe(stamp);
 
-            // And a third poll from the same place is still quiet: the watermark
-            // is stable, not merely advanced once.
-            const third = await service.getBeezChanges(context, { since: again.nextCursor, limit: 500 });
-            expect(third.items.map(i => i.transactionGuid)).not.toContain(txGuid);
+            // Continuing a sweep from a position sitting exactly on the row
+            // excludes it. This is the comparison the truncation broke: at
+            // microsecond precision the tuple is equal, so `>` is false.
+            const midSweep = beez.encodeChangesCursor({
+                ...(issued as import('@/lib/integrations/beez').ChangesCursor),
+                sweepEnterDate: stamp,
+                sweepGuid: txGuid,
+            });
+            const after = await service.getBeezChanges(context, { since: midSweep, limit: 500 });
+            expect(after.items.map(i => i.transactionGuid)).not.toContain(txGuid);
 
             // Its enter_date is deliberately in the future so it sorts last and
             // the cursor lands exactly on it. Drop it again so it does not sit
@@ -935,9 +979,7 @@ describe.skipIf(!HAS_TEST_DATABASE)('beez-trackz sync round trip', () => {
             await dropTransaction(txGuid);
         });
 
-        it('pages five rows across three pages of two without skipping or duplicating', async () => {
-            // Start from a drained cursor so only the five rows below are in
-            // play, whatever else this suite has already written.
+        it('pages a sweep without skipping or duplicating inside it', async () => {
             const drained = await service.getBeezChanges(context, { since: null, limit: 500 });
             expect(drained.hasMore).toBe(false);
 
@@ -949,28 +991,39 @@ describe.skipIf(!HAS_TEST_DATABASE)('beez-trackz sync round trip', () => {
                 expected.push(created.result.transactionGuid);
             }
 
-            const seen: string[] = [];
-            let cursor = drained.nextCursor;
-            for (let page = 0; page < 3; page += 1) {
-                const response = await service.getBeezChanges(context, { since: cursor, limit: 2 });
-                // The always-emitted sets ride along on every page and are
-                // identified by a null enterDate or the deleted flag; only the
-                // ordered page is bounded by `limit`.
-                const ordered = response.items.filter(item => !item.deleted && !item.quarantined);
-                expect(ordered.length, `page ${page}`).toBe(page < 2 ? 2 : 1);
-                seen.push(...ordered.map(item => item.transactionGuid as string));
-                cursor = response.nextCursor;
-                expect(response.hasMore, `page ${page}`).toBe(page < 2);
+            // A sweep re-reads the whole overlap band, so it covers this
+            // suite's earlier rows as well as the five above — that is the
+            // design, not a leak. What must hold WITHIN one sweep is the old
+            // property: strictly forward, every row exactly once.
+            const { ordered, polls } = await sweepFrom(drained.nextCursor, 2);
+            expect(polls).toBeGreaterThan(1);
+            expect(new Set(ordered).size, 'a sweep must not repeat a row').toBe(ordered.length);
+            for (const guid of expected) expect(ordered).toContain(guid);
+
+            // Each page except the last carried a full `limit` of ordered rows,
+            // so nothing was dropped at a page boundary either.
+            expect(ordered.length).toBeGreaterThanOrEqual(5);
+        });
+
+        it('makes progress when the overlap band is larger than one page', async () => {
+            // The failure mode a naive overlap has: re-derive the sweep floor
+            // from the high watermark on EVERY poll and, once the band holds
+            // more rows than `limit`, each poll re-reads the same first page,
+            // re-issues the same watermark, and the tail is never reached. A
+            // client would loop forever having consumed nothing new.
+            //
+            // `limit: 1` makes the band larger than a page by construction —
+            // this suite has written far more than one row in the last two
+            // hours — so a stalled sweep fails here as a clean assertion.
+            const { ordered, polls } = await sweepFrom(null, 1);
+            expect(polls).toBeGreaterThan(3);
+            expect(new Set(ordered).size).toBe(ordered.length);
+
+            // And the sweep genuinely terminated rather than hitting the guard.
+            const last = await service.getBeezChanges(context, { since: null, limit: 500 });
+            for (const guid of last.items.filter(i => !i.deleted && !i.quarantined).map(i => i.transactionGuid)) {
+                expect(ordered).toContain(guid);
             }
-
-            // Every row exactly once: no gap across a page boundary, no repeat.
-            // Compared as sets because two creates can land in the same
-            // millisecond, in which case guid — not creation order — decides.
-            expect(new Set(seen).size).toBe(5);
-            expect([...seen].sort()).toEqual([...expected].sort());
-
-            const after = await service.getBeezChanges(context, { since: cursor, limit: 2 });
-            expect(after.items.filter(i => !i.deleted && !i.quarantined)).toEqual([]);
         });
 
         it('emits a tombstone for a link whose transaction was deleted in folio, until DELETE clears it', async () => {
@@ -1173,16 +1226,100 @@ describe.skipIf(!HAS_TEST_DATABASE)('beez-trackz sync round trip', () => {
             });
         });
 
-        it('returns the caller cursor unchanged when there is nothing new', async () => {
+        it('never rewinds its high watermark, however far a sweep restarts below it', async () => {
+            // The watermark is what the NEXT sweep's floor is measured from. If
+            // re-emitted rows — which all sort BELOW it — were allowed to move
+            // it, the floor would walk backwards one poll at a time until the
+            // feed was replaying the whole ledger on every pass.
             const all = await service.getBeezChanges(context, { since: null, limit: 500 });
             expect(all.hasMore).toBe(false);
-            const empty = await service.getBeezChanges(context, { since: all.nextCursor, limit: 500 });
-            // The ordered stream is exhausted. The always-emitted sets — the
-            // quarantine set and tombstones — ride along regardless, which is
-            // what keeps them from being lost, so they are excluded here.
-            expect(empty.items.filter(item => !item.deleted && !item.quarantined)).toEqual([]);
-            expect(empty.nextCursor).toBe(all.nextCursor);
-            expect(empty.hasMore).toBe(false);
+            const high = beez.decodeChangesCursor(all.nextCursor as string);
+            expect(high?.enterDate).toBeTruthy();
+            // A drained sweep clears its position; that clear is what makes the
+            // next pass start low.
+            expect(high?.sweepEnterDate).toBeNull();
+
+            const again = await service.getBeezChanges(context, { since: all.nextCursor, limit: 500 });
+            // Nothing was written in between, so the overlap re-emits and only
+            // re-emits: no row above the watermark appears.
+            const repeated = again.items.filter(item => !item.deleted && !item.quarantined);
+            expect(repeated.length).toBeGreaterThan(0);
+            const nextHigh = beez.decodeChangesCursor(again.nextCursor as string);
+            expect(nextHigh?.enterDate).toBe(high?.enterDate);
+            expect(nextHigh?.guid).toBe(high?.guid);
+            expect(again.hasMore).toBe(false);
+        });
+
+        it('re-emits a row byte for byte, so transactionGuid + enterDate dedups it', async () => {
+            // The wire contract sells duplicates as the price of no loss. That
+            // is only payable if a repeat is RECOGNISABLE: an enterDate that
+            // drifted between polls would look like an edit and the client
+            // would apply the same row twice.
+            const id = `${RUN_ID}-dedup`;
+            const created = await service.createBeezTransaction(context, actor(), parsed(id, 5100), null);
+
+            const first = await service.getBeezChanges(context, { since: null, limit: 500 });
+            expect(first.hasMore).toBe(false);
+            const once = first.items.find(i => i.transactionGuid === created.result.transactionGuid);
+            expect(once?.enterDate).toBe(created.result.enterDate);
+
+            const second = await service.getBeezChanges(context, { since: first.nextCursor, limit: 500 });
+            const twice = second.items.find(i => i.transactionGuid === created.result.transactionGuid);
+            expect(twice, 'the overlap must re-emit it').toBeDefined();
+            expect(twice?.enterDate).toBe(once?.enterDate);
+            expect(twice).toEqual(once);
+
+            await service.deleteBeezTransaction(context, actor(), id, null);
+            await service.getBeezChanges(context, { since: null, limit: 500 });
+        });
+
+        it('delivers a bare-NOW() write made behind an in-horizon future cursor', async () => {
+            // THE FINDING THIS CLOSES. Most writers in this repository stamp a
+            // bare NOW() / new Date(): reconcile.ts, statement-reconcile-data.ts,
+            // lot-assignment.ts, the SimpleFin sync, the invoice engine, the
+            // Stripe and inbound webhooks, every importer. A cursor may sit up
+            // to the skew horizon (one hour) AHEAD of the clock, so such a write
+            // lands BELOW it and a strictly-forward watermark drops it forever.
+            //
+            // Fifty minutes ahead is inside the horizon, so the row is ORDERED
+            // and the cursor really does advance onto it — which is precisely
+            // the state that used to be fatal.
+            const pool = getTestPool();
+            const futureGuid = testGuid();
+            await pool.query(
+                `INSERT INTO transactions (guid, currency_guid, num, post_date, enter_date, description)
+                 VALUES ($1, $2, '', NOW(),
+                         (clock_timestamp() AT TIME ZONE 'UTC') + interval '50 minutes',
+                         'In-horizon future row')`,
+                [futureGuid, USD_GUID],
+            );
+            await insertBalancedSplits(futureGuid, 1100);
+
+            const issued = await service.getBeezChanges(context, { since: null, limit: 500 });
+            expect(issued.hasMore).toBe(false);
+            const watermark = beez.decodeChangesCursor(issued.nextCursor as string);
+            // The cursor is genuinely on the future row; otherwise this proves
+            // nothing about writing behind it.
+            expect(watermark?.guid).toBe(futureGuid);
+            expect(issued.items.find(i => i.transactionGuid === futureGuid)?.quarantined)
+                .toBeUndefined();
+
+            // A bare-NOW() writer, exactly as reconcile.ts and friends spell it.
+            const bareGuid = testGuid();
+            await pool.query(
+                `INSERT INTO transactions (guid, currency_guid, num, post_date, enter_date, description)
+                 VALUES ($1, $2, '', NOW(), NOW(), 'Written by a bare NOW() path')`,
+                [bareGuid, USD_GUID],
+            );
+            await insertBalancedSplits(bareGuid, 1200);
+
+            // Fifty minutes below the watermark, and delivered anyway — that is
+            // the overlap doing the job the writers were not asked to do.
+            const next = await service.getBeezChanges(context, { since: issued.nextCursor, limit: 500 });
+            expect(next.items.map(i => i.transactionGuid)).toContain(bareGuid);
+
+            await dropTransaction(futureGuid);
+            await dropTransaction(bareGuid);
         });
     });
 
@@ -1382,6 +1519,67 @@ describe.skipIf(!HAS_TEST_DATABASE)('beez-trackz sync round trip', () => {
 
             await service.deleteBeezTransaction(context, actor(), idA, null);
             await service.deleteBeezTransaction(context, actor(), idB, null);
+        });
+
+        it('gives an undo restoration a fresh stamp instead of its historical one', async () => {
+            // The one class of writer the overlap cannot cover: a restore
+            // replays a snapshot, and a snapshot's enter_date is as old as the
+            // row was. No bounded window catches an arbitrarily old timestamp,
+            // so the restore stamps fresh and leaves the historical value where
+            // the evidence belongs — in the audit record.
+            const audit = await import('@/lib/services/audit.service');
+            const pool = getTestPool();
+
+            const id = `${RUN_ID}-undo-restore`;
+            const created = await service.createBeezTransaction(context, actor(), parsed(id, 4100), null);
+            const txGuid = created.result.transactionGuid;
+
+            // The snapshot a DELETE entry would have captured, aged to 2020 —
+            // five years below any overlap band there could ever be.
+            const live = await audit.snapshotTransactionByGuid(txGuid);
+            expect(live).not.toBeNull();
+            const snapshot = { ...(live as NonNullable<typeof live>), enter_date: '2020-01-01T00:00:00.000Z' };
+
+            // Delete it the way a folio-side delete would, link and all, so the
+            // restore is a genuine re-create rather than a replace.
+            await pool.query(`DELETE FROM gnucash_web_external_links
+                              WHERE book_guid = $1 AND external_id = $2`, [BOOK_GUID, id]);
+            await pool.query(`DELETE FROM gnucash_web_transaction_meta WHERE transaction_guid = $1`, [txGuid]);
+            await pool.query(`DELETE FROM splits WHERE tx_guid = $1`, [txGuid]);
+            await pool.query(`DELETE FROM transactions WHERE guid = $1`, [txGuid]);
+
+            const entry = await pool.query<{ id: number }>(
+                `INSERT INTO gnucash_web_audit (book_guid, action, entity_type, entity_guid, old_values)
+                 VALUES ($1, 'DELETE', 'TRANSACTION', $2, $3::jsonb) RETURNING id`,
+                [BOOK_GUID, txGuid, JSON.stringify(snapshot)],
+            );
+
+            // A cursor issued BEFORE the restore — the state that makes an
+            // old-timestamp write invisible.
+            const issued = await service.getBeezChanges(context, { since: null, limit: 500 });
+            expect(issued.hasMore).toBe(false);
+            expect(issued.items.map(i => i.transactionGuid)).not.toContain(txGuid);
+
+            const undone = await audit.undoAuditEntry(entry.rows[0].id, BOOK_GUID);
+            expect(undone.ok, undone.message).toBe(true);
+
+            const restored = await pool.query<{ enter_date: string }>(
+                `SELECT to_char(enter_date, 'YYYY-MM-DD"T"HH24:MI:SS.US') AS enter_date
+                 FROM transactions WHERE guid = $1`,
+                [txGuid],
+            );
+            expect(restored.rows).toHaveLength(1);
+            // Not 2020, and not merely "not null": above the watermark the feed
+            // had already handed out.
+            expect(restored.rows[0].enter_date.startsWith('2020-')).toBe(false);
+            const watermark = beez.decodeChangesCursor(issued.nextCursor as string);
+            expect(restored.rows[0].enter_date > (watermark?.enterDate ?? '')).toBe(true);
+
+            // And so it is delivered, which is the whole point.
+            const next = await service.getBeezChanges(context, { since: issued.nextCursor, limit: 500 });
+            expect(next.items.map(i => i.transactionGuid)).toContain(txGuid);
+
+            await dropTransaction(txGuid);
         });
 
         it('stamps a whole bulk set above the watermark in one statement', async () => {

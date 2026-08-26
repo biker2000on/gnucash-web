@@ -41,6 +41,7 @@ import { cacheInvalidateFrom } from '@/lib/cache';
 import { publishDataChange } from '@/lib/data-events';
 import { assertNotLocked } from '@/lib/services/period-lock.service';
 import {
+    BEEZ_FEED_OVERLAP,
     EnterDateStampError,
     enterDateHorizonSql,
     stampEnterDate,
@@ -1030,15 +1031,67 @@ interface ChangeSplitRow {
 
 /**
  * Transactions entered after the cursor, oldest first, plus two always-emitted
- * sets: NULL-enter_date rows and deletion tombstones.
+ * sets: quarantined rows and deletion tombstones.
  *
  * ORDERING. `(enter_date, guid)` is the only total order that stays stable
  * while rows are being written: post_date has ties and moves backwards on an
- * edit, and `guid` breaks the remaining ties deterministically. The cursor
- * therefore encodes ONLY a non-NULL `(enter_date, guid)` watermark, and the
- * comparison is the tuple one — `enter_date` greater, or equal with a greater
- * guid. Comparing `enter_date` alone with `>` would skip every other row minted
- * in the same microsecond.
+ * edit, and `guid` breaks the remaining ties deterministically. The comparison
+ * is the tuple one — `enter_date` greater, or equal with a greater guid.
+ * Comparing `enter_date` alone with `>` would skip every other row minted in
+ * the same microsecond.
+ *
+ * BOUNDED OVERLAP — the reason this is a SWEEP and not a strict watermark.
+ *
+ * Only a handful of writers in this repository stamp `enter_date` through the
+ * ordering-safe helper (src/lib/enter-date.ts). Dozens do not: the SimpleFin
+ * sync, the invoice engine, the Stripe webhook, the inbound webhook, the CSV /
+ * QIF / QBO / settlement importers, `reconcile.ts`,
+ * `statement-reconcile-data.ts`, `lot-assignment.ts`, `lot-scrub.ts`,
+ * `transaction.service.ts`, `inventory-engine.ts`, and so on all write a bare
+ * `NOW()` / `new Date()`. Because a cursor may legitimately sit up to
+ * ENTER_DATE_SKEW_TOLERANCE (one hour) ahead of the wall clock, a bare-clock
+ * row can land BELOW a cursor already in a client's hands, and a strictly
+ * forward watermark would skip it permanently. Auditing every writer forever is
+ * not a design; it is a list that goes stale the next time somebody adds one.
+ *
+ * So the READER carries the burden. The cursor holds two positions:
+ *
+ *  - the HIGH WATERMARK — the greatest `(enter_date, guid)` ever emitted to
+ *    this client. Monotone; it never rewinds.
+ *  - the SWEEP POSITION — how far the current pass has read. It advances while
+ *    the pass has more, and is CLEARED when the pass drains.
+ *
+ * A pass with no sweep position starts at `highWatermark - BEEZ_FEED_OVERLAP`
+ * (two hours) and re-emits everything above that floor. The wire contract
+ * already requires idempotent apply by `transactionGuid`, so re-emission costs
+ * the client nothing; `enterDate` is byte-identical across the repeats, so the
+ * pair is also a usable dedup key.
+ *
+ * THE GUARANTEE, precisely. Let H be the horizon (1 hour) and V the overlap
+ * (2 hours). The highest cursor the feed can ever issue is at most H ahead of
+ * the database clock, because the horizon excludes everything above that from
+ * the ORDER. So the floor of the pass a client starts at time p is at most
+ * `p + H - V` — one hour BEHIND p. Therefore:
+ *
+ *   A row is delivered if its stamp is no more than (V - H) behind true time
+ *   at the moment it is written — one hour, at these values.
+ *
+ * Every bare-clock writer above satisfies that on any host running NTP, which
+ * is how they are covered without being touched. V > H is what makes the margin
+ * positive at all; a smaller overlap would guarantee nothing.
+ *
+ * WHY TWO POSITIONS AND NOT ONE. Re-deriving the floor from a single watermark
+ * deadlocks as soon as the overlap band holds more than `limit` rows: every
+ * poll re-reads the same first page, re-issues the same watermark, and the rest
+ * of the band is never reached. A bulk import of a few thousand rows would do
+ * it. Separating "how far this pass has read" from "the highest thing ever
+ * sent" makes each pass strictly advance — so it terminates — while the pass
+ * after it still starts low enough to catch a late-landing write.
+ *
+ * WHAT THE OVERLAP CANNOT COVER is a write stamped far in the PAST: no bounded
+ * window catches an arbitrarily old timestamp. Those writers — the audit undo's
+ * snapshot restore — stamp through `stampEnterDate` instead, which is why the
+ * historical value stays in the audit record rather than on the live row.
  *
  * PRECISION. `enter_date` is read with `to_char(…, 'YYYY-MM-DD"T"HH24:MI:SS.US')`
  * and travels through the cursor as that exact string. Nothing on this path
@@ -1086,19 +1139,15 @@ interface ChangeSplitRow {
  * a position for it. Tombstones do not count towards `limit` for the
  * transaction page or advance `nextCursor`.
  *
- * ONE CLOCK, ONE HELPER. The ordering key is DATABASE-owned, and every
- * feed-visible writer in the app — the beez mutations, the transaction editor's
- * PUT, the bulk edit, and the reconcile/lot split paths — stamps through
- * `stampEnterDate`/`stampEnterDates` in src/lib/enter-date.ts rather than
- * writing `new Date()` from the app host. That helper writes
- * `clock_timestamp()` and never lands below the greatest admitted `enter_date`
- * already in the table, which is what closes the inverse-skew hole: an app host
- * running fast could otherwise stamp a row in the future, a poll would advance
- * the watermark onto it, and every database-clock write for the next few
- * seconds would sort behind the cursor and be lost. Rows minted by a fast clock
- * outside the app (the GnuCash desktop client, a DBA) stay safe for the same
- * reason — the stamp climbs above them rather than assuming they do not
- * exist.
+ * THE STAMPER, for the writers that use it. The beez mutations, the transaction
+ * editor's PUT, the bulk edit, the reconcile/lot split paths, and the audit undo
+ * restore stamp through `stampEnterDate`/`stampEnterDates` in
+ * src/lib/enter-date.ts. That helper writes `clock_timestamp()` and never lands
+ * below the greatest admitted `enter_date` already in the table, so those rows
+ * are unmissable by construction rather than by overlap — they cannot land
+ * below an issued cursor at all. It is belt AND braces: the overlap would catch
+ * them anyway, but the ordering stays clean, and the transaction editor's
+ * optimistic-lock token needs that strict millisecond bump regardless.
  *
  * STALENESS WINDOW (known, bounded, and documented on the route). The stamp is
  * taken as late as a writer can take it — after every idempotency claim and row
@@ -1106,10 +1155,9 @@ interface ChangeSplitRow {
  * before COMMIT. Two writers can therefore commit out of timestamp order: A
  * stamps T1, B stamps T2 > T1 and commits first, a poll advances the cursor
  * past T2, then A commits at T1 and sits behind the watermark. Nothing stamped
- * before COMMIT can close that window; taking it last shrinks it to the
- * remaining transaction duration. A client that needs certainty re-polls from
- * an older cursor — this feed's items are keyed by `transactionGuid` /
- * `externalId` and are safe to apply twice.
+ * before COMMIT can close that window at the writer. The overlap closes it at
+ * the reader: A's row stays above the next pass's floor for two hours after it
+ * lands, so any poll inside that window delivers it.
  */
 export async function getBeezChanges(
     context: BeezBookContext,
@@ -1135,14 +1183,26 @@ export async function getBeezChanges(
         WHERE s.tx_guid = t.guid AND s.account_guid = ANY(${bookAccountGuids}::text[])
     )`;
 
-    // The cursor string is compared as a timestamp, not as text: `::timestamp`
+    // WHERE THIS SWEEP STARTS. Three cases, in priority order:
+    //
+    //  1. MID-SWEEP — the client holds a sweep position, so continue strictly
+    //     after it. This is the ordinary paging case and it never re-emits.
+    //  2. SWEEP DRAINED — no sweep position, but a high watermark. Restart
+    //     BEEZ_FEED_OVERLAP below that watermark and re-read the band, which is
+    //     what catches a bare-clock writer's row that landed underneath it. No
+    //     guid tie-break is needed or wanted here: the floor is a time, and
+    //     re-reading a row that sits exactly on it is harmless.
+    //  3. NEITHER — the stream has not started (a client only part-way through
+    //     the quarantine set, or a brand new one). Scan from the beginning.
+    //
+    // The cursor strings are compared as timestamps, not as text: `::timestamp`
     // parses the microseconds, where a text comparison would depend on the
-    // rendering being byte-identical. A null `enterDate` means the ordered
-    // stream has not started yet (the client is only part-way through the NULL
-    // set), which is a scan from the beginning — never a skip.
-    const afterCursor: Prisma.Sql = cursor && cursor.enterDate !== null
-        ? Prisma.sql`(t.enter_date, t.guid) > (${cursor.enterDate}::timestamp, ${cursor.guid})`
-        : Prisma.sql`TRUE`;
+    // rendering being byte-identical.
+    const afterCursor: Prisma.Sql = cursor && cursor.sweepEnterDate !== null
+        ? Prisma.sql`(t.enter_date, t.guid) > (${cursor.sweepEnterDate}::timestamp, ${cursor.sweepGuid})`
+        : cursor && cursor.enterDate !== null
+            ? Prisma.sql`t.enter_date > (${cursor.enterDate}::timestamp - ${BEEZ_FEED_OVERLAP}::interval)`
+            : Prisma.sql`TRUE`;
 
     // One extra row is the cheapest honest hasMore: it answers "is there a
     // next page?" without a second COUNT over the same predicate.
@@ -1288,19 +1348,54 @@ export async function getBeezChanges(
         items.push({ externalId: tombstone.external_id, deleted: true });
     }
 
-    // Each stream advances its own half of the cursor. An empty ordered page
-    // must not reset the client to the beginning of the feed, so the time
-    // watermark it sent is carried forward untouched.
+    // Each stream advances its own part of the cursor.
+    //
+    // The HIGH WATERMARK is the greatest position ever sent, so it takes the
+    // max of what the client already held and the last row on this page — a
+    // sweep that restarted below the watermark emits rows underneath it, and
+    // letting those rewind the watermark would drag the next sweep's floor down
+    // with them, one poll at a time, forever. An empty page leaves it alone,
+    // which is also what keeps a client from being reset to the beginning of
+    // the feed when there is simply nothing new.
     const last = page[page.length - 1];
-    const position = last && last.enter_date
-        ? { enterDate: last.enter_date, guid: last.guid }
-        : { enterDate: cursor?.enterDate ?? null, guid: cursor?.guid ?? null };
+    const held = { enterDate: cursor?.enterDate ?? null, guid: cursor?.guid ?? null };
+    const seen = last && last.enter_date ? { enterDate: last.enter_date, guid: last.guid } : null;
+    const position = seen && isAfter(seen, held) ? seen : held;
 
-    // Nothing to name in either stream — an empty book — so the client starts
+    // The SWEEP POSITION advances while the pass has more to read and clears
+    // when it drains — the clear is what makes the NEXT pass start from
+    // `enterDate - BEEZ_FEED_OVERLAP` and pick up late-landing writes. Keeping
+    // it while `hasMore` is what makes each pass terminate.
+    const nextSweep = orderedHasMore && seen ? seen : null;
+
+    // Nothing to name in any stream — an empty book — so the client starts
     // from the beginning next time, which is where it already is.
     const nextCursor = position.enterDate !== null || nextNullGuid !== null
-        ? encodeChangesCursor({ ...position, nullGuid: nextNullGuid })
+        ? encodeChangesCursor({
+            ...position,
+            nullGuid: nextNullGuid,
+            sweepEnterDate: nextSweep?.enterDate ?? null,
+            sweepGuid: nextSweep?.guid ?? null,
+        })
         : null;
 
     return { items, nextCursor, hasMore };
+}
+
+/**
+ * `a > b` in the feed's `(enter_date, guid)` order, for positions already
+ * rendered in {@link ENTER_DATE_PG_FORMAT}.
+ *
+ * String comparison is exact here and NOT a shortcut: the format is fixed-width
+ * and zero-padded from the most significant field down, so lexicographic order
+ * IS chronological order. Parsing to a `Date` to compare would throw the
+ * microseconds away, which is the one thing this cursor exists to keep.
+ */
+function isAfter(
+    a: { enterDate: string; guid: string },
+    b: { enterDate: string | null; guid: string | null },
+): boolean {
+    if (b.enterDate === null || b.guid === null) return true;
+    if (a.enterDate !== b.enterDate) return a.enterDate > b.enterDate;
+    return a.guid > b.guid;
 }

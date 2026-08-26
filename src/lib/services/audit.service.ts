@@ -18,6 +18,7 @@ import {
     lockTransactionsForUpdate,
 } from '@/lib/services/reconciled-split.service';
 import { afterLedgerWrite } from '@/lib/data-events';
+import { stampEnterDate } from '@/lib/enter-date';
 
 /** Global client or an interactive-transaction client. */
 type DbClient = Omit<
@@ -227,7 +228,24 @@ export function buildUndoPlan(entry: AuditEntryLike): { plan: UndoPlan | null; r
     }
 }
 
-/** Write a snapshot within the caller's transaction (claim-first callers). */
+/**
+ * Write a snapshot within the caller's transaction (claim-first callers).
+ *
+ * ENTER_DATE IS NOT RESTORED, deliberately. Every other column comes back
+ * exactly as the snapshot recorded it, because that is what "undo" means. But
+ * `enter_date` is not a property of the transaction — it is this repository's
+ * change-feed ordering key (src/lib/enter-date.ts), and the beez feed pages on
+ * it. Writing back a historical value — or the NULL a pre-stamp snapshot may
+ * carry — puts a row that a client MUST see below a watermark that client
+ * already holds, and no reader-side overlap can catch a timestamp of arbitrary
+ * age. So the restore finishes with a fresh monotonic stamp, above anything the
+ * feed could have issued.
+ *
+ * Nothing is lost by that: the historical `enter_date` is still in the audit
+ * record's snapshot, which is where the evidence belongs. The live row carries
+ * when it came back, which is the truthful answer to "when was this entered?"
+ * for a row that was entered again.
+ */
 async function writeSnapshot(tx: DbClient, snapshot: TransactionSnapshot, replaceExisting: boolean): Promise<void> {
     if (replaceExisting) {
         // The slots table has no FK on obj_guid: splits that exist now but
@@ -258,7 +276,10 @@ async function writeSnapshot(tx: DbClient, snapshot: TransactionSnapshot, replac
             currency_guid: snapshot.currency_guid,
             num: snapshot.num,
             post_date: snapshot.post_date ? new Date(snapshot.post_date) : null,
-            enter_date: snapshot.enter_date ? new Date(snapshot.enter_date) : null,
+            // Placeholder only, and never observable: the authoritative stamp is
+            // taken below, once the splits are in. A NOT NULL column needs
+            // something on the INSERT.
+            enter_date: new Date(0),
             description: snapshot.description,
         },
     });
@@ -284,6 +305,10 @@ async function writeSnapshot(tx: DbClient, snapshot: TransactionSnapshot, replac
             },
         });
     }
+    // Last, so the value is above every row this restore could have raced with,
+    // and so a reader that polls between the INSERT and COMMIT sees nothing
+    // rather than the placeholder.
+    await stampEnterDate(tx, snapshot.guid);
 }
 
 /** Aborts the undo transaction with a user-facing conflict message (→ 409). */
@@ -360,12 +385,18 @@ export async function undoAuditEntry(auditId: number, activeBookGuid: string): P
             case 'restore_deleted': {
                 // Period lock: restoring re-creates a transaction at its old date
                 await assertNotLocked(activeBookGuid, [plan.snapshot.post_date]);
-                await prisma.$transaction(async (tx) => {
+                const restored = await prisma.$transaction(async (tx) => {
                     await claimUndo(tx, auditId, userId);
                     await writeSnapshot(tx, plan.snapshot, false);
+                    // Re-read rather than log `plan.snapshot`: the restore
+                    // deliberately does NOT bring the historical `enter_date`
+                    // back (see writeSnapshot), so the snapshot and the row it
+                    // produced are no longer the same thing. The audit entry
+                    // must describe the row that exists.
+                    return await snapshotTransactionByGuid(plan.snapshot.guid, tx);
                 });
                 await logAudit('CREATE', 'TRANSACTION', plan.snapshot.guid, null, {
-                    ...plan.snapshot,
+                    ...(restored ?? plan.snapshot),
                     undo_of_audit_id: auditId,
                 });
                 afterLedgerWrite(activeBookGuid, 'transactions', { guid: plan.snapshot.guid, action: 'create' });
@@ -376,7 +407,7 @@ export async function undoAuditEntry(auditId: number, activeBookGuid: string): P
                 if (!probe) return { ok: false, message: 'Transaction no longer exists — restore it from its DELETE entry instead' };
                 // Period lock: both the current date and the reverted-to date must be open
                 await assertNotLocked(activeBookGuid, [probe.post_date, plan.snapshot.post_date]);
-                const current = await prisma.$transaction(async (tx) => {
+                const reverted = await prisma.$transaction(async (tx) => {
                     await claimUndo(tx, auditId, userId);
                     // Re-read INSIDE the transaction: the pre-check above ran on a
                     // stale snapshot that a concurrent edit may have invalidated.
@@ -403,10 +434,17 @@ export async function undoAuditEntry(auditId: number, activeBookGuid: string): P
                     // refuse before the rewrite.
                     assertSplitsNotProtected('revert this transaction', live.splits);
                     await writeSnapshot(tx, plan.snapshot, true);
-                    return live;
+                    // The "after" image has to be the row as it now stands, not
+                    // the snapshot that was replayed into it: `enter_date` is
+                    // stamped fresh rather than restored, and `new_values` is
+                    // what a LATER undo compares the live row against. Logging
+                    // the historical value here would make every entry look
+                    // like it had been edited since, and block the next undo.
+                    const after = await snapshotTransactionByGuid(plan.snapshot.guid, tx);
+                    return { live, after };
                 });
-                await logAudit('UPDATE', 'TRANSACTION', plan.snapshot.guid, current, {
-                    ...plan.snapshot,
+                await logAudit('UPDATE', 'TRANSACTION', plan.snapshot.guid, reverted.live, {
+                    ...(reverted.after ?? plan.snapshot),
                     undo_of_audit_id: auditId,
                 });
                 afterLedgerWrite(activeBookGuid, 'transactions', { guid: plan.snapshot.guid, action: 'update' });

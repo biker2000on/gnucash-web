@@ -19,9 +19,21 @@
 // (src/lib/enter-date.ts). Both go to the QUARANTINE set — flagged
 // `quarantined: true`, carried by a SECOND watermark in the cursor, paged on
 // its own budget and reset to the start whenever that set drains, which is what
-// keeps a row that appears later reachable. Apply items idempotently by
-// `transactionGuid` / `externalId`: this endpoint guarantees no loss, and
-// bounded repetition is how it pays for that.
+// keeps a row that appears later reachable.
+//
+// The ordered stream is a SWEEP, not a strict watermark. Most writers in this
+// application stamp `enter_date` from a bare clock, and a cursor may sit up to
+// an hour ahead of that clock, so such a write can land underneath a cursor a
+// client already holds. Rather than trust every writer, the feed re-reads: when
+// a sweep drains, the next one restarts two hours below the high watermark and
+// re-emits that band. The guarantee is the difference between the two bounds —
+// a write is delivered if its timestamp is no more than an hour behind true
+// time when it is written, which covers every writer in the codebase.
+//
+// Apply items idempotently by `transactionGuid` / `externalId`: this endpoint
+// guarantees no loss, and bounded repetition is how it pays for that. A
+// re-emitted row carries a byte-identical `enterDate`, so
+// `transactionGuid + enterDate` is a usable dedup key.
 
 import { NextResponse } from 'next/server';
 import { parseChangesLimit } from '@/lib/integrations/beez';
@@ -42,23 +54,32 @@ import { getBeezChanges } from '@/lib/services/beez-sync.service';
  *       polling never rewinds.
  *
  *
- *       DUPLICATES ARE POSSIBLE; LOSS IS NOT. Apply every item idempotently,
- *       keyed by `transactionGuid` (or `externalId`). Items flagged
- *       `quarantined: true` have no position in the time order — either
- *       `enterDate` is null (GnuCash allows it) or it is stamped more than an
- *       hour ahead of the server clock, which is corruption rather than skew
- *       and cannot be allowed to move the cursor. They are paged separately by
- *       guid and that set is re-sent from its start each time it drains, so
- *       expect them on most responses; `deleted: true` tombstones repeat until
- *       acknowledged. `hasMore` covers BOTH streams, so keep polling while it
- *       is true. Separately, `enter_date` is read from the database clock just
- *       before the write rather than at commit, so two concurrent writers can
- *       commit slightly out of timestamp order; a transaction that commits
- *       behind an already-advanced cursor can be missed by a client that only
- *       ever moves forward. The window is bounded by one write's duration. If
- *       your book cannot tolerate it, re-poll periodically from a cursor a few
- *       minutes old — repeated items are safe, which is the whole point of the
- *       idempotent-apply rule above.
+ *       DUPLICATES ARE EXPECTED; LOSS IS NOT. Apply every item idempotently,
+ *       keyed by `transactionGuid` (or `externalId`); `enterDate` repeats byte
+ *       for byte across re-emissions, so `transactionGuid + enterDate` is a
+ *       usable dedup key.
+ *
+ *
+ *       Duplicates come from three places, all deliberate. First, the ordered
+ *       stream is a SWEEP: while `hasMore` is true it moves strictly forward,
+ *       but once it drains, the next sweep restarts TWO HOURS below the high
+ *       watermark and re-sends that band. That is what makes the feed lossless
+ *       without requiring every writer in the server to cooperate — a write is
+ *       guaranteed delivered as long as its timestamp is no more than an hour
+ *       behind true time at the moment it is written, which is true of every
+ *       writer on a host running NTP. The cost is that a caught-up client
+ *       re-reads the last two hours of activity on each new sweep. Second,
+ *       items flagged `quarantined: true` have no position in the time order at
+ *       all — either `enterDate` is null (GnuCash allows it) or it is stamped
+ *       more than an hour ahead of the server clock, which is corruption rather
+ *       than skew and cannot be allowed to move the cursor. They are paged
+ *       separately by guid and re-sent from the start of that set each time it
+ *       drains. Third, `deleted: true` tombstones repeat until acknowledged.
+ *
+ *
+ *       `hasMore` covers BOTH streams, so keep polling while it is true. It
+ *       goes false at the end of a sweep, which is exactly when the next sweep
+ *       will rewind — that is normal, not a signal to stop syncing.
  *
  *
  *       An item with `unrepresentable: true` has at least one split whose

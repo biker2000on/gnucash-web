@@ -46,6 +46,8 @@ const TX_GUID = 't'.repeat(32);
 const SPLIT_1 = 's1'.padEnd(32, '0');
 const SPLIT_2 = 's2'.padEnd(32, '0');
 const AUDIT_ID = 42;
+/** What the shared stamper reports back for a restored row. */
+const STAMPED = '2026-08-25T18:00:00.000000';
 
 /** A live transaction row as Prisma returns it (splits included). */
 function dbTransaction(reconcileState: string) {
@@ -106,11 +108,14 @@ beforeEach(() => {
     prismaMock.$transaction.mockImplementation(
         async (cb: (tx: unknown) => unknown) => cb(prismaMock),
     );
-    // $queryRaw serves two callers: the "already undone?" pre-check (must find
-    // nothing) and claimUndo's UPDATE ... RETURNING id (must win the claim).
+    // $queryRaw serves three callers: the "already undone?" pre-check (must
+    // find nothing), claimUndo's UPDATE ... RETURNING id (must win the claim),
+    // and the shared enter_date stamper the restore finishes with (must report
+    // the row it stamped, or it raises EnterDateStampError).
     prismaMock.$queryRaw.mockImplementation((strings: TemplateStringsArray) => {
         const sql = strings.join('?');
         if (sql.includes('UPDATE gnucash_web_audit')) return Promise.resolve([{ id: AUDIT_ID }]);
+        if (sql.includes('UPDATE transactions')) return Promise.resolve([{ enter_date: STAMPED }]);
         return Promise.resolve([]);
     });
     prismaMock.lots.findUnique.mockResolvedValue(null);
@@ -167,6 +172,21 @@ describe('undoAuditEntry — revert_update', () => {
         expect(result.ok).toBe(true);
         expect(prismaMock.splits.deleteMany).toHaveBeenCalled();
         expect(prismaMock.transactions.create).toHaveBeenCalled();
+
+        // The restore does NOT replay the snapshot's enter_date. That column is
+        // the change feed's ordering key, and writing a historical value back
+        // would seat the restored row below a cursor a sync client already
+        // holds — permanently invisible, with no reader-side window able to
+        // reach back far enough to catch it. So the INSERT carries a
+        // placeholder and the shared stamper writes the real value.
+        const created = prismaMock.transactions.create.mock.calls[0][0] as {
+            data: { enter_date: Date };
+        };
+        expect(created.data.enter_date.getTime()).toBe(0);
+        const stamps = prismaMock.$queryRaw.mock.calls.filter(
+            (call: unknown[]) => (call[0] as TemplateStringsArray).join('?').includes('UPDATE transactions'),
+        );
+        expect(stamps).toHaveLength(1);
     });
 });
 

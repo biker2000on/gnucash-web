@@ -329,8 +329,22 @@ export function isEnterDateStamp(value: string): boolean {
 }
 
 /**
- * Position in the change feed: a watermark in the `(enter_date, guid)` stream,
- * plus a separate watermark in the guid-ordered set of NULL-`enter_date` rows.
+ * Position in the change feed: a HIGH WATERMARK and a SWEEP POSITION in the
+ * `(enter_date, guid)` stream, plus a separate watermark in the guid-ordered
+ * set of NULL-`enter_date` rows.
+ *
+ * TWO FIELDS FOR ONE STREAM, because the feed does not scan strictly forward.
+ * Most writers in this repository stamp a bare clock and can land below an
+ * already-issued watermark, so a drained sweep restarts `BEEZ_FEED_OVERLAP`
+ * below the high watermark and re-reads that band (see src/lib/enter-date.ts).
+ * Doing that with ONE field would deadlock the moment the band held more rows
+ * than `limit`: every poll would re-read the same first page, re-issue the same
+ * position, and never reach the rest. So the high watermark records what has
+ * been SEEN (monotone, never rewinds) while the sweep position records where
+ * the current pass has READ (advances within a pass, cleared when it drains).
+ * Progress is then guaranteed — a pass strictly advances and therefore
+ * terminates — while the pass after it still starts low enough to catch a
+ * late-landing write.
  *
  * TWO STREAMS, because there are genuinely two. `enter_date` is nullable in
  * GnuCash, and a row without one has no position in a time order at all. The
@@ -362,12 +376,27 @@ export function isEnterDateStamp(value: string): boolean {
  * requires idempotent apply by `transactionGuid`.
  */
 export interface ChangesCursor {
-    /** Microsecond timestamp, exactly as PostgreSQL rendered it, or null before the stream starts. */
+    /**
+     * The HIGH WATERMARK: the greatest `(enter_date, guid)` this client has ever
+     * been sent. Monotone — it never moves backwards, even when a sweep
+     * re-emits rows below it. Null before the stream starts.
+     */
     enterDate: string | null;
     /** Tie-break guid at {@link ChangesCursor.enterDate}; null exactly when that is null. */
     guid: string | null;
     /** Position in the guid-ordered NULL-`enter_date` set, or null for its start. */
     nullGuid: string | null;
+    /**
+     * The SWEEP POSITION: how far the current pass has read, or null when the
+     * last pass drained and the next one starts fresh from
+     * `enterDate - BEEZ_FEED_OVERLAP`.
+     *
+     * Paired with {@link ChangesCursor.sweepGuid} exactly as `enterDate` is
+     * with `guid`.
+     */
+    sweepEnterDate: string | null;
+    /** Tie-break guid at {@link ChangesCursor.sweepEnterDate}; null exactly when that is null. */
+    sweepGuid: string | null;
 }
 
 /**
@@ -378,11 +407,17 @@ export interface ChangesCursor {
  * feed the caller is already authorized to read in full, so forging one buys
  * nothing that a different `since` value would not.
  *
- * All three keys are always written, so an unchanged position re-encodes to a
+ * All five keys are always written, so an unchanged position re-encodes to a
  * byte-identical string and a client can compare cursors for equality.
  */
 export function encodeChangesCursor(cursor: ChangesCursor): string {
-    const json = JSON.stringify({ e: cursor.enterDate, g: cursor.guid, n: cursor.nullGuid });
+    const json = JSON.stringify({
+        e: cursor.enterDate,
+        g: cursor.guid,
+        n: cursor.nullGuid,
+        se: cursor.sweepEnterDate,
+        sg: cursor.sweepGuid,
+    });
     return Buffer.from(json, 'utf8').toString('base64url');
 }
 
@@ -408,7 +443,7 @@ export function decodeChangesCursor(raw: string): ChangesCursor | null {
         return null;
     }
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
-    const candidate = parsed as { e?: unknown; g?: unknown; n?: unknown };
+    const candidate = parsed as { e?: unknown; g?: unknown; n?: unknown; se?: unknown; sg?: unknown };
 
     let nullGuid: string | null = null;
     if (candidate.n !== undefined && candidate.n !== null) {
@@ -416,13 +451,22 @@ export function decodeChangesCursor(raw: string): ChangesCursor | null {
         nullGuid = candidate.n.toLowerCase();
     }
 
+    // The sweep position obeys the same pairing rule as the high watermark, and
+    // is simply absent on a cursor issued before the overlap existed — such a
+    // cursor decodes to "start a fresh sweep", which re-reads the overlap band
+    // once. Bounded repetition on upgrade, never a skip.
+    const sweep = readPosition(candidate.se, candidate.sg);
+    if (sweep === null) return null;
+
     const hasEnterDate = candidate.e !== undefined && candidate.e !== null;
     const hasGuid = candidate.g !== undefined && candidate.g !== null;
     if (hasEnterDate !== hasGuid) return null;
 
     if (!hasEnterDate) {
-        if (nullGuid === null) return null;
-        return { enterDate: null, guid: null, nullGuid };
+        // No high watermark means no floor to sweep down from, so a sweep
+        // position here names nothing this endpoint could have issued.
+        if (nullGuid === null || sweep.enterDate !== null) return null;
+        return { enterDate: null, guid: null, nullGuid, sweepEnterDate: null, sweepGuid: null };
     }
 
     if (typeof candidate.g !== 'string' || !isValidGuid(candidate.g)) return null;
@@ -431,7 +475,31 @@ export function decodeChangesCursor(raw: string): ChangesCursor | null {
     // out-of-range fields by rolling them over instead of refusing them.
     if (typeof candidate.e !== 'string' || !isEnterDateStamp(candidate.e)) return null;
 
-    return { enterDate: candidate.e, guid: candidate.g.toLowerCase(), nullGuid };
+    return {
+        enterDate: candidate.e,
+        guid: candidate.g.toLowerCase(),
+        nullGuid,
+        sweepEnterDate: sweep.enterDate,
+        sweepGuid: sweep.guid,
+    };
+}
+
+/**
+ * A `(enter_date, guid)` pair from two raw JSON fields, or null when the pair is
+ * not one this endpoint mints: half-present, malformed, or naming an instant
+ * that does not exist. An absent pair is the valid `{ enterDate: null }`.
+ */
+function readPosition(
+    rawStamp: unknown,
+    rawGuid: unknown,
+): { enterDate: string | null; guid: string | null } | null {
+    const hasStamp = rawStamp !== undefined && rawStamp !== null;
+    const hasGuid = rawGuid !== undefined && rawGuid !== null;
+    if (hasStamp !== hasGuid) return null;
+    if (!hasStamp) return { enterDate: null, guid: null };
+    if (typeof rawStamp !== 'string' || !isEnterDateStamp(rawStamp)) return null;
+    if (typeof rawGuid !== 'string' || !isValidGuid(rawGuid)) return null;
+    return { enterDate: rawStamp, guid: rawGuid.toLowerCase() };
 }
 
 export type LimitParseResult =

@@ -14,11 +14,18 @@
  *    conflict.
  *
  * Neither is served by `new Date()`, and each writer having its own opinion is
- * how both defects arrived. So every feed-visible writer stamps through
- * {@link stampEnterDate} / {@link stampEnterDates}, and the feed orders through
- * {@link enterDateHorizonSql}. Between them they hold ONE invariant:
+ * how both defects arrived. Two mechanisms answer that, and they are deliberately
+ * layered because neither is sufficient alone.
  *
- *   **Every cursor the feed can issue is <= every subsequent writer's floor.**
+ * ## 1. The stamper, for the writers that can use it
+ *
+ * The beez mutations, `PUT /api/transactions/[guid]`, the bulk edit, the
+ * reconcile/lot split routes, and the audit undo restore stamp through
+ * {@link stampEnterDate} / {@link stampEnterDates}; the feed orders through
+ * {@link enterDateHorizonSql}. Between them they hold ONE invariant, FOR THOSE
+ * WRITERS:
+ *
+ *   **Every cursor the feed can issue is <= every subsequent stamper write.**
  *
  * The two halves that make that true:
  *
@@ -33,11 +40,32 @@
  * reader's t_read has a horizon at least as far out as that reader's, so the
  * row the reader's cursor names is inside the writer's watermark range. The
  * stamp is therefore strictly greater than the cursor. That is the whole
- * argument.
+ * argument — for a row written through the stamper.
  *
- * What this does NOT close, because nothing stamped before COMMIT can: two
- * writers may still COMMIT out of stamp order. See the staleness window
- * documented on `getBeezChanges`.
+ * ## 2. The overlap, for every other writer
+ *
+ * Most feed-visible writes in this repository do NOT go through the stamper and
+ * are not going to: SimpleFin sync, the invoice engine, the Stripe webhook, the
+ * inbound webhook, the CSV/QIF/QBO/settlement importers, `reconcile.ts`,
+ * `statement-reconcile-data.ts`, `lot-assignment.ts`, `lot-scrub.ts`,
+ * `transaction.service.ts`, and so on all write a bare `NOW()` / `new Date()`.
+ * Converting them one by one is a list nobody can keep complete, and the next
+ * writer somebody adds would silently reopen the hole.
+ *
+ * So the READER absorbs them instead, with {@link BEEZ_FEED_OVERLAP}: a drained
+ * sweep restarts two hours below its own high watermark, which covers every
+ * writer whose clock is within an hour of true time. See that constant for the
+ * derivation, and `getBeezChanges` for the mechanism.
+ *
+ * What the overlap does NOT cover is a write stamped far in the PAST — a
+ * restore replaying a historical timestamp. There is no bounded window that
+ * catches an arbitrarily old value, so those writers, and only those, are
+ * converted to the stamper.
+ *
+ * What neither closes, because nothing stamped before COMMIT can: two writers
+ * may still COMMIT out of stamp order. The overlap shrinks that window from
+ * "one write's duration" to "one write's duration, re-checked for two hours",
+ * which is the practical answer. See `getBeezChanges`.
  */
 
 import { Prisma } from '@prisma/client';
@@ -61,6 +89,50 @@ import { ENTER_DATE_PG_FORMAT } from '@/lib/integrations/beez';
  * every later write would sort behind that cursor forever.
  */
 export const ENTER_DATE_SKEW_TOLERANCE = '1 hour';
+
+/**
+ * How far BELOW its own watermark the beez change feed re-scans when it starts
+ * a fresh sweep — the bounded-overlap half of the no-loss argument.
+ *
+ * WHY AN OVERLAP EXISTS AT ALL. `stampEnterDate` is the ordering-safe way to
+ * write this column, but it is not the ONLY writer: dozens of paths across this
+ * repository (the SimpleFin sync, the invoice engine, the Stripe webhook, the
+ * CSV/QIF/QBO importers, the reconcile and lot-scrub engines, the inbound
+ * webhook, …) stamp a bare `NOW()` / `new Date()`, and converting every one of
+ * them is neither reviewable nor enforceable against the next one somebody
+ * writes. Such a row can land BELOW a cursor the feed already issued — the
+ * cursor may sit up to {@link ENTER_DATE_SKEW_TOLERANCE} ahead of the wall
+ * clock — and a strictly-forward watermark would skip it permanently.
+ *
+ * So the feed does not rely on every writer being disciplined. When its ordered
+ * sweep drains, it restarts the next sweep this far below its own high
+ * watermark and re-emits whatever it finds. The wire contract already requires
+ * idempotent apply by `transactionGuid`, so a re-emitted row costs the client
+ * nothing.
+ *
+ * WHY TWO HOURS. The guarantee it buys is exactly `overlap - horizon`:
+ *
+ *   A write is delivered if its stamp is no more than (overlap - horizon)
+ *   behind true wall-clock time at the moment it is written.
+ *
+ * because the highest cursor the feed can issue is at most `horizon` ahead of
+ * the clock, so the floor of the next sweep is at most `horizon - overlap`
+ * ahead of it — i.e. one hour BEHIND it at these values. Every bare-clock
+ * writer in the repository is within a hour of true time on any host running
+ * NTP, so all of them are covered without being touched. Two hours is also
+ * strictly greater than the horizon, which is what keeps the margin positive at
+ * all; a value at or below it would guarantee nothing.
+ *
+ * The cost is proportional: a client that has caught up re-reads the last two
+ * hours of writes on its next sweep. That is bounded by the book's write rate,
+ * it is paged like any other sweep, and it is the same bargain the quarantine
+ * set and the deletion tombstones already make.
+ *
+ * What the overlap CANNOT cover is a writer that stamps a time far in the past —
+ * a restore that replays a historical `enter_date`. Those are converted to
+ * {@link stampEnterDate} instead; see src/lib/services/audit.service.ts.
+ */
+export const BEEZ_FEED_OVERLAP = '2 hours';
 
 /**
  * The horizon itself: the latest `enter_date` this system will treat as a
