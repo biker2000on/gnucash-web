@@ -78,13 +78,23 @@ services:
       start_period: 20s
     labels:
       - "traefik.enable=true"
+      - "traefik.http.routers.folio.rule=Host(`folio.adventureintandem.com`)"
+      - "traefik.http.routers.folio.entrypoints=websecure"
+      - "traefik.http.routers.folio.tls=true"
+      - "traefik.http.routers.folio.tls.certresolver=cloudflare"
+      - "traefik.http.routers.folio.tls.domains[0].main=adventureintandem.com"
+      - "traefik.http.routers.folio.tls.domains[0].sans=*.adventureintandem.com"
+      - "traefik.http.services.folio.loadbalancer.server.port=3000"
+      # Legacy hostname: permanent redirect cash.* -> folio.* so old links keep working
       - "traefik.http.routers.cash.rule=Host(`cash.adventureintandem.com`)"
       - "traefik.http.routers.cash.entrypoints=websecure"
       - "traefik.http.routers.cash.tls=true"
       - "traefik.http.routers.cash.tls.certresolver=cloudflare"
-      - "traefik.http.routers.cash.tls.domains[0].main=adventureintandem.com"
-      - "traefik.http.routers.cash.tls.domains[0].sans=*.adventureintandem.com"
-      - "traefik.http.services.cash.loadbalancer.server.port=3000"
+      - "traefik.http.routers.cash.middlewares=cash-to-folio"
+      - "traefik.http.routers.cash.service=folio"
+      - "traefik.http.middlewares.cash-to-folio.redirectregex.regex=^https://cash\\.adventureintandem\\.com/(.*)"
+      - "traefik.http.middlewares.cash-to-folio.redirectregex.replacement=https://folio.adventureintandem.com/$${1}"
+      - "traefik.http.middlewares.cash-to-folio.redirectregex.permanent=true"
 
   worker:
     image: ${IMAGE_REPOSITORY:-ghcr.io/biker2000on/gnucash-web-app}:${IMAGE_TAG:-latest}

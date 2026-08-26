@@ -14,7 +14,7 @@ build, the image is pushed to GHCR, and only then does the workflow advance the
 **`deploy` branch** to that commit. Dockhand watches `deploy` (not `main`) and
 syncs it every five minutes; when the branch moves it pulls the new image and
 recreates the stack. The workflow's last step polls
-`https://cash.adventureintandem.com/api/health` until `revision` matches the
+`https://folio.adventureintandem.com/api/health` until `revision` matches the
 pushed commit, so a deploy that never lands turns the build red instead of
 passing silently. Expect production to update within roughly 5-10 minutes.
 

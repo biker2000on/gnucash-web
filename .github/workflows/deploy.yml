@@ -244,7 +244,7 @@ jobs:
       # turns a silent non-deploy into a red build.
       - name: Verify production is serving this revision
         env:
-          HEALTH_URL: https://cash.adventureintandem.com/api/health
+          HEALTH_URL: https://folio.adventureintandem.com/api/health
           EXPECTED: ${{ github.sha }}
         run: |
           short="${EXPECTED:0:7}"
