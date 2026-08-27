@@ -330,6 +330,15 @@ function normalizeColumnOrder(order: string[] | ColumnId[] | undefined): ColumnI
     return ['accountName', ...filtered, ...remaining];
 }
 
+// Identity-stable fallbacks for the queries below. A `= []` destructure
+// default mints a fresh array every render while the query is pending (or
+// failed); that identity churn cascades through reconcileMap/accountTagsMap
+// into the table's `data`/`columns`, and every row-model memo bust queues a
+// `resetPageIndex()` whose state spread re-renders unconditionally — the same
+// infinite DefaultLane loop that froze the document vault (2026-08-21).
+const EMPTY_RECONCILE_SUMMARY: ReconcileSummaryRow[] = [];
+const EMPTY_TAGS: TagWithAccounts[] = [];
+
 interface AccountHierarchyProps {
     accounts: AccountWithChildren[];
     onRefresh?: () => void;
@@ -345,7 +354,7 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
     const { data: reviewStatusData } = useReviewStatus();
     const statusMap = useMemo<ReviewStatusMap>(() => reviewStatusData ?? {}, [reviewStatusData]);
 
-    const { data: reconcileSummary = [] } = useQuery<ReconcileSummaryRow[]>({
+    const { data: reconcileSummary = EMPTY_RECONCILE_SUMMARY } = useQuery<ReconcileSummaryRow[]>({
         queryKey: ['accounts', 'reconcile-summary'],
         queryFn: async () => {
             const res = await fetch('/api/accounts/reconcile-summary');
@@ -356,7 +365,7 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
     });
 
     // Tags per account (for chips after the account name)
-    const { data: allTags = [] } = useQuery<TagWithAccounts[]>({
+    const { data: allTags = EMPTY_TAGS } = useQuery<TagWithAccounts[]>({
         queryKey: ['tags', 'with-accounts'],
         queryFn: async () => {
             const res = await fetch('/api/tags?include=accounts');
@@ -985,6 +994,9 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
         getSubRows: (row) => row.children,
         getCoreRowModel: getCoreRowModel(),
         getExpandedRowModel: getExpandedRowModel(),
+        // There is no pagination; without this, any row-model recompute queues
+        // a resetPageIndex() whose state spread re-renders unconditionally.
+        autoResetPageIndex: false,
         onColumnVisibilityChange: (updater) => {
             setColumnVisibility((prev) => {
                 const next = typeof updater === 'function' ? updater(prev) : updater;
