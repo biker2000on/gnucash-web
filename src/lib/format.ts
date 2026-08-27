@@ -1,14 +1,17 @@
 import { MONEY_DISPLAY_EPSILON } from './tolerances';
 
-export function formatCurrency(amount: number | string, currencyMnemonic: string = 'USD') {
+export function formatCurrency(amount: number | string, currencyMnemonic: string = 'USD', decimals: number = 2) {
     let val = typeof amount === 'string' ? parseFloat(amount) : amount;
     if (!Number.isFinite(val)) val = 0;
 
     // Normalize negative zero and sub-cent values that round to "0.00" so the
     // formatter never renders "-$0.00". MONEY_DISPLAY_EPSILON *is* the
     // threshold the formatter rounds at, which is exactly why it is the one to
-    // use rather than a literal that happens to match it today.
-    if (Math.abs(val) < MONEY_DISPLAY_EPSILON) val = 0;
+    // use rather than a literal that happens to match it today. For non-2dp
+    // renderings (share quantities) the threshold is half the last displayed
+    // digit for the same reason.
+    const zeroEpsilon = decimals === 2 ? MONEY_DISPLAY_EPSILON : 0.5 * Math.pow(10, -decimals);
+    if (Math.abs(val) < zeroEpsilon) val = 0;
 
     // GnuCash mnemonics usually match ISO 4217, but sometimes have custom ones.
     // Intl.NumberFormat is robust for standard ones.
@@ -16,14 +19,14 @@ export function formatCurrency(amount: number | string, currencyMnemonic: string
         return new Intl.NumberFormat('en-US', {
             style: 'currency',
             currency: currencyMnemonic,
-            minimumFractionDigits: 2,
-            maximumFractionDigits: 2,
+            minimumFractionDigits: decimals,
+            maximumFractionDigits: decimals,
         }).format(val);
     } catch {
         // Fallback for non-standard mnemonics
         const formattedNumber = new Intl.NumberFormat('en-US', {
-            minimumFractionDigits: 2,
-            maximumFractionDigits: 2,
+            minimumFractionDigits: decimals,
+            maximumFractionDigits: decimals,
         }).format(val);
         return `${currencyMnemonic} ${formattedNumber}`;
     }

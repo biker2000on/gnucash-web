@@ -1,15 +1,18 @@
 'use client';
 
 import { formatCurrency } from '@/lib/format';
+import { decimalPlacesForScu } from '@/lib/reconcile-shared';
 
 interface ReconcileSummaryProps {
     reconciledBalance: number;
     selectedTotal: number;
     /** null while the ending-balance input is empty/invalid. */
     endingBalance: number | null;
-    /** Difference in integer cents; null while ending balance is invalid. */
+    /** Difference in integer SCU units; null while ending balance is invalid. */
     differenceCents: number | null;
     currency: string;
+    /** Account commodity SCU: scales the difference and sets decimal places. */
+    commodityScu: number;
     lastReconcileDate: string | null;
 }
 
@@ -24,12 +27,14 @@ export function ReconcileSummary({
     endingBalance,
     differenceCents,
     currency,
+    commodityScu,
     lastReconcileDate,
 }: ReconcileSummaryProps) {
+    const places = decimalPlacesForScu(commodityScu);
     const items: Array<{ label: string; value: string; className: string; hint?: string }> = [
         {
             label: 'Reconciled Balance',
-            value: formatCurrency(reconciledBalance, currency),
+            value: formatCurrency(reconciledBalance, currency, places),
             className: 'text-foreground',
             hint: lastReconcileDate
                 ? `Last reconciled ${lastReconcileDate.slice(0, 10)}`
@@ -37,17 +42,17 @@ export function ReconcileSummary({
         },
         {
             label: 'Selected Total',
-            value: formatCurrency(selectedTotal, currency),
+            value: formatCurrency(selectedTotal, currency, places),
             className: 'text-foreground',
         },
         {
             label: 'Ending Balance',
-            value: endingBalance === null ? '—' : formatCurrency(endingBalance, currency),
+            value: endingBalance === null ? '—' : formatCurrency(endingBalance, currency, places),
             className: 'text-foreground',
         },
         {
             label: 'Difference',
-            value: differenceCents === null ? '—' : formatCurrency(differenceCents / 100, currency),
+            value: differenceCents === null ? '—' : formatCurrency(differenceCents / commodityScu, currency, places),
             className:
                 differenceCents === 0 ? 'text-positive' : 'text-negative',
         },

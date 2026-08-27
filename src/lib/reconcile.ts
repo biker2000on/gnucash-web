@@ -460,7 +460,7 @@ export async function finalizeReconciliation(
                            completed_at = NOW(),
                            interaction_count = interaction_count + ${interactionDelta},
                            ending_difference = ${Number(differenceUnits) / commodityScu},
-                           metadata = metadata || jsonb_build_object('statementEndingBalance', ${endingBalance})
+                           metadata = metadata || jsonb_build_object('statementEndingBalance', ${String(endingBalance)}::text)
                      WHERE id = ${completion.sessionId}
                        AND book_guid = ${completion.bookGuid}
                        AND account_guid = ${accountGuid}
@@ -474,7 +474,7 @@ export async function finalizeReconciliation(
                            completed_at = NOW(),
                            interaction_count = interaction_count + ${interactionDelta},
                            ending_difference = ${Number(differenceUnits) / commodityScu},
-                           metadata = metadata || jsonb_build_object('statementEndingBalance', ${endingBalance})
+                           metadata = metadata || jsonb_build_object('statementEndingBalance', ${String(endingBalance)}::text)
                      WHERE id = (
                          SELECT id
                            FROM gnucash_web_reconciliation_sessions
@@ -498,7 +498,7 @@ export async function finalizeReconciliation(
                         ${randomUUID()}, ${completion.bookGuid}, ${accountGuid},
                         ${completion.userId}, ${statementDate}, 'completed',
                         ${interactionDelta}, NOW(), ${Number(differenceUnits) / commodityScu},
-                        jsonb_build_object('statementEndingBalance', ${endingBalance})
+                        jsonb_build_object('statementEndingBalance', ${String(endingBalance)}::text)
                     )
                 `;
             }

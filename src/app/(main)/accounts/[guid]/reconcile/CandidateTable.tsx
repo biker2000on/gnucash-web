@@ -1,7 +1,7 @@
 'use client';
 
 import { formatCurrency } from '@/lib/format';
-import type { ReconcileCandidate } from '@/lib/reconcile-shared';
+import { decimalPlacesForScu, type ReconcileCandidate } from '@/lib/reconcile-shared';
 import { Tip } from '@/components/ui/Tooltip';
 
 interface CandidateTableProps {
@@ -12,6 +12,8 @@ interface CandidateTableProps {
     onSelectAll: (select: boolean) => void;
     onDelete: (candidate: ReconcileCandidate) => void;
     currency: string;
+    /** Account commodity SCU: sets the amounts' decimal places. */
+    commodityScu: number;
 }
 
 /** Badge styling matches AccountLedger's reconcile-state display. */
@@ -33,7 +35,9 @@ export function CandidateTable({
     onSelectAll,
     onDelete,
     currency,
+    commodityScu,
 }: CandidateTableProps) {
+    const places = decimalPlacesForScu(commodityScu);
     const allSelected =
         candidates.length > 0 && candidates.every((c) => selected.has(c.guid));
 
@@ -122,13 +126,13 @@ export function CandidateTable({
                                     className="p-3 text-right font-mono text-positive"
                                     style={{ fontFeatureSettings: "'tnum'" }}
                                 >
-                                    {c.amount > 0 ? formatCurrency(c.amount, currency) : ''}
+                                    {c.amount > 0 ? formatCurrency(c.amount, currency, places) : ''}
                                 </td>
                                 <td
                                     className="p-3 text-right font-mono text-negative"
                                     style={{ fontFeatureSettings: "'tnum'" }}
                                 >
-                                    {c.amount < 0 ? formatCurrency(Math.abs(c.amount), currency) : ''}
+                                    {c.amount < 0 ? formatCurrency(Math.abs(c.amount), currency, places) : ''}
                                 </td>
                                 <td className="p-3 text-center">
                                     <Tip content={badge.label}>

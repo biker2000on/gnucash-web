@@ -410,7 +410,11 @@ describe('finalizeReconciliation', () => {
         const sessionSql = mockPrisma.$executeRaw.mock.calls.map(sqlText).join('\n');
         expect(sessionSql).toContain("statementEndingBalance");
         expect(sessionSql).toContain('ending_difference');
-        expect(mockPrisma.$executeRaw.mock.calls.some((call: unknown[]) => call.includes(175))).toBe(true);
+        // The ending balance reaches the session metadata as a STRING with an
+        // explicit ::text cast: jsonb_build_object's parameters are variadic
+        // "any", and an uncast parameter made Postgres reject every completion
+        // statement with 42P18 "could not determine data type of parameter".
+        expect(mockPrisma.$executeRaw.mock.calls.some((call: unknown[]) => call.includes('175'))).toBe(true);
     });
 
     /**

@@ -46,6 +46,14 @@ export interface ReconcileWorkspace {
     candidates: ReconcileCandidate[];
 }
 
+/** Display decimal places for a power-of-ten SCU (100 → 2, 10000 → 4); 2 for
+ *  a non-power-of-ten SCU, where no fixed decimal rendering is exact anyway. */
+export function decimalPlacesForScu(scu: number): number {
+    let value = scu; let places = 0;
+    while (value > 1 && value % 10 === 0) { value /= 10; places++; }
+    return value === 1 ? places : 2;
+}
+
 export function decimalToScuUnits(raw: string, scu: number): bigint | null {
     let value = scu; let places = 0;
     while (value > 1 && value % 10 === 0) { value /= 10; places++; }

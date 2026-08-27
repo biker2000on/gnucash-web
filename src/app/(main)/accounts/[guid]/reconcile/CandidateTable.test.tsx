@@ -37,6 +37,7 @@ describe('CandidateTable', () => {
                 onSelectAll={vi.fn()}
                 onDelete={vi.fn()}
                 currency="USD"
+                commodityScu={100}
             />,
         );
 
@@ -57,6 +58,7 @@ describe('CandidateTable', () => {
                 onSelectAll={onSelectAll}
                 onDelete={vi.fn()}
                 currency="USD"
+                commodityScu={100}
             />,
         );
 
@@ -75,6 +77,7 @@ describe('CandidateTable', () => {
                 onSelectAll={vi.fn()}
                 onDelete={onDelete}
                 currency="USD"
+                commodityScu={100}
             />,
         );
 

@@ -396,6 +396,7 @@ function ReconcilePageContent() {
                         endingBalance={endingBalance === null ? null : Number(endingBalance)}
                         differenceCents={differenceCents === null ? null : Number(differenceCents)}
                         currency={currency}
+                        commodityScu={workspace.account.commodityScu}
                         lastReconcileDate={workspace.lastReconcileDate}
                     />
                 </div>
@@ -499,6 +500,7 @@ function ReconcilePageContent() {
                     onSelectAll={selectAll}
                     onDelete={setDeleteCandidate}
                     currency={currency}
+                    commodityScu={workspace.account.commodityScu}
                 />
             ) : null}
 
