@@ -1597,6 +1597,9 @@ export default function AccountLedger({
         data: displayTransactions,
         columns,
         getCoreRowModel: getCoreRowModel(),
+        // There is no pagination; without this, any row-model recompute queues
+        // a resetPageIndex() whose state spread re-renders unconditionally.
+        autoResetPageIndex: false,
     });
 
     const visibleColumnIds = useMemo(

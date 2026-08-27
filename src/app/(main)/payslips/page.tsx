@@ -215,6 +215,9 @@ export default function PayslipsPage() {
     getFilteredRowModel: getFilteredRowModel(),
     getRowId: row => String(row.id),
     enableRowSelection: row => row.original.status !== 'posted',
+    // There is no pagination; without this, any row-model recompute queues
+    // a resetPageIndex() whose state spread re-renders unconditionally.
+    autoResetPageIndex: false,
   });
 
   const selectedCount = Object.keys(rowSelection).length;

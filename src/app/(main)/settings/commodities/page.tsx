@@ -610,6 +610,9 @@ export default function CommodityPriceSettingsPage() {
     getCoreRowModel: getCoreRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
     getSortedRowModel: getSortedRowModel(),
+    // There is no pagination; without this, any row-model recompute queues
+    // a resetPageIndex() whose state spread re-renders unconditionally.
+    autoResetPageIndex: false,
     globalFilterFn: (row, _columnId, filterValue) => {
       const searchValue = String(filterValue).toLowerCase();
       return [
