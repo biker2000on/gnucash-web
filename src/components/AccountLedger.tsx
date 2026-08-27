@@ -6,7 +6,6 @@ import { useRouter } from 'next/navigation';
 import { formatCurrency, applyBalanceReversal } from '@/lib/format';
 import { formatDisplayAccountPath } from '@/lib/account-path';
 import { useUserPreferences } from '@/contexts/UserPreferencesContext';
-import { ReconciliationPanel } from './ReconciliationPanel';
 import { suppressNextDataEvent } from './DataEventsProvider';
 import { TransactionModal, originalPayeeLine } from './TransactionModal';
 import { TransactionFormModal } from './TransactionFormModal';
@@ -56,15 +55,7 @@ import { BulkDescriptionModal, BulkTagsModal, type BulkDescriptionPayload } from
 import TagChip from '@/components/tags/TagChip';
 import type { Tag } from '@/lib/tags';
 import { useQueryClient, type QueryClient } from '@tanstack/react-query';
-import {
-    getRowAccountSplits,
-    getSelectableRowSplits,
-    isRowSelected,
-    selectAllRows,
-    sumSelectedRows,
-    toggleRowSelection,
-    type ReconciliationRowSplit,
-} from '@/lib/reconciliation-selection';
+import { type ReconciliationRowSplit } from '@/lib/reconciliation-selection';
 import { Tip } from '@/components/ui/Tooltip';
 
 export interface AccountTransaction extends Transaction {
@@ -342,12 +333,6 @@ export default function AccountLedger({
     const [expandedTransactions, setExpandedTransactions] = useState<Set<string>>(new Set());
     const loader = useRef<HTMLDivElement>(null);
 
-    // Reconciliation state
-    const [isReconciling, setIsReconciling] = useState(false);
-    const [selectedSplits, setSelectedSplits] = useState<Set<string>>(new Set());
-    const [simpleFinBalance, setSimpleFinBalance] = useState<{ balance: number; balanceDate: string } | null>(null);
-    const [reconciledBalance, setReconciledBalance] = useState<number>(currentBalance);
-
     // Modal state
     const [selectedTxGuid, setSelectedTxGuid] = useState<string | null>(null);
     const [isViewModalOpen, setIsViewModalOpen] = useState(false);
@@ -573,35 +558,6 @@ export default function AccountLedger({
         setFilters({ minAmount: '', maxAmount: '', reconcileStates: [] });
     };
 
-    // Fetch SimpleFin balance for this account on mount
-    useEffect(() => {
-        fetch(`/api/simplefin/balance/${accountGuid}`)
-            .then(res => res.ok ? res.json() : null)
-            .then(data => {
-                if (data?.hasBalance) {
-                    setSimpleFinBalance({ balance: data.balance, balanceDate: data.balanceDate });
-                }
-            })
-            .catch(() => {}); // silently ignore - not all accounts have SimpleFin mapping
-    }, [accountGuid]);
-
-    // Fetch reconciled balance (sum of splits with reconcile_state = 'y') for reconciliation "Current" value
-    useEffect(() => {
-        fetch('/api/accounts/reconcile-summary')
-            .then(res => res.ok ? res.json() : null)
-            .then((data: Array<{ guid: string; reconciled_usd: string; reconciled_quantity?: string; is_investment?: boolean }> | null) => {
-                if (!data) return;
-                const summary = data.find(s => s.guid === accountGuid);
-                if (summary) {
-                    const raw = summary.is_investment && summary.reconciled_quantity != null
-                        ? parseFloat(summary.reconciled_quantity)
-                        : parseFloat(summary.reconciled_usd);
-                    setReconciledBalance(raw || 0);
-                }
-            })
-            .catch(() => {});
-    }, [accountGuid, isReconciling]);
-
     // Listen for global 'n' key shortcut to open new transaction (skip in edit mode)
     const isEditModeRef = useRef(isEditMode);
     isEditModeRef.current = isEditMode;
@@ -615,49 +571,6 @@ export default function AccountLedger({
         return () => window.removeEventListener('open-new-transaction', handler);
     }, []);
 
-
-    const toggleTransactionSelection = useCallback((tx: AccountTransaction) => {
-        setSelectedSplits(prev => toggleRowSelection(tx, prev));
-    }, []);
-
-    const selectAllUnreconciled = useCallback(() => {
-        setSelectedSplits(selectAllRows(transactions));
-    }, [transactions]);
-
-    const clearSelection = useCallback(() => {
-        setSelectedSplits(new Set());
-    }, []);
-
-    // Calculate the sum of selected splits for reconciliation
-    const selectedBalance = useMemo(() => {
-        return sumSelectedRows(transactions, selectedSplits);
-    }, [transactions, selectedSplits]);
-
-    const handleReconcileComplete = useCallback(() => {
-        // The reconcile mutation just committed on this tab; drop the relayed
-        // echo (the local state update below already reflects it).
-        suppressNextDataEvent('transactions');
-        // Refresh the transactions to show updated reconcile states
-        setTransactions(prev => prev.map(tx => {
-            const accountSplits = getRowAccountSplits(tx);
-            if (!accountSplits.some(split => selectedSplits.has(split.guid))) return tx;
-            const nextAccountSplits = accountSplits.map(split => (
-                selectedSplits.has(split.guid) ? { ...split, reconcile_state: 'y' } : split
-            ));
-            const nextSplits = tx.splits?.map(split => (
-                selectedSplits.has(split.guid) ? { ...split, reconcile_state: 'y' } : split
-            ));
-            return {
-                ...tx,
-                splits: nextSplits,
-                account_splits: nextAccountSplits,
-                account_split_reconcile_state:
-                    nextAccountSplits.every(split => split.reconcile_state === 'y') ? 'y' : tx.account_split_reconcile_state,
-            };
-        }));
-        setSelectedSplits(new Set());
-        setIsReconciling(false);
-    }, [selectedSplits]);
 
     // Build URL params helper (needed by fetchTransactions)
     const buildUrlParams = useCallback((extraParams: Record<string, string | number> = {}) => {
@@ -1317,9 +1230,6 @@ export default function AccountLedger({
         setIsEditMode(prev => {
             const next = !prev;
             if (next) {
-                // Entering edit mode: exit reconciliation
-                setIsReconciling(false);
-                setSelectedSplits(new Set());
                 setEditReviewedCount(0);
             } else {
                 // Exiting edit mode: clear edit state and refresh data
@@ -1587,11 +1497,10 @@ export default function AccountLedger({
         const colFn = isInvestmentAccount ? getInvestmentColumns : getColumns;
         return colFn({
             accountGuid,
-            isReconciling,
             isEditMode,
             viewStyle: ledgerViewStyle,
         });
-    }, [accountGuid, isReconciling, isEditMode, isInvestmentAccount, ledgerViewStyle]);
+    }, [accountGuid, isEditMode, isInvestmentAccount, ledgerViewStyle]);
 
     const table = useReactTable({
         data: displayTransactions,
@@ -2147,8 +2056,7 @@ export default function AccountLedger({
                 isEditModalOpen ||
                 editingTransaction !== null ||
                 deleteConfirmOpen ||
-                isDeleting ||
-                isReconciling,
+                isDeleting,
             fetch: fetchTransactions,
         };
     });
@@ -2295,10 +2203,10 @@ export default function AccountLedger({
 
     // Overflow actions on mobile (edit mode is desktop-only)
     const mobileActions: ActionMenuItem[] = [
-        ...(!isReconciling ? [{
+        {
             label: 'Reconcile',
-            onSelect: () => { setIsEditMode(false); setIsReconciling(true); },
-        }] : []),
+            onSelect: () => router.push(`/accounts/${accountGuid}/reconcile`),
+        },
         ...(isInvestmentAccount ? [{
             label: showLotsView ? 'Hide Lots' : 'Show Lots',
             onSelect: () => setShowLotsView(!showLotsView),
@@ -2516,29 +2424,17 @@ export default function AccountLedger({
                             )}
                         </div>
                     )}
-                    {/* Reconcile button in toolbar; panel floats separately */}
-                    {!isReconciling && (
-                        <ReconciliationPanel
-                            accountGuid={accountGuid}
-                            commodityScu={commodityScu}
-                            accountCurrency={accountCurrency}
-                            isInvestment={isInvestmentAccount}
-                            sharePrecision={sharePrecision}
-                            currentBalance={reconciledBalance}
-                            selectedBalance={selectedBalance}
-                            onReconcileComplete={handleReconcileComplete}
-                            selectedSplits={selectedSplits}
-                            onSelectAll={selectAllUnreconciled}
-                            onClearSelection={clearSelection}
-                            isReconciling={isReconciling}
-                            onStartReconcile={() => { setIsEditMode(false); setIsReconciling(true); }}
-                            onCancelReconcile={() => {
-                                setIsReconciling(false);
-                                setSelectedSplits(new Set());
-                            }}
-                            simpleFinBalance={simpleFinBalance}
-                        />
-                    )}
+                    {/* Reconcile: both entry points lead to the dedicated
+                        reconcile page; the old in-ledger panel flow is gone. */}
+                    <button
+                        onClick={() => router.push(`/accounts/${accountGuid}/reconcile`)}
+                        className="px-3 py-2 min-h-[44px] text-xs rounded-lg border border-border text-foreground-muted hover:text-foreground hover:bg-surface-hover transition-colors flex items-center gap-2"
+                    >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        Reconcile
+                    </button>
                 </div>
                 </>
                 )}
@@ -2735,19 +2631,6 @@ export default function AccountLedger({
                                                         else setEditSelectedGuids(new Set());
                                                     }}
                                                     tabIndex={-1}
-                                                    className="w-4 h-4 rounded border-border-hover bg-background-tertiary text-primary cursor-pointer"
-                                                />
-                                            )}
-                                            {isReconciling && (
-                                                <input
-                                                    type="checkbox"
-                                                    checked={selectedSplits.size > 0 && displayTransactions.every(tx => getSelectableRowSplits(tx).length === 0 || isRowSelected(tx, selectedSplits))}
-                                                    onChange={(e) => {
-                                                        if (e.target.checked) selectAllUnreconciled();
-                                                        else clearSelection();
-                                                    }}
-                                                    tabIndex={-1}
-                                                    aria-label="Select all unreconciled"
                                                     className="w-4 h-4 rounded border-border-hover bg-background-tertiary text-primary cursor-pointer"
                                                 />
                                             )}
@@ -3067,7 +2950,6 @@ export default function AccountLedger({
                                 const isUnreviewed = tx.reviewed === false;
                                 const amount = parseFloat(tx.account_split_value);
                                 const reconcileInfo = getReconcileIcon(tx.account_split_reconcile_state);
-                                const isSelected = isRowSelected(tx, selectedSplits);
 
                                 if (editingGuid === tx.guid) {
                                     return (
@@ -3097,7 +2979,7 @@ export default function AccountLedger({
                                 return (
                                     <React.Fragment key={row.id}>
                                     <tr
-                                        className={`hover:bg-surface-hover transition-colors group cursor-pointer ${isSelected ? 'bg-warning/5' : ''} ${index === focusedRowIndex ? 'ring-2 ring-primary/50 ring-inset bg-primary/5' : ''} ${isUnreviewed ? 'border-l-2 border-l-warning' : ''}`}
+                                        className={`hover:bg-surface-hover transition-colors group cursor-pointer ${index === focusedRowIndex ? 'ring-2 ring-primary/50 ring-inset bg-primary/5' : ''} ${isUnreviewed ? 'border-l-2 border-l-warning' : ''}`}
                                         onContextMenu={(e) => openContextMenu(e, tx)}
                                         onClick={(e) => {
                                             // Don't trigger on checkbox or button clicks
@@ -3109,18 +2991,7 @@ export default function AccountLedger({
                                             const colId = cell.column.id;
 
                                             if (colId === 'select') {
-                                                return (
-                                                    <td key={cell.id} className="px-3 py-2 align-middle">
-                                                        {getSelectableRowSplits(tx).length > 0 && (
-                                                            <input
-                                                                type="checkbox"
-                                                                checked={isSelected}
-                                                                onChange={() => toggleTransactionSelection(tx)}
-                                                                className="w-4 h-4 rounded border-border-hover bg-background-tertiary text-warning focus:ring-warning/50 cursor-pointer"
-                                                            />
-                                                        )}
-                                                    </td>
-                                                );
+                                                return <td key={cell.id} className="px-3 py-2 align-middle" />;
                                             }
 
                                             if (colId === 'expand') {
@@ -3705,29 +3576,6 @@ export default function AccountLedger({
             </div>
         </Modal>
 
-        {/* Floating reconciliation panel - outside overflow-clip container */}
-        {isReconciling && (
-            <ReconciliationPanel
-                accountGuid={accountGuid}
-                commodityScu={commodityScu}
-                accountCurrency={accountCurrency}
-                isInvestment={isInvestmentAccount}
-                sharePrecision={sharePrecision}
-                currentBalance={reconciledBalance}
-                selectedBalance={selectedBalance}
-                onReconcileComplete={handleReconcileComplete}
-                selectedSplits={selectedSplits}
-                onSelectAll={selectAllUnreconciled}
-                onClearSelection={clearSelection}
-                isReconciling={isReconciling}
-                onStartReconcile={() => { setIsEditMode(false); setIsReconciling(true); }}
-                onCancelReconcile={() => {
-                    setIsReconciling(false);
-                    setSelectedSplits(new Set());
-                }}
-                simpleFinBalance={simpleFinBalance}
-            />
-        )}
         </>
     );
 }

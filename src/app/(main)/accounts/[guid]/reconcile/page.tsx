@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState, Suspense } from 'react';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useToast } from '@/contexts/ToastContext';
 import { notifyActionCenterUpdated } from '@/lib/financial-actions/client-events';
@@ -31,6 +31,7 @@ function parseEndingBalance(raw: string): string | null {
 function ReconcilePageContent() {
     const params = useParams();
     const guid = params.guid as string;
+    const router = useRouter();
     const toast = useToast();
 
     const [statementDate, setStatementDate] = useState<string>(todayIsoDate);
@@ -103,6 +104,30 @@ function ReconcilePageContent() {
         window.addEventListener('keydown', handleNewTransactionShortcut);
         return () => window.removeEventListener('keydown', handleNewTransactionShortcut);
     }, [newTransactionOpen, deleteCandidate]);
+
+    // Escape returns to this account's ledger, mirroring the ledger's own
+    // Escape-back-to-hierarchy step. Focus inside an input blurs first, so a
+    // stray Escape while typing the ending balance is not a navigation. The
+    // transaction and delete dialogs never reach this handler at all — the
+    // shared Modal answers Escape on `document` and stops propagation before
+    // any window listener — but the guard keeps that true even if a dialog
+    // ever opts out of closeOnEscape.
+    useEffect(() => {
+        const handleEscape = (event: KeyboardEvent) => {
+            if (event.key !== 'Escape' || newTransactionOpen || deleteCandidate) return;
+            const target = event.target as HTMLElement | null;
+            const tag = target?.tagName;
+            if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') {
+                event.preventDefault();
+                target?.blur();
+                return;
+            }
+            event.preventDefault();
+            router.push(`/accounts/${guid}`);
+        };
+        window.addEventListener('keydown', handleEscape);
+        return () => window.removeEventListener('keydown', handleEscape);
+    }, [guid, newTransactionOpen, deleteCandidate, router]);
 
     useEffect(() => {
         if (!guid) return;

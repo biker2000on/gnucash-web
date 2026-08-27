@@ -5,13 +5,12 @@ const columnHelper = createColumnHelper<AccountTransaction>();
 
 export function getColumns(meta: {
     accountGuid: string;
-    isReconciling: boolean;
     isEditMode: boolean;
     viewStyle?: string;
 }): ColumnDef<AccountTransaction>[] {
     return [
-        // Checkbox column (reconciliation or edit mode)
-        ...(meta.isReconciling || meta.isEditMode ? [
+        // Checkbox column (edit mode)
+        ...(meta.isEditMode ? [
             columnHelper.display({
                 id: 'select',
                 header: 'select',
@@ -91,12 +90,11 @@ export function getColumns(meta: {
 
 export function getInvestmentColumns(meta: {
     accountGuid: string;
-    isReconciling: boolean;
     isEditMode: boolean;
     viewStyle?: string;
 }): ColumnDef<AccountTransaction>[] {
     return [
-        ...(meta.isReconciling || meta.isEditMode ? [
+        ...(meta.isEditMode ? [
             columnHelper.display({
                 id: 'select',
                 header: 'select',

@@ -3,9 +3,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const toastSuccess = vi.fn();
 const toastError = vi.fn();
+const routerPush = vi.fn();
 
 vi.mock('next/navigation', () => ({
     useParams: () => ({ guid: 'account-guid' }),
+    useRouter: () => ({ push: routerPush, replace: vi.fn(), prefetch: vi.fn() }),
 }));
 
 vi.mock('@/contexts/ToastContext', () => ({
@@ -93,6 +95,7 @@ describe('ReconcilePage transaction actions', () => {
         deleteStatus = 200;
         toastSuccess.mockReset();
         toastError.mockReset();
+        routerPush.mockReset();
 
         vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
             const url = String(input);
@@ -119,6 +122,31 @@ describe('ReconcilePage transaction actions', () => {
             }
             return jsonResponse({});
         }));
+    });
+
+    it('returns to the account ledger on Escape, but blurs a focused input first', async () => {
+        render(<ReconcilePage />);
+        await screen.findByText('Review me');
+
+        // Focus in an input: Escape leaves the field, not the page.
+        const endingInput = screen.getByLabelText(/ending balance/i);
+        endingInput.focus();
+        fireEvent.keyDown(endingInput, { key: 'Escape' });
+        expect(routerPush).not.toHaveBeenCalled();
+
+        fireEvent.keyDown(window, { key: 'Escape' });
+        expect(routerPush).toHaveBeenCalledWith('/accounts/account-guid');
+    });
+
+    it('does not navigate on Escape while the new-transaction dialog is open', async () => {
+        render(<ReconcilePage />);
+        await screen.findByText('Review me');
+
+        fireEvent.keyDown(window, { key: 'n', altKey: true });
+        expect(screen.getByRole('dialog', { name: 'New Transaction' })).toBeInTheDocument();
+
+        fireEvent.keyDown(window, { key: 'Escape' });
+        expect(routerPush).not.toHaveBeenCalled();
     });
 
     it('opens a transaction modal for Alt+N and defaults it to the reconciled account', async () => {
