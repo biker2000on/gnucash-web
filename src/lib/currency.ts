@@ -8,7 +8,7 @@
 import prisma from './prisma';
 import { toDecimalNumber as toDecimal } from './gnucash';
 import { getActiveBookRootGuid } from './book-scope';
-import { isPriceStale, priceAgeDays, stalenessDaysFor } from './price-staleness';
+import { isPriceStale, priceAgeDays, stalenessDaysFor, stalenessReferenceTime } from './price-staleness';
 
 /**
  * The bound for a currency pair.
@@ -162,9 +162,12 @@ export async function getAllCurrencies(): Promise<Currency[]> {
  * reached, so a rate from three years ago reads exactly like this morning's.
  */
 function ageOf(priceDate: Date, asOfDate: Date): { ageDays: number; stale: boolean } {
+    // Capped at the present: a lookup as of a future date is served by today's
+    // newest quote, which is not stale for the future date not having arrived.
+    const reference = stalenessReferenceTime(asOfDate, new Date());
     return {
-        ageDays: priceAgeDays(priceDate, asOfDate),
-        stale: isPriceStale(priceDate, asOfDate, FX_STALENESS_DAYS),
+        ageDays: priceAgeDays(priceDate, reference),
+        stale: isPriceStale(priceDate, reference, FX_STALENESS_DAYS),
     };
 }
 

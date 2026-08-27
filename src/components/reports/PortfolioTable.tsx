@@ -19,6 +19,7 @@ import {
     stalePriceMark,
     stalePriceMessage,
     stalenessDaysFor,
+    stalenessReferenceTime,
 } from '@/lib/price-staleness';
 
 function fmtCurrency(n: number): string {
@@ -99,12 +100,17 @@ export function PortfolioTable({ data, onAccountClick }: PortfolioTableProps) {
     // that is not looks arbitrary, and the reader has nothing on screen to tell
     // them it is the market that differs, not the data.
     const asOfDate = data.filters.endDate || data.generatedAt;
+    // Judged against the as-of date capped at the payload's generation moment:
+    // a report whose range ends in the future is priced from the newest quote
+    // that existed when it was generated, and judging that quote against the
+    // future end date would report fresh prices as months old.
+    const stalenessAsOf = stalenessReferenceTime(asOfDate, data.generatedAt);
     const boundFor = (h: PortfolioHolding) => stalenessDaysFor({
         namespace: h.commodityNamespace,
         mnemonic: h.symbol,
         continuousWeekends: h.priceContinuousWeekends,
     });
-    const isStale = (h: PortfolioHolding) => isPriceStale(h.priceDate, asOfDate, boundFor(h));
+    const isStale = (h: PortfolioHolding) => isPriceStale(h.priceDate, stalenessAsOf, boundFor(h));
     const staleCount = holdings.filter(isStale).length;
     /**
      * The mark, the age, and the bound — plus the whole sentence for a screen
@@ -119,7 +125,7 @@ export function PortfolioTable({ data, onAccountClick }: PortfolioTableProps) {
      */
     const staleMark = (h: PortfolioHolding) => {
         const bound = boundFor(h);
-        const age = priceAgeDays(h.priceDate, asOfDate);
+        const age = priceAgeDays(h.priceDate, stalenessAsOf);
         return (
             <span className="ml-1 text-xs text-warning whitespace-nowrap">
                 <span aria-hidden="true">{stalePriceMark(age, bound)}</span>

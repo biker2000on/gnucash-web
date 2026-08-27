@@ -4,6 +4,7 @@ import { getBaseCurrency, type Currency } from '@/lib/currency';
 import {
   describeStalePrice,
   isPriceStale,
+  stalenessReferenceTime,
   stalenessDaysFor,
   CONTINUOUS_EVIDENCE_SOURCE,
   WEEKEND_EVIDENCE_DAYS,
@@ -487,11 +488,17 @@ export async function buildAccountValuationContext(
     continuousWeekends: continuousWeekends.get(guid),
   });
 
+  // Staleness is judged against the as-of date capped at the present: a range
+  // that ends in the future (a year-to-date dashboard ending December 31) is
+  // priced from today's newest quote, and judging that quote against the
+  // future end date reported fresh prices as months old.
+  const stalenessAsOf = stalenessReferenceTime(asOf, new Date());
+
   // A stale quote names the commodity the same way a gap does, so both need the
   // mnemonic backfill. A fully priced, fully current book still triggers
   // neither, keeping that path query-for-query identical.
   const staleGuids = [...rateDates.keys()].filter(
-    guid => isPriceStale(rateDates.get(guid), asOf, boundFor(guid)),
+    guid => isPriceStale(rateDates.get(guid), stalenessAsOf, boundFor(guid)),
   );
   if (gapReasons.size > 0 || staleGuids.length > 0) {
     await resolveMissingMnemonics([...gapReasons.keys(), ...staleGuids], mnemonics);
@@ -503,7 +510,7 @@ export async function buildAccountValuationContext(
       guid,
       mnemonics.get(guid) ?? guid,
       rateDates.get(guid),
-      asOf,
+      stalenessAsOf,
       boundFor(guid),
     );
     if (disclosure) stalePrices.push(disclosure);

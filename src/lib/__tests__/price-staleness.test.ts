@@ -18,9 +18,43 @@ import {
     stalePriceMark,
     stalePriceMessage,
     stalenessDaysFor,
+    stalenessReferenceTime,
 } from '../price-staleness';
 
 const MONDAY = new Date('2026-08-17T13:00:00.000Z');
+
+/**
+ * Regression (2026-08-27): the dashboard's year-to-date range ends December 31,
+ * and staleness was judged against that FUTURE end date — so quotes fetched one
+ * and two days earlier reported as "127 days old" / "128 days old" across every
+ * KPI. The reference for age must be the as-of date capped at the present.
+ */
+describe('stalenessReferenceTime', () => {
+    it('keeps a past or present as-of date as the reference', () => {
+        const past = new Date('2020-03-31T00:00:00.000Z');
+        expect(stalenessReferenceTime(past, MONDAY)).toBe(past);
+        expect(stalenessReferenceTime(MONDAY, MONDAY)).toBe(MONDAY);
+    });
+
+    it('caps a future as-of date at now', () => {
+        const yearEnd = new Date('2026-12-31T00:00:00.000Z');
+        expect(stalenessReferenceTime(yearEnd, MONDAY)).toBe(MONDAY);
+    });
+
+    it('keeps a two-day-old quote current when the range ends in the future', () => {
+        const quote = new Date('2026-08-15T20:00:00.000Z');
+        const yearEnd = new Date('2026-12-31T00:00:00.000Z');
+        const reference = stalenessReferenceTime(yearEnd, MONDAY);
+        expect(priceAgeDays(quote, reference)).toBe(1);
+        expect(isPriceStale(quote, reference)).toBe(false);
+        // Unclamped, the same quote read as months old — the reported defect.
+        expect(isPriceStale(quote, yearEnd)).toBe(true);
+    });
+
+    it('passes an unparseable as-of through unchanged', () => {
+        expect(stalenessReferenceTime('not a date', MONDAY)).toBe('not a date');
+    });
+});
 
 describe('priceAgeDays', () => {
     it('counts whole elapsed days, not calendar boundaries', () => {

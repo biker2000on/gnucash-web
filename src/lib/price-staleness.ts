@@ -464,9 +464,37 @@ function toTime(value: Date | string | number | null | undefined): number | null
 }
 
 /**
+ * The moment a quote's age should be judged against: the as-of date, capped at
+ * `now`.
+ *
+ * The as-of date is the right reference for the PAST — a statement drawn as of
+ * March 2020 is not stale for being about March 2020. It is the wrong
+ * reference for the FUTURE: a valuation drawn as of a date that has not
+ * happened yet (a year-to-date dashboard whose range ends December 31) is
+ * priced from today's newest quote, and measuring that quote's age against the
+ * future end date reported two-day-old prices as 128 days old. A quote cannot
+ * be stale relative to a moment at which no newer quote could exist.
+ *
+ * `now` is a required parameter rather than a `Date.now()` default so this
+ * module stays pure: the server passes its valuation moment, a Client
+ * Component passes the payload's `generatedAt`.
+ */
+export function stalenessReferenceTime(
+    asOf: Date | string | number,
+    now: Date | string | number,
+): Date | string | number {
+    const asOfTime = toTime(asOf);
+    const nowTime = toTime(now);
+    if (asOfTime === null || nowTime === null) return asOf;
+    return asOfTime <= nowTime ? asOf : now;
+}
+
+/**
  * Whole days between a quote and the moment it is being used to value
  * something. Measured against the AS-OF date rather than the wall clock: a
  * statement drawn as of March 2020 is not stale for being about March 2020.
+ * Callers valuing a range that can END IN THE FUTURE must clamp the reference
+ * through `stalenessReferenceTime` first.
  *
  * A quote dated after the as-of moment counts as zero days old rather than a
  * negative age, so nothing downstream has to defend against a negative.
