@@ -1,10 +1,11 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { CreateTransactionRequest } from '@/lib/types';
 import { toNumDenom } from '@/lib/validation';
 import { useAccounts } from '@/lib/hooks/useAccounts';
 import { useDateShortcuts } from '@/lib/hooks/useDateShortcuts';
+import { useFormKeyboardShortcuts } from '@/lib/hooks/useFormKeyboardShortcuts';
 import { formatDateForDisplay, parseDateInput } from '@/lib/date-format';
 import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 import { toLocalDateString } from '@/lib/datePresets';
@@ -39,6 +40,8 @@ interface InvestmentTransactionFormProps {
     currentShares?: number;
     onSave: () => void;
     onCancel: () => void;
+    /** Refresh data without closing the modal (Record & New / Ctrl+Shift+Enter). */
+    onSaveAndNew?: () => void;
 }
 
 interface FormState {
@@ -253,6 +256,7 @@ export function InvestmentTransactionForm({
     currentShares = 0,
     onSave,
     onCancel,
+    onSaveAndNew,
 }: InvestmentTransactionFormProps) {
     const sharePrecision = commodityFraction > 0
         ? Math.max(0, Math.round(Math.log10(commodityFraction)))
@@ -263,6 +267,11 @@ export function InvestmentTransactionForm({
     const [errors, setErrors] = useState<string[]>([]);
     const [saving, setSaving] = useState(false);
     const [currencyGuid, setCurrencyGuid] = useState<string>('');
+    const formRef = useRef<HTMLFormElement>(null);
+    // In-flight guard. A ref, not `saving` state: the Ctrl+Enter listener can
+    // fire twice before React re-renders, so a state read would still be false
+    // on the second press and post the transaction twice.
+    const savingRef = useRef(false);
 
     // Track which fields have been edited for auto-calculation
     type EditedField = 'shares' | 'price' | 'total';
@@ -501,8 +510,25 @@ export function InvestmentTransactionForm({
         commoditySymbol,
     });
 
-    const handleSubmit = async (e: React.FormEvent) => {
-        e.preventDefault();
+    /** Same-date fresh form after Record & New, mirroring TransactionForm's
+     *  resetForm: keep the date (and the chosen action/accounts, the
+     *  investment analog of its default accounts), clear the entry fields. */
+    const resetForNextEntry = () => {
+        setForm(prev => ({
+            ...INITIAL_FORM_STATE,
+            date: prev.date,
+            action: prev.action,
+            cashAccountGuid: prev.cashAccountGuid,
+            incomeAccountGuid: prev.incomeAccountGuid,
+            expenseAccountGuid: prev.expenseAccountGuid,
+        }));
+        setEditHistory([]);
+    };
+
+    const submitTransaction = async (saveAndNew: boolean) => {
+        // Ctrl+Enter is a window-level listener, so it bypasses the button's
+        // disabled={saving}; without this a second press duplicates the entry.
+        if (savingRef.current) return;
         setErrors([]);
 
         const validationErrors = validateForm();
@@ -545,6 +571,7 @@ export function InvestmentTransactionForm({
             splits,
         };
 
+        savingRef.current = true;
         setSaving(true);
         try {
             const res = await fetch('/api/transactions', {
@@ -558,7 +585,12 @@ export function InvestmentTransactionForm({
                 throw new Error(extractErrorMessage(err, 'Failed to create transaction'));
             }
 
-            onSave();
+            if (saveAndNew && onSaveAndNew) {
+                resetForNextEntry();
+                onSaveAndNew();
+            } else {
+                onSave();
+            }
         } catch (error) {
             if (error instanceof Error) {
                 setErrors([error.message]);
@@ -566,12 +598,34 @@ export function InvestmentTransactionForm({
                 setErrors(['An error occurred while saving']);
             }
         } finally {
+            savingRef.current = false;
             setSaving(false);
         }
     };
 
+    const handleSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        await submitTransaction(false);
+    };
+
+    // Ctrl+Enter submits, like the other transaction modals.
+    useFormKeyboardShortcuts(formRef, () => void submitTransaction(false));
+
+    // Ctrl+Shift+Enter submits and keeps the modal open on a fresh form with
+    // the same date, like the other transaction modals' Save & New.
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'Enter') {
+                e.preventDefault();
+                void submitTransaction(onSaveAndNew ? true : false);
+            }
+        };
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    });
+
     return (
-        <form onSubmit={handleSubmit} className="space-y-6">
+        <form ref={formRef} onSubmit={handleSubmit} className="space-y-6">
             {/* Header */}
             <div className="flex items-center justify-between pb-4 border-b border-border">
                 <div>
@@ -940,6 +994,18 @@ export function InvestmentTransactionForm({
                 >
                     Cancel
                 </button>
+                {onSaveAndNew && (
+                    <Tip content="Record and start another with the same date (Ctrl+Shift+Enter)">
+                    <button
+                        type="button"
+                        onClick={() => void submitTransaction(true)}
+                        disabled={saving || loadingAccounts}
+                        className="px-4 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-primary-foreground rounded-lg transition-colors"
+                    >
+                        Record &amp; New
+                    </button>
+                    </Tip>
+                )}
                 <button
                     type="submit"
                     disabled={saving || loadingAccounts}

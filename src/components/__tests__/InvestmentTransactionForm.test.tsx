@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { InvestmentTransactionForm } from '../InvestmentTransactionForm';
 
@@ -165,5 +165,74 @@ describe('InvestmentTransactionForm account pickers', () => {
         expect(screen.getByText('New Shares to Add')).toBeInTheDocument();
         expect(screen.queryByText(/Split Ratio/i)).not.toBeInTheDocument();
         expect(screen.queryByPlaceholderText('e.g., 2-for-1')).not.toBeInTheDocument();
+    });
+});
+
+describe('InvestmentTransactionForm submit keyboard shortcuts', () => {
+    beforeEach(() => {
+        accountSelectorMock.mockClear();
+        vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const url = String(input);
+            if (url.startsWith('/api/commodities')) {
+                return { ok: true, json: async () => [{ guid: 'usd-guid', mnemonic: 'USD' }] };
+            }
+            if (url === '/api/transactions' && init?.method === 'POST') {
+                return { ok: true, json: async () => ({}) };
+            }
+            throw new Error(`Unexpected request: ${url}`);
+        }));
+    });
+
+    afterEach(() => {
+        vi.unstubAllGlobals();
+    });
+
+    /** Fill out a valid Dividend entry (fewest required fields). */
+    async function fillDividend() {
+        fireEvent.click(screen.getByRole('button', { name: 'Dividend' }));
+        fireEvent.change(screen.getByPlaceholderText('0.00'), { target: { value: '12.34' } });
+        fireEvent.click(screen.getByTestId('account-selector-Select cash/bank account...'));
+        fireEvent.click(screen.getByTestId('account-selector-Select income account...'));
+        // Let the currency fetch resolve into state so submission is not
+        // rejected with "Currency not loaded".
+        await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    }
+
+    it('submits on Ctrl+Enter like the other transaction modals', async () => {
+        const onSave = vi.fn();
+        render(<InvestmentTransactionForm {...formProps} onSave={onSave} />);
+        await fillDividend();
+
+        fireEvent.keyDown(window, { key: 'Enter', ctrlKey: true });
+
+        await vi.waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+        expect(fetch).toHaveBeenCalledWith('/api/transactions', expect.objectContaining({ method: 'POST' }));
+    });
+
+    it('Ctrl+Shift+Enter records and starts a fresh form with the same date', async () => {
+        const onSave = vi.fn();
+        const onSaveAndNew = vi.fn();
+        render(<InvestmentTransactionForm {...formProps} onSave={onSave} onSaveAndNew={onSaveAndNew} />);
+        await fillDividend();
+
+        const dateInput = screen.getByPlaceholderText('MM/DD/YYYY') as HTMLInputElement;
+        const dateBefore = dateInput.value;
+
+        fireEvent.keyDown(window, { key: 'Enter', ctrlKey: true, shiftKey: true });
+
+        await vi.waitFor(() => expect(onSaveAndNew).toHaveBeenCalledTimes(1));
+        // Modal stays open on a cleared form: parent close callback not called,
+        // the amount is blank again, and the date survives for the next entry.
+        expect(onSave).not.toHaveBeenCalled();
+        expect((screen.getByPlaceholderText('0.00') as HTMLInputElement).value).toBe('');
+        expect(dateInput.value).toBe(dateBefore);
+    });
+
+    it('renders a Record & New button only when onSaveAndNew is wired', () => {
+        const { rerender } = render(<InvestmentTransactionForm {...formProps} />);
+        expect(screen.queryByRole('button', { name: 'Record & New' })).not.toBeInTheDocument();
+
+        rerender(<InvestmentTransactionForm {...formProps} onSaveAndNew={vi.fn()} />);
+        expect(screen.getByRole('button', { name: 'Record & New' })).toBeInTheDocument();
     });
 });

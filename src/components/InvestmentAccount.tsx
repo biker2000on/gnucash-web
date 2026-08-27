@@ -13,6 +13,7 @@ import {
 import type { CostBasisCoverage, PositionSide } from '@/lib/holdings-coverage';
 import { useToast } from '@/contexts/ToastContext';
 import { InvestmentTransactionForm } from './InvestmentTransactionForm';
+import { Modal } from './ui/Modal';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceArea, AreaChart, Area, ReferenceLine } from 'recharts';
 import type { CategoricalChartFunc } from 'recharts/types/chart/types';
 import { computeZeroOffset, CHART_COLORS, GRADIENT_FILL_OPACITY } from '@/lib/chart-utils';
@@ -684,10 +685,21 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
                 </div>
             )}
 
-            {/* Investment Transaction Modal */}
-            {showTransactionModal && commodity && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center overflow-hidden bg-black/50 p-4">
-                    <div className="max-h-[calc(100dvh-2rem)] w-full max-w-2xl overflow-auto rounded-lg border border-border bg-surface-elevated p-5">
+            {/* Investment Transaction Modal. The shared Modal owns Escape and
+                stops its propagation, so the ledger's window-level handler
+                cannot also see the keystroke and navigate back to the account
+                hierarchy while the modal closes. */}
+            {commodity && (
+                <Modal
+                    isOpen={showTransactionModal}
+                    onClose={() => setShowTransactionModal(false)}
+                    title="New Investment Transaction"
+                    size="2xl"
+                    closeOnBackdrop={false}
+                    closeOnEscape={true}
+                    resetKey="new-investment"
+                >
+                    <div className="px-6 py-4">
                         <InvestmentTransactionForm
                             accountGuid={data.account.guid}
                             accountName={data.account.name}
@@ -697,10 +709,11 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
                                 setShowTransactionModal(false);
                                 fetchData();
                             }}
+                            onSaveAndNew={() => fetchData()}
                             onCancel={() => setShowTransactionModal(false)}
                         />
                     </div>
-                </div>
+                </Modal>
             )}
 
             {/* Add Price Modal */}

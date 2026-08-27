@@ -3557,6 +3557,10 @@ export default function AccountLedger({
                                 suppressNextDataEvent('transactions');
                                 fetchTransactions();
                             }}
+                            onSaveAndNew={() => {
+                                suppressNextDataEvent('transactions');
+                                fetchTransactions();
+                            }}
                             onCancel={() => setIsEditModalOpen(false)}
                         />
                     </div>
