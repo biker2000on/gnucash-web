@@ -924,9 +924,6 @@ export function DocumentVaultBrowser({
 
     return (
         <section className="space-y-4" aria-label="Document browser">
-            {/* Preload the pdf.js runtime so a Preview click does not pay the
-                module download on the critical path (React hoists this link). */}
-            <link rel="modulepreload" href="/pdf.min.mjs" />
             <div className="flex flex-wrap items-end gap-3 rounded-lg border border-border bg-background-secondary/30 p-3">
                 <label className="min-w-64 flex-1 text-xs font-medium text-foreground-secondary">
                     Search document text

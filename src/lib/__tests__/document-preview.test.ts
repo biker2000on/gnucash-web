@@ -65,14 +65,17 @@ describe('buildDocumentServeHeaders', () => {
         expect(serve('application/pdf', '')['Content-Disposition']).toMatch(/^attachment;/);
     });
 
-    it('sends the isolation headers only on inline responses', () => {
-        // Sandbox on EVERY inline type, PDFs included: previews render via
-        // pdf.js from a fetched ArrayBuffer, so the browser never interprets
-        // the response as a document and the strictest policy costs nothing.
+    it('sends the isolation headers per type on inline responses', () => {
+        // No sandbox for application/pdf: the preview modal frames the inline
+        // URL so the browser's built-in viewer renders it, and that viewer
+        // refuses to run sandboxed — Chrome downloads the file instead.
+        // nosniff pins the declared type so the body cannot be re-typed.
         const inline = serve('application/pdf', 'inline');
-        expect(inline['Content-Security-Policy']).toBe("sandbox; default-src 'none'");
+        expect(inline['Content-Security-Policy']).toBeUndefined();
         expect(inline['X-Content-Type-Options']).toBe('nosniff');
 
+        // <img> rendering is unaffected by sandbox, so images keep the opaque
+        // origin as defence in depth.
         const image = serve('image/png', 'inline');
         expect(image['Content-Security-Policy']).toBe("sandbox; default-src 'none'");
 
@@ -118,6 +121,6 @@ describe('resolvePreviewKind', () => {
 describe('document urls', () => {
     it('keeps the download url free of the disposition parameter', () => {
         expect(documentDownloadUrl(7)).toBe('/api/business/documents/7/download');
-        expect(documentInlineUrl(7)).toBe('/api/business/documents/7/download?disposition=inline&v=2');
+        expect(documentInlineUrl(7)).toBe('/api/business/documents/7/download?disposition=inline&v=3');
     });
 });

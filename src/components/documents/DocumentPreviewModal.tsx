@@ -1,7 +1,6 @@
 'use client';
 
 import { useCallback, useState } from 'react';
-import { PdfCanvasPreview } from '@/components/documents/PdfCanvasPreview';
 import { Modal } from '@/components/ui/Modal';
 import {
     documentDownloadUrl,
@@ -27,12 +26,16 @@ interface DocumentPreviewModalProps extends Omit<Partial<DocumentPreviewTarget>,
 /**
  * In-browser preview for a vault document.
  *
- * PDFs render via pdf.js onto canvases (PdfCanvasPreview) — never the
- * browser's built-in viewer, whose plugin refuses to run under the response's
- * CSP `sandbox` and makes Chrome download the file instead (a native save
- * dialog popping over the app). Images render as an `<img>`. Anything else
- * (or a document whose type we cannot determine) shows a download prompt
- * rather than an empty frame, so every caller degrades cleanly.
+ * PDFs render in the BROWSER'S OWN viewer via an `<iframe>` of the inline URL
+ * — text selection, search, zoom and print for free. The server makes that
+ * possible by omitting the CSP `sandbox` for `application/pdf` specifically
+ * (see `inlineSecurityHeaders` in lib/document-preview.ts): under `sandbox`
+ * the built-in viewer refuses to run and Chrome downloads the file instead,
+ * which is why previews spent a while rendered through a vendored pdf.js.
+ * The frame carries no `sandbox` attribute for the same reason. Images render
+ * as an `<img>`. Anything else (or a document whose type we cannot determine)
+ * shows a download prompt rather than an empty frame, so every caller
+ * degrades cleanly.
  *
  * The preview renders OPTIMISTICALLY from the caller-supplied MIME type and
  * file name. There used to be a HEAD "probe" of the inline URL first, and it
@@ -84,11 +87,11 @@ export function DocumentPreviewModal({
         >
             <div className="flex h-full min-h-[60vh] w-full min-w-0 flex-col p-4">
                 {kind === 'pdf' && (
-                    // Rendered with pdf.js, NOT the browser's built-in viewer:
-                    // the plugin refuses to run under the response's CSP
-                    // sandbox and Chrome downloads the file instead (a native
-                    // save dialog over the app). See PdfCanvasPreview.
-                    <PdfCanvasPreview src={documentInlineUrl(documentId)} heading={heading} />
+                    <iframe
+                        src={documentInlineUrl(documentId)}
+                        title={`Preview of ${heading}`}
+                        className="h-full min-h-0 w-full min-w-0 flex-1 rounded-lg border border-border bg-background-tertiary"
+                    />
                 )}
 
                 {kind === 'image' && !imageFailed && (

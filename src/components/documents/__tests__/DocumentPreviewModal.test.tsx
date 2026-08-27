@@ -1,9 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-vi.mock('@/components/documents/PdfCanvasPreview', () => ({
-    PdfCanvasPreview: ({ src, heading }: { src: string; heading: string }) => (
-        <div data-testid="pdf-canvas-preview" data-src={src} data-heading={heading} />
-    ),
-}));
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { DocumentPreviewModal } from '@/components/documents/DocumentPreviewModal';
 
@@ -45,15 +40,17 @@ const open = (props: Partial<React.ComponentProps<typeof DocumentPreviewModal>> 
     );
 
 describe('DocumentPreviewModal', () => {
-    it('renders a PDF through the pdf.js canvas preview at the inline URL', async () => {
+    it('frames a PDF at the inline URL so the browser-native viewer renders it', async () => {
         installProbe({ contentType: 'application/pdf' });
         open();
 
-        const pdfPreview = await screen.findByTestId('pdf-canvas-preview');
-        expect(pdfPreview.getAttribute('data-src')).toBe('/api/business/documents/12/download?disposition=inline&v=2');
-        // Never the built-in viewer: under the response's CSP sandbox Chrome
-        // downloads instead of rendering (native save dialog over the app).
-        expect(document.querySelector('iframe')).toBeNull();
+        const frame = await screen.findByTitle('Preview of Homeowners policy');
+        expect(frame.tagName).toBe('IFRAME');
+        expect(frame.getAttribute('src')).toBe('/api/business/documents/12/download?disposition=inline&v=3');
+        // No sandbox attribute: it would disable the built-in PDF viewer and
+        // Chrome would download the file instead. The server-side isolation
+        // for other types lives in inlineSecurityHeaders (document-preview.ts).
+        expect(frame.hasAttribute('sandbox')).toBe(false);
     });
 
     it('renders an image document as an img', async () => {
@@ -62,7 +59,7 @@ describe('DocumentPreviewModal', () => {
 
         const image = await screen.findByAltText('Preview of Roof photo');
         expect(image.tagName).toBe('IMG');
-        expect(image.getAttribute('src')).toBe('/api/business/documents/12/download?disposition=inline&v=2');
+        expect(image.getAttribute('src')).toBe('/api/business/documents/12/download?disposition=inline&v=3');
     });
 
     it('offers a download instead of a frame for a type that cannot be previewed', async () => {
@@ -83,7 +80,7 @@ describe('DocumentPreviewModal', () => {
         installProbe({ contentType: 'application/pdf' });
         open();
 
-        await screen.findByTestId('pdf-canvas-preview');
+        await screen.findByTitle('Preview of Homeowners policy');
         expect(globalThis.fetch).not.toHaveBeenCalledWith(
             expect.stringContaining('/download'),
             expect.objectContaining({ method: 'HEAD' }),
@@ -95,9 +92,9 @@ describe('DocumentPreviewModal', () => {
         open();
 
         // The probe failing open still previews: kind comes from the caller's
-        // mimeType/fileName, and the canvas renderer surfaces any real error.
-        const pdfPreview = await screen.findByTestId('pdf-canvas-preview');
-        expect(pdfPreview.getAttribute('data-heading')).toBe('Homeowners policy');
+        // mimeType/fileName, and the frame's own load surfaces any real error.
+        const frame = await screen.findByTitle('Preview of Homeowners policy');
+        expect(frame.tagName).toBe('IFRAME');
     });
 
     it('always exposes a download action in the header', async () => {

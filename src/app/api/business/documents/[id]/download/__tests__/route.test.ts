@@ -36,12 +36,28 @@ describe('GET document download', () => {
         expect(response.headers.get('Content-Security-Policy')).toBeNull();
     });
 
-    it('serves a safelisted type inline with the isolation headers', async () => {
+    it('serves an inline PDF without the CSP sandbox so the built-in viewer renders it', async () => {
         const response = await GET(request('?disposition=inline'), params);
         expect(response.headers.get('Content-Disposition')).toBe("inline; filename*=UTF-8''policy.pdf");
         expect(response.headers.get('Content-Type')).toBe('application/pdf');
-        // Sandboxed even for PDFs: the preview renders via pdf.js from a fetch,
-        // so the browser never interprets this response as a document.
+        // No sandbox for application/pdf: the preview modal frames this URL
+        // and the browser's own PDF viewer refuses to run sandboxed — Chrome
+        // downloads the file instead. nosniff pins the declared type so the
+        // body can never be re-typed as HTML.
+        expect(response.headers.get('Content-Security-Policy')).toBeNull();
+        expect(response.headers.get('X-Content-Type-Options')).toBe('nosniff');
+    });
+
+    it('keeps the CSP sandbox on inline images', async () => {
+        getFileMock.mockResolvedValue({
+            buffer: Buffer.from('fake-png-bytes'),
+            fileName: 'roof.png',
+            mimeType: 'image/png',
+        });
+        const response = await GET(request('?disposition=inline'), params);
+        expect(response.headers.get('Content-Disposition')).toBe("inline; filename*=UTF-8''roof.png");
+        // <img> rendering is unaffected by sandbox, so images keep the opaque
+        // origin as defence in depth.
         expect(response.headers.get('Content-Security-Policy')).toBe("sandbox; default-src 'none'");
         expect(response.headers.get('X-Content-Type-Options')).toBe('nosniff');
     });
