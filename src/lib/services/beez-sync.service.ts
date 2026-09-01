@@ -39,7 +39,11 @@ import { getAccountGuidsForBook } from '@/lib/book-scope';
 import { logAudit } from '@/lib/services/audit.service';
 import { cacheInvalidateFrom } from '@/lib/cache';
 import { publishDataChange } from '@/lib/data-events';
-import { assertNotLocked } from '@/lib/services/period-lock.service';
+import {
+    assertNotLocked,
+    findLockedDate,
+    getCachedLockDate,
+} from '@/lib/services/period-lock.service';
 import {
     BEEZ_FEED_OVERLAP,
     EnterDateStampError,
@@ -48,6 +52,7 @@ import {
 } from '@/lib/enter-date';
 import {
     assertSplitsNotProtected,
+    isProtectedReconcileState,
     ReconciledSplitError,
 } from '@/lib/services/reconciled-split.service';
 import {
@@ -1480,4 +1485,234 @@ function isAfter(
     if (b.enterDate === null || b.guid === null) return true;
     if (a.enterDate !== b.enterDate) return a.enterDate > b.enterDate;
     return a.guid > b.guid;
+}
+
+// ---------------------------------------------------------------------------
+// Verify (read-only)
+// ---------------------------------------------------------------------------
+
+/**
+ * What an external id resolves to, right now, in this book.
+ *
+ *  - `linked` — the link exists and so does its transaction. The item carries
+ *    the whole ledger entry so the caller can compare it field by field.
+ *  - `no-link` — this book has never linked that id, or the link was removed.
+ *    Nothing to compare against.
+ *  - `orphan-link` — the link exists but its transaction is gone. This is the
+ *    tombstone the change feed reports, seen from the other side, and it is a
+ *    DIFFERENT fact from `no-link`: the mapping survived and the ledger entry
+ *    did not, so the repair is DELETE to acknowledge, not POST to recreate.
+ */
+export type BeezVerifyState = 'linked' | 'no-link' | 'orphan-link';
+
+export interface BeezVerifySplit {
+    accountGuid: string;
+    amountCents: number;
+    memo: string;
+}
+
+/**
+ * One id's answer. Everything past `state` is present only for `linked`, except
+ * `transactionGuid`, which an `orphan-link` also carries — it names the row the
+ * link still points at, which is what a repair tool needs in order to say what
+ * went missing.
+ */
+export interface BeezVerifyItem {
+    externalId: string;
+    state: BeezVerifyState;
+    transactionGuid?: string;
+    enterDate?: string | null;
+    postDate?: string | null;
+    description?: string | null;
+    num?: string | null;
+    splits?: BeezVerifySplit[];
+    /**
+     * Set when at least one split cannot be stated exactly in cents; `splits`
+     * is then empty, exactly as in the change feed. A verifier must treat this
+     * as "cannot compare", never as "the amounts differ" — see the cents
+     * discipline in src/lib/integrations/beez.ts.
+     */
+    unrepresentable?: true;
+    /**
+     * True when any split is reconciled ('y') or frozen ('f'). Such a
+     * transaction cannot be corrected through this API at all: PUT and DELETE
+     * refuse it with 409. A caller that finds a divergence here knows to raise
+     * it with a human rather than to queue a repair that will bounce.
+     */
+    reconciledOrFrozen?: boolean;
+    /**
+     * True when the post date falls on or before the book's period lock date —
+     * the same rule `assertNotLocked` enforces on every write. Also
+     * uncorrectable remotely, for a different reason: the period was closed
+     * with these figures in it.
+     */
+    inClosedPeriod?: boolean;
+}
+
+interface VerifyTxRow {
+    guid: string;
+    post_date: Date | null;
+    num: string | null;
+    description: string | null;
+    /** The database's own microsecond rendering — see {@link ChangeTxRow}. */
+    enter_date: string | null;
+}
+
+/**
+ * Resolve external ids to what they currently point at. READS ONLY.
+ *
+ * This is the read half of the restore story: after beez-trackz restores its
+ * own external-id mappings from a portable snapshot, it must prove every
+ * restored id still resolves to the transaction it expects BEFORE sync is
+ * re-enabled — because the first thing a re-enabled sync would otherwise do is
+ * push its idea of the truth over folio's. So this function writes nothing at
+ * all: no idempotency claim, no `enter_date` bump, no link mutation, no audit
+ * row. There is deliberately no verb here that could repair anything; a caller
+ * that finds a divergence uses the existing write endpoints, one at a time,
+ * with a human in the loop.
+ *
+ * ONE PASS, NOT ONE PASS PER ID. Four queries answer the whole batch — links,
+ * transactions, splits, and the book's lock date — so a 500-id verification
+ * costs the same round trips as a 1-id one. The shape follows the change feed's
+ * fan-out (`= ANY(...::text[])`, then group in memory) rather than a loop of
+ * `findLinkByExternalId`, which would be 1500 round trips for the same answer.
+ *
+ * BOOK SCOPING is the link query's `book_guid` predicate and nothing else,
+ * which is sound for exactly the reason {@link findLinkByExternalId} documents:
+ * the POST path is the only writer of that table, so a link row under this book
+ * always names a transaction in this book. Re-deriving book membership from the
+ * splits would be a second, weaker spelling of an invariant the unique index
+ * already holds.
+ *
+ * The results are returned in REQUEST ORDER, one per requested entry including
+ * repeats, so the caller can zip its own list against them by index.
+ */
+export async function verifyBeezExternalIds(
+    context: BeezBookContext,
+    externalIds: string[],
+): Promise<BeezVerifyItem[]> {
+    if (externalIds.length === 0) return [];
+
+    const uniqueIds = [...new Set(externalIds)];
+    const links = await prisma.$queryRaw<LinkRow[]>`
+        SELECT external_id, entity_guid
+        FROM gnucash_web_external_links
+        WHERE book_guid = ${context.bookGuid} AND source = ${BEEZ_SOURCE}
+          AND entity_type = 'transaction'
+          AND external_id = ANY(${uniqueIds}::text[])
+    `;
+    const entityByExternalId = new Map(links.map(row => [row.external_id, row.entity_guid]));
+    const txGuids = [...new Set(links.map(row => row.entity_guid))];
+
+    // The lock date is read ONCE for the batch, through the ordinary cached
+    // reader rather than the `bypassCache` path the writers use. This call
+    // takes no locks and changes nothing, so a lock date set in the last second
+    // costs at worst one stale `inClosedPeriod` flag on a report a human is
+    // going to act on — where the writers' checks must bypass the cache
+    // because a stale read there would let a write into a closed period.
+    const [txRows, splitRows, lockDate] = await Promise.all([
+        txGuids.length > 0
+            ? prisma.$queryRaw<VerifyTxRow[]>`
+                SELECT guid, post_date, num, description,
+                       to_char(enter_date, ${ENTER_DATE_PG_FORMAT}::text) AS enter_date
+                FROM transactions WHERE guid = ANY(${txGuids}::text[])
+            `
+            : Promise.resolve([] as VerifyTxRow[]),
+        txGuids.length > 0
+            ? prisma.$queryRaw<ChangeSplitRow[]>`
+                SELECT tx_guid, account_guid, memo, reconcile_state, value_num, value_denom
+                FROM splits WHERE tx_guid = ANY(${txGuids}::text[])
+                ORDER BY tx_guid, guid
+            `
+            : Promise.resolve([] as ChangeSplitRow[]),
+        getCachedLockDate(context.bookGuid),
+    ]);
+
+    const txByGuid = new Map(txRows.map(row => [row.guid, row]));
+    const splitsByTx = new Map<string, ChangeSplitRow[]>();
+    for (const split of splitRows) {
+        const bucket = splitsByTx.get(split.tx_guid);
+        if (bucket) bucket.push(split);
+        else splitsByTx.set(split.tx_guid, [split]);
+    }
+
+    return externalIds.map((externalId): BeezVerifyItem => {
+        const entityGuid = entityByExternalId.get(externalId);
+        if (entityGuid === undefined) {
+            return { externalId, state: 'no-link' };
+        }
+
+        const transaction = txByGuid.get(entityGuid);
+        if (!transaction) {
+            return { externalId, state: 'orphan-link', transactionGuid: entityGuid };
+        }
+
+        const rawSplits = splitsByTx.get(entityGuid) ?? [];
+        const converted = rawSplits.map(split => ({
+            split,
+            cents: splitValueToCents(split.value_num, split.value_denom),
+        }));
+
+        const base: BeezVerifyItem = {
+            externalId,
+            state: 'linked',
+            transactionGuid: transaction.guid,
+            // The raw database rendering with the UTC marker the column's
+            // convention implies — byte-identical to the change feed's, so a
+            // client can compare the two without normalizing either. A Date
+            // round trip would truncate the microseconds and make a row that
+            // never changed look as though it had.
+            enterDate: transaction.enter_date ? `${transaction.enter_date}Z` : null,
+            postDate: timestampToPostDate(transaction.post_date),
+            description: transaction.description,
+            num: transaction.num,
+            // The codebase-wide meaning of "pinned to a statement", not a local
+            // `=== 'y'`: 'f' is the state that got missed the first time a
+            // second spelling of this rule was written.
+            reconciledOrFrozen: rawSplits.some(
+                split => isProtectedReconcileState(split.reconcile_state),
+            ),
+            inClosedPeriod: findLockedDate(lockDate, [transaction.post_date]) !== null,
+        };
+
+        // All-or-nothing, as in the change feed: one 1/3 split makes the whole
+        // transaction incomparable rather than partially comparable. Rounding
+        // it into cents would invent money and, here, would manufacture a
+        // divergence — or hide one.
+        if (converted.some(entry => entry.cents === null)) {
+            return { ...base, splits: [], unrepresentable: true };
+        }
+
+        return {
+            ...base,
+            splits: converted.map(entry => ({
+                accountGuid: entry.split.account_guid,
+                amountCents: entry.cents as number,
+                memo: entry.split.memo ?? '',
+            })),
+        };
+    });
+}
+
+/**
+ * One external id's current state, for `GET .../transactions/{externalId}`.
+ *
+ * Implemented ON TOP of the batch so the two endpoints cannot drift: the single
+ * lookup is a batch of one, and every field, flag, and edge case is computed by
+ * the same code. The only difference is at the edge — `no-link` is a 404 here,
+ * because a caller that asked about one id by name is asking whether it exists,
+ * whereas a batch caller is asking what each of its ids is, and one absent id
+ * must not fail the other 499.
+ */
+export async function getBeezTransactionByExternalId(
+    context: BeezBookContext,
+    externalId: string,
+): Promise<BeezVerifyItem> {
+    const [item] = await verifyBeezExternalIds(context, [externalId]);
+    if (!item || item.state === 'no-link') {
+        throw new BeezSyncError(
+            404, 'unknown_external_id', `No folio transaction is linked to "${externalId}"`,
+        );
+    }
+    return item;
 }

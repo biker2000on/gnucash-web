@@ -17,11 +17,14 @@ import {
     MAX_CHANGES_LIMIT,
     MAX_EXTERNAL_ID_LENGTH,
     MAX_SPLITS,
+    MAX_VERIFY_IDS,
     decodeChangesCursor,
     encodeChangesCursor,
     isCalendarDate,
     isEnterDateStamp,
+    normalizeExternalId,
     parseBeezTransactionInput,
+    parseBeezVerifyInput,
     parseChangesLimit,
     postDateToTimestamp,
     splitValueToCents,
@@ -624,5 +627,114 @@ describe('parseChangesLimit', () => {
         for (const raw of ['0', '-1', 'abc', '10.5', String(MAX_CHANGES_LIMIT + 1), '   ']) {
             expect(parseChangesLimit(raw).ok, raw).toBe(false);
         }
+    });
+});
+
+describe('normalizeExternalId', () => {
+    it('trims and accepts an id within the column width', () => {
+        expect(normalizeExternalId('  beez-8412 ')).toEqual({ ok: true, externalId: 'beez-8412' });
+        expect(normalizeExternalId('x'.repeat(MAX_EXTERNAL_ID_LENGTH)))
+            .toEqual({ ok: true, externalId: 'x'.repeat(MAX_EXTERNAL_ID_LENGTH) });
+    });
+
+    it('refuses a blank id rather than looking up the empty string', () => {
+        for (const raw of ['', '   ', '\t\n']) {
+            expect(normalizeExternalId(raw)).toEqual({
+                ok: false, detail: 'externalId: must not be empty',
+            });
+        }
+    });
+
+    it('refuses an over-long id rather than truncating the lookup', () => {
+        expect(normalizeExternalId('x'.repeat(MAX_EXTERNAL_ID_LENGTH + 1))).toEqual({
+            ok: false, detail: `externalId: must be at most ${MAX_EXTERNAL_ID_LENGTH} characters`,
+        });
+    });
+
+    it('names the field it was given, so a batch entry reports its index', () => {
+        expect(normalizeExternalId('  ', 'externalIds[3]')).toEqual({
+            ok: false, detail: 'externalIds[3]: must not be empty',
+        });
+    });
+
+    it('is the SAME rule the POST body applies', () => {
+        // One spelling, or a client can create a record through POST that GET
+        // and verify then refuse to look up.
+        const padded = `  ${'x'.repeat(MAX_EXTERNAL_ID_LENGTH)}  `;
+        const viaBody = parseBeezTransactionInput(
+            validBody({ externalId: padded }),
+            { requireExternalId: true },
+        );
+        expect(viaBody.ok).toBe(true);
+        if (!viaBody.ok) return;
+        const viaHelper = normalizeExternalId(padded);
+        expect(viaHelper.ok).toBe(true);
+        if (!viaHelper.ok) return;
+        expect(viaBody.data.externalId).toBe(viaHelper.externalId);
+    });
+});
+
+describe('parseBeezVerifyInput', () => {
+    it('accepts a list of ids and trims each one', () => {
+        expect(parseBeezVerifyInput({ externalIds: [' beez-1', 'beez-2 '] })).toEqual({
+            ok: true, externalIds: ['beez-1', 'beez-2'],
+        });
+    });
+
+    it('keeps request order and duplicates', () => {
+        // The response is one result per requested entry, zipped by index, so
+        // collapsing or sorting here would silently misalign every caller.
+        expect(parseBeezVerifyInput({ externalIds: ['b', 'a', 'b'] })).toEqual({
+            ok: true, externalIds: ['b', 'a', 'b'],
+        });
+    });
+
+    it('accepts exactly the cap and refuses one more', () => {
+        const atCap = Array.from({ length: MAX_VERIFY_IDS }, (_, i) => `beez-${i}`);
+        expect(parseBeezVerifyInput({ externalIds: atCap })).toEqual({
+            ok: true, externalIds: atCap,
+        });
+        expect(parseBeezVerifyInput({ externalIds: [...atCap, 'beez-over'] })).toEqual({
+            ok: false, detail: `externalIds: at most ${MAX_VERIFY_IDS} ids per request`,
+        });
+    });
+
+    it('reports the cap before it reports a malformed entry inside an over-large batch', () => {
+        const overCap = Array.from({ length: MAX_VERIFY_IDS + 1 }, () => '');
+        expect(parseBeezVerifyInput({ externalIds: overCap })).toEqual({
+            ok: false, detail: `externalIds: at most ${MAX_VERIFY_IDS} ids per request`,
+        });
+    });
+
+    it('refuses an empty list rather than proving nothing successfully', () => {
+        expect(parseBeezVerifyInput({ externalIds: [] })).toEqual({
+            ok: false, detail: 'externalIds: must name at least 1 external id',
+        });
+    });
+
+    it.each([
+        [undefined],
+        [null],
+        ['not-an-object'],
+        [42],
+        [['beez-1']],
+    ])('refuses %j as a body', (body) => {
+        const result = parseBeezVerifyInput(body);
+        expect(result.ok).toBe(false);
+    });
+
+    it.each([
+        [{}, 'externalIds: required, must be an array of strings'],
+        [{ externalIds: 'beez-1' }, 'externalIds: required, must be an array of strings'],
+        [{ externalIds: { 0: 'beez-1' } }, 'externalIds: required, must be an array of strings'],
+        [{ externalIds: ['beez-1', 7] }, 'externalIds[1]: must be a string'],
+        [{ externalIds: [null] }, 'externalIds[0]: must be a string'],
+        [{ externalIds: ['beez-1', '  '] }, 'externalIds[1]: must not be empty'],
+        [
+            { externalIds: ['x'.repeat(MAX_EXTERNAL_ID_LENGTH + 1)] },
+            `externalIds[0]: must be at most ${MAX_EXTERNAL_ID_LENGTH} characters`,
+        ],
+    ])('refuses %j with a detail naming the offending entry', (body, detail) => {
+        expect(parseBeezVerifyInput(body)).toEqual({ ok: false, detail });
     });
 });

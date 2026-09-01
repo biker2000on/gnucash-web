@@ -185,11 +185,20 @@ describe('parseExternalIdParam', () => {
     });
 
     it('rejects an empty or over-long id rather than truncating the lookup', async () => {
-        for (const raw of ['', '   ', 'x'.repeat(201)]) {
+        // The details are the SHARED `normalizeExternalId` messages, not a
+        // second spelling of the same bound: the path segment, the POST body,
+        // and each verify-batch entry must agree on which ids exist, or a
+        // client can create a record it cannot read back.
+        for (const [raw, detail] of [
+            ['', 'externalId: must not be empty'],
+            ['   ', 'externalId: must not be empty'],
+            ['x'.repeat(201), 'externalId: must be at most 200 characters'],
+        ] as const) {
             const result = parseExternalIdParam(raw);
             expect(result.ok, raw).toBe(false);
             if (result.ok) continue;
             expect(result.response.status).toBe(422);
+            await expect(result.response.json()).resolves.toEqual({ error: 'validation', detail });
         }
     });
 });

@@ -63,6 +63,18 @@ export const CENTS_DENOM = 100n;
 export const DEFAULT_CHANGES_LIMIT = 100;
 export const MAX_CHANGES_LIMIT = 500;
 
+/**
+ * How many external ids one batch verify may name.
+ *
+ * Not an accounting rule — a bound on how much work a single request queues, in
+ * the same spirit as {@link MAX_SPLITS}. The verify pass resolves the whole
+ * batch in a fixed number of queries, so the cost is linear in the id count and
+ * a caller with 40,000 restored mappings pages through them rather than asking
+ * the server to hold them all at once. It matches {@link MAX_CHANGES_LIMIT} so
+ * a client can size its verify batches to its feed pages.
+ */
+export const MAX_VERIFY_IDS = 500;
+
 // ---------------------------------------------------------------------------
 // Request shapes
 // ---------------------------------------------------------------------------
@@ -122,6 +134,30 @@ export function timestampToPostDate(value: Date | null): string | null {
     return value.toISOString().slice(0, 10);
 }
 
+/**
+ * Trim an external id and hold it to the `external_id VARCHAR(200)` column.
+ *
+ * ONE spelling of the rule, for every place an id arrives: the POST body, the
+ * `{externalId}` path segment, and each entry of a verify batch. A blank id and
+ * an over-long one are both refusals rather than, respectively, a lookup for
+ * `''` and a truncated lookup that would match the wrong record — and an id
+ * that is accepted by one endpoint must be accepted by the others, or a client
+ * could create a record it can never verify.
+ */
+export function normalizeExternalId(
+    raw: string,
+    field = 'externalId',
+): { ok: true; externalId: string } | { ok: false; detail: string } {
+    const externalId = raw.trim();
+    if (externalId.length === 0) {
+        return { ok: false, detail: `${field}: must not be empty` };
+    }
+    if (externalId.length > MAX_EXTERNAL_ID_LENGTH) {
+        return { ok: false, detail: `${field}: must be at most ${MAX_EXTERNAL_ID_LENGTH} characters` };
+    }
+    return { ok: true, externalId };
+}
+
 function readOptionalText(raw: unknown, field: string, max: number): { ok: true; value: string } | { ok: false; detail: string } {
     if (raw === undefined || raw === null) return { ok: true, value: '' };
     if (typeof raw !== 'string') return { ok: false, detail: `${field}: must be a string` };
@@ -151,13 +187,9 @@ export function parseBeezTransactionInput(
         if (typeof raw.externalId !== 'string') {
             return fail('externalId: required, must be a string');
         }
-        externalId = raw.externalId.trim();
-        if (externalId.length === 0) {
-            return fail('externalId: must not be empty');
-        }
-        if (externalId.length > MAX_EXTERNAL_ID_LENGTH) {
-            return fail(`externalId: must be at most ${MAX_EXTERNAL_ID_LENGTH} characters`);
-        }
+        const normalized = normalizeExternalId(raw.externalId);
+        if (!normalized.ok) return fail(normalized.detail);
+        externalId = normalized.externalId;
     } else if (raw.externalId !== undefined) {
         return fail('externalId: not accepted here — the external id is the path segment');
     }
@@ -229,6 +261,57 @@ export function parseBeezTransactionInput(
     }
 
     return { ok: true, data: { externalId, postDate, description, num: num.value, splits } };
+}
+
+export type BeezVerifyParseResult =
+    | { ok: true; externalIds: string[] }
+    | { ok: false; detail: string };
+
+/**
+ * Validate a batch verify body: `{ externalIds: string[] }`.
+ *
+ * DUPLICATES ARE KEPT, not collapsed. The response preserves request order one
+ * result per requested entry, so a caller can zip the two arrays by index
+ * without re-deriving which id produced which result. The database side reads
+ * each distinct id once regardless, so a duplicate costs nothing but a repeated
+ * row in the answer.
+ *
+ * AN EMPTY ARRAY IS REFUSED rather than answered with an empty result set. A
+ * verification pass that names nothing has proved nothing, and a client that
+ * sent `[]` because its own list was empty by accident should learn that from a
+ * 422 instead of from a green tick.
+ *
+ * The cap is checked BEFORE the per-entry rules so an over-large batch is told
+ * about its size rather than about the first malformed id inside it.
+ */
+export function parseBeezVerifyInput(body: unknown): BeezVerifyParseResult {
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+        return { ok: false, detail: 'body: must be a JSON object' };
+    }
+    const raw = (body as Record<string, unknown>).externalIds;
+
+    if (!Array.isArray(raw)) {
+        return { ok: false, detail: 'externalIds: required, must be an array of strings' };
+    }
+    if (raw.length === 0) {
+        return { ok: false, detail: 'externalIds: must name at least 1 external id' };
+    }
+    if (raw.length > MAX_VERIFY_IDS) {
+        return { ok: false, detail: `externalIds: at most ${MAX_VERIFY_IDS} ids per request` };
+    }
+
+    const externalIds: string[] = [];
+    for (const [index, entry] of raw.entries()) {
+        const field = `externalIds[${index}]`;
+        if (typeof entry !== 'string') {
+            return { ok: false, detail: `${field}: must be a string` };
+        }
+        const normalized = normalizeExternalId(entry, field);
+        if (!normalized.ok) return { ok: false, detail: normalized.detail };
+        externalIds.push(normalized.externalId);
+    }
+
+    return { ok: true, externalIds };
 }
 
 // ---------------------------------------------------------------------------

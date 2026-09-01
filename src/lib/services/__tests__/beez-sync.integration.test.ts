@@ -11,6 +11,10 @@
  *     unrepresentable-split rule, all of which are SQL.
  *   - the reconciled-split and period-lock guards, which read committed state
  *     inside the write transaction.
+ *   - the read-only verify pass, whose whole value is that its `enterDate` is
+ *     byte-identical to the change feed's for the same row. That is a property
+ *     of PostgreSQL's `to_char` rendering, not of any code a mock could stand
+ *     in for, and it is what a restore compares against.
  *
  * DATA. This tier never truncates (see vitest.integration.config.ts). Every row
  * written here carries this run's uuid in its guid or a run-scoped column, and
@@ -1750,6 +1754,239 @@ describe.skipIf(!HAS_TEST_DATABASE)('beez-trackz sync round trip', () => {
             await service.deleteBeezTransaction(context, actor(), idA, null);
             await service.deleteBeezTransaction(context, actor(), idB, null);
             await dropTransaction(futureGuid);
+        });
+    });
+    /**
+     * The read-only verify pass, against real SQL.
+     *
+     * What needs a database here and cannot be faked: that `= ANY($1::text[])`
+     * and the `to_char` rendering actually run, that an id resolves through the
+     * link table's unique index rather than through a mock's Map, and — the one
+     * that matters most for a restore — that the `enterDate` this pass reports
+     * is BYTE-IDENTICAL to the one the change feed reports for the same row. A
+     * client that compared a millisecond-truncated value against a microsecond
+     * one would see every unchanged transaction as changed.
+     */
+    describe('verify (read-only)', () => {
+        it('returns the whole transaction for a linked id, and writes nothing', async () => {
+            const id = `${RUN_ID}-verify-linked`;
+            const created = await service.createBeezTransaction(context, actor(), parsed(id, 1250), null);
+            const txGuid = created.result.transactionGuid;
+
+            const item = await service.getBeezTransactionByExternalId(context, id);
+
+            expect(item.state).toBe('linked');
+            expect(item.transactionGuid).toBe(txGuid);
+            expect(item.postDate).toBe('2026-08-25');
+            expect(item.description).toBe('Hive inspection supplies');
+            expect(item.reconciledOrFrozen).toBe(false);
+            expect(item.splits).toEqual(
+                expect.arrayContaining([
+                    { accountGuid: EXPENSE_GUID, amountCents: 1250, memo: 'supplies' },
+                    { accountGuid: CHECKING_GUID, amountCents: -1250, memo: '' },
+                ]),
+            );
+
+            // The enter_date is the ledger's, untouched: a read that stamped one
+            // would invalidate every browser tab holding the row and would make
+            // the verification pass itself look like an edit in the change feed.
+            const stored = await getTestPool().query<{ enter_date: string }>(
+                `SELECT to_char(enter_date, 'YYYY-MM-DD"T"HH24:MI:SS.US') AS enter_date
+                 FROM transactions WHERE guid = $1`,
+                [txGuid],
+            );
+            expect(item.enterDate).toBe(`${stored.rows[0].enter_date}Z`);
+            expect(item.enterDate).toBe(created.result.enterDate);
+
+            await service.deleteBeezTransaction(context, actor(), id, null);
+        });
+
+        it('reports the same enterDate the change feed reports for the same row', async () => {
+            const id = `${RUN_ID}-verify-feed-parity`;
+            const created = await service.createBeezTransaction(context, actor(), parsed(id, 1300), null);
+            const txGuid = created.result.transactionGuid;
+
+            const feed = await service.getBeezChanges(context, { since: null, limit: 500 });
+            const fromFeed = feed.items.find(item => item.transactionGuid === txGuid);
+            const [fromVerify] = await service.verifyBeezExternalIds(context, [id]);
+
+            // Byte-identical, not merely equal-as-instants. This pair is what a
+            // restore compares, so a millisecond truncation on either side would
+            // report every untouched transaction as divergent.
+            expect(fromVerify.enterDate).toBe(fromFeed?.enterDate);
+            expect(fromVerify.postDate).toBe(fromFeed?.postDate);
+
+            await service.deleteBeezTransaction(context, actor(), id, null);
+        });
+
+        it('answers an id this book never linked with no-link, not an error', async () => {
+            expect(await service.verifyBeezExternalIds(context, [`${RUN_ID}-never`])).toEqual([
+                { externalId: `${RUN_ID}-never`, state: 'no-link' },
+            ]);
+        });
+
+        it('answers a link whose transaction is gone with orphan-link', async () => {
+            const id = `${RUN_ID}-verify-orphan`;
+            const created = await service.createBeezTransaction(context, actor(), parsed(id, 1400), null);
+            const txGuid = created.result.transactionGuid;
+
+            // Deleted in folio the way a human would: the row goes, the link
+            // stays. This is the tombstone the change feed reports, and the
+            // repair is DELETE to acknowledge — never a re-POST, which would
+            // lose to the link still holding the unique index.
+            await getTestPool().query(
+                `DELETE FROM gnucash_web_transaction_meta WHERE transaction_guid = $1`, [txGuid],
+            );
+            await dropTransaction(txGuid);
+
+            expect(await service.verifyBeezExternalIds(context, [id])).toEqual([
+                { externalId: id, state: 'orphan-link', transactionGuid: txGuid },
+            ]);
+
+            // ...and the single-id read agrees, at 200 rather than 404.
+            const single = await service.getBeezTransactionByExternalId(context, id);
+            expect(single.state).toBe('orphan-link');
+
+            await service.deleteBeezTransaction(context, actor(), id, null);
+        });
+
+        it('404s the single-id read when there is no link at all', async () => {
+            await expect(service.getBeezTransactionByExternalId(context, `${RUN_ID}-absent`))
+                .rejects.toMatchObject({ status: 404, code: 'unknown_external_id' });
+        });
+
+        it.each([['y'], ['f']])(
+            'flags a %s split, matching the state PUT and DELETE refuse',
+            async (state) => {
+                const id = `${RUN_ID}-verify-protected-${state}`;
+                const created = await service.createBeezTransaction(context, actor(), parsed(id, 1500), null);
+                await getTestPool().query(
+                    `UPDATE splits SET reconcile_state = $3 WHERE tx_guid = $1 AND account_guid = $2`,
+                    [created.result.transactionGuid, CHECKING_GUID, state],
+                );
+
+                const [item] = await service.verifyBeezExternalIds(context, [id]);
+                expect(item.reconciledOrFrozen).toBe(true);
+
+                // The flag and the refusal are the same fact: a client that saw
+                // the flag and tried the repair anyway must get the 409.
+                await expect(service.replaceBeezTransaction(context, actor(), id, parsed(null, 1501), null))
+                    .rejects.toMatchObject({ status: 409, code: 'reconciled' });
+
+                await getTestPool().query(
+                    `UPDATE splits SET reconcile_state = 'n' WHERE tx_guid = $1`,
+                    [created.result.transactionGuid],
+                );
+                await service.deleteBeezTransaction(context, actor(), id, null);
+            },
+        );
+
+        it('reports an inexact-cents transaction as unrepresentable, never rounded', async () => {
+            const id = `${RUN_ID}-verify-thirds`;
+            const created = await service.createBeezTransaction(context, actor(), parsed(id, 1600), null);
+            const txGuid = created.result.transactionGuid;
+            // A denominator that does not divide 100 — the shape GnuCash writes
+            // for a GCD-reduced fraction, which has no cents representation.
+            await getTestPool().query(
+                `UPDATE splits SET value_num = 1, value_denom = 3 WHERE tx_guid = $1 AND account_guid = $2`,
+                [txGuid, EXPENSE_GUID],
+            );
+
+            const [item] = await service.verifyBeezExternalIds(context, [id]);
+            expect(item.state).toBe('linked');
+            expect(item.unrepresentable).toBe(true);
+            expect(item.splits).toEqual([]);
+
+            await getTestPool().query(
+                `UPDATE splits SET value_num = 1600, value_denom = 100
+                 WHERE tx_guid = $1 AND account_guid = $2`,
+                [txGuid, EXPENSE_GUID],
+            );
+            await service.deleteBeezTransaction(context, actor(), id, null);
+        });
+
+        it('preserves request order across a mixed batch, repeats included', async () => {
+            const linked = `${RUN_ID}-verify-batch-linked`;
+            const absent = `${RUN_ID}-verify-batch-absent`;
+            await service.createBeezTransaction(context, actor(), parsed(linked, 1700), null);
+
+            const requested = [absent, linked, absent, linked];
+            const results = await service.verifyBeezExternalIds(context, requested);
+
+            // The contract invites the caller to zip its own list against the
+            // results by index, so a deduped or reordered answer would silently
+            // misalign every comparison a restore makes.
+            expect(results.map(item => item.externalId)).toEqual(requested);
+            expect(results.map(item => item.state)).toEqual(['no-link', 'linked', 'no-link', 'linked']);
+
+            await service.deleteBeezTransaction(context, actor(), linked, null);
+        });
+
+        it('cannot see another book link, even with the right external id', async () => {
+            const id = `${RUN_ID}-verify-foreign`;
+            // Written directly, because the service will not create a link in a
+            // book its context does not name — which is the point being tested.
+            await getTestPool().query(
+                `INSERT INTO gnucash_web_external_links
+                     (book_guid, source, external_id, entity_type, entity_guid)
+                 VALUES ($1, 'beez-trackz', $2, 'transaction', $3)`,
+                [OTHER_BOOK_GUID, id, testGuid()],
+            );
+
+            expect(await service.verifyBeezExternalIds(context, [id])).toEqual([
+                { externalId: id, state: 'no-link' },
+            ]);
+
+            await getTestPool().query(
+                `DELETE FROM gnucash_web_external_links WHERE book_guid = $1 AND external_id = $2`,
+                [OTHER_BOOK_GUID, id],
+            );
+        });
+
+        it('leaves the ledger, the links, and the audit trail untouched', async () => {
+            const id = `${RUN_ID}-verify-noop`;
+            const created = await service.createBeezTransaction(context, actor(), parsed(id, 1800), null);
+            const txGuid = created.result.transactionGuid;
+
+            const snapshot = async () => {
+                const pool = getTestPool();
+                const tx = await pool.query(
+                    `SELECT to_char(enter_date, 'YYYY-MM-DD"T"HH24:MI:SS.US') AS enter_date,
+                            post_date, description, num
+                     FROM transactions WHERE guid = $1`,
+                    [txGuid],
+                );
+                const link = await pool.query(
+                    `SELECT external_id, entity_guid, updated_at
+                     FROM gnucash_web_external_links
+                     WHERE book_guid = $1 AND external_id = $2`,
+                    [BOOK_GUID, id],
+                );
+                const audit = await pool.query<{ n: string }>(
+                    `SELECT count(*)::text AS n FROM gnucash_web_audit WHERE book_guid = $1`,
+                    [BOOK_GUID],
+                );
+                const idempotency = await pool.query<{ n: string }>(
+                    `SELECT count(*)::text AS n FROM gnucash_web_webhook_idempotency WHERE book_guid = $1`,
+                    [BOOK_GUID],
+                );
+                return {
+                    tx: tx.rows[0], link: link.rows[0],
+                    audit: audit.rows[0].n, idempotency: idempotency.rows[0].n,
+                };
+            };
+
+            const before = await snapshot();
+            await service.verifyBeezExternalIds(context, [id, id, `${RUN_ID}-nothing`]);
+            await service.getBeezTransactionByExternalId(context, id);
+            const after = await snapshot();
+
+            // Every column a write on this path would have moved: the
+            // enter_date stamp, the link's updated_at, the audit row count, and
+            // the idempotency claim table.
+            expect(after).toEqual(before);
+
+            await service.deleteBeezTransaction(context, actor(), id, null);
         });
     });
 });

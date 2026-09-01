@@ -19,6 +19,7 @@ import {
     IDEMPOTENCY_KEY_MAX_LENGTH,
     validateIdempotencyKey,
 } from '@/lib/webhook-idempotency';
+import { normalizeExternalId } from '@/lib/integrations/beez';
 
 export { IDEMPOTENCY_KEY_MAX_LENGTH };
 
@@ -114,22 +115,24 @@ export async function readJsonBody(
 /**
  * Decode an `[externalId]` path segment.
  *
- * Next.js has already percent-decoded it, so this only enforces the bounds the
- * `external_id VARCHAR(200)` column has. An over-long id is a 422 rather than a
- * truncated lookup that would match the wrong record.
+ * Next.js has already percent-decoded it, so the only work left is the bounds
+ * the `external_id VARCHAR(200)` column has — and those are deliberately NOT
+ * spelled out here. `normalizeExternalId` is the same rule the POST body and
+ * the verify batch apply, and an id one endpoint accepted while another
+ * refused it would mean a record a client can create but never read back.
  */
 export function parseExternalIdParam(
     raw: string,
 ): { ok: true; externalId: string } | { ok: false; response: NextResponse } {
-    const externalId = raw.trim();
-    if (externalId.length === 0 || externalId.length > 200) {
+    const normalized = normalizeExternalId(raw);
+    if (!normalized.ok) {
         return {
             ok: false,
             response: NextResponse.json(
-                { error: 'validation', detail: 'externalId: must be 1-200 characters' },
+                { error: 'validation', detail: normalized.detail },
                 { status: 422 },
             ),
         };
     }
-    return { ok: true, externalId };
+    return { ok: true, externalId: normalized.externalId };
 }
