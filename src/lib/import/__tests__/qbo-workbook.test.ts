@@ -1,7 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import * as XLSX from 'xlsx';
 import { zipSync, strToU8 } from 'fflate';
-import { sheetsFromUpload, classifySheet } from '../qbo-workbook';
+import {
+    sheetsFromUpload,
+    classifySheet,
+    selectSourceSheets,
+    type ClassifiedSheet,
+    type SheetKind,
+} from '../qbo-workbook';
 import { parseQboJournalRows, parseQboCoaRows, splitCsvRows } from '../qbo-journal';
 import { parseQboGeneralLedgerRows } from '../qbo-gl';
 
@@ -91,6 +97,81 @@ describe('classifySheet', () => {
             ['Date', 'Transaction Type', 'Num', 'Name', 'Memo', 'Account', 'Debit', 'Credit'],
         ];
         expect(classifySheet(rows)).toBe('journal');
+    });
+
+    it('classifies the "Export data" General Ledger (Debit/Credit + Balance) as general_ledger, not journal', () => {
+        const rows = [
+            ['Industrial Insight Inc'],
+            ['General Ledger'],
+            ['All Dates'],
+            [],
+            ['', 'Date', 'Transaction Type', 'Num', 'Name', 'Memo/Description', 'Account', 'Debit', 'Credit', 'Balance'],
+            ['Checking'],
+            ['', '12/06/2016', 'Transfer', '', '', 'TRNSFER', 'Checking', '', '25.00', '-25.00'],
+        ];
+        expect(classifySheet(rows)).toBe('general_ledger');
+    });
+
+    it('classifies Balance Sheet and Profit and Loss reports by title + sections', () => {
+        expect(
+            classifySheet([
+                ['Co'],
+                ['Balance Sheet'],
+                ['', 'Total'],
+                ['ASSETS', ''],
+                ['Bank Accounts', ''],
+                ['Checking', '1.00'],
+                ['Total Bank Accounts', '$1.00'],
+                ['TOTAL ASSETS', '$1.00'],
+            ])
+        ).toBe('balance_sheet');
+        expect(
+            classifySheet([
+                ['Co'],
+                ['Profit and Loss'],
+                ['', 'Total'],
+                ['Income', ''],
+                ['Services', '1.00'],
+                ['Total Income', '$1.00'],
+            ])
+        ).toBe('profit_and_loss');
+    });
+
+    it('leaves the Trial Balance (Debit/Credit, no Date) unknown', () => {
+        expect(
+            classifySheet([['Co', '', ''], ['Trial Balance', '', ''], ['', 'Debit', 'Credit'], ['Checking', '1.00', '']])
+        ).toBe('unknown');
+    });
+});
+
+describe('selectSourceSheets', () => {
+    const journalRows = JOURNAL_AOA.map((r) => r.map(String));
+    const mk = (name: string, kind: SheetKind, rows: string[][] = journalRows): ClassifiedSheet => ({ name, kind, rows });
+
+    it('prefers the sheet named "Journal" over a larger Journal look-alike that sorts first', () => {
+        const lookalike = mk('General_ledger', 'journal', [...journalRows, ...journalRows, ...journalRows]);
+        const journal = mk('Journal', 'journal');
+        const sel = selectSourceSheets([mk('Balance_sheet', 'balance_sheet'), lookalike, journal]);
+        expect(sel.source).toBe(journal);
+    });
+
+    it('falls back to the largest candidate when no name matches, then to the General Ledger', () => {
+        const small = mk('Report A', 'journal');
+        const big = mk('Report B', 'journal', [...journalRows, ...journalRows]);
+        expect(selectSourceSheets([small, big]).source).toBe(big);
+
+        const gl = mk('General_ledger', 'general_ledger');
+        expect(selectSourceSheets([mk('Vendors', 'unknown'), gl]).source).toBe(gl);
+        expect(selectSourceSheets([mk('Vendors', 'unknown')]).source).toBeNull();
+    });
+
+    it('collects the CoA sheet and the statement sheets separately', () => {
+        const coa = mk('Account_list', 'chart_of_accounts');
+        const bs = mk('Balance_sheet', 'balance_sheet');
+        const pl = mk('Profit_and_loss', 'profit_and_loss');
+        const sel = selectSourceSheets([bs, coa, pl, mk('Journal', 'journal')]);
+        expect(sel.coa).toBe(coa);
+        expect(sel.statements).toEqual([bs, pl]);
     });
 });
 

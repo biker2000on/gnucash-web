@@ -58,6 +58,69 @@ describe('detectGlHeader', () => {
         expect(cols).not.toBeNull();
         expect(cols!.date).toBe(1);
     });
+
+    it('detects the "Export data" layout: Debit/Credit + Balance + Account (no Amount)', () => {
+        const cols = detectGlHeader(EXPORT_DATA_GL_HEADER);
+        expect(cols).not.toBeNull();
+        expect(cols!.amount).toBe(-1);
+        expect(cols!.debit).toBe(7);
+        expect(cols!.credit).toBe(8);
+        expect(cols!.balance).toBe(9);
+        expect(cols!.account).toBe(6);
+    });
+
+    it('still rejects a Debit/Credit header with no Balance column (that is the Journal)', () => {
+        expect(detectGlHeader(['', 'Date', 'Transaction Type', 'Num', 'Name', 'Memo/Description', 'Account', 'Debit', 'Credit'])).toBeNull();
+    });
+});
+
+/* ------------------------------------------------------------------ */
+/* "Export data" ZIP layout                                             */
+/* ------------------------------------------------------------------ */
+
+const EXPORT_DATA_GL_HEADER = ['', 'Date', 'Transaction Type', 'Num', 'Name', 'Memo/Description', 'Account', 'Debit', 'Credit', 'Balance'];
+
+const EXPORT_DATA_GL: string[][] = [
+    ['Industrial Insight Inc'],
+    ['General Ledger'],
+    ['All Dates'],
+    [],
+    EXPORT_DATA_GL_HEADER,
+    ['BUSINESS SAVINGS ACCOUNT (1579)'],
+    ['', '12/06/2016', 'Transfer', '', '', 'TRNSFER FRM SV', 'BUSINESS SAVINGS ACCOUNT (1579)', '', '25.00', '-25.00'],
+    ['', '12/06/2016', 'Deposit', '', '', 'CASH ADVANCE', 'BUSINESS SAVINGS ACCOUNT (1579)', '105.00', '', '80.00'],
+    ['Total for BUSINESS SAVINGS ACCOUNT (1579)', '', '', '', '', '', '', '$105.00', '$25.00', ''],
+    ['SMALL BUSINESS CHECKING ACCOUN (4604)'],
+    ['', '12/06/2016', 'Transfer', '', '', 'TRNSFER FRM SV', 'SMALL BUSINESS CHECKING ACCOUN (4604)', '25.00', '', '25.00'],
+    ['Total for SMALL BUSINESS CHECKING ACCOUN (4604)', '', '', '', '', '', '', '$25.00', '', ''],
+    ['Repayment'],
+    ['401(k) Loan Repayment'],
+    ['', '12/06/2016', 'Deposit', '', '', 'CASH ADVANCE', 'Repayment:401(k) Loan Repayment', '', '105.00', '-105.00'],
+    ['Total for 401(k) Loan Repayment', '', '', '', '', '', '', '', '$105.00', ''],
+    ['Total for Repayment', '', '', '', '', '', '', '', '$105.00', ''],
+];
+
+describe('parseQboGeneralLedgerRows — "Export data" Debit/Credit layout', () => {
+    const result = parseQboGeneralLedgerRows(EXPORT_DATA_GL);
+
+    it('reads amounts as debit − credit and reconstructs balanced transactions', () => {
+        expect(result.errors).toEqual([]);
+        expect(result.transactions).toHaveLength(2);
+        const transfer = result.transactions.find((t) => t.type === 'Transfer')!;
+        expect(transfer.lines.map((l) => [l.accountPath, l.amount])).toEqual([
+            ['BUSINESS SAVINGS ACCOUNT (1579)', -25],
+            ['SMALL BUSINESS CHECKING ACCOUN (4604)', 25],
+        ]);
+    });
+
+    it('takes the account path from the Account column (nested sections agree)', () => {
+        const deposit = result.transactions.find((t) => t.type === 'Deposit')!;
+        expect(deposit.lines.map((l) => l.accountPath)).toEqual([
+            'BUSINESS SAVINGS ACCOUNT (1579)',
+            'Repayment:401(k) Loan Repayment',
+        ]);
+        expect(result.accountsSeen).toContain('Repayment:401(k) Loan Repayment');
+    });
 });
 
 /* ------------------------------------------------------------------ */

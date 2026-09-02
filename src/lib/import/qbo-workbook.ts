@@ -18,6 +18,8 @@ import {
     MAX_HEADER_SCAN_ROWS,
 } from './qbo-journal';
 import { detectGlHeader } from './qbo-gl';
+import { detectStatementKind } from './qbo-statements';
+import { detectContactListKind } from './qbo-business';
 
 /** Hard cap on rows per sheet (mirrors the CSV route's line cap). */
 export const MAX_SHEET_ROWS = 100_000;
@@ -28,7 +30,16 @@ export interface UploadSheet {
     rows: string[][];
 }
 
-export type SheetKind = 'journal' | 'general_ledger' | 'chart_of_accounts' | 'unknown';
+export type SheetKind =
+    | 'journal'
+    | 'general_ledger'
+    | 'chart_of_accounts'
+    | 'balance_sheet'
+    | 'profit_and_loss'
+    | 'customers'
+    | 'vendors'
+    | 'employees'
+    | 'unknown';
 
 /* ------------------------------------------------------------------ */
 /* Ingestion                                                            */
@@ -183,14 +194,17 @@ function stripExtension(name: string): string {
 
 /**
  * Classify a sheet by header detection within the first rows:
- *   - journal:           Date + Account + Debit + Credit
- *   - general_ledger:    Date + Amount + Balance (no Debit/Credit; the
- *                        per-account section structure is handled by qbo-gl)
+ *   - journal:           Date + Account + Debit + Credit (no Balance)
+ *   - general_ledger:    Date + Balance + (Amount | Debit + Credit); the
+ *                        per-account section structure is handled by qbo-gl
  *   - chart_of_accounts: Account name + Type (no Date)
+ *   - balance_sheet / profit_and_loss: report title + QBO type sections
+ *                        (qbo-statements; used to type accounts when the
+ *                        export has no Chart of Accounts)
  *
- * Journal wins over GL when a row could match both (it can't in practice —
- * the Debit/Credit columns are mutually exclusive with the GL layout — but
- * the check order encodes the preference anyway).
+ * The running Balance column is what tells a General Ledger from a Journal:
+ * QBO's "Export data" GL uses Debit/Credit/Balance, so a Debit/Credit pair
+ * alone is not enough to call a sheet a Journal.
  */
 export function classifySheet(rows: string[][]): SheetKind {
     const limit = Math.min(rows.length, MAX_HEADER_SCAN_ROWS);
@@ -204,5 +218,43 @@ export function classifySheet(rows: string[][]): SheetKind {
             if (detect(rows[i])) return kind;
         }
     }
-    return 'unknown';
+    return detectStatementKind(rows) ?? detectContactListKind(rows) ?? 'unknown';
+}
+
+export interface ClassifiedSheet extends UploadSheet {
+    kind: SheetKind;
+}
+
+export interface SourceSheetSelection {
+    /** Sheet the transactions come from (Journal preferred over GL) */
+    source: ClassifiedSheet | null;
+    /** Explicit Chart of Accounts sheet, if the archive has one */
+    coa: ClassifiedSheet | null;
+    /** Balance Sheet / P&L sheets (fallback typing when there is no CoA) */
+    statements: ClassifiedSheet[];
+    /** Customer / Vendor / Employee contact lists */
+    contacts: ClassifiedSheet[];
+}
+
+/**
+ * Pick the sheets that feed an import. Among several Journal sheets the one
+ * whose name says "journal" wins, then the one with the most rows — the
+ * "Export data" ZIP order is alphabetical, and a workbook that merely LOOKS
+ * like a Journal must never shadow the real one.
+ */
+export function selectSourceSheets(sheets: ClassifiedSheet[]): SourceSheetSelection {
+    const byPreference = (kind: SheetKind): ClassifiedSheet | null => {
+        const candidates = sheets.filter((s) => s.kind === kind);
+        if (candidates.length === 0) return null;
+        const namePattern = kind === 'journal' ? /journal/i : /general.?ledger|\bgl\b/i;
+        const named = candidates.filter((s) => namePattern.test(s.name));
+        const pool = named.length > 0 ? named : candidates;
+        return pool.reduce((best, s) => (s.rows.length > best.rows.length ? s : best));
+    };
+    return {
+        source: byPreference('journal') ?? byPreference('general_ledger'),
+        coa: sheets.find((s) => s.kind === 'chart_of_accounts') ?? null,
+        statements: sheets.filter((s) => s.kind === 'balance_sheet' || s.kind === 'profit_and_loss'),
+        contacts: sheets.filter((s) => s.kind === 'customers' || s.kind === 'vendors' || s.kind === 'employees'),
+    };
 }

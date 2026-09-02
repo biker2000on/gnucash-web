@@ -7,8 +7,15 @@ import { useBooks } from '@/contexts/BookContext';
 interface PreviewAccount {
     path: string;
     gnucashType: string;
-    source: 'override' | 'coa' | 'inferred' | 'default';
+    source: 'override' | 'coa' | 'statement' | 'inferred' | 'default';
     lines: number;
+    targetPath: string;
+}
+
+interface TreePreview {
+    accounts: Array<{ path: string; accountType: string; placeholder: boolean; origin: 'scaffold' | 'coa' | 'journal' }>;
+    fromChart: number;
+    journalOnly: Array<{ path: string; placedAs: string; how: 'deleted-suffix' | 'parent' | 'type' }>;
 }
 
 interface PreviewData {
@@ -23,10 +30,28 @@ interface PreviewData {
     warnings: string[];
     coaLoaded: boolean;
     coaAccountCount: number;
+    coaSource?: 'chart_of_accounts' | 'statements' | null;
     duplicateWarning: string | null;
     sourceFormat: 'journal' | 'general_ledger';
     glStats: { reconstructed: number; failed: number } | null;
     sheets: Array<{ name: string; kind: string; used: boolean }> | null;
+    tree: TreePreview;
+    business: {
+        customers: number;
+        vendors: number;
+        employees: number;
+        invoices: number;
+        creditNotes: number;
+        bills: number;
+        customerPayments: number;
+        billPayments: number;
+        paidInFull: number;
+        partiallyPaid: number;
+        unallocatedPayments: number;
+        unallocatedAmount: number;
+        skipped: number;
+        skippedSamples: Array<{ type: string; name: string; date: string; reason: string }>;
+    };
     sampleTransactions: Array<{ date: string; description: string; amount: number; lines: number }>;
 }
 
@@ -35,6 +60,12 @@ interface CommitResult {
     accountsCreated: number;
     transactionsCreated: number;
     splitsCreated: number;
+    customersCreated?: number;
+    vendorsCreated?: number;
+    employeesCreated?: number;
+    invoicesCreated?: number;
+    billsCreated?: number;
+    paymentsApplied?: number;
     skippedErrors: number;
     warnings: string[];
 }
@@ -65,6 +96,7 @@ const ACCOUNT_TYPE_OPTIONS = [
 const SOURCE_LABEL: Record<PreviewAccount['source'], string> = {
     override: 'manual',
     coa: 'chart of accounts',
+    statement: 'balance sheet / P&L',
     inferred: 'inferred from name',
     default: 'default (review)',
 };
@@ -73,6 +105,11 @@ const SHEET_KIND_LABEL: Record<string, string> = {
     journal: 'Journal',
     general_ledger: 'General Ledger',
     chart_of_accounts: 'Chart of Accounts',
+    balance_sheet: 'Balance Sheet',
+    profit_and_loss: 'Profit and Loss',
+    customers: 'Customers',
+    vendors: 'Vendors',
+    employees: 'Employees',
     unknown: 'not used',
 };
 
@@ -161,10 +198,11 @@ export default function QuickBooksImportPage() {
     const [result, setResult] = useState<CommitResult | null>(null);
     const [error, setError] = useState<string | null>(null);
 
+    // The ZIP and the Chart of Accounts CSV go in together; only the Journal
+    // CSV is an alternative to the ZIP.
     const handleArchiveFile = useCallback((f: File) => {
         setArchiveFile(f);
         setJournalFile(null);
-        setCoaFile(null);
         setPreview(null);
         setResult(null);
         setError(null);
@@ -182,7 +220,6 @@ export default function QuickBooksImportPage() {
 
     const handleCoaFile = useCallback((f: File) => {
         setCoaFile(f);
-        setArchiveFile(null);
         setPreview(null);
         setResult(null);
         setError(null);
@@ -293,18 +330,35 @@ export default function QuickBooksImportPage() {
                                 <span className="font-mono text-xs">Settings gear → Tools → Export data</span>,
                                 select all reports and lists, download the ZIP, and drop it below.
                                 Transactions are rebuilt from the Journal sheet when present, otherwise
-                                from the General Ledger; the Chart of Accounts is picked up automatically.
+                                from the General Ledger. Account types come from the Chart of Accounts
+                                when the export has one, otherwise from the Balance Sheet and Profit and
+                                Loss reports (every account sits under its QuickBooks type section there).
                             </p>
                         </div>
                     </div>
 
-                    <FileDrop
-                        label="QuickBooks Export Data ZIP (Settings gear → Tools → Export data)"
-                        hint="Drop the Export data ZIP (or a single .xlsx report) here or click to browse"
-                        file={archiveFile}
-                        onFile={handleArchiveFile}
-                        accept=".zip,.xlsx"
-                    />
+                    <div className="grid gap-4 sm:grid-cols-2">
+                        <FileDrop
+                            label="QuickBooks Export Data ZIP (Settings gear → Tools → Export data)"
+                            hint="Drop the Export data ZIP (or a single .xlsx report) here or click to browse"
+                            file={archiveFile}
+                            onFile={handleArchiveFile}
+                            accept=".zip,.xlsx"
+                        />
+                        <FileDrop
+                            label="Chart of Accounts CSV (recommended)"
+                            hint="Settings gear → Chart of accounts → Run report → Export to CSV"
+                            file={coaFile}
+                            onFile={handleCoaFile}
+                            accept=".csv,.txt,.xlsx"
+                        />
+                    </div>
+                    <p className="text-xs text-foreground-muted">
+                        The Export data ZIP does not include the Chart of Accounts. With the CSV, the book is built
+                        from the chart itself: GnuCash top-level accounts (Assets, Liabilities, Equity, Income,
+                        Expenses), a group per QuickBooks account type beneath them, and every account — used or
+                        not — nested under its group with the type taken from the group.
+                    </p>
 
                     <div>
                         <button
@@ -312,40 +366,24 @@ export default function QuickBooksImportPage() {
                             onClick={() => setCsvMode((v) => !v)}
                             className="text-sm text-primary hover:text-primary-hover transition-colors"
                         >
-                            {csvMode ? '▾' : '▸'} or upload Journal + Chart of Accounts CSVs
+                            {csvMode ? '▾' : '▸'} or upload the Journal report as CSV instead of the ZIP
                         </button>
                         {csvMode && (
                             <div className="mt-4 space-y-4">
-                                <div className="text-sm text-foreground-secondary space-y-2">
-                                    <p>
-                                        <span className="text-foreground font-medium">1. Journal report (required):</span>{' '}
-                                        Go to <span className="font-mono text-xs">Reports → Journal</span>,
-                                        set the report period to the full date range you want to migrate (e.g. All Dates),
-                                        run the report, then use the export icon → <span className="font-mono text-xs">Export to CSV</span>.
-                                    </p>
-                                    <p>
-                                        <span className="text-foreground font-medium">2. Chart of Accounts (recommended):</span>{' '}
-                                        Go to <span className="font-mono text-xs">Settings gear → Chart of accounts → Run report</span>,
-                                        then export it to CSV. This gives every account its correct type; without it, types
-                                        are inferred from account names.
-                                    </p>
-                                </div>
-                                <div className="grid gap-4 sm:grid-cols-2">
-                                    <FileDrop
-                                        label="Journal report CSV"
-                                        hint="Drop the Journal export here or click to browse"
-                                        file={journalFile}
-                                        onFile={handleJournalFile}
-                                        accept=".csv,.txt,.xlsx"
-                                    />
-                                    <FileDrop
-                                        label="Chart of Accounts CSV (optional)"
-                                        hint="Drop the Chart of Accounts export here or click to browse"
-                                        file={coaFile}
-                                        onFile={handleCoaFile}
-                                        accept=".csv,.txt,.xlsx"
-                                    />
-                                </div>
+                                <p className="text-sm text-foreground-secondary">
+                                    <span className="text-foreground font-medium">Journal report:</span>{' '}
+                                    Go to <span className="font-mono text-xs">Reports → Journal</span>,
+                                    set the report period to the full date range you want to migrate (e.g. All Dates),
+                                    run the report, then use the export icon → <span className="font-mono text-xs">Export to CSV</span>.
+                                    Pair it with the Chart of Accounts CSV above.
+                                </p>
+                                <FileDrop
+                                    label="Journal report CSV"
+                                    hint="Drop the Journal export here or click to browse"
+                                    file={journalFile}
+                                    onFile={handleJournalFile}
+                                    accept=".csv,.txt,.xlsx"
+                                />
                             </div>
                         )}
                     </div>
@@ -530,11 +568,16 @@ export default function QuickBooksImportPage() {
                             Accounts ({preview.accounts.length})
                             {preview.coaLoaded ? (
                                 <span className="ml-2 text-xs font-normal text-foreground-muted">
-                                    typed from Chart of Accounts ({preview.coaAccountCount} accounts)
+                                    typed from{' '}
+                                    {preview.coaSource === 'statements'
+                                        ? 'Balance Sheet + Profit and Loss'
+                                        : 'Chart of Accounts'}{' '}
+                                    ({preview.coaAccountCount} accounts)
                                 </span>
                             ) : (
                                 <span className="ml-2 text-xs font-normal text-warning">
-                                    no Chart of Accounts — types inferred from names
+                                    no Chart of Accounts — types inferred from names; upload the Chart of
+                                    Accounts CSV for an exact structure
                                 </span>
                             )}
                         </h3>
@@ -542,7 +585,8 @@ export default function QuickBooksImportPage() {
                             <table className="w-full text-sm">
                                 <thead className="sticky top-0 bg-surface">
                                     <tr className="text-xs text-foreground-muted uppercase tracking-wider">
-                                        <th className="text-left px-3 py-2 font-medium">Account</th>
+                                        <th className="text-left px-3 py-2 font-medium">QuickBooks account</th>
+                                        <th className="text-left px-3 py-2 font-medium">Imports as</th>
                                         <th className="text-right px-3 py-2 font-medium">Lines</th>
                                         <th className="text-left px-3 py-2 font-medium">Source</th>
                                         <th className="text-left px-3 py-2 font-medium">Type</th>
@@ -551,8 +595,11 @@ export default function QuickBooksImportPage() {
                                 <tbody>
                                     {preview.accounts.map((a) => (
                                         <tr key={a.path} className="border-t border-border">
-                                            <td className="px-3 py-1.5 text-foreground font-mono text-xs max-w-[22rem] truncate">
+                                            <td className="px-3 py-1.5 text-foreground font-mono text-xs max-w-[18rem] truncate">
                                                 {a.path}
+                                            </td>
+                                            <td className="px-3 py-1.5 text-foreground-secondary font-mono text-xs max-w-[22rem] truncate">
+                                                {a.targetPath}
                                             </td>
                                             <td className="px-3 py-1.5 font-mono text-right text-foreground-secondary">
                                                 {a.lines}
@@ -589,6 +636,87 @@ export default function QuickBooksImportPage() {
                             </table>
                         </div>
                     </div>
+
+                    {/* Account tree that will be created */}
+                    {preview.tree && (
+                        <details className="space-y-2">
+                            <summary className="cursor-pointer text-sm font-semibold text-foreground">
+                                Book structure ({preview.tree.accounts.length} accounts:{' '}
+                                {preview.tree.fromChart} from the chart,{' '}
+                                {preview.tree.accounts.filter((n) => n.origin === 'scaffold').length} GnuCash groups
+                                {preview.tree.journalOnly.length > 0 && (
+                                    <>, {preview.tree.journalOnly.length} journal-only</>
+                                )}
+                                )
+                            </summary>
+                            <div className="mt-2 border border-border rounded-lg max-h-96 overflow-y-auto p-3 font-mono text-xs">
+                                {preview.tree.accounts.map((n) => {
+                                    const depth = n.path.split(':').length - 1;
+                                    return (
+                                        <div
+                                            key={n.path}
+                                            className={n.placeholder ? 'text-foreground-muted' : 'text-foreground'}
+                                            style={{ paddingLeft: `${depth * 1.25}rem` }}
+                                        >
+                                            {n.path.split(':').pop()}
+                                            <span className="ml-2 text-foreground-muted">{n.accountType}</span>
+                                            {n.origin === 'journal' && (
+                                                <span className="ml-2 text-warning">not in chart</span>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </details>
+                    )}
+
+                    {/* Business records */}
+                    {preview.business && (
+                        <div className="space-y-2">
+                            <h3 className="text-sm font-semibold text-foreground">Business records</h3>
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+                                {(
+                                    [
+                                        ['Customers', preview.business.customers],
+                                        ['Vendors', preview.business.vendors],
+                                        ['Employees', preview.business.employees],
+                                        ['Invoices', preview.business.invoices],
+                                        ['Credit notes', preview.business.creditNotes],
+                                        ['Bills', preview.business.bills],
+                                        ['Customer payments', preview.business.customerPayments],
+                                        ['Bill payments', preview.business.billPayments],
+                                        ['Paid in full', preview.business.paidInFull],
+                                    ] as Array<[string, number]>
+                                ).map(([label, n]) => (
+                                    <div key={label} className="bg-surface/50 border border-border rounded-lg p-3">
+                                        <div className="text-xs text-foreground-muted uppercase tracking-wider">{label}</div>
+                                        <div className="text-foreground font-mono text-lg">{n.toLocaleString()}</div>
+                                    </div>
+                                ))}
+                            </div>
+                            <p className="text-xs text-foreground-muted">
+                                Invoices and bills are posted against their journal transactions with an A/R–A/P lot;
+                                payments are applied oldest-first to the same customer or vendor&apos;s open documents.
+                                {preview.business.partiallyPaid > 0 && ` ${preview.business.partiallyPaid} partially paid.`}
+                                {preview.business.unallocatedPayments > 0 &&
+                                    ` ${preview.business.unallocatedPayments} payment(s) carry ${fmtAmount(preview.business.unallocatedAmount)} with no open document to settle.`}
+                            </p>
+                            {preview.business.skippedSamples.length > 0 && (
+                                <details className="text-xs text-foreground-muted">
+                                    <summary className="cursor-pointer">
+                                        {preview.business.skipped} document-like transaction(s) stay plain ledger entries
+                                    </summary>
+                                    <ul className="mt-1 space-y-0.5 font-mono">
+                                        {preview.business.skippedSamples.map((s, i) => (
+                                            <li key={i}>
+                                                {s.date} {s.type} {s.name ? `"${s.name}"` : ''} — {s.reason}
+                                            </li>
+                                        ))}
+                                    </ul>
+                                </details>
+                            )}
+                        </div>
+                    )}
 
                     {/* Sample transactions */}
                     {preview.sampleTransactions.length > 0 && (
@@ -710,6 +838,23 @@ export default function QuickBooksImportPage() {
                                 <span className="text-foreground-muted">Skipped (errors): </span>
                                 <span className="text-foreground font-mono">{result.skippedErrors}</span>
                             </div>
+                            {(
+                                [
+                                    ['Customers', result.customersCreated],
+                                    ['Vendors', result.vendorsCreated],
+                                    ['Employees', result.employeesCreated],
+                                    ['Invoices', result.invoicesCreated],
+                                    ['Bills', result.billsCreated],
+                                    ['Payments applied', result.paymentsApplied],
+                                ] as Array<[string, number | undefined]>
+                            )
+                                .filter(([, n]) => n !== undefined)
+                                .map(([label, n]) => (
+                                    <div key={label}>
+                                        <span className="text-foreground-muted">{label}: </span>
+                                        <span className="text-foreground font-mono">{n}</span>
+                                    </div>
+                                ))}
                         </div>
                         <p className="text-sm text-foreground-secondary mt-3">
                             The new book &quot;{bookName}&quot; was created. Switch to it with the book

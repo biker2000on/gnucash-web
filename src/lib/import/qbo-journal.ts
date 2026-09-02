@@ -88,9 +88,16 @@ export interface QboCoaParseResult {
     accounts: QboCoaAccount[];
     warnings: string[];
     errors: QboParseError[];
+    /**
+     * Set when the account list was synthesized from the Balance Sheet /
+     * Profit and Loss reports (qbo-statements.ts) rather than read from a
+     * Chart of Accounts export. Resolved types then report source
+     * 'statement' so the UI can say where they came from.
+     */
+    derivedFrom?: 'statements';
 }
 
-export type AccountTypeSource = 'override' | 'coa' | 'inferred' | 'default';
+export type AccountTypeSource = 'override' | 'coa' | 'statement' | 'inferred' | 'default';
 
 export interface ResolvedAccount {
     path: string;
@@ -221,6 +228,10 @@ export function detectJournalHeader(cells: string[]): JournalColumns | null {
         }
         return -1;
     };
+
+    // A running Balance column means this is a General Ledger (QBO's
+    // "Export data" GL uses Debit/Credit/Balance), never the Journal report.
+    if (norm.some((c) => c === 'balance' || c.endsWith(' balance'))) return null;
 
     const date = find('date', 'transaction date', (c) => c.endsWith('date'));
     const debit = find('debit', (c) => c.includes('debit'));
@@ -616,6 +627,8 @@ export function inferAccountTypeFromName(path: string): string | null {
     if (/credit card|\bvisa\b|\bmastercard\b|\bamex\b/.test(n)) return 'CREDIT';
     if (/income|revenue|\bsales\b/.test(n)) return 'INCOME';
     if (/expense|cost of|\bcogs\b|\bfees?\b|\bcosts?\b|\bcharges?\b/.test(n)) return 'EXPENSE';
+    // "Spark Card", "Business Card 1234": a card account is a credit card.
+    if (/\bcard\b/.test(n)) return 'CREDIT';
     if (/checking|savings|\bbank\b|\bcash\b/.test(n)) return 'BANK';
     if (/\bloan\b|liabilit|mortgage/.test(n)) return 'LIABILITY';
     return null;
@@ -654,6 +667,7 @@ export function resolveAccountTypes(
 ): ResolvedAccount[] {
     const byFullName = new Map<string, QboCoaAccount>();
     const byLeaf = new Map<string, QboCoaAccount[]>();
+    const coaSource: AccountTypeSource = coa?.derivedFrom === 'statements' ? 'statement' : 'coa';
     if (coa) {
         for (const a of coa.accounts) {
             const full = a.fullName.toLowerCase();
@@ -678,7 +692,7 @@ export function resolveAccountTypes(
             return {
                 path,
                 gnucashType: coaMatch.gnucashType ?? 'ASSET',
-                source: 'coa' as const,
+                source: coaSource,
             };
         }
         const segments = path.split(':');
@@ -688,7 +702,7 @@ export function resolveAccountTypes(
             return {
                 path,
                 gnucashType: leafMatches[0].gnucashType ?? 'ASSET',
-                source: 'coa' as const,
+                source: coaSource,
             };
         }
 

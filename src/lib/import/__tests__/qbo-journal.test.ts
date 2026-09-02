@@ -10,6 +10,7 @@ import {
     inferAccountTypeFromName,
     resolveAccountTypes,
     isValidGnucashType,
+    detectJournalHeader,
 } from '../qbo-journal';
 
 /* ------------------------------------------------------------------ */
@@ -497,6 +498,7 @@ describe('inferAccountTypeFromName', () => {
         ['Accounts Receivable', 'RECEIVABLE'],
         ['Sales Tax Payable', 'PAYABLE'],
         ['Chase Credit Card', 'CREDIT'],
+        ['Spark Card (deleted)', 'CREDIT'], // "card" alone is a credit card
         ['Equipment Loan', 'LIABILITY'],
         ['Long Term Liabilities:SBA Loan', 'LIABILITY'],
         ['Consulting Income', 'INCOME'],
@@ -604,5 +606,16 @@ describe('journal + CoA together', () => {
             gnucashType: 'BANK',
             source: 'inferred',
         });
+    });
+});
+
+describe('detectJournalHeader', () => {
+    it('rejects a header with a running Balance column (that is a General Ledger)', () => {
+        expect(
+            detectJournalHeader(['', 'Date', 'Transaction Type', 'Num', 'Name', 'Memo/Description', 'Account', 'Debit', 'Credit', 'Balance'])
+        ).toBeNull();
+        expect(
+            detectJournalHeader(['Date', 'Transaction Type', 'Num', 'Name', 'Memo/Description', 'Account', 'Debit', 'Credit'])
+        ).not.toBeNull();
     });
 });

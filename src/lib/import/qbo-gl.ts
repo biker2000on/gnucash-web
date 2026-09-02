@@ -8,7 +8,9 @@
  *   - account-name section header rows (only the first cell populated),
  *     possibly nested (sub-account sections inside their parent's section),
  *   - per-account transaction rows: Date, Transaction Type, Num, Name,
- *     Memo/Description, Split, signed Amount, running Balance,
+ *     Memo/Description, Split, signed Amount, running Balance — or, in the
+ *     "Export data" ZIP layout, an Account path column plus Debit/Credit
+ *     instead of Split/Amount,
  *   - "Beginning Balance" rows and "Total for X" closing rows.
  *
  * Every double-entry transaction appears once in EACH account it touches, so
@@ -69,8 +71,14 @@ interface GlColumns {
     name: number;
     memo: number;
     split: number;
+    /** Signed Amount column, or -1 when the export uses Debit/Credit instead */
     amount: number;
+    /** Debit/Credit pair (QBO "Export data" GL layout); -1 when absent */
+    debit: number;
+    credit: number;
     balance: number;
+    /** Full account path column (present in the "Export data" GL); -1 when absent */
+    account: number;
 }
 
 interface GlEntry {
@@ -91,8 +99,10 @@ interface GlEntry {
 /* ------------------------------------------------------------------ */
 
 /**
- * Detect a General Ledger header row: Date + signed Amount + running Balance,
- * and NO Debit/Credit columns (those mean it's a Journal or Trial Balance).
+ * Detect a General Ledger header row: Date + running Balance + either a
+ * signed Amount column (classic report export) or a Debit/Credit pair (the
+ * "Export data" ZIP layout). The Balance column is what separates a GL from
+ * the Journal report; a Trial Balance has Debit/Credit but no Date.
  */
 export function detectGlHeader(cells: string[]): GlColumns | null {
     const norm = cells.map(normHeader);
@@ -106,18 +116,21 @@ export function detectGlHeader(cells: string[]): GlColumns | null {
         return -1;
     };
 
-    if (norm.some((c) => c.includes('debit')) || norm.some((c) => c.includes('credit'))) {
-        return null;
-    }
     const date = find('date', 'transaction date', (c) => c.endsWith('date'));
     const amount = find('amount', (c) => c.includes('amount'));
-    const balance = find('balance', (c) => c.includes('balance'));
-    if (date < 0 || amount < 0 || balance < 0) return null;
+    const debit = find('debit', (c) => c.includes('debit'));
+    const credit = find('credit', (c) => c.includes('credit'));
+    const balance = find('balance', (c) => c === 'balance' || c.endsWith(' balance'));
+    if (date < 0 || balance < 0) return null;
+    if (amount < 0 && (debit < 0 || credit < 0)) return null;
 
     return {
         date,
         amount,
+        debit,
+        credit,
         balance,
+        account: find('full account name', 'account', 'account name', (c) => c.includes('account')),
         type: find('transaction type', 'type', (c) => c.includes('transaction type')),
         num: find('num', 'no.', 'no', '#', 'number'),
         name: find('name', (c) => c === 'payee' || c === 'vendor' || c === 'customer'),
@@ -161,6 +174,24 @@ export function parseQboGeneralLedgerRows(
 
     const cell = (row: string[], idx: number): string =>
         idx >= 0 && idx < row.length ? row[idx] : '';
+    const hasAmount = (row: string[]): boolean =>
+        cols.amount >= 0
+            ? cell(row, cols.amount) !== ''
+            : cell(row, cols.debit) !== '' || cell(row, cols.credit) !== '';
+    /** Signed amount (debit positive), or null plus the raw text that failed. */
+    const readAmount = (row: string[]): { amount: number | null; raw: string } => {
+        if (cols.amount >= 0) {
+            const raw = cell(row, cols.amount);
+            return { amount: parseQboAmount(raw, locale), raw };
+        }
+        const debitRaw = cell(row, cols.debit);
+        const creditRaw = cell(row, cols.credit);
+        const debit = parseQboAmount(debitRaw, locale);
+        const credit = parseQboAmount(creditRaw, locale);
+        if (debit === null) return { amount: null, raw: debitRaw };
+        if (credit === null) return { amount: null, raw: creditRaw };
+        return { amount: round2(debit - credit), raw: debitRaw || creditRaw };
+    };
 
     // 2. Walk rows: track the account-section stack, collect entries
     const sectionStack: string[] = [];
@@ -189,17 +220,20 @@ export function parseQboGeneralLedgerRows(
                 }
                 continue;
             }
-            const amountRaw = cell(row, cols.amount);
-            const amount = parseQboAmount(amountRaw, locale);
+            // The "Export data" GL carries the full account path on every
+            // row; prefer it over the section stack when present.
+            const accountFromColumn = canonicalAccountPath(cell(row, cols.account));
+            const accountPath = accountFromColumn || sectionStack.join(':');
+            const { amount, raw: amountRaw } = readAmount(row);
             if (amount === null) {
                 errors.push({
                     row: rowNum,
-                    message: `Could not parse amount "${amountRaw}" in account "${sectionStack.join(':')}".`,
+                    message: `Could not parse amount "${amountRaw}" in account "${accountPath}".`,
                 });
                 continue;
             }
             entries.push({
-                accountPath: sectionStack.join(':'),
+                accountPath,
                 date: iso,
                 type: cell(row, cols.type),
                 num: cell(row, cols.num),
@@ -230,7 +264,7 @@ export function parseQboGeneralLedgerRows(
         }
 
         // Account section header: a label row with no amount value.
-        if (cell(row, cols.amount) === '') {
+        if (!hasAmount(row)) {
             const name = canonicalAccountPath(label);
             if (name !== '') sectionStack.push(name);
         }
