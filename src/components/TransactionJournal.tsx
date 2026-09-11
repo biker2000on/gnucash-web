@@ -760,6 +760,7 @@ export default function TransactionJournal({ initialTransactions, startDate, end
                                     onClick={() => handleRowClick(tx.guid)}
                                     fields={[
                                         { label: 'Date', value: new Date(tx.post_date).toLocaleDateString('en-US', { timeZone: 'UTC' }) },
+                                        { label: 'Receipts', value: <ReceiptIndicator transactionGuid={tx.guid} transactionDescription={tx.description} receiptCount={tx.receipt_count ?? 0} /> },
                                         { label: 'Description', value: <><span className="font-medium">{tx.description}</span>{tx.num && <span className="text-xs text-foreground-muted ml-1">#{tx.num}</span>}{(commentCounts[tx.guid] ?? 0) > 0 && <span className="ml-1 inline-block align-middle"><CommentCountBadge count={commentCounts[tx.guid] ?? 0} /></span>}</> },
                                         { label: 'Accounts', value: <div className="text-right">{tx.splits?.map(s => <div key={s.guid} className="text-foreground-secondary text-xs">{s.account_name}</div>)}</div> },
                                         ...(debitTotal > 0 ? [{ label: 'Debit', value: <span className="text-positive font-mono">{formatCurrency(debitTotal)}</span> }] : []),

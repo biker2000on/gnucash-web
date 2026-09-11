@@ -10,6 +10,7 @@ import { formatAccountPath } from '@/lib/account-utils';
 import { PopoutButton } from './popout/PopoutButton';
 import { TransactionActivityFeed } from './transactions/TransactionActivityFeed';
 import { usePopoutHost } from '@/lib/popout/usePopout';
+import { ReceiptIndicator } from './receipts/ReceiptIndicator';
 import { Tip } from '@/components/ui/Tooltip';
 
 function getReconcileStatus(splits: Split[] | undefined): {
@@ -173,6 +174,12 @@ export function TransactionDetailContent({
                     </div>
                 </div>
             </div>
+
+            <ReceiptIndicator
+                key={transaction.guid}
+                transactionGuid={transaction.guid}
+                transactionDescription={transaction.description}
+            />
 
             {/* Splits Table */}
             <div>

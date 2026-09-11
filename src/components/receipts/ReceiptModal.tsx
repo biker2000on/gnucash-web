@@ -34,6 +34,9 @@ export function ReceiptModal({ isOpen, onClose, transactionGuid, transactionDesc
       if (res.ok) {
         const data = await res.json();
         setReceipts(data);
+        window.dispatchEvent(new CustomEvent('gnucash:receipts-changed', {
+          detail: { transactionGuid, count: data.length },
+        }));
         setActiveTab(data.length > 0 ? 'view' : 'upload');
         setActiveIndex(0);
       } else if (res.status === 401 || res.status === 403) {

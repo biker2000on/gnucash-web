@@ -2484,6 +2484,7 @@ export default function AccountLedger({
                                             <div className="text-sm font-medium flex items-center gap-2">
                                                 <TransactionTypeIcon type={invRow.transactionType} className="mr-0.5" />
                                                 {tx.description}
+                                                <ReceiptIndicator transactionGuid={tx.guid} transactionDescription={tx.description} receiptCount={tx.receipt_count ?? 0} />
                                                 {tx.source && tx.source !== 'manual' && tx.match_type !== 'manual_reconciliation' && (
                                                     <span className="text-[9px] px-1.5 py-0.5 rounded bg-warning/10 text-warning border border-warning/20 uppercase tracking-wider font-bold">Imported</span>
                                                 )}
@@ -2583,6 +2584,7 @@ export default function AccountLedger({
                                     className={isUnreviewed ? 'border-l-2 border-l-warning' : ''}
                                     fields={[
                                         { label: 'Date', value: new Date(tx.post_date).toLocaleDateString('en-US', { timeZone: 'UTC' }) },
+                                        { label: 'Receipts', value: <ReceiptIndicator transactionGuid={tx.guid} transactionDescription={tx.description} receiptCount={tx.receipt_count ?? 0} /> },
                                         { label: 'Description', value: <span className="font-medium flex items-center gap-2">{tx.description}{tx.source && tx.source !== 'manual' && tx.match_type !== 'manual_reconciliation' && <span className="text-[9px] px-1.5 py-0.5 rounded bg-warning/10 text-warning border border-warning/20 uppercase tracking-wider font-bold">Imported</span>}{tx.match_type === 'manual_reconciliation' && <span className="text-[9px] px-1.5 py-0.5 rounded bg-primary/10 text-primary border border-primary/20 uppercase tracking-wider font-bold">Bank-verified</span>}</span> },
                                         { label: 'Transfer', value: transferName },
                                         ...(amount >= 0
