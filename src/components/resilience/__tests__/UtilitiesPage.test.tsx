@@ -196,3 +196,28 @@ describe('utilities bill review queue', () => {
     expect(screen.getByText('Duke Energy')).toBeTruthy();
   });
 });
+
+
+describe('utility trend controls', () => {
+  it('shows monthly costs and changes for a named fee, and filters utility type', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => sectionResponse([
+      bill({ charges: [{ label: 'Customer charge', amount: 10, category: 'fee' }] }),
+      bill({ id: 'later', date: '2026-06-06', charges: [{ label: 'Customer charge', amount: 15, category: 'fee' }] }),
+      gasSuggestion,
+    ], []) })));
+    await renderPage();
+    fireEvent.click(screen.getByRole('button', { name: 'Trends' }));
+    expect(screen.getByText('2 bills in this selection')).toBeTruthy();
+    expect(screen.getByText('+50%')).toBeTruthy();
+    expect(screen.getByText('+$5.00')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Fee type'), { target: { value: 'customer charge' } });
+    const monthly = screen.getByText('Monthly values').closest('section')!;
+    expect(within(monthly).getByRole('columnheader', { name: 'Customer charge' })).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Trend start date'), { target: { value: '2026-06-01' } });
+    expect(screen.getByText('1 bill in this selection')).toBeTruthy();
+    expect(screen.queryByText('+50%')).toBeNull();
+    fireEvent.change(screen.getByLabelText('Trend utility type'), { target: { value: 'gas' } });
+    expect(screen.getByText('Usage over time · therms')).toBeTruthy();
+    expect(screen.getByText('No complete monthly fee breakdowns in this selection.')).toBeTruthy();
+  });
+});

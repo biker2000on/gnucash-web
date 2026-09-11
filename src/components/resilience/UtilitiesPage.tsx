@@ -16,6 +16,7 @@ import { formatCurrency } from '@/lib/format';
 import { findDuplicateUtilityBill } from '@/lib/resilience/p3-core';
 import type { UtilitiesProfile, UtilityBill } from '@/lib/resilience/types';
 import { Empty, Field, FieldGrid, INPUT, Metric, Panel, SaveBar, Tabs, TNUM } from './ui';
+import { UtilityTrends } from './UtilityTrends';
 import { numberValue, today, uid, useSection } from './P3FeaturePages';
 
 type UtilityResponse = {
@@ -359,7 +360,7 @@ export function UtilitiesPlannerPage() {
     solar: { enabled: false, systemCost: 0, incentives: 0, annualProductionKwh: 0, degradationRate: 0.5, electricRateInflation: 3, annualMaintenance: 0, analysisYears: 25 },
   });
   // Honor the Action Center's deep link into the solar scenario.
-  const [tab, setTab] = useState<'usage' | 'solar'>(searchParams.get('tab') === 'solar' ? 'solar' : 'usage');
+  const [tab, setTab] = useState<'usage' | 'trends' | 'solar'>(searchParams.get('tab') === 'solar' ? 'solar' : searchParams.get('tab') === 'trends' ? 'trends' : 'usage');
   // OCR runs on a worker, so a fresh upload has no suggestion yet. Poll the
   // section until one appears (or we give up), refreshing only the computed
   // half of the response so unsaved bill edits survive.
@@ -482,7 +483,7 @@ export function UtilitiesPlannerPage() {
   return (
     <div className="mx-auto max-w-[1400px] space-y-6 p-4 sm:p-6">
       <PageHeader title="Utilities & Solar" subtitle="Separate usage changes from rate increases and test solar against actual household bills." actions={<button type="button" onClick={addManualBill} className="rounded-md bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground hover:bg-primary-hover">Add bill</button>} />
-      <Tabs value={tab} onChange={setTab} tabs={[{ value: 'usage', label: 'Usage & rates' }, { value: 'solar', label: 'Solar scenario' }]} />
+      <Tabs value={tab} onChange={setTab} tabs={[{ value: 'usage', label: 'Usage & rates' }, { value: 'trends', label: 'Trends' }, { value: 'solar', label: 'Solar scenario' }]} />
       {tab === 'usage' && <>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-4"><Metric label="Trailing 12-month cost" value={formatCurrency(state.response?.analysis.trailing12Cost ?? 0)} />{state.response?.analysis.byType.map(row => <Metric key={row.type} label={`${row.type} unit rate`} value={`$${row.latestRate.toFixed(2)}`} tone={row.rateChangePercent > 15 ? 'warning' : undefined} />)}</div>
         <Panel
@@ -563,6 +564,7 @@ export function UtilitiesPlannerPage() {
             )}
         </Panel>
       </>}
+      {tab === 'trends' && <UtilityTrends bills={state.profile.bills} dirty={state.dirty} />}
       {tab === 'solar' && <>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-4"><Metric label="Net upfront cost" value={formatCurrency(state.response?.solar.upfrontCost ?? 0)} /><Metric label="Current electric rate" value={`$${(state.response?.solar.currentElectricRate ?? 0).toFixed(2)}/kWh`} /><Metric label="Simple payback" value={state.response?.solar.paybackYear ? `${state.response.solar.paybackYear} years` : 'Not reached'} tone={state.response?.solar.paybackYear ? 'positive' : 'warning'} /><Metric label="Lifetime net savings" value={formatCurrency(state.response?.solar.lifetimeSavings ?? 0)} tone={(state.response?.solar.lifetimeSavings ?? 0) >= 0 ? 'positive' : 'negative'} /></div>
         <Panel title="Solar capital scenario" description="Uses entered production and actual latest electric rate; this is a planning scenario, not a contractor quote."><label className="mb-4 flex items-center gap-2 text-sm"><input type="checkbox" checked={state.profile.solar.enabled} onChange={event => updateSolar({ enabled: event.target.checked })} /> Enable scenario</label><FieldGrid>{([['System cost','systemCost'],['Incentives','incentives'],['Annual production kWh','annualProductionKwh'],['Degradation %','degradationRate'],['Electric inflation %','electricRateInflation'],['Annual maintenance','annualMaintenance'],['Analysis years','analysisYears']] as const).map(([label, key]) => <Field key={key} label={label}><input type="number" step="0.1" className={`${INPUT} font-mono`} value={state.profile.solar[key]} onChange={event => updateSolar({ [key]: numberValue(event.target.value) })} /></Field>)}</FieldGrid></Panel>
