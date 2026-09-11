@@ -83,7 +83,7 @@ export function ReceiptModal({ isOpen, onClose, transactionGuid, transactionDesc
   const activeReceipt = receipts[activeIndex];
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title={transactionDescription || 'Receipt'} size="lg">
+    <Modal isOpen={isOpen} onClose={onClose} title={transactionDescription || 'Receipt'} size={receipts.length > 0 ? '2xl' : 'lg'}>
       <div className="flex flex-col h-full">
         {/* Tab bar */}
         <div className="flex border-b border-border px-4">
@@ -136,8 +136,8 @@ export function ReceiptModal({ isOpen, onClose, transactionGuid, transactionDesc
                 <div className="bg-black/20 rounded-lg overflow-hidden flex items-center justify-center min-h-[300px]">
                   {activeReceipt.mime_type === 'application/pdf' ? (
                     <iframe
-                      src={`/api/receipts/${activeReceipt.id}`}
-                      className="w-full h-[60vh] border-0"
+                      src={`/api/receipts/${activeReceipt.id}#view=FitH&pagemode=none`}
+                      className="w-full min-w-0 h-[65vh] border-0"
                       title={activeReceipt.filename}
                     />
                   ) : (

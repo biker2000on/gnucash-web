@@ -56,6 +56,7 @@ export function ReceiptIndicator({ transactionGuid, transactionDescription, rece
         className="p-1 rounded hover:bg-surface-hover transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center gap-1 text-xs text-primary whitespace-nowrap"
         aria-label={label}
       >
+        <span className="relative inline-flex shrink-0">
         {(count ?? 0) > 0 ? (
           <svg className="w-4 h-4 text-primary" fill="currentColor" viewBox="0 0 24 24">
             <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
@@ -65,7 +66,12 @@ export function ReceiptIndicator({ transactionGuid, transactionDescription, rece
             <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
         )}
-        {(count ?? 0) > 0 && <span>{count} receipt{count !== 1 ? 's' : ''}</span>}
+        {(count ?? 0) > 0 && (
+          <span aria-hidden="true" className="absolute -right-2 -top-2 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-0.5 text-[10px] font-semibold leading-none text-primary-foreground ring-2 ring-surface">
+            {count}
+          </span>
+        )}
+        </span>
         {receiptCount === undefined && !count && <span>{label}</span>}
       </button>
       </Tip>
