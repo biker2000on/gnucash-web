@@ -1,4 +1,5 @@
 "use client";
+import { PlanningNav, usePlanningGroups } from './PlanningNav';
 
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
@@ -575,6 +576,9 @@ export default function Layout({ children }: { children: ReactNode }) {
 
     // Expandable nav sections (e.g. Investments sub-items)
     const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
+    const planningLinks = effectiveNavItems.find(item => item.name === 'Planning')?.children ?? [];
+    const planningActiveHref = resolveActiveChildHref(planningLinks, pathname, searchParams ?? new URLSearchParams());
+    const planningGroups = usePlanningGroups(planningActiveHref, planningLinks);
 
     // Keep sidebarWidthRef in sync with sidebarWidth state
     useEffect(() => {
@@ -748,7 +752,7 @@ export default function Layout({ children }: { children: ReactNode }) {
                 {/* Sub-items (desktop expanded only) */}
                 {item.children && isSectionExpanded && !isCollapsed && (
                     <div className="ml-8 mt-1 space-y-0.5">
-                        {item.children.map((child) => {
+                        {item.name === 'Planning' ? <PlanningNav links={item.children} activeHref={activeChildHref} {...planningGroups} onNavigate={() => setMobileSidebarState({ open: false, pathname })} /> : item.children.map((child) => {
                             const isChildActive = child.href === activeChildHref;
                             return (
                                 <Link
@@ -977,7 +981,7 @@ export default function Layout({ children }: { children: ReactNode }) {
                                 {/* Mobile sub-items */}
                                 {item.children && isSectionExpanded && (
                                     <div className="ml-8 mt-1 space-y-0.5">
-                                        {item.children.map((child) => {
+                                        {item.name === 'Planning' ? <PlanningNav links={item.children} activeHref={activeChildHref} {...planningGroups} mobile onNavigate={() => setMobileSidebarState({ open: false, pathname })} /> : item.children.map((child) => {
                                             const isChildActive = child.href === activeChildHref;
                                             return (
                                                 <Link

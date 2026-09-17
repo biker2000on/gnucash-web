@@ -251,6 +251,11 @@ Covers work landed since 0.23.2.0 (2026-07-29).
 
 ### Added
 
+- **Planning sidebar groups:** Living Plan stays directly accessible while the
+  remaining links are organized into seven collapsible groups. Group preferences
+  persist across reloads, the current page's group opens automatically, and desktop
+  and mobile share the same navigation. Pinned links remain direct shortcuts.
+
 - **Pay Off Debt or Invest?** now includes a full planner alongside the original
   quick comparison: up to 12 debts, allocation priorities, protected cash reserves,
   named user/book-scoped scenarios and side-by-side comparison. Models incremental
