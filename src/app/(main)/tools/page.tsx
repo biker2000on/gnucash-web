@@ -231,6 +231,12 @@ export default function ToolsPage() {
             href: '/tools/mortgage',
         },
         {
+            title: 'Pay Off Debt or Invest?',
+            description: 'Compare debt payoff, investing, and splitting extra cash with return sensitivity and liquidity tradeoffs.',
+            icon: 'percent',
+            href: '/tools/debt-vs-invest',
+        },
+        {
             title: 'Mortgage Payoff',
             description: 'Estimate payoff timeline with extra payments or calculate the payment needed for a target date.',
             icon: 'calendar',

@@ -1,5 +1,7 @@
 'use client';
 
+import Link from 'next/link';
+
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { AccountSelector } from '@/components/ui/AccountSelector';
 import { CollapsibleConfigSection } from '@/components/ui/CollapsibleConfigSection';
@@ -644,6 +646,7 @@ export default function MortgageCalculatorPage() {
           <p className="text-foreground-muted mt-1">
             Calculate mortgage payments, track your loan, and estimate payoff with extra payments.
           </p>
+          <Link href="/tools/debt-vs-invest" className="inline-block mt-2 text-sm text-primary hover:underline">Compare paying off debt with investing</Link>
         </div>
         {(detectionTraceId || balanceTraceId) && (
           <div className="flex flex-wrap gap-2">

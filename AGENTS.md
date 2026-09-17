@@ -59,6 +59,7 @@ docker run -p 3000:3000 -e DATABASE_URL="..." gnucash-web
 - `format.ts` - Currency formatting utility
 - `scheduled-transactions.ts` - Shared utility: `resolveTemplateSplits()`, GnuCash date parsing
 - `recurrence.ts` - Recurrence computation engine (9 period types, weekend adjustment, month-end clamping)
+- `debt-vs-invest.ts` - Before-tax fixed-rate debt/investment comparison with equal monthly budgets, lump-sum allocation, freed-payment investing, effective annual break-even, and return sensitivity. UI at `/tools/debt-vs-invest` imports active-book debt/mortgage terms via the existing debt-payoff endpoint and supplies inline Financial Provenance. Focused tests: `npx vitest run src/lib/__tests__/debt-vs-invest.test.ts`.
 - `tax/farm-analysis.ts` - Farm formalization engine: 4-scenario comparison (unreported cash, hobby, Schedule F, Schedule F + NC LLC) with SE tax, QBI, and §179 modeling
 - `tax/nc-farm-rules.ts` - NC farm rules: qualifying-farmer sales-tax exemption ($10k threshold), present-use value hints, LLC formation/annual-report fees
 - `tax/farm-book-data.ts` - Pulls and annualizes farm income/expense actuals from user-selected account subtrees

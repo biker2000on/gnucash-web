@@ -1,6 +1,39 @@
 # Product Roadmap and TODOs
 
-Updated 2026-08-19.
+Updated 2026-09-16.
+
+## Pay Off Debt or Invest? (P2)
+
+Compare debt repayment with investing the same resources, starting with a single
+fixed-rate mortgage or other debt and reusing the FIRE calculator's assumptions,
+projection, and scenario design patterns.
+
+- [x] First version: one fixed-rate debt, manual entry or import of current balance
+  and saved mortgage/debt terms from the active book; editable assumptions.
+- [x] Compare pay-off-first, invest-first, and configurable split strategies with
+  both a lump sum today and extra monthly cash. Use identical starting resources,
+  monthly budgets, and comparison dates; invest freed payments and excess cash.
+- [x] Show projected investments minus remaining debt, differences from investing,
+  debt-free dates, interest paid/saved, and accessible investments separately from
+  debt reduction/home equity. Keep unaffected assets out of the comparison.
+- [x] Add net-worth projection and return-sensitivity charts, break-even return,
+  input validation, transparent monthly calculations, and Financial Provenance.
+- [x] Explain liquidity, market risk, reduced obligations, emergency reserves,
+  and the personal value of being debt-free. Exclude taxes/insurance from freed
+  mortgage payments; label nominal, before-tax assumptions and model limitations.
+- [ ] Save named, book-scoped scenarios and compare them side by side, following
+  the FIRE calculator's saved-scenario design.
+- [ ] Add FIRE-style historical/Monte Carlo simulations, shared market paths per
+  strategy, outcome percentiles, downside scenarios, and probability of finishing
+  ahead under the selected assumptions (not a guaranteed forecast).
+- [ ] Add deeper tax treatment: actual incremental mortgage-interest deduction,
+  investment fees/tax drag, taxable versus retirement accounts, and taxes/penalties
+  on liquidating investments for payoff; distinguish expected and certain savings.
+- [ ] Model mortgage insurance cancellation, prepayment penalties, variable rates,
+  recasting/refinancing, and lender-specific payment rules explicitly.
+- [ ] Extend to multiple debts and allocation priorities, emergency-fund constraints,
+  FIRE-date impact, and adoption into the Living Plan / Action Center.
+
 
 GnuCash Web has passed the point where desktop parity or raw feature count is the
 right roadmap. The product already has accounting-grade books, household and

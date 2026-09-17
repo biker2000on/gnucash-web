@@ -251,6 +251,13 @@ Covers work landed since 0.23.2.0 (2026-07-29).
 
 ### Added
 
+- **Pay Off Debt or Invest?** compares fixed-rate debt payoff, investing, and
+  splitting spare cash using equal budgets. Import saved mortgage/debt terms,
+  model lump sums and monthly contributions, and compare payoff dates, interest,
+  accessible investments, return sensitivity, and effective annual break-even.
+  Includes calculation explanations and liquidity tradeoffs; the first version
+  uses constant before-tax returns and does not save scenarios.
+
 - **beez-trackz sync:** a hive-management install can now keep its books in
   folio automatically. Point it at `/api/integrations/beez/*` with a personal
   access token and it can list your chart of accounts, post balanced

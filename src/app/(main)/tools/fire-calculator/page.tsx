@@ -1091,7 +1091,7 @@ export default function FireCalculatorPage() {
           contributions are invested at year end. Past performance does not guarantee future results.
         </p>
       )}
-      <RelatedLinks ids={['tool-drawdown', 'tool-scenario', 'rpt-nw-attribution']} />
+      <RelatedLinks ids={['tool-debt-vs-invest', 'tool-drawdown', 'tool-scenario', 'rpt-nw-attribution']} />
     </div>
   );
 }

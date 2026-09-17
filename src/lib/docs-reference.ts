@@ -387,6 +387,19 @@ function readsAndChangesFor(feature: Feature): string[] {
 }
 
 export function featureReferencePage(feature: Feature): DocPage {
+  if (feature.id === 'tool-debt-vs-invest') {
+    return {
+      slug: feature.id, title: feature.title, summary: feature.description,
+      kind: 'reference', readTime: '5 min',
+      sections: [
+        { heading: 'What it is for', paragraphs: ['Compare paying a fixed-rate debt, investing spare cash, or splitting cash between both. Each strategy starts with the same lump sum and uses the same monthly budget and end date. The result is projected investments minus remaining debt, not total household net worth.'] },
+        { heading: 'Before you begin', bullets: ['Have the current balance, fixed annual debt rate, and scheduled monthly principal-and-interest payment ready. Exclude property taxes, homeowners insurance, and mortgage insurance.', 'Use only money available after your emergency reserve. The first version uses US dollars and assumes investments can be accessed without withdrawal restrictions.', 'The scheduled payment must exceed the first month’s interest. Variable rates, recasting, and additional borrowing are not modeled.'] },
+        { heading: 'How to use it', steps: ['Open Planning → Pay Off Debt or Invest?, or follow the link from the mortgage or financial independence calculator.', 'Enter debt terms manually, or choose Import mortgage or debt to read current balances and saved linked mortgage/debt-planner terms from the active book. Review every imported value; missing terms must be entered.', 'Set a lump sum, extra monthly cash, effective annual investment return, comparison years, and the split percentage allocated to debt.', 'Compare the three results, open the yearly values, and inspect return sensitivity. Use Explain this number for the calculation inputs and annual steps.'] },
+        { heading: 'What it reads and changes', bullets: ['Optional import reads the active book through the existing debt-payoff endpoint. Manual calculations run locally in the browser.', 'This version does not save scenarios, post transactions, pay lenders, or place investments. Reloading or changing books resets the inputs.', 'Explanations are inline Financial Provenance traces of the current inputs, including initial import evidence where available; they are not persisted.'] },
+        { heading: 'Verify the result', bullets: ['All strategies use scheduled payment plus extra cash every month. After payoff, the full budget is invested; unused final-payment cash and excess lump sums are invested too.', 'Debt interest accrues monthly at annual rate / 12. Investments grow at (1 + annual return)^(1/12) − 1, with contributions at month end. The lump sum is allocated immediately.', 'The before-tax break-even investment return is (1 + annual debt rate / 12)^12 − 1, using rates as fractions. At that return, the strategies have equal modeled net worth.', 'Compare accessible investments separately from debt reduction: home equity is not liquid cash. Unchanged home value and other assets are excluded from all three results.', 'Returns are constant, nominal, and before tax and fees. Market uncertainty, tax deductions, liquidation taxes, prepayment penalties, and mortgage insurance cancellation are future enhancements. Interest savings cover only the selected comparison period.'] },
+      ],
+    };
+  }
   return {
     slug: feature.id,
     title: feature.title,
