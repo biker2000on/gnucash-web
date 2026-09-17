@@ -1,4 +1,5 @@
 import prisma from '@/lib/prisma';
+import { loadDebtInvestmentActions } from './debt-investment';
 import { runDataHealth } from '@/lib/data-health';
 import { listInsights } from '@/lib/insights';
 import { listNotifications, type AppNotification } from '@/lib/notifications';
@@ -1315,6 +1316,7 @@ export async function loadSourceActions(input: {
   const { userId, bookGuid, bookAccountGuids } = input;
   const results = await Promise.all([
     safeActionSource('Transaction review', () => transactionReviewActions(bookAccountGuids)),
+    safeActionSource('Debt investment scenarios', () => loadDebtInvestmentActions(userId, bookGuid)),
     safeActionSource('Receipt inbox', () => receiptActions(bookGuid)),
     safeActionSource('Payslips', () => payslipActions(bookGuid)),
     safeActionSource('Statement reconciliation', () => statementActions(bookGuid)),

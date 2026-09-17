@@ -10,6 +10,7 @@
 
 import { z } from 'zod';
 import prisma from '@/lib/prisma';
+import { PlannerSchema } from '@/lib/debt-investment-planner';
 
 /**
  * Validation schemas
@@ -129,6 +130,7 @@ export class ToolConfigService {
     data: Omit<CreateToolConfigInput, 'accountGuid'>,
   ) {
     const validated = CreateToolConfigSchema.parse({ ...data, accountGuid: null });
+    if (validated.toolType === 'debt-vs-invest') throw new Error('Use named scenario create/update for the debt investment planner.');
     const rows = await prisma.$queryRaw<Array<{
       id: number;
       user_id: number | null;
@@ -146,7 +148,7 @@ export class ToolConfigService {
         (${userId}, ${bookGuid}, ${validated.toolType}, ${validated.name}, NULL,
          ${JSON.stringify(validated.config)}::jsonb)
       ON CONFLICT (user_id, book_guid, tool_type)
-        WHERE user_id IS NOT NULL AND account_guid IS NULL
+        WHERE user_id IS NOT NULL AND account_guid IS NULL AND tool_type <> 'debt-vs-invest'
       DO UPDATE SET
         name = EXCLUDED.name,
         config = EXCLUDED.config,
@@ -200,6 +202,7 @@ export class ToolConfigService {
    */
   static async create(userId: number, bookGuid: string, data: CreateToolConfigInput) {
     const validated = CreateToolConfigSchema.parse(data);
+    if (validated.toolType === 'debt-vs-invest') validated.config = PlannerSchema.parse(validated.config);
 
     // If account GUID provided, validate it exists in this book
     if (validated.accountGuid) {
@@ -278,6 +281,7 @@ export class ToolConfigService {
     if (!existing || existing.user_id !== userId || existing.book_guid !== bookGuid) {
       return null; // Not found or not owned by this user in this book
     }
+    if (existing.tool_type === 'debt-vs-invest' && validated.config !== undefined) validated.config = PlannerSchema.parse(validated.config);
 
     // If account GUID provided, validate it exists and belongs to book
     if (validated.accountGuid) {

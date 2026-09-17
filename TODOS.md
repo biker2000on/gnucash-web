@@ -21,18 +21,26 @@ projection, and scenario design patterns.
 - [x] Explain liquidity, market risk, reduced obligations, emergency reserves,
   and the personal value of being debt-free. Exclude taxes/insurance from freed
   mortgage payments; label nominal, before-tax assumptions and model limitations.
-- [ ] Save named, book-scoped scenarios and compare them side by side, following
+- [x] Save named, user/book-scoped scenarios and compare up to three side by side, following
   the FIRE calculator's saved-scenario design.
-- [ ] Add FIRE-style historical/Monte Carlo simulations, shared market paths per
+- [x] Add FIRE-style historical/Monte Carlo simulations, shared market paths per
   strategy, outcome percentiles, downside scenarios, and probability of finishing
   ahead under the selected assumptions (not a guaranteed forecast).
-- [ ] Add deeper tax treatment: actual incremental mortgage-interest deduction,
+- [x] Add deeper tax treatment: incremental mortgage-interest deduction using
+  user-confirmed eligible interest and itemization inputs,
   investment fees/tax drag, taxable versus retirement accounts, and taxes/penalties
   on liquidating investments for payoff; distinguish expected and certain savings.
-- [ ] Model mortgage insurance cancellation, prepayment penalties, variable rates,
+- [x] Model mortgage insurance cancellation, prepayment penalties, variable rates,
   recasting/refinancing, and lender-specific payment rules explicitly.
-- [ ] Extend to multiple debts and allocation priorities, emergency-fund constraints,
-  FIRE-date impact, and adoption into the Living Plan / Action Center.
+- [x] Extend to multiple debts and allocation priorities, emergency-fund constraints,
+  FIRE-threshold impact, Action Center review actions, and recording a selected
+  saved strategy in an existing Living Plan decision journal. Journal entries
+  preserve the input snapshot and expected impact; they do not replace its forecast.
+
+The full planner retains the original quick comparison. Tax rates and lender
+rules are explicit assumptions, not eligibility determinations. Simulations run
+in a cancellable browser worker; infeasible budgets are flagged and cannot be
+recorded as Living Plan decisions. No lender payments or trades are executed.
 
 
 GnuCash Web has passed the point where desktop parity or raw feature count is the

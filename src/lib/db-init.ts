@@ -1,4 +1,5 @@
 import { query, withDatabaseAdvisoryLock } from './db';
+import { TOOL_CONFIG_PERSONAL_INDEX_SQL } from './tool-config-schema';
 import {
     CALCULATION_TRACES_SCHEMA_SQL,
     FINANCIAL_ACTIONS_SCHEMA_SQL,
@@ -978,6 +979,7 @@ async function createExtensionTables() {
         WHERE older.id < newer.id
           AND older.book_guid = newer.book_guid
           AND older.tool_type = newer.tool_type
+          AND older.tool_type <> 'debt-vs-invest'
           AND older.user_id IS NOT DISTINCT FROM newer.user_id
           AND older.account_guid IS NULL
           AND newer.account_guid IS NULL;
@@ -1017,9 +1019,7 @@ async function createExtensionTables() {
     `;
 
     const toolConfigUniqueIndexesDDL = `
-        CREATE UNIQUE INDEX IF NOT EXISTS uq_tool_config_user_singleton
-          ON gnucash_web_tool_config(user_id, book_guid, tool_type)
-          WHERE user_id IS NOT NULL AND account_guid IS NULL;
+        ${TOOL_CONFIG_PERSONAL_INDEX_SQL}
         CREATE UNIQUE INDEX IF NOT EXISTS uq_tool_config_book_singleton
           ON gnucash_web_tool_config(book_guid, tool_type)
           WHERE user_id IS NULL AND account_guid IS NULL;

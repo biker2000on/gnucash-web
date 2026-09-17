@@ -251,12 +251,16 @@ Covers work landed since 0.23.2.0 (2026-07-29).
 
 ### Added
 
-- **Pay Off Debt or Invest?** compares fixed-rate debt payoff, investing, and
-  splitting spare cash using equal budgets. Import saved mortgage/debt terms,
-  model lump sums and monthly contributions, and compare payoff dates, interest,
-  accessible investments, return sensitivity, and effective annual break-even.
-  Includes calculation explanations and liquidity tradeoffs; the first version
-  uses constant before-tax returns and does not save scenarios.
+- **Pay Off Debt or Invest?** now includes a full planner alongside the original
+  quick comparison: up to 12 debts, allocation priorities, protected cash reserves,
+  named user/book-scoped scenarios and side-by-side comparison. Models incremental
+  interest deductions, taxable/retirement basis and liquidation taxes, fees,
+  insurance cancellation, penalties, variable rates, recasting and refinancing.
+  Paired historical simulations show percentile bands and probabilities; equal
+  budgets, funding-gap checks and calculation explanations keep assumptions
+  visible. Saved scenarios appear in the Action Center and a selected strategy
+  can be recorded in an existing Living Plan decision journal with its input
+  snapshot. Records do not replace the plan forecast or execute payments/trades.
 
 - **beez-trackz sync:** a hive-management install can now keep its books in
   folio automatically. Point it at `/api/integrations/beez/*` with a personal

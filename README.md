@@ -29,7 +29,7 @@ A self-hosted personal and small-business finance platform with full double-entr
 - Contribution summary with IRS limit tracking, tax-year attribution, and progress bars
 - Net worth and income/expense charts
 - Mortgage payoff calculator with amortization schedule
-- Pay Off Debt or Invest? compares payoff, investing, and split strategies with equal budgets, return sensitivity, and calculation explanations
+- Pay Off Debt or Invest? compares equal-budget strategies across multiple debts, saved scenarios, taxes, lender events, and paired historical simulations, with calculation explanations and Living Plan decision records
 - FIRE calculator with savings rate and projection
 - Farm & Apiary Analyzer: side-by-side tax comparison of four ways to handle home-farm income (hobby, Schedule F, Schedule F + NC LLC), fed by your actual book data
 - Schedule F report mapping farm income/expense accounts onto IRS lines, with a farm chart of accounts for books labeled "Farm or ranch" and farm deadlines on the compliance calendar

@@ -60,6 +60,7 @@ docker run -p 3000:3000 -e DATABASE_URL="..." gnucash-web
 - `scheduled-transactions.ts` - Shared utility: `resolveTemplateSplits()`, GnuCash date parsing
 - `recurrence.ts` - Recurrence computation engine (9 period types, weekend adjustment, month-end clamping)
 - `debt-vs-invest.ts` - Before-tax fixed-rate debt/investment comparison with equal monthly budgets, lump-sum allocation, freed-payment investing, effective annual break-even, and return sensitivity. UI at `/tools/debt-vs-invest` imports active-book debt/mortgage terms via the existing debt-payoff endpoint and supplies inline Financial Provenance. Focused tests: `npx vitest run src/lib/__tests__/debt-vs-invest.test.ts`.
+- `debt-investment-planner.ts` - Version 2 multi-debt engine and shared Zod schema: protected cash, tax/basis accounting, lender events, priority allocation, numeric break-even, and seeded paired historical simulations. Full planner uses a cancellable browser worker; original calculator is `QuickComparison.tsx`. Named personal/book scenarios use `ToolConfigService` with `tool_type = 'debt-vs-invest'`. Action Center source is `financial-actions/debt-investment.ts`; `/api/tools/debt-vs-invest/adopt` verifies saved inputs and edit access before writing an existing Living Plan decision journal (does not alter its forecast). No new tables or transactions. Startup replaces the personal singleton index to exclude named debt scenarios; singleton upserts use the matching partial-index predicate. Focused engine tests: `npx vitest run src/lib/__tests__/debt-investment-planner.test.ts`.
 - `tax/farm-analysis.ts` - Farm formalization engine: 4-scenario comparison (unreported cash, hobby, Schedule F, Schedule F + NC LLC) with SE tax, QBI, and §179 modeling
 - `tax/nc-farm-rules.ts` - NC farm rules: qualifying-farmer sales-tax exemption ($10k threshold), present-use value hints, LLC formation/annual-report fees
 - `tax/farm-book-data.ts` - Pulls and annualizes farm income/expense actuals from user-selected account subtrees
@@ -140,3 +141,13 @@ Always read DESIGN.md before making any visual or UI decisions.
 All font choices, colors, spacing, and aesthetic direction are defined there.
 Do not deviate without explicit user approval.
 In QA mode, flag any code that doesn't match DESIGN.md.
+
+<!-- BEGIN:nextjs-agent-rules -->
+
+# This is NOT the Next.js you know
+
+This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
+
+This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
+
+<!-- END:nextjs-agent-rules -->
