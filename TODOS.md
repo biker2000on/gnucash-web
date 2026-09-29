@@ -74,6 +74,19 @@ If those answers are weak, improve an existing workflow instead.
 
 # Open
 
+### [P2] Contractor payment history and details
+
+**Status:** Open · **Area:** business · **Added:** 2026-09-29 · **Effort:** M
+**Keywords:** contractor portal, self-service, payment history, remittance,
+vendor access, invoice, job, work period
+
+**Outcome:** A company using Folio can invite a contractor to view only that
+contractor's payments from its books. Show the payer, amount, payment date,
+status, method/reference, related invoice, job, or work period, and any receipt
+or remittance recorded by the company. Link each payment to its Folio
+transaction, flag missing or unmatched details for the company in the Action
+Center, and show payment dates in the Money Timeline.
+
 ### [P3] Home Assistant energy integration: billed vs. metered usage
 
 **Status:** Open · **Area:** utilities · **Added:** 2026-08-11 · **Effort:** M
