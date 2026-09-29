@@ -45,7 +45,7 @@ export const MISSING_TEST_DATABASE_URL_MESSAGE = [
     '  3. Create the schema once:  npm run test:integration:schema',
     '  4. Run the tier:            npm run test:integration',
     '',
-    'In CI: the postgres service in the `quality` job of',
+    'In CI: the postgres service in the `integration-tests` job of',
     '.github/workflows/deploy.yml supplies this. Seeing this message there',
     'means the service block or its env: mapping was dropped.',
 ].join('\n');

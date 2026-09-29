@@ -3,15 +3,15 @@ name: Build and Push Docker Image
 on:
   push:
     branches: [main]
-  # Gate pull requests on the same `quality` job that gates main. Only that
-  # job runs here - `build-and-push` is guarded on `github.event_name` below,
-  # so a PR never publishes an image or moves the deploy pointer.
+  # Gate pull requests on the same check jobs that gate main. Only those run
+  # here - `image` and `deploy` are guarded on `github.event_name` below, so a
+  # PR never publishes an image or moves the deploy pointer.
   #
   # paths-ignore is deliberately on this trigger ONLY. On `push` it would also
-  # skip `build-and-push`, and a prose-only change still has to be able to
-  # reach production; those pushes are instead skipped with `[skip ci]` in the
+  # skip `deploy`, and a prose-only change still has to be able to reach
+  # production; those pushes are instead skipped with `[skip ci]` in the
   # commit message when the author wants that. Nothing under `docs/` or any
-  # *.md file is read by the quality job - `docs:check` validates the
+  # *.md file is read by the check jobs - `docs:check` validates the
   # TypeScript feature registry, not the markdown - so ignoring them here
   # costs no coverage and keeps TODOS.md-only PRs free.
   pull_request:
@@ -34,8 +34,117 @@ env:
   # PAT-published package so GITHUB_TOKEN receives package admin on creation.
   IMAGE_NAME: ${{ github.repository }}-app
 
+# The gate is split into parallel jobs, and the image builds alongside them;
+# only `deploy` waits for all of it. Standard runners are free for this public
+# repository, so parallelism costs nothing but a few duplicated `npm ci`s, and
+# wall-clock time drops to the slowest single job (unit tests) instead of the
+# sum of everything.
 jobs:
-  quality:
+  checks:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Run typecheck
+        run: npm run typecheck
+
+      # The Docker stage builds the app too, but its image only reaches
+      # production after every check passed and only on main - so a PR that
+      # compiles under `tsc` and still fails `next build` (a bad "use client"
+      # boundary, a server-only import pulled into a Client Component, a route
+      # that will not statically analyse) would otherwise be invisible until
+      # the deploy build. This is the cheap place to find it.
+      - name: Restore Next.js build cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: .next/cache
+          # Sources in the key, lockfile as the fallback: a source change gets
+          # a fresh entry but still restores the previous build's cache, which
+          # is what makes the incremental compile cheap.
+          key: nextjs-${{ runner.os }}-${{ hashFiles('package-lock.json') }}-${{ hashFiles('src/**', 'next.config.js', 'tsconfig.json') }}
+          restore-keys: |
+            nextjs-${{ runner.os }}-${{ hashFiles('package-lock.json') }}-
+            nextjs-${{ runner.os }}-
+
+      - name: Build the application
+        # Placeholders only. The build must not reach a database - the Docker
+        # builder proves that by running `npm run build` with no environment at
+        # all - so anything that starts connecting during the build fails here
+        # with a bad host rather than silently depending on CI having a DB.
+        env:
+          DATABASE_URL: postgresql://build:build@127.0.0.1:1/build_should_not_connect
+          SESSION_SECRET: ci-build-placeholder-secret-not-used-at-runtime
+          NEXT_TELEMETRY_DISABLED: '1'
+        run: npm run build
+
+      - name: Verify documentation coverage
+        run: npm run docs:check
+
+      # Catches a gnucash_web_* table that exists only in raw DDL or only in
+      # the Prisma schema. Both halves are hand-maintained, and bootstrap.sql
+      # is generated from the Prisma side, so drift silently produces fresh
+      # installs that are missing tables.
+      - name: Verify Prisma/db-init schema parity
+        run: npm run schema:check
+
+      - name: Run lint
+        run: npm run lint
+
+  unit-tests:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      # Coverage instead of a bare `vitest run`: it is the same single suite
+      # execution, and it turns "someone deleted a test file" into a red build
+      # via the thresholds in vitest.config.ts.
+      - name: Run unit tests with coverage
+        run: npm run test:coverage
+
+      # Uploaded even when an earlier step failed: on a red run the lcov is
+      # how you see whether the gap is new or pre-existing.
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: coverage-${{ github.sha }}
+          path: |
+            coverage/lcov.info
+            coverage/coverage-summary.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  integration-tests:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -83,58 +192,9 @@ jobs:
       - name: Generate Prisma client
         run: npx prisma generate
 
-      - name: Run typecheck
-        run: npm run typecheck
-
-      # The Docker stage builds the app too, but only after `quality` has
-      # passed and only on main - so a PR that compiles under `tsc` and still
-      # fails `next build` (a bad "use client" boundary, a server-only import
-      # pulled into a Client Component, a route that will not statically
-      # analyse) was previously invisible until the deploy build. This is the
-      # cheap place to find it.
-      - name: Restore Next.js build cache
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: .next/cache
-          # Sources in the key, lockfile as the fallback: a source change gets
-          # a fresh entry but still restores the previous build's cache, which
-          # is what makes the incremental compile cheap.
-          key: nextjs-${{ runner.os }}-${{ hashFiles('package-lock.json') }}-${{ hashFiles('src/**', 'next.config.js', 'tsconfig.json') }}
-          restore-keys: |
-            nextjs-${{ runner.os }}-${{ hashFiles('package-lock.json') }}-
-            nextjs-${{ runner.os }}-
-
-      - name: Build the application
-        # Placeholders only. The build must not reach a database - the Docker
-        # builder proves that by running `npm run build` with no environment at
-        # all - so anything that starts connecting during the build fails here
-        # with a bad host rather than silently depending on CI having a DB.
-        env:
-          DATABASE_URL: postgresql://build:build@127.0.0.1:1/build_should_not_connect
-          SESSION_SECRET: ci-build-placeholder-secret-not-used-at-runtime
-          NEXT_TELEMETRY_DISABLED: '1'
-        run: npm run build
-
-      - name: Verify documentation coverage
-        run: npm run docs:check
-
-      # Catches a gnucash_web_* table that exists only in raw DDL or only in
-      # the Prisma schema. Both halves are hand-maintained, and bootstrap.sql
-      # is generated from the Prisma side, so drift silently produces fresh
-      # installs that are missing tables.
-      - name: Verify Prisma/db-init schema parity
-        run: npm run schema:check
-
-      # Coverage instead of a bare `vitest run`: it is the same single suite
-      # execution, and it turns "someone deleted a test file" into a red build
-      # via the thresholds in vitest.config.ts.
-      - name: Run unit tests with coverage
-        run: npm run test:coverage
-
-      # Split from the run above so a red build says which half broke. The
-      # schema step comes first and separately for the same reason: "the
-      # database was never built" and "the code is wrong" are different
-      # problems and should not share a step name.
+      # The schema step comes first and separately: "the database was never
+      # built" and "the code is wrong" are different problems and should not
+      # share a step name.
       - name: Create integration database schema
         run: npm run test:integration:schema
 
@@ -149,31 +209,17 @@ jobs:
       - name: Run Prisma deadlock oracle proof
         run: npm run test:prisma-deadlock-oracle
 
-      - name: Run lint
-        run: npm run lint
-
-      # Uploaded even when an earlier step failed: on a red run the lcov is
-      # how you see whether the gap is new or pre-existing.
-      - name: Upload coverage report
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: coverage-${{ github.sha }}
-          path: |
-            coverage/lcov.info
-            coverage/coverage-summary.json
-          if-no-files-found: warn
-          retention-days: 14
-
-  build-and-push:
-    needs: quality
-    # Pull requests stop at `quality`. Publishing an image, advancing the
+  # Builds and pushes the image while the checks run, tagged ONLY with the
+  # commit sha. Production pulls `latest`, so a candidate from a commit whose
+  # checks later fail is inert; `deploy` promotes it only after every check
+  # has passed.
+  image:
+    # Pull requests stop at the checks. Publishing an image, advancing the
     # deploy pointer and probing production are all push-to-main actions.
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
-      # contents: write - the deploy pointer below is a branch push.
-      contents: write
+      contents: read
       packages: write
 
     steps:
@@ -196,7 +242,6 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=latest
             type=raw,value=${{ github.sha }}
             type=sha,prefix=
 
@@ -212,8 +257,36 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+  deploy:
+    needs: [checks, unit-tests, integration-tests, image]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      # contents: write - the deploy pointer below is a branch push.
+      contents: write
+      packages: write
+
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # A registry-side manifest copy: seconds, no rebuild, and byte-identical
+      # to the image built alongside the checks. Production pulls `latest`.
+      - name: Promote image to latest
+        env:
+          SOURCE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          TARGET: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+        run: docker buildx imagetools create --tag "$TARGET" "$SOURCE"
+
       # Advancing this branch is what tells production to deploy. It happens
-      # only AFTER the image is in the registry, which is the whole point:
+      # only AFTER `latest` points at the new image, which is the whole point:
       # Dockhand watches the branch, so a git-commit trigger would otherwise
       # race the build and deploy the PREVIOUS image, then record the commit
       # as done and never retry.
@@ -226,10 +299,9 @@ jobs:
       # picks this branch up runs in the background with no request attached,
       # so it cannot be killed that way.
       - name: Advance deploy pointer
-        # A REST ref update, not `git push`: actions/checkout is shallow, so
-        # the runner cannot prove a fast-forward locally and git rejects the
-        # push. The server still enforces fast-forward here (force defaults to
-        # false), so a stale re-run cannot walk production backwards.
+        # A REST ref update, not `git push`: this job has no checkout, and the
+        # server still enforces fast-forward (force defaults to false), so a
+        # stale re-run cannot walk production backwards.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -259,7 +331,7 @@ jobs:
               exit 0
             fi
             echo "waiting - production reports '${actual:-unreachable}', want '$short'"
-            sleep 30
+            sleep 15
           done
           echo "::error::Production did not reach $short within 15 minutes."
           echo "Check the stack, then deploy by hand on the TrueNAS host:"

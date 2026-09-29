@@ -177,7 +177,7 @@ service container is new for every job.
 
 **If `TEST_DATABASE_URL` is missing, the tier fails with instructions — it does
 not skip.** A skipped tier reports green while asserting nothing, which reads
-as coverage that does not exist. In CI the `quality` job's `postgres` service
+as coverage that does not exist. In CI the `integration-tests` job's `postgres` service
 supplies the variable.
 
 ### Coverage

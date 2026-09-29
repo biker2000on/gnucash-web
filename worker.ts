@@ -20,6 +20,7 @@ import {
 } from './src/lib/worker/refresh-schedule';
 import { listRefreshEnabledUserIdsFromStore } from './src/lib/worker/refresh-schedule-store';
 import { TimerRegistry } from './src/lib/worker/timer-registry';
+import { closeWithTimeout } from './src/lib/worker/close-with-timeout';
 
 /**
  * Every timer this process arms and every promise a timer callback produces is
@@ -37,6 +38,15 @@ const timers = new TimerRegistry();
  */
 const SHUTDOWN_DRAIN_TIMEOUT_MS =
   Number.parseInt(process.env.WORKER_SHUTDOWN_DRAIN_MS ?? '', 10) || 4 * 60 * 1000;
+
+/**
+ * How long shutdown waits for BullMQ's graceful close before forcing it. The
+ * close hangs forever when Redis is already gone, which is what a production
+ * deploy does (see close-with-timeout.ts). Healthy closes take well under a
+ * second, so this only bounds the broken case.
+ */
+const WORKER_CLOSE_TIMEOUT_MS =
+  Number.parseInt(process.env.WORKER_CLOSE_TIMEOUT_MS ?? '', 10) || 15 * 1000;
 
 // Last-resort observability: scheduled callbacks and third-party clients must
 // not fail silently. Individual operations still own their normal retry/error
@@ -959,7 +969,12 @@ async function main() {
     // Let BullMQ finish/release its current jobs, then wait for the
     // timer-driven work that BullMQ knows nothing about (scheduled SimpleFin
     // syncs, backups, sweeps) before exiting.
-    await worker.close();
+    const closed = await closeWithTimeout(worker, WORKER_CLOSE_TIMEOUT_MS);
+    if (closed === 'forced') {
+      console.warn(
+        `BullMQ close did not finish within ${WORKER_CLOSE_TIMEOUT_MS}ms (Redis unreachable?); forced it and continuing shutdown.`,
+      );
+    }
     const drain = await timers.drain(SHUTDOWN_DRAIN_TIMEOUT_MS);
     if (drain.drained) {
       console.log('All scheduled work drained; exiting.');
