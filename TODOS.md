@@ -74,11 +74,11 @@ If those answers are weak, improve an existing workflow instead.
 
 # Open
 
-### [P2] Contractor payment history and details
+### [P2] Contractor portal: payment history and details
 
 **Status:** Open · **Area:** business · **Added:** 2026-09-29 · **Effort:** M
-**Keywords:** contractor portal, self-service, payment history, remittance,
-vendor access, invoice, job, work period
+**Keywords:** contractor portal, vendor portal, self-service, payment history,
+remittance, vendor access, invoice, job, work period, 1099, W-9, share link
 
 **Outcome:** A company using Folio can invite a contractor to view only that
 contractor's payments from its books. Show the payer, amount, payment date,
@@ -86,6 +86,33 @@ status, method/reference, related invoice, job, or work period, and any receipt
 or remittance recorded by the company. Link each payment to its Folio
 transaction, flag missing or unmatched details for the company in the Action
 Center, and show payment dates in the Money Timeline.
+
+**Access and security (the main design question):** the contractor is an
+outside party with no Folio account. Start from the customer share-link model
+in `src/lib/business/invoice-shares.service.ts` (`/share/invoice/[token]`):
+random 24-byte tokens, revocable and expiring, resolved without a session, and
+indistinguishable from unknown tokens once revoked. Decide whether a bare link
+is enough for a standing, multi-payment view or whether it needs a second
+factor (emailed one-time code). Either way:
+
+- Scope every query to one vendor in one book. A token must never widen to the
+  vendor's other books, other vendors, or any account or transaction detail
+  beyond the payment row itself.
+- Show payer-side facts only: no account names, balances, or splits other than
+  the payment amount and reference.
+- Invite, revoke, and view events go to the audit log; the company can see when
+  a contractor last opened the portal.
+
+**Reuse, don't rebuild:**
+
+- Invoice share links and the client portal (`src/app/share/`, shipped
+  2026-07-24) for token issue/revoke, the public read-only rendering, and the
+  expired-link screen.
+- 1099 Contractor Compliance (`vendor-1099.service.ts`,
+  `vendor-1099-compliance.ts`) for the vendor record, W-9 status, and which
+  payments count toward the 1099-NEC total. The portal can show the contractor
+  their year-to-date 1099 amount and request a missing W-9.
+- Receipt/document evidence links for remittance attachments.
 
 ### [P3] Home Assistant energy integration: billed vs. metered usage
 
