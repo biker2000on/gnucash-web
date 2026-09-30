@@ -19,6 +19,16 @@
 
 import type { BusinessActivity, EntityType } from '@/lib/services/entity.service';
 import { FARM_CAPABLE_ENTITY_TYPES } from '@/lib/book-templates';
+import {
+  ELECTION_FORM_LABELS,
+  describeStatus,
+  electionStatutoryDueDate,
+  legacyEntityType,
+  resolveTaxYear,
+  sortHistory,
+  statusSignature,
+  type EntityStatusRow,
+} from '@/lib/entity-status';
 
 export type ComplianceSeverity = 'filing' | 'payment' | 'admin';
 
@@ -244,6 +254,8 @@ function formW2W3(year: number): ComplianceItem {
   );
 }
 
+const NC_LLC_ANNUAL_REPORT_FEE = 'LLC annual reports carry a $200 fee ($203 filed online).';
+
 /** NC Secretary of State annual report (LLCs and corporations). */
 function ncAnnualReport(year: number, feeNote: string): ComplianceItem {
   return item(
@@ -362,7 +374,7 @@ export function complianceItemsForYear(
       items.push(...householdItems(year, nc), form1099Nec(year));
       if (nc) {
         items.push(
-          ncAnnualReport(year, 'LLC annual reports carry a $200 fee ($203 filed online).'),
+          ncAnnualReport(year, NC_LLC_ANNUAL_REPORT_FEE),
         );
       }
       break;
@@ -389,7 +401,7 @@ export function complianceItemsForYear(
       );
       if (nc) {
         items.push(
-          ncAnnualReport(year, 'LLC annual reports carry a $200 fee ($203 filed online).'),
+          ncAnnualReport(year, NC_LLC_ANNUAL_REPORT_FEE),
         );
       }
       break;
@@ -473,6 +485,173 @@ export function complianceItemsForYear(
   }
 
   return items;
+}
+
+/* ------------------------------------------------------------------ */
+/* Effective-dated entity status                                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Items whose `period` names the calendar year they are DUE in but which
+ * report on the PRIOR tax year (annual returns and information returns).
+ * Everything else covers the tax year it is generated for: quarterly
+ * payments, state annual reports, and farm admin items.
+ */
+export const ITEMS_COVERING_PRIOR_TAX_YEAR: ReadonlySet<string> = new Set([
+  'fed-1040',
+  'nc-d400',
+  'fed-1099-nec',
+  'fed-w2-w3',
+  'fed-1065',
+  'fed-k1',
+  'fed-1120s',
+  'fed-1120',
+  'nc-franchise-tax',
+  'fed-990',
+  'fed-farmer-mar1',
+]);
+
+/** The tax year a generated item reports on. */
+export function itemTaxYear(item: Pick<ComplianceItem, 'key' | 'period'>): number {
+  const year = Number(item.period.slice(0, 4));
+  return ITEMS_COVERING_PRIOR_TAX_YEAR.has(item.key) ? year - 1 : year;
+}
+
+function addDaysIso(iso: string, days: number): string {
+  const [y, m, d] = iso.split('-').map(Number);
+  return toIso(new Date(Date.UTC(y, m - 1, d + days)));
+}
+
+/** IRS processing window we allow before nudging about a missing acceptance letter. */
+const ELECTION_ACCEPTANCE_FOLLOWUP_DAYS = 60;
+
+/**
+ * Items generated from the status history itself: election filing deadlines,
+ * the IRS-acceptance follow-up, S-corp payroll setup, and short tax years.
+ * Returned for every year; callers filter by due date. Each item's `period`
+ * is the status row's effective date, which is unique per book.
+ */
+export function entityStatusItems(rows: readonly EntityStatusRow[]): ComplianceItem[] {
+  const items: ComplianceItem[] = [];
+  const sorted = sortHistory(rows);
+  sorted.forEach((row, i) => {
+    const previous = i > 0 ? sorted[i - 1] : null;
+    const period = row.effectiveFrom;
+    const statusText = describeStatus(row);
+
+    if (row.electionForm && !row.electionFiledOn) {
+      const statutory = electionStatutoryDueDate(row.electionForm, row.effectiveFrom);
+      if (statutory) {
+        items.push(
+          item(
+            `fed-election-${row.electionForm}`,
+            `File ${ELECTION_FORM_LABELS[row.electionForm]} — effective ${row.effectiveFrom}`,
+            row.electionForm === '2553'
+              ? `To be taxed as an S-corporation from ${row.effectiveFrom}, Form 2553 must be filed no more than 2 months and 15 days after the start of that tax year. A late election normally takes effect the following year unless late-election relief applies. Record the filed date in Settings once it is sent.`
+              : `A Form 8832 classification election can take effect no more than 75 days before it is filed, so for an effective date of ${row.effectiveFrom} it must be filed by this date. Record the filed date in Settings once it is sent.`,
+            statutory,
+            period,
+            'filing',
+            '/settings#entity-status',
+          ),
+        );
+      }
+    }
+
+    if (row.electionForm && row.electionFiledOn && !row.electionAcceptedOn) {
+      items.push(
+        item(
+          'fed-election-acceptance',
+          `Record the IRS acceptance of ${ELECTION_FORM_LABELS[row.electionForm]}`,
+          `The election was filed on ${row.electionFiledOn}. The IRS usually confirms it by letter (CP261 for an S election) within about 60 days. Record the acceptance date and attach the letter in Settings; if nothing has arrived, call the IRS Business & Specialty Tax Line.`,
+          addDaysIso(row.electionFiledOn, ELECTION_ACCEPTANCE_FOLLOWUP_DAYS),
+          period,
+          'admin',
+          '/settings#entity-status',
+        ),
+      );
+    }
+
+    const becomesSCorp =
+      previous !== null &&
+      row.taxClassification === 's_corp' &&
+      previous.taxClassification !== 's_corp';
+    if (becomesSCorp) {
+      items.push(
+        item(
+          'entity-scorp-payroll-setup',
+          `S-corporation status starts ${row.effectiveFrom}: set up payroll`,
+          `From ${row.effectiveFrom} the business is ${statusText}. Owner-employees who work in the business must be paid a reasonable salary through payroll (W-2 wages with withholding and Form 941 deposits) before taking distributions. Set up payroll and decide the salary before this date.`,
+          row.effectiveFrom,
+          period,
+          'admin',
+          '/tools/s-corp-analyzer',
+        ),
+      );
+    }
+
+    if (
+      previous !== null &&
+      !row.effectiveFrom.endsWith('-01-01') &&
+      statusSignature(previous) !== statusSignature(row)
+    ) {
+      const year = Number(row.effectiveFrom.slice(0, 4));
+      items.push(
+        item(
+          'entity-short-tax-year',
+          `Short tax years in ${year}: status changes on ${row.effectiveFrom}`,
+          `The entity changes from ${describeStatus(previous)} to ${statusText} mid-year, which splits ${year} into short tax years that may each need their own return. This app applies the year-end status to the annual items for ${year}; confirm the filings with your tax preparer.`,
+          row.effectiveFrom,
+          period,
+          'admin',
+          '/settings#entity-status',
+        ),
+      );
+    }
+  });
+  return items;
+}
+
+/**
+ * All compliance deadlines a book acts on in calendar year `year`, resolved
+ * against its effective-dated status history:
+ *
+ *   - items that report on the prior tax year (annual returns, W-2s, 1099s)
+ *     follow the status in effect for tax year `year - 1`;
+ *   - items for tax year `year` (quarterlies, annual reports) follow the
+ *     status for `year`;
+ *   - election / payroll-setup / short-year items come from the history and
+ *     are included when they fall due in `year`.
+ *
+ * A mid-year change resolves each tax year to its year-end status (see
+ * resolveTaxYear) and adds an 'entity-short-tax-year' item.
+ */
+export function complianceItemsForHistory(
+  rows: readonly EntityStatusRow[],
+  taxState: string | null | undefined,
+  year: number,
+  businessActivity: BusinessActivity = 'general',
+): ComplianceItem[] {
+  const typeFor = (taxYear: number): EntityType => {
+    const status = resolveTaxYear(rows, taxYear).status;
+    return status ? legacyEntityType(status.legalForm, status.taxClassification) : 'household';
+  };
+  const yearLegalForm = resolveTaxYear(rows, year).status?.legalForm ?? null;
+  const current = complianceItemsForYear(typeFor(year), taxState, year, businessActivity)
+    .filter((i) => !ITEMS_COVERING_PRIOR_TAX_YEAR.has(i.key))
+    // The NC annual-report fee follows the LEGAL form: an LLC taxed as an
+    // S- or C-corp still files the LLC report ($200), not the corporation's.
+    .map((i) =>
+      i.key === 'nc-annual-report' &&
+      (yearLegalForm === 'llc_single_member' || yearLegalForm === 'llc_multi_member')
+        ? ncAnnualReport(year, NC_LLC_ANNUAL_REPORT_FEE)
+        : i,
+    );
+  const prior = complianceItemsForYear(typeFor(year - 1), taxState, year, businessActivity).filter(
+    (i) => ITEMS_COVERING_PRIOR_TAX_YEAR.has(i.key),
+  );
+  const fromHistory = entityStatusItems(rows).filter((i) => i.dueDate.startsWith(`${year}-`));
+  return [...prior, ...current, ...fromHistory];
 }
 
 /* ------------------------------------------------------------------ */

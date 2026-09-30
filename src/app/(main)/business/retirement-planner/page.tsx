@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { formatCurrency } from '@/lib/format';
 import { SUPPORTED_TAX_YEARS, isSupportedTaxYear, type TaxYear } from '@/lib/tax/types';
 import { StatCard, StatGrid } from '@/components/ui/StatCard';
+import { EntityYearStatusNotice } from '@/components/tax/EntityYearStatusNotice';
 
 const MONO = { fontFeatureSettings: "'tnum'" } as const;
 
@@ -161,6 +162,8 @@ export default function RetirementPlannerPage() {
           §415(c) combined cap, and catch-up — Solo 401(k) versus SEP-IRA.
         </p>
       </header>
+
+      <EntityYearStatusNotice year={year} />
 
       {/* Inputs */}
       <div className="rounded-lg border border-border bg-surface/30 p-4">

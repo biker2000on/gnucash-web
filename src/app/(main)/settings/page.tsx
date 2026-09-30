@@ -8,6 +8,8 @@ import { CollapsibleConfigSection } from '@/components/ui/CollapsibleConfigSecti
 import { EmailNotificationsSection } from '@/components/settings/EmailNotificationsSection';
 import { BookFeaturesSection } from '@/components/settings/BookFeaturesSection';
 import { BookLinksSection } from '@/components/settings/BookLinksSection';
+import { EntityStatusSection } from '@/components/settings/EntityStatusSection';
+import { EntityTypeChangeDialog } from '@/components/settings/EntityTypeChangeDialog';
 import { BackupsSection } from '@/components/settings/BackupsSection';
 import { TwoFactorSection } from '@/components/settings/TwoFactorSection';
 import { ApiTokensSection } from '@/components/settings/ApiTokensSection';
@@ -199,6 +201,11 @@ export default function SettingsPage() {
   const [simplefinConnected, setSimplefinConnected] = useState(false);
   const [savingBalance, setSavingBalance] = useState(false);
   const [entity, setEntity] = useState<EntityProfileForm | null>(null);
+  // Entity type as last loaded/saved — a different value in the form means
+  // the user changed it, which goes through the effective-dated history.
+  const [savedEntityType, setSavedEntityType] = useState<EntityType | null>(null);
+  const [typeChangeOpen, setTypeChangeOpen] = useState(false);
+  const [entityReloadKey, setEntityReloadKey] = useState(0);
   const [savingEntity, setSavingEntity] = useState(false);
 
   // Household inventory opt-in (business books always have inventory).
@@ -289,6 +296,7 @@ export default function SettingsPage() {
         const res = await fetch('/api/entity');
         if (res.ok) {
           const data = await res.json();
+          setSavedEntityType(data.entityType ?? 'household');
           setEntity({
             entityType: data.entityType ?? 'household',
             entityName: data.entityName ?? '',
@@ -320,7 +328,7 @@ export default function SettingsPage() {
       }
     }
     loadEntity();
-  }, []);
+  }, [entityReloadKey]);
 
   // Load index coverage
   useEffect(() => {
@@ -578,22 +586,29 @@ export default function SettingsPage() {
     );
   };
 
-  const handleSaveEntity = async () => {
+  const handleSaveEntity = async (typeOverride?: EntityType) => {
     if (!entity) return;
+    // A changed type is either a dated change or a correction; ask first
+    // (EntityTypeChangeDialog), then save with the type in effect today.
+    if (typeOverride === undefined && savedEntityType !== null && entity.entityType !== savedEntityType) {
+      setTypeChangeOpen(true);
+      return;
+    }
+    const entityType = typeOverride ?? entity.entityType;
     setSavingEntity(true);
     try {
       const res = await fetch('/api/entity', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          entityType: entity.entityType,
+          entityType,
           entityName: entity.entityName.trim() || null,
           taxState: entity.taxState.trim() || null,
           // '' clears the stored filing status (the API treats '' as null).
-          filingStatus: NO_FILING_STATUS_ENTITY_TYPES.has(entity.entityType)
+          filingStatus: NO_FILING_STATUS_ENTITY_TYPES.has(entityType)
             ? ''
             : entity.filingStatus,
-          businessActivity: ACTIVITY_ENTITY_TYPES.has(entity.entityType)
+          businessActivity: ACTIVITY_ENTITY_TYPES.has(entityType)
             ? entity.businessActivity
             : 'general',
           notes: entity.notes,
@@ -615,7 +630,9 @@ export default function SettingsPage() {
         const data = await res.json().catch(() => null);
         throw new Error(data?.error || 'Failed to save entity profile');
       }
-      success(`${entityNoun(entity.entityType)} profile saved`);
+      success(`${entityNoun(entityType)} profile saved`);
+      setSavedEntityType(entityType);
+      setEntity((current) => (current ? { ...current, entityType } : current));
       // Filing status (and the rest of the profile) is inherited across the
       // tax tools via the ['entity', 'profile'] query — invalidate so every
       // surface sees the fresh household setting, never a stale cache.
@@ -623,7 +640,7 @@ export default function SettingsPage() {
       // Let the sidebar re-evaluate whether to show the Business nav group
       // without a page refresh (household ⇄ business/nonprofit toggles it).
       window.dispatchEvent(
-        new CustomEvent('entity-updated', { detail: { entityType: entity.entityType } }),
+        new CustomEvent('entity-updated', { detail: { entityType } }),
       );
     } catch (e) {
       showError(e instanceof Error ? e.message : 'Failed to save entity profile');
@@ -918,7 +935,7 @@ export default function SettingsPage() {
 
             {/* Save */}
             <button
-              onClick={handleSaveEntity}
+              onClick={() => void handleSaveEntity()}
               disabled={savingEntity}
               className="w-full bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-primary-foreground font-medium px-4 py-2 rounded-lg transition-colors disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
@@ -930,6 +947,27 @@ export default function SettingsPage() {
           </div>
         )}
       </CollapsibleConfigSection>
+
+      {/* Effective-dated legal form + tax classification (S elections etc.) */}
+      <EntityStatusSection onChanged={() => setEntityReloadKey((k) => k + 1)} />
+
+      {entity && savedEntityType && (
+        <EntityTypeChangeDialog
+          isOpen={typeChangeOpen}
+          fromLabel={ENTITY_TYPE_OPTIONS.find((o) => o.value === savedEntityType)?.label ?? savedEntityType}
+          toType={entity.entityType}
+          toLabel={ENTITY_TYPE_OPTIONS.find((o) => o.value === entity.entityType)?.label ?? entity.entityType}
+          onCancel={() => {
+            setTypeChangeOpen(false);
+            // Nothing was recorded: put the select back to the saved type.
+            setEntity((current) => (current ? { ...current, entityType: savedEntityType } : current));
+          }}
+          onApplied={(currentEntityType) => {
+            setTypeChangeOpen(false);
+            void handleSaveEntity(currentEntityType);
+          }}
+        />
+      )}
 
       {/* Feature modules (business/nonprofit books only; renders null for household) */}
       <BookFeaturesSection />

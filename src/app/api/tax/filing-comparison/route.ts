@@ -6,7 +6,7 @@ import { getPreference } from '@/lib/user-preferences';
 import { getContributionLimit, calculateAge } from '@/lib/reports/irs-limits';
 import { aggregateBookTaxData } from '@/lib/tax/book-income';
 import { getLinkedBusinessIncome, applyLinkedBusinessIncome } from '@/lib/tax/linked-business';
-import { getEntityProfile } from '@/lib/services/entity.service';
+import { getEntityProfileForTaxYear } from '@/lib/services/entity.service';
 import { FILING_STATUSES, isSupportedTaxYear, type FilingStatus } from '@/lib/tax/types';
 import type { AccountOwner } from '@/lib/tax/filing-comparison';
 
@@ -44,7 +44,7 @@ export async function GET(request: NextRequest) {
     }
 
     const bookGuid = await getActiveBookGuid();
-    const entity = await getEntityProfile(bookGuid, userId);
+    const entity = await getEntityProfileForTaxYear(bookGuid, userId, year);
     const [birthdayPref, filingStatusPref, spouseBirthdayPref, coveredPref, spouseCoveredPref] =
       await Promise.all([
         getPreference<string | null>(userId, 'birthday', null),

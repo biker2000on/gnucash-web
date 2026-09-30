@@ -55,6 +55,8 @@ docker run -p 3000:3000 -e DATABASE_URL="..." gnucash-web
 - `avg-basis-history.ts` - Durable per-write history of a lot's pooled (average-cost) remaining basis, one row per write in the app-owned `gnucash_web_avg_basis_history` table. The top of the stack is mirrored into the `avg_cost_basis_remaining` GnuCash slot, which stays the fast path for every reader; the table is what makes a revert restorable at any depth. Raises `AvgBasisHistoryRepairRequiredError` (HTTP 422) rather than falling back to per-lot cost when a lot's pooled basis is unrecoverable.
 - `lots.ts` - Lot querying and summary computation (realized/unrealized gains, holding periods, transfer metadata)
 - `cost-basis.ts` - Cost basis tracing across account transfers with FIFO/LIFO/average allocation
+- `entity-status.ts` - Pure, client-safe effective-dated entity status: legal form vs federal tax classification, `resolveStatusAt` / `resolveTaxYear` (short-year segments), affected-year diffing, election deadlines. The earliest row is dated at `INCEPTION_DATE` (1900-01-01) and applies since inception.
+- `services/entity-status.service.ts` - Persistence for `gnucash_web_entity_status_history`: dry-run-able record/correct/delete under a per-book advisory lock, audit, and the profile's derived `entity_type` sync. Tax features must resolve `getEntityStatusForTaxYear` / `getEntityProfileForTaxYear` (entity.service) — never today's `entityType` — and compliance items come from `complianceItemsForHistory`.
 - `types.ts` - Core TypeScript interfaces: Account, Transaction, Split
 - `format.ts` - Currency formatting utility
 - `scheduled-transactions.ts` - Shared utility: `resolveTemplateSplits()`, GnuCash date parsing

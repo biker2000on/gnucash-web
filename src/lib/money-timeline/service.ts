@@ -7,7 +7,7 @@ import {
   rmdEvents,
   scheduledTransactionEvents,
 } from '@/lib/ical';
-import { complianceItemsForYear } from '@/lib/compliance';
+import { complianceItemsForHistory } from '@/lib/compliance';
 import { loadFixedIncomePositions, summarizeFixedIncome } from '@/lib/fixed-income';
 import { fetchScheduledTransactions } from '@/lib/scheduled-transactions';
 import { getPreference } from '@/lib/user-preferences';
@@ -20,7 +20,7 @@ import {
   listReportSchedules,
   schedulableReportLabel,
 } from '@/lib/report-scheduler';
-import { ENTITY_TYPES } from '@/lib/services/entity.service';
+import { listEntityStatusHistory } from '@/lib/services/entity-status.service';
 import { get1099Compliance } from '@/lib/business/vendor-1099.service';
 import { loadResilienceEvents } from '@/lib/resilience/service';
 import {
@@ -308,13 +308,13 @@ export async function collectFinancialEventsForBook(
   }
 
   try {
-    const entityType = profile && (ENTITY_TYPES as readonly string[]).includes(profile.entity_type)
-      ? profile.entity_type as (typeof ENTITY_TYPES)[number]
-      : 'household';
+    // Entity status resolved per tax year from the effective-dated history,
+    // so a planned election changes deadlines only from its effective year.
+    const { rows: entityStatusRows } = await listEntityStatusHistory(bookGuid);
     const activity = profile?.business_activity === 'farm' ? 'farm' : 'general';
     const items = [
-      ...complianceItemsForYear(entityType, profile?.tax_state ?? null, now.getFullYear(), activity),
-      ...complianceItemsForYear(entityType, profile?.tax_state ?? null, now.getFullYear() + 1, activity),
+      ...complianceItemsForHistory(entityStatusRows, profile?.tax_state ?? null, now.getFullYear(), activity),
+      ...complianceItemsForHistory(entityStatusRows, profile?.tax_state ?? null, now.getFullYear() + 1, activity),
     ];
     const statusRows = await prisma.gnucash_web_compliance_status.findMany({
       where: { book_guid: bookGuid },

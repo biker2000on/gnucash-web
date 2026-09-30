@@ -8,6 +8,7 @@ import { CollapsibleConfigSection } from '@/components/ui/CollapsibleConfigSecti
 import { StatCard, StatGrid } from '@/components/ui/StatCard';
 import { useKeyboardShortcut } from '@/lib/hooks/useKeyboardShortcut';
 import { useToast } from '@/contexts/ToastContext';
+import { EntityYearStatusNotice } from '@/components/tax/EntityYearStatusNotice';
 import ScheduleCMappingPanel, {
     type ScheduleCMappingAccount,
     type ScheduleCLineOption,
@@ -20,6 +21,14 @@ interface ScheduleCMappingsPayload {
     accounts: ScheduleCMappingAccount[];
     lineOptions: ScheduleCLineOption[];
 }
+
+/** Entity types that do not report on Schedule C, with the return they file. */
+const NOT_SCHEDULE_C_TYPES = new Map<string, string>([
+    ['llc_partnership', 'Form 1065'],
+    ['s_corp', 'Form 1120-S'],
+    ['c_corp', 'Form 1120'],
+    ['nonprofit_501c3', 'Form 990'],
+]);
 
 export default function ScheduleCPage() {
     const currentYear = new Date().getUTCFullYear();
@@ -66,7 +75,8 @@ export default function ScheduleCPage() {
             try {
                 const [res, entityRes, mapsRes] = await Promise.all([
                     fetch(`/api/business/reports/schedule-c?year=${year}`),
-                    fetch('/api/entity'),
+                    // The selected tax year's status, not today's.
+                    fetch(`/api/entity/status?year=${year}`),
                     fetch('/api/business/schedule-c/mappings'),
                 ]);
                 if (!res.ok) throw new Error(`Request failed (${res.status})`);
@@ -75,7 +85,7 @@ export default function ScheduleCPage() {
                 const maps = mapsRes.ok ? await mapsRes.json() : null;
                 if (!cancelled) {
                     setReport(json);
-                    setEntityType(entity?.entityType ?? null);
+                    setEntityType(entity?.taxYear?.entityType ?? null);
                     setMappingsData(maps);
                     setExpanded(new Set());
                 }
@@ -162,6 +172,15 @@ export default function ScheduleCPage() {
                     </label>
                 }
             />
+
+            <EntityYearStatusNotice year={year} />
+
+            {entityType !== null && NOT_SCHEDULE_C_TYPES.has(entityType) && (
+                <div className="border border-warning/30 bg-warning/5 rounded-lg px-4 py-3 text-sm text-foreground-secondary">
+                    For {year} this entity files its own return ({NOT_SCHEDULE_C_TYPES.get(entityType)}), not
+                    Schedule C. The report below is shown for reference only.
+                </div>
+            )}
 
             {entityType === 'household' && (
                 <div className="border border-warning/30 bg-warning/5 rounded-lg px-4 py-3 text-sm text-foreground-secondary">

@@ -3,7 +3,11 @@ import { requireRole } from '@/lib/auth';
 import prisma from '@/lib/prisma';
 import { getEntityProfile } from '@/lib/services/entity.service';
 import {
-  complianceItemsForYear,
+  listEntityStatusHistory,
+  taxYearFromRows,
+} from '@/lib/services/entity-status.service';
+import {
+  complianceItemsForHistory,
   complianceStatusKey,
   type ComplianceItemWithStatus,
 } from '@/lib/compliance';
@@ -41,10 +45,15 @@ export async function GET(request: NextRequest) {
     const now = new Date();
     const year = explicitYear ?? now.getFullYear();
 
-    const entity = await getEntityProfile(bookGuid, user.id);
+    const [entity, { rows: statusRows }] = await Promise.all([
+      getEntityProfile(bookGuid, user.id),
+      listEntityStatusHistory(bookGuid),
+    ]);
 
-    const items = complianceItemsForYear(
-      entity.entityType,
+    // Resolved per item against the effective-dated status: returns filed
+    // in `year` follow tax year year-1's status, quarterlies follow year's.
+    const items = complianceItemsForHistory(
+      statusRows,
       entity.taxState,
       year,
       entity.businessActivity,
@@ -52,20 +61,22 @@ export async function GET(request: NextRequest) {
     if (explicitYear === null) {
       // Lookahead: next year's items due within ~3 months from today.
       const horizon = isoDate(new Date(now.getTime() + LOOKAHEAD_DAYS * 24 * 60 * 60 * 1000));
-      const nextYearItems = complianceItemsForYear(
-        entity.entityType,
+      const nextYearItems = complianceItemsForHistory(
+        statusRows,
         entity.taxState,
         year + 1,
         entity.businessActivity,
       ).filter(i => i.dueDate <= horizon);
       items.push(...nextYearItems);
     }
+    const yearStatus = taxYearFromRows(statusRows, year);
+    const priorYearStatus = taxYearFromRows(statusRows, year - 1);
 
-    const statusRows = await prisma.gnucash_web_compliance_status.findMany({
+    const completionRows = await prisma.gnucash_web_compliance_status.findMany({
       where: { book_guid: bookGuid },
     });
     const statusMap = new Map(
-      statusRows.map(r => [complianceStatusKey(r.item_key, r.period), r]),
+      completionRows.map(r => [complianceStatusKey(r.item_key, r.period), r]),
     );
 
     const merged: ComplianceItemWithStatus[] = items
@@ -83,7 +94,12 @@ export async function GET(request: NextRequest) {
       year,
       today: isoDate(now),
       entity: {
-        entityType: entity.entityType,
+        // Status for tax year `year` (quarterlies, annual reports) and for
+        // year-1 (the returns filed during `year`); they differ in the year
+        // after an election takes effect.
+        entityType: yearStatus.entityType,
+        priorYearEntityType: priorYearStatus.entityType,
+        statusMixed: yearStatus.mixed,
         entityName: entity.entityName,
         taxState: entity.taxState,
       },

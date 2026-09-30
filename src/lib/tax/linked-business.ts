@@ -15,11 +15,20 @@
  *
  * Owner's draws recorded in the household book (e.g. Income:Business Draws:*)
  * must be mapped 'exclude' — the profit computed here is the taxable amount.
+ *
+ * The treatment follows the business's status for the requested TAX YEAR
+ * (src/lib/services/entity-status.service.ts), not today's: a 2027 S election
+ * must not turn 2026 Schedule C profit into K-1 income. A year with a
+ * mid-year change uses the year-end status and is flagged `statusMixed`.
  */
 
 import { getAccountGuidsForBook } from '@/lib/book-scope';
 import { aggregateBookTaxData } from '@/lib/tax/book-income';
 import { getLinksToHouseholdBook } from '@/lib/services/book-links.service';
+import {
+  listEntityStatusHistories,
+  taxYearFromRows,
+} from '@/lib/services/entity-status.service';
 import type { BookTaxData, TaxCategory } from '@/lib/tax/types';
 import type { EntityType } from '@/lib/services/entity.service';
 
@@ -29,7 +38,10 @@ export interface LinkedBusinessIncome {
   businessBookGuid: string;
   businessBookName: string | null;
   entityName: string | null;
+  /** The business's status for the requested tax year (year-end status). */
   entityType: EntityType | null;
+  /** The status changed mid-year (short tax years); treatment uses year-end. */
+  statusMixed: boolean;
   ownershipPercent: number;
   /** Business net profit (SE income − business expenses) for the year, YTD. */
   netProfit: number;
@@ -66,6 +78,7 @@ export async function getLinkedBusinessIncome(
 ): Promise<LinkedBusinessIncome[]> {
   const links = await getLinksToHouseholdBook(householdBookGuid);
   if (links.length === 0) return [];
+  const histories = await listEntityStatusHistories(links.map(l => l.businessBookGuid));
 
   const results: LinkedBusinessIncome[] = [];
   for (const link of links) {
@@ -75,13 +88,17 @@ export async function getLinkedBusinessIncome(
     const data = await aggregateBookTaxData(accountGuids, year, null);
     const netProfit =
       categoryTotal(data, 'self_employment_income') - categoryTotal(data, 'business_expense');
-    const treatment = treatmentFor(link.businessEntityType);
+    const history = histories.get(link.businessBookGuid);
+    const yearStatus = history ? taxYearFromRows(history, year) : null;
+    const entityType = yearStatus?.entityType ?? link.businessEntityType;
+    const treatment = treatmentFor(entityType);
 
     results.push({
       businessBookGuid: link.businessBookGuid,
       businessBookName: link.businessBookName,
       entityName: link.businessEntityName,
-      entityType: link.businessEntityType,
+      entityType,
+      statusMixed: yearStatus?.mixed ?? false,
       ownershipPercent: link.ownershipPercent,
       netProfit,
       share: treatment === 'none' ? 0 : (netProfit * link.ownershipPercent) / 100,

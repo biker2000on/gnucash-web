@@ -10,11 +10,22 @@
  * Backed by gnucash_web_entity_profiles + gnucash_web_entity_members
  * (see src/lib/db-init.ts). When no profile row exists, a household profile
  * is synthesized from user preferences so existing installs keep working.
+ *
+ * `entityType` is the status in effect TODAY, resolved from the
+ * effective-dated history in gnucash_web_entity_status_history (see
+ * src/lib/services/entity-status.service.ts). Tax features that care about a
+ * specific date or tax year must resolve through that service instead.
  */
 
 import prisma from '@/lib/prisma';
 import { getPreference } from '@/lib/user-preferences';
 import { calculateCalendarAge } from '@/lib/age';
+import {
+  applyLegacyEntityType,
+  getEntityStatusAt,
+  getEntityStatusForTaxYear,
+  todayIso,
+} from '@/lib/services/entity-status.service';
 
 export type EntityType =
   | 'household'
@@ -199,13 +210,16 @@ export async function getEntityProfile(
     return synthesizeHouseholdProfile(userId);
   }
 
-  const members = await prisma.gnucash_web_entity_members.findMany({
-    where: { book_guid: bookGuid },
-    orderBy: [{ sort_order: 'asc' }, { id: 'asc' }],
-  });
+  const [members, current] = await Promise.all([
+    prisma.gnucash_web_entity_members.findMany({
+      where: { book_guid: bookGuid },
+      orderBy: [{ sort_order: 'asc' }, { id: 'asc' }],
+    }),
+    getEntityStatusAt(bookGuid, todayIso()),
+  ]);
 
   return {
-    entityType: profile.entity_type as EntityType,
+    entityType: current.entityType,
     entityName: profile.entity_name,
     taxState: profile.tax_state,
     filingStatus: profile.filing_status,
@@ -227,6 +241,36 @@ export async function getEntityProfile(
       }))
     ),
     synthesized: false,
+  };
+}
+
+export interface TaxYearEntityProfile extends EntityProfile {
+  /** The tax year `entityType` was resolved for. */
+  taxYear: number;
+  /** The status changes mid-year (short tax years); entityType is year-end. */
+  statusMixed: boolean;
+}
+
+/**
+ * The profile with `entityType` resolved for calendar tax year `year` from
+ * the effective-dated status history — what every tax-year calculation and
+ * applicability gate must use instead of today's type. A year with a
+ * mid-year change resolves to its year-end status and sets `statusMixed`.
+ */
+export async function getEntityProfileForTaxYear(
+  bookGuid: string,
+  userId: number,
+  year: number
+): Promise<TaxYearEntityProfile> {
+  const [profile, yearStatus] = await Promise.all([
+    getEntityProfile(bookGuid, userId),
+    getEntityStatusForTaxYear(bookGuid, year),
+  ]);
+  return {
+    ...profile,
+    entityType: yearStatus.entityType,
+    taxYear: year,
+    statusMixed: yearStatus.mixed,
   };
 }
 
@@ -255,7 +299,8 @@ export interface SaveEntityProfileInput {
  */
 export async function saveEntityProfile(
   bookGuid: string,
-  input: SaveEntityProfileInput
+  input: SaveEntityProfileInput,
+  userId: number | null = null
 ): Promise<EntityProfile> {
   if (!ENTITY_TYPES.includes(input.entityType)) {
     throw new EntityValidationError(`Invalid entity type: ${input.entityType}`);
@@ -326,6 +371,11 @@ export async function saveEntityProfile(
     }),
   ]);
 
+  // A changed type from this single-field editor (or a book-creation/import
+  // path) corrects the history row in effect today; future-dated rows such
+  // as a planned S election are left alone. No-op when the type matches.
+  await applyLegacyEntityType(bookGuid, input.entityType, { userId });
+
   // Re-read the row so omitted tax fields reflect what is actually stored.
   const saved = await prisma.gnucash_web_entity_profiles.findUnique({
     where: { book_guid: bookGuid },
@@ -376,16 +426,20 @@ export async function updateBookTaxProfile(
 ): Promise<EntityProfile> {
   const current = await getEntityProfile(bookGuid, userId);
 
-  return saveEntityProfile(bookGuid, {
-    entityType: current.entityType,
-    entityName: current.entityName,
-    taxState: fields.taxState === undefined ? current.taxState : fields.taxState,
-    filingStatus:
-      fields.filingStatus === undefined ? current.filingStatus : fields.filingStatus,
-    stateFlatRate:
-      fields.stateFlatRate === undefined ? current.stateFlatRate : fields.stateFlatRate,
-    businessActivity: current.businessActivity,
-    notes: current.notes,
-    members: current.members,
-  });
+  return saveEntityProfile(
+    bookGuid,
+    {
+      entityType: current.entityType,
+      entityName: current.entityName,
+      taxState: fields.taxState === undefined ? current.taxState : fields.taxState,
+      filingStatus:
+        fields.filingStatus === undefined ? current.filingStatus : fields.filingStatus,
+      stateFlatRate:
+        fields.stateFlatRate === undefined ? current.stateFlatRate : fields.stateFlatRate,
+      businessActivity: current.businessActivity,
+      notes: current.notes,
+      members: current.members,
+    },
+    userId
+  );
 }

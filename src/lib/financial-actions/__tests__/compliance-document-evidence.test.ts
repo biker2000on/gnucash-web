@@ -12,6 +12,24 @@ vi.mock('@/lib/prisma', () => ({
   },
 }));
 vi.mock('@/lib/services/entity.service', () => ({ getEntityProfile }));
+vi.mock('@/lib/services/entity-status.service', () => ({
+  listEntityStatusHistory: vi.fn(async () => ({
+    rows: [{
+      id: null,
+      effectiveFrom: '1900-01-01',
+      legalForm: 'household',
+      taxClassification: 'individual',
+      electionForm: null,
+      electionFiledOn: null,
+      electionAcceptedOn: null,
+      shortYearConfirmed: false,
+      electionDocumentId: null,
+      acceptanceDocumentId: null,
+      notes: null,
+    }],
+    synthesized: true,
+  })),
+}));
 vi.mock('@/lib/tax/farm-certificates', () => ({ getFarmCertificateObligations }));
 vi.mock('@/lib/documents', () => ({
   listLinkedDocuments,

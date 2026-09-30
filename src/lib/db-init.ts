@@ -1299,6 +1299,70 @@ async function createExtensionTables() {
         END $$;
     `;
 
+    // Effective-dated legal form + tax classification (src/lib/entity-status.ts).
+    // entity_type on the profile stays as the derived "current" value; tax
+    // features resolve the status in effect for a date or tax year from here.
+    // The seed gives every existing profile one since-inception row mapped
+    // from its entity_type, dated at the 1900-01-01 inception sentinel
+    // (INCEPTION_DATE) so any real change the user records sorts after it.
+    // The NOT EXISTS guard makes it idempotent, and the
+    // advisory lock serializes the app and worker running db-init together.
+    const entityStatusHistoryDDL = `
+        DO $$
+        BEGIN
+            PERFORM pg_advisory_xact_lock(hashtext('gnucash_web_entity_status_history'));
+            CREATE TABLE IF NOT EXISTS gnucash_web_entity_status_history (
+                id SERIAL PRIMARY KEY,
+                book_guid VARCHAR(32) NOT NULL,
+                effective_from DATE NOT NULL,
+                legal_form VARCHAR(30) NOT NULL,
+                tax_classification VARCHAR(20) NOT NULL,
+                election_form VARCHAR(10),
+                election_filed_on DATE,
+                election_accepted_on DATE,
+                short_year_confirmed BOOLEAN NOT NULL DEFAULT false,
+                election_document_id INTEGER,
+                acceptance_document_id INTEGER,
+                notes TEXT,
+                created_by INTEGER,
+                updated_by INTEGER,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS gnucash_web_entity_status_history_book_guid_effective_from_key
+                ON gnucash_web_entity_status_history(book_guid, effective_from);
+
+            INSERT INTO gnucash_web_entity_status_history
+                (book_guid, effective_from, legal_form, tax_classification, notes)
+            SELECT p.book_guid,
+                   DATE '1900-01-01',
+                   CASE p.entity_type
+                       WHEN 'sole_prop' THEN 'sole_prop'
+                       WHEN 'llc_single' THEN 'llc_single_member'
+                       WHEN 'llc_partnership' THEN 'llc_multi_member'
+                       WHEN 's_corp' THEN 'corporation'
+                       WHEN 'c_corp' THEN 'corporation'
+                       WHEN 'nonprofit_501c3' THEN 'nonprofit_corp'
+                       ELSE 'household'
+                   END,
+                   CASE p.entity_type
+                       WHEN 'sole_prop' THEN 'disregarded'
+                       WHEN 'llc_single' THEN 'disregarded'
+                       WHEN 'llc_partnership' THEN 'partnership'
+                       WHEN 's_corp' THEN 's_corp'
+                       WHEN 'c_corp' THEN 'c_corp'
+                       WHEN 'nonprofit_501c3' THEN 'exempt'
+                       ELSE 'individual'
+                   END,
+                   'Seeded from the entity profile'
+            FROM gnucash_web_entity_profiles p
+            WHERE NOT EXISTS (
+                SELECT 1 FROM gnucash_web_entity_status_history h
+                WHERE h.book_guid = p.book_guid
+            );
+        END $$;
+    `;
+
     // Per-book feature-module overrides. Absence of a row means "use the
     // default for the book's entity type" (see src/lib/book-features.ts).
     const bookFeaturesTableDDL = `
@@ -2950,6 +3014,7 @@ async function createExtensionTables() {
         await query(entityProfilesTableDDL);
         await query(entityProfilesTaxColumnsDDL);
         await query(entityProfilesActivityColumnDDL);
+        await query(entityStatusHistoryDDL);
         await query(bookFeaturesTableDDL);
         await query(bookLinksTableDDL);
         await query(FAMILY_OFFICE_SCHEMA_SQL);

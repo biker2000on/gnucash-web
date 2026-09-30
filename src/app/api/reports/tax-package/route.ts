@@ -13,7 +13,7 @@ import { generateScheduleC } from '@/lib/business/business-reports';
 import { getMappings } from '@/lib/business/schedule-c-mappings';
 import { generateCharitableGiving } from '@/lib/reports/charitable-giving';
 import { loadWithholdingCheckup } from '@/lib/withholding';
-import { getEntityProfile } from '@/lib/services/entity.service';
+import { getEntityProfileForTaxYear } from '@/lib/services/entity.service';
 import { FILING_STATUSES, isSupportedTaxYear, type FilingStatus } from '@/lib/tax/types';
 import {
   contributionSummaryToCSV,
@@ -125,7 +125,7 @@ export async function GET(request: NextRequest) {
 
     // --- Withholding checkup (supported engine years only) -----------------
     // Only for books filing a personal 1040; skipped for business entities.
-    const entity = await getEntityProfile(roleResult.bookGuid, user.id);
+    const entity = await getEntityProfileForTaxYear(roleResult.bookGuid, user.id, year);
     const filesPersonal1040 =
       entity.entityType === 'household' ||
       entity.entityType === 'sole_prop' ||

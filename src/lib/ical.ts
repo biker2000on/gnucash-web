@@ -485,24 +485,23 @@ export async function buildCalendarFeed(
     if (eventTypes.includes('compliance')) {
         try {
             const prisma = (await import('@/lib/prisma')).default;
-            const { complianceItemsForYear } = await import('@/lib/compliance');
-            const { ENTITY_TYPES } = await import('@/lib/services/entity.service');
+            const { complianceItemsForHistory } = await import('@/lib/compliance');
+            const { listEntityStatusHistory } = await import('@/lib/services/entity-status.service');
 
-            const profile = await prisma.gnucash_web_entity_profiles.findUnique({
-                where: { book_guid: bookGuid },
-            });
-            const entityType =
-                profile && (ENTITY_TYPES as readonly string[]).includes(profile.entity_type)
-                    ? (profile.entity_type as (typeof ENTITY_TYPES)[number])
-                    : 'household';
+            const [profile, { rows: entityStatusRows }] = await Promise.all([
+                prisma.gnucash_web_entity_profiles.findUnique({
+                    where: { book_guid: bookGuid },
+                }),
+                listEntityStatusHistory(bookGuid),
+            ]);
             const taxState = profile?.tax_state ?? null;
             const businessActivity =
                 profile?.business_activity === 'farm' ? ('farm' as const) : ('general' as const);
 
             const year = now.getFullYear();
             const items = [
-                ...complianceItemsForYear(entityType, taxState, year, businessActivity),
-                ...complianceItemsForYear(entityType, taxState, year + 1, businessActivity),
+                ...complianceItemsForHistory(entityStatusRows, taxState, year, businessActivity),
+                ...complianceItemsForHistory(entityStatusRows, taxState, year + 1, businessActivity),
             ];
             const statusRows = await prisma.gnucash_web_compliance_status.findMany({
                 where: { book_guid: bookGuid },

@@ -6,7 +6,7 @@ import { getContributionLimit } from '@/lib/reports/irs-limits';
 import { aggregateBookTaxData } from '@/lib/tax/book-income';
 import { getLinkedBusinessIncome, applyLinkedBusinessIncome } from '@/lib/tax/linked-business';
 import { calculateAge } from '@/lib/reports/irs-limits';
-import { getEntityProfile } from '@/lib/services/entity.service';
+import { getEntityProfileForTaxYear } from '@/lib/services/entity.service';
 import { FILING_STATUSES, type FilingStatus } from '@/lib/tax/types';
 
 /**
@@ -43,7 +43,7 @@ export async function GET(request: NextRequest) {
     // The entity profile is the canonical household/business description for
     // the active book (synthesized from preferences when not yet persisted).
     const bookGuid = await getActiveBookGuid();
-    const entity = await getEntityProfile(bookGuid, userId);
+    const entity = await getEntityProfileForTaxYear(bookGuid, userId, year);
 
     // Filing status, state, and flat rate are book-scoped (entity profile);
     // user preferences remain the fallback for profiles saved before these
@@ -122,7 +122,9 @@ export async function GET(request: NextRequest) {
         spouseCoveredByEmployerPlan: effectiveSpouseCovered,
       },
       entity: {
+        // Status for the requested tax year, not today's.
         entityType: entity.entityType,
+        statusMixed: entity.statusMixed,
         entityName: entity.entityName,
         synthesized: entity.synthesized,
         memberCount: entity.members.length,

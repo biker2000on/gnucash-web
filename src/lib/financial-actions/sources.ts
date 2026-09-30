@@ -13,8 +13,9 @@ import {
   currentYearActiveBudgetPeriod,
   parseBudgetAlertSourceId,
 } from '@/lib/budget-alert-context';
-import { complianceItemsForYear, complianceStatusKey } from '@/lib/compliance';
+import { complianceItemsForHistory, complianceStatusKey } from '@/lib/compliance';
 import { getEntityProfile } from '@/lib/services/entity.service';
+import { listEntityStatusHistory } from '@/lib/services/entity-status.service';
 import { FinancialSummaryService } from '@/lib/services/financial-summary.service';
 import { listBatches, ensureStatementTables } from '@/lib/services/statement.service';
 import { generateContributionSummary } from '@/lib/reports/contribution-summary';
@@ -463,10 +464,13 @@ export async function complianceActions(
   bookGuid: string,
 ): Promise<FinancialActionCandidate[]> {
   const now = new Date();
-  const entity = await getEntityProfile(bookGuid, userId);
+  const [entity, { rows: entityStatusRows }] = await Promise.all([
+    getEntityProfile(bookGuid, userId),
+    listEntityStatusHistory(bookGuid),
+  ]);
   const items = [
-    ...complianceItemsForYear(entity.entityType, entity.taxState, now.getFullYear(), entity.businessActivity),
-    ...complianceItemsForYear(entity.entityType, entity.taxState, now.getFullYear() + 1, entity.businessActivity)
+    ...complianceItemsForHistory(entityStatusRows, entity.taxState, now.getFullYear(), entity.businessActivity),
+    ...complianceItemsForHistory(entityStatusRows, entity.taxState, now.getFullYear() + 1, entity.businessActivity)
       .filter(item => daysUntil(item.dueDate, now) <= 92),
   ];
   const statuses = await prisma.gnucash_web_compliance_status.findMany({

@@ -40,7 +40,7 @@ vi.mock('@/lib/ical', () => ({
     }))),
 }));
 vi.mock('@/lib/compliance', () => ({
-  complianceItemsForYear: vi.fn((_entity: string, _state: string | null, year: number) => year === 2026 ? [{
+  complianceItemsForHistory: vi.fn((_rows: unknown, _state: string | null, year: number) => year === 2026 ? [{
     key: 'fed-payment',
     title: 'Estimated payment',
     description: 'Pay the installment.',

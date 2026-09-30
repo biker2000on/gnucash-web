@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
 import { getBookAccountGuids, getAccountGuidsForBook } from '@/lib/book-scope';
-import { getEntityProfile } from '@/lib/services/entity.service';
+import { getEntityProfile, getEntityProfileForTaxYear } from '@/lib/services/entity.service';
 import { getLinksForBusinessBook } from '@/lib/services/book-links.service';
 import { hasMinimumRole } from '@/lib/services/permission.service';
 import { ToolConfigService } from '@/lib/services/tool-config.service';
@@ -87,7 +87,7 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const entity = await getEntityProfile(bookGuid, user.id);
+    const entity = await getEntityProfileForTaxYear(bookGuid, user.id, year);
     if (!APPLICABLE_TYPES.has(entity.entityType)) {
       return NextResponse.json({ applicable: false, entityType: entity.entityType });
     }

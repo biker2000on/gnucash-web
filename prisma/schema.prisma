@@ -1075,6 +1075,31 @@ model gnucash_web_entity_profiles {
   @@map("gnucash_web_entity_profiles")
 }
 
+/// Effective-dated legal form + federal tax classification per book. A row is
+/// in effect from effective_from until the next row; the earliest row also
+/// applies since inception. See src/lib/entity-status.ts.
+model gnucash_web_entity_status_history {
+  id                     Int       @id @default(autoincrement())
+  book_guid              String    @db.VarChar(32)
+  effective_from         DateTime  @db.Date
+  legal_form             String    @db.VarChar(30)
+  tax_classification     String    @db.VarChar(20)
+  election_form          String?   @db.VarChar(10)
+  election_filed_on      DateTime? @db.Date
+  election_accepted_on   DateTime? @db.Date
+  short_year_confirmed   Boolean   @default(false)
+  election_document_id   Int?
+  acceptance_document_id Int?
+  notes                  String?   @db.Text
+  created_by             Int?
+  updated_by             Int?
+  created_at             DateTime  @default(now())
+  updated_at             DateTime  @default(now())
+
+  @@unique([book_guid, effective_from])
+  @@map("gnucash_web_entity_status_history")
+}
+
 model gnucash_web_entity_members {
   id                       Int       @id @default(autoincrement())
   book_guid                String    @db.VarChar(32)

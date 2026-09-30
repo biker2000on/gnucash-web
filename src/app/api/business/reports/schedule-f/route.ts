@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { generateScheduleF } from '@/lib/business/schedule-f-report';
 import { getMappings } from '@/lib/business/schedule-f-mappings';
 import { getBookAccountGuids } from '@/lib/book-scope';
-import { getEntityProfile } from '@/lib/services/entity.service';
+import { getEntityProfileForTaxYear } from '@/lib/services/entity.service';
 import { FARM_CAPABLE_ENTITY_TYPES } from '@/lib/book-templates';
 import {
   expandGuidsToDescendants,
@@ -35,7 +35,7 @@ export async function GET(request: NextRequest) {
         }
 
         const bookAccountGuids = await getBookAccountGuids();
-        const entity = await getEntityProfile(bookGuid, user.id);
+        const entity = await getEntityProfileForTaxYear(bookGuid, user.id, year);
 
         let restrictToGuids: string[] | undefined;
         // Whole-book mode only when the book is a farm-labeled pass-through

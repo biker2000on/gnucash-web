@@ -104,7 +104,7 @@ export async function PUT(request: Request) {
     };
 
     const bookGuid = await getActiveBookGuid();
-    const profile = await saveEntityProfile(bookGuid, input);
+    const profile = await saveEntityProfile(bookGuid, input, roleResult.user.id);
     return NextResponse.json(profile);
   } catch (error) {
     if (error instanceof EntityValidationError) {

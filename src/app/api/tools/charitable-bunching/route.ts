@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
 import { getBookAccountGuids } from '@/lib/book-scope';
 import { getPreference } from '@/lib/user-preferences';
-import { getEntityProfile } from '@/lib/services/entity.service';
+import { getEntityProfileForTaxYear } from '@/lib/services/entity.service';
 import { calculateAge } from '@/lib/reports/irs-limits';
 import { aggregateBookTaxData } from '@/lib/tax/book-income';
 import { generateCharitableGiving } from '@/lib/reports/charitable-giving';
@@ -106,7 +106,7 @@ export async function GET(request: NextRequest) {
     const givingOverride =
       Number.isFinite(givingParam) && givingParam >= 0 ? givingParam : null;
 
-    const entity = await getEntityProfile(bookGuid, user.id);
+    const entity = await getEntityProfileForTaxYear(bookGuid, user.id, year);
 
     /* --- Filing status / ages (mirrors /api/tax/estimated) ------------- */
     const [filingStatusPref, birthdayPref] = await Promise.all([

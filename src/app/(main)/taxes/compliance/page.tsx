@@ -18,6 +18,10 @@ interface CalendarResponse {
   today: string;
   entity: {
     entityType: string;
+    /** Status governing the returns filed this year (they cover year-1). */
+    priorYearEntityType?: string;
+    /** The year contains a mid-year status change (short tax years). */
+    statusMixed?: boolean;
     entityName: string | null;
     taxState: string | null;
   };
@@ -308,10 +312,14 @@ export default function ComplianceCalendarPage() {
     return { overdue, next30, later, resolved };
   }, [data]);
 
-  const entityLabel = data
-    ? ENTITY_RULESET_LABELS[data.entity.entityType as keyof typeof ENTITY_RULESET_LABELS] ??
-      data.entity.entityType
-    : null;
+  const rulesetLabel = (type: string) =>
+    ENTITY_RULESET_LABELS[type as keyof typeof ENTITY_RULESET_LABELS] ?? type;
+  const entityLabel = data ? rulesetLabel(data.entity.entityType) : null;
+  const priorYearLabel =
+    data?.entity.priorYearEntityType &&
+    data.entity.priorYearEntityType !== data.entity.entityType
+      ? rulesetLabel(data.entity.priorYearEntityType)
+      : null;
 
   return (
     <div className="space-y-6 max-w-[1100px]">
@@ -326,6 +334,20 @@ export default function ComplianceCalendarPage() {
             <p className="mt-2 text-xs text-foreground-secondary">
               Rule set:{' '}
               <span className="text-foreground font-medium">{entityLabel}</span>
+              {priorYearLabel && (
+                <>
+                  {' '}&middot; Returns for {data.year - 1}:{' '}
+                  <span className="text-foreground font-medium">{priorYearLabel}</span>
+                </>
+              )}
+              {data.entity.statusMixed && (
+                <>
+                  {' '}&middot;{' '}
+                  <Link href="/settings#entity-status" className="text-warning hover:underline">
+                    Status changes mid-year
+                  </Link>
+                </>
+              )}
               {data.entity.taxState && (
                 <>
                   {' '}&middot; State: <span className="text-foreground font-medium">{data.entity.taxState}</span>

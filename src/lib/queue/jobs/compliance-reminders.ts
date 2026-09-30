@@ -24,10 +24,9 @@ function isoDate(d: Date): string {
 
 export async function handleComplianceReminders(job: Job): Promise<void> {
   const prisma = (await import('@/lib/prisma')).default;
-  const { complianceItemsForYear, complianceStatusKey } = await import('@/lib/compliance');
+  const { complianceItemsForHistory, complianceStatusKey } = await import('@/lib/compliance');
   const { createNotification, ensureNotificationsTable } = await import('@/lib/notifications');
-  const { ENTITY_TYPES } = await import('@/lib/services/entity.service');
-  type EntityType = (typeof ENTITY_TYPES)[number];
+  const { listEntityStatusHistory } = await import('@/lib/services/entity-status.service');
 
   const { bookGuid } = (job.data ?? {}) as { bookGuid?: string };
 
@@ -49,23 +48,23 @@ export async function handleComplianceReminders(job: Job): Promise<void> {
   let created = 0;
   for (const book of books) {
     try {
-      // Entity type/state straight from the profile row; books without a
+      // State/activity straight from the profile row; books without a
       // profile default to household with no state (same default the
-      // synthesized profile uses).
-      const profile = await prisma.gnucash_web_entity_profiles.findUnique({
-        where: { book_guid: book.guid },
-      });
-      const entityType: EntityType =
-        profile && (ENTITY_TYPES as readonly string[]).includes(profile.entity_type)
-          ? (profile.entity_type as EntityType)
-          : 'household';
+      // synthesized profile uses). The entity status is resolved per tax
+      // year from the effective-dated history.
+      const [profile, { rows: entityStatusRows }] = await Promise.all([
+        prisma.gnucash_web_entity_profiles.findUnique({
+          where: { book_guid: book.guid },
+        }),
+        listEntityStatusHistory(book.guid),
+      ]);
       const taxState = profile?.tax_state ?? null;
       const businessActivity =
         profile?.business_activity === 'farm' ? ('farm' as const) : ('general' as const);
 
       const dueSoon = [
-        ...complianceItemsForYear(entityType, taxState, year, businessActivity),
-        ...complianceItemsForYear(entityType, taxState, year + 1, businessActivity),
+        ...complianceItemsForHistory(entityStatusRows, taxState, year, businessActivity),
+        ...complianceItemsForHistory(entityStatusRows, taxState, year + 1, businessActivity),
       ].filter(i => i.dueDate >= today && i.dueDate <= horizon);
       if (dueSoon.length === 0) continue;
 

@@ -74,94 +74,6 @@ If those answers are weak, improve an existing workflow instead.
 
 # Open
 
-### [P1] Effective-dated entity and tax classification history
-
-**Status:** Open · **Area:** tax · **Added:** 2026-09-29 · **Effort:** L
-**Keywords:** entity type, tax classification, S election, Form 2553, Form
-8832, check-the-box, disregarded entity, S-corp effective date, entity
-history, legal form, tax status, conversion, as-of date, prior year
-
-**Outcome:** Each book keeps a dated history of its legal form and its federal
-tax classification. Every tax-sensitive feature asks "what was this entity on
-date X / for tax year Y?" instead of reading today's value. For example, if
-Lotus Bud elects S-corp status effective 2027-01-01, the 2026 reports,
-Schedule C, and expense reports still treat it as a disregarded single-member
-LLC, while 2027 treats it as an S-corp. Recording the election in advance
-(effective next January 1) drives reminders without changing current
-behavior.
-
-**Today:** `gnucash_web_entity_profiles` has one row per book (`entity_type`,
-`business_activity`, `filing_status`, ...), with no effective dates and no
-history. Editing it silently rewrites the treatment of every prior year.
-`entity_type` also mixes two separate facts. `llc_single` and `s_corp` are
-different kinds of thing: an LLC with an S election is legally an LLC and is
-taxed as an S-corp. About 50 modules in `src/lib` and `src/app/api` read
-entity type, among them compliance, book features, linked-business 1040
-aggregation, the S-corp and retirement analyzers, the Money Timeline, and the
-990 and Schedule F routes.
-
-**Model:**
-
-- Separate **legal form** (`sole_prop`, `llc_single_member`,
-  `llc_multi_member`, `corporation`, `nonprofit_corp`, `household`) from
-  **tax classification** (`individual_1040`, `disregarded_schedule_c`,
-  `disregarded_schedule_f`, `partnership_1065`, `s_corp_1120s`, `c_corp_1120`,
-  `exempt_990`). Validate the pairs: a sole prop cannot be `s_corp_1120s`,
-  and a multi-member LLC cannot be disregarded.
-- New table `gnucash_web_entity_status_history` with these columns: book guid,
-  `effective_from` (date), legal form, tax classification, election form
-  (`2553` / `8832` / none), filed date, IRS acceptance date, linked documents
-  (the election and the CP261 acceptance letter in the Document Vault),
-  notes, and created by/at. Ranges must not overlap. A row is effective until
-  the next row begins. Future-dated rows are allowed and marked **planned**
-  until acceptance is recorded.
-- `entity_type` on the profile becomes a derived "current" value, kept for
-  compatibility and for non-tax gating such as feature-module defaults and
-  the chart template.
-
-**API:** add `getEntityStatusAt(bookGuid, date)` and
-`getEntityStatusForTaxYear(bookGuid, year)`. The tax-year form returns every
-segment when an effective date falls mid-year. That is a short-year case:
-v1 warns and asks the user to confirm the split, and never guesses.
-
-**Migrate the consumers**, starting with those that depend on tax years:
-
-- Compliance calendar and reminders: which return is due, and when (1120-S
-  on March 15 vs. Schedule C on April 15), plus a Form 2553 deadline item for
-  a planned election. The deadline is 2 months and 15 days after the start
-  of the tax year.
-- Linked-business 1040 aggregation (`src/lib/tax/linked-business.ts`): a
-  Schedule C profit year vs. a K-1 plus W-2 year.
-- Estimated taxes and self-employment tax, the S-corp analyzer (compare
-  before and after using the real effective date), and retirement capacity
-  (SE income vs. W-2 wages).
-- Owner expense reports: the accountable-plan guard is evaluated at each
-  line's expense date.
-- Reports and exports run for a past period show the status in effect for
-  that period, with a banner when the period spans a change.
-
-**UI:** the entity settings show a timeline. Changing the type asks whether
-the user is recording a change effective on a date, or correcting a mistake
-in an existing row. A correction rewrites history and is audited, with a
-preview of which tax years' outputs change. Show a new entity's status "since
-inception" by default. Seed each existing book with one row effective from
-its first transaction date.
-
-**Surfaces:** the Action Center gets "S election effective 2027-01-01: set up
-payroll and reasonable compensation", "Form 2553 due by 2027-03-15", and
-"Election filed, IRS acceptance not recorded". The Money Timeline gets the
-effective date and the filing deadlines. Tax outputs cite the status row
-they used.
-
-**Acceptance:**
-
-- Record a planned S election for Lotus Bud effective next January 1.
-- The current-year Schedule C, estimated taxes, and expense-report guard do
-  not change, and the compliance calendar gains the 2553 and 1120-S items.
-- Moving the "as of" date past January 1 switches every migrated consumer.
-- Correcting a historical row shows the tax years it affects before saving,
-  and leaves an audit record.
-
 ### [P2] Contractor portal: payment history and details
 
 **Status:** Open · **Area:** business · **Added:** 2026-09-29 · **Effort:** M
@@ -331,11 +243,12 @@ by hand, with nothing tying it back to the personal transaction.
      - Flag lines past the deadline in the Action Center. Late lines may
        need to be treated as taxable wages.
      - Evaluate each line against the tax status **in effect on its
-       expense date**, not today's status. See "Effective-dated entity and tax
-       classification history" below. A report that spans an S election's
-       effective date applies different rules to its lines before and after
-       that date. Show the resolved status per line, and show the next
-       planned change on the book-link settings.
+       expense date**, not today's status: use `getEntityStatusAt(bookGuid,
+       expenseDate)` from `src/lib/services/entity-status.service.ts`
+       (effective-dated history, shipped 2026-09-30). A report that spans an
+       S election's effective date applies different rules to its lines
+       before and after that date. Show the resolved status per line, and
+       show the next planned change on the book-link settings.
      - Link the report to the S-corp analyzer's household context. The
        analyzer uses book links today.
 

@@ -8,8 +8,9 @@
 
 import prisma from '@/lib/prisma';
 import { assertVendor1099BookScope } from '@/lib/business/vendor-1099.service';
-import { complianceItemsForYear } from '@/lib/compliance';
+import { complianceItemsForHistory } from '@/lib/compliance';
 import { getEntityProfile } from '@/lib/services/entity.service';
+import { listEntityStatusHistory } from '@/lib/services/entity-status.service';
 import { getResilienceProfile } from '@/lib/resilience/service';
 import type { GivingProfile, RentalsProfile } from '@/lib/resilience/types';
 import {
@@ -81,7 +82,8 @@ function splitComplianceItem(value: string): { itemKey: string; period: string; 
   }
   const itemKey = value.slice(0, idx);
   const period = value.slice(idx + 1);
-  const yearMatch = /^(\d{4})(?:-Q[1-4])?$/.exec(period);
+  // '2026', '2026-Q3', or an entity-status item's effective date '2027-01-01'.
+  const yearMatch = /^(\d{4})(?:-Q[1-4]|-\d{2}-\d{2})?$/.exec(period);
   if (!yearMatch) throw new DocumentLinkTargetValidationError('Invalid compliance target');
   return { itemKey, period, year: Number(yearMatch[1]) };
 }
@@ -135,13 +137,21 @@ export async function validateDocumentLinkTarget(
         throw new DocumentLinkTargetValidationError('Compliance target validation requires a user context');
       }
       const { itemKey, period, year } = splitComplianceItem(input.targetId);
-      const entity = await getEntityProfile(bookGuid, input.userId);
-      const found = complianceItemsForYear(
-        entity.entityType,
-        entity.taxState,
-        year,
-        entity.businessActivity,
-      ).some(item => item.key === itemKey && item.period === period);
+      const [entity, { rows: entityStatusRows }] = await Promise.all([
+        getEntityProfile(bookGuid, input.userId),
+        listEntityStatusHistory(bookGuid),
+      ]);
+      // Same generator the calendar uses. Entity-status items are keyed by
+      // effective date, and their due date can fall in the adjacent year.
+      const candidateYears = /^\d{4}-\d{2}-\d{2}$/.test(period) ? [year - 1, year, year + 1] : [year];
+      const found = candidateYears.some(y =>
+        complianceItemsForHistory(
+          entityStatusRows,
+          entity.taxState,
+          y,
+          entity.businessActivity,
+        ).some(item => item.key === itemKey && item.period === period),
+      );
       if (!found) throw new DocumentLinkTargetValidationError('Compliance item not found for this book');
       return;
     }

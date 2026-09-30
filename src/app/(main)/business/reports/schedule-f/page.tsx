@@ -14,6 +14,7 @@ import ScheduleFMappingPanel, {
     type ScheduleFMappingAccount,
     type ScheduleFLineOption,
 } from './ScheduleFMappingPanel';
+import { EntityYearStatusNotice } from '@/components/tax/EntityYearStatusNotice';
 
 const TNUM = { fontFeatureSettings: "'tnum'" } as const;
 
@@ -214,6 +215,8 @@ export default function ScheduleFPage() {
                     </label>
                 }
             />
+
+            <EntityYearStatusNotice year={year} />
 
             {loading && (
                 <div className="flex items-center justify-center py-12">

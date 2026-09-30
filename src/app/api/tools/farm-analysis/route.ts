@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { requireRole } from '@/lib/auth';
 import { getBookAccountGuids, getAccountGuidsForBook } from '@/lib/book-scope';
-import { getEntityProfile } from '@/lib/services/entity.service';
+import { getEntityProfile, getEntityProfileForTaxYear } from '@/lib/services/entity.service';
 import { getLinksForBusinessBook } from '@/lib/services/book-links.service';
 import { hasMinimumRole } from '@/lib/services/permission.service';
 import { ToolConfigService } from '@/lib/services/tool-config.service';
@@ -124,7 +124,7 @@ export async function GET(request: NextRequest) {
     }
 
     const [entity, pinned, bookAccountGuids] = await Promise.all([
-      getEntityProfile(bookGuid, user.id),
+      getEntityProfileForTaxYear(bookGuid, user.id, year),
       loadPinnedInputs(user.id, bookGuid),
       getBookAccountGuids(),
     ]);

@@ -8,6 +8,21 @@ Covers work landed since 0.23.2.0 (2026-07-29).
 
 ### ⚠️ Behavior changes you should read before upgrading
 
+- **Tax features now use the entity status in effect for each tax year, not
+  today's.** Every book has an effective-dated history of its legal form and
+  federal tax classification (Settings → Tax Status History). The compliance
+  calendar, reminders, Action Center, Money Timeline and calendar feed; the
+  household estimator's linked-business income; and the estimated-tax,
+  withholding, filing-comparison, charitable-bunching, tax-package, S-corp,
+  retirement, 990, Schedule F and farm-analyzer routes all resolve the status
+  for the year they compute. Recording an S election effective next January 1
+  changes nothing about this year. In the calendar year after an election, the
+  returns filed that year (which cover the prior year) keep the prior year's
+  rule set while quarterlies follow the new one. Existing books are seeded with
+  one "since inception" row matching their current type, so nothing changes on
+  upgrade. Changing the Entity Type in the profile editor now asks whether it
+  changed on a date or corrects a mistake, and previews the affected years.
+
 - **Mortgage detection now treats material multi-draw and HELOC activity as an
   estimate.** A book with a $50,000 initial draw followed by an $80,000 draw
   previously reported a $50,000 original amount, 7.06% rate, and high
@@ -250,6 +265,18 @@ Covers work landed since 0.23.2.0 (2026-07-29).
   these zero-value entries.
 
 ### Added
+
+- **Tax Status History** (Settings): record when an entity's legal form or tax
+  classification changes — an LLC's Form 2553 S election, a Form 8832
+  classification election — with filed and IRS-acceptance dates and links to the
+  election and acceptance letter in the Document Vault. Corrections and removals
+  preview the tax years whose treatment changes before saving, and every edit is
+  audited. A mid-year effective date must be confirmed as creating short tax
+  years; the app applies the year-end status and says so. The compliance
+  calendar gains the Form 2553 / 8832 deadline (2 months 15 days / 75 days,
+  rolled past weekends and holidays), an IRS-acceptance follow-up, S-corp
+  payroll setup, and a short-tax-year warning. Year-driven tax pages show a
+  notice when the selected year's status differs from today's.
 
 - **Planning sidebar groups:** Living Plan stays directly accessible while the
   remaining links are organized into seven collapsible groups. Group preferences

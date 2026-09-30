@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
 import prisma from '@/lib/prisma';
 import { getBookAccountGuids } from '@/lib/book-scope';
-import { getEntityProfile } from '@/lib/services/entity.service';
+import { getEntityProfileForTaxYear } from '@/lib/services/entity.service';
 
 /** Gross-receipts ceiling for Form 990-N (e-Postcard) eligibility. */
 const FORM_990N_THRESHOLD = 50_000;
@@ -31,7 +31,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid year' }, { status: 400 });
     }
 
-    const entity = await getEntityProfile(bookGuid, user.id);
+    const entity = await getEntityProfileForTaxYear(bookGuid, user.id, year);
     if (entity.entityType !== 'nonprofit_501c3') {
       return NextResponse.json({ applicable: false, entityType: entity.entityType });
     }

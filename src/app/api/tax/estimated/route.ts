@@ -3,7 +3,7 @@ import { requireRole } from '@/lib/auth';
 import prisma from '@/lib/prisma';
 import { getAccountGuidsForBook } from '@/lib/book-scope';
 import { getPreference } from '@/lib/user-preferences';
-import { getEntityProfile } from '@/lib/services/entity.service';
+import { getEntityProfileForTaxYear } from '@/lib/services/entity.service';
 import { ToolConfigService } from '@/lib/services/tool-config.service';
 import { calculateAge } from '@/lib/reports/irs-limits';
 import { aggregateBookTaxData, expandMappingsToDescendants } from '@/lib/tax/book-income';
@@ -141,7 +141,7 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const entity = await getEntityProfile(bookGuid, user.id);
+    const entity = await getEntityProfileForTaxYear(bookGuid, user.id, year);
     if (entity.entityType !== 'household') {
       return NextResponse.json({ applicable: false, entityType: entity.entityType });
     }

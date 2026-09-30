@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
 import { getBookAccountGuids } from '@/lib/book-scope';
 import { getPreference } from '@/lib/user-preferences';
-import { getEntityProfile } from '@/lib/services/entity.service';
+import { getEntityProfileForTaxYear } from '@/lib/services/entity.service';
 import { calculateAge, getContributionLimit } from '@/lib/reports/irs-limits';
 import { loadWithholdingCheckup } from '@/lib/withholding';
 import { FILING_STATUSES, isSupportedTaxYear, type FilingStatus } from '@/lib/tax/types';
@@ -44,7 +44,7 @@ export async function GET(request: NextRequest) {
 
     // A W-4 withholding checkup only makes sense for books that file a
     // personal 1040 (households and Schedule-C pass-throughs).
-    const entity = await getEntityProfile(bookGuid, user.id);
+    const entity = await getEntityProfileForTaxYear(bookGuid, user.id, year);
     const filesPersonal1040 =
       entity.entityType === 'household' ||
       entity.entityType === 'sole_prop' ||

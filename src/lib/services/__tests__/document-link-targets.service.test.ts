@@ -17,6 +17,24 @@ vi.mock('@/lib/prisma', () => ({
 vi.mock('@/lib/business/vendor-1099.service', () => ({ assertVendor1099BookScope: vendorScope }));
 vi.mock('@/lib/resilience/service', () => ({ getResilienceProfile: profileMock }));
 vi.mock('@/lib/services/entity.service', () => ({ getEntityProfile: entityProfile }));
+vi.mock('@/lib/services/entity-status.service', () => ({
+  listEntityStatusHistory: vi.fn(async () => ({
+    rows: [{
+      id: null,
+      effectiveFrom: '1900-01-01',
+      legalForm: 'household',
+      taxClassification: 'individual',
+      electionForm: null,
+      electionFiledOn: null,
+      electionAcceptedOn: null,
+      shortYearConfirmed: false,
+      electionDocumentId: null,
+      acceptanceDocumentId: null,
+      notes: null,
+    }],
+    synthesized: true,
+  })),
+}));
 
 import {
   DOCUMENT_LINK_TARGET_ROLES,

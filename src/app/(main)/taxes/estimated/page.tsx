@@ -8,6 +8,7 @@ import { Abbr } from '@/components/ui/Abbr';
 import { ProvenanceModal } from '@/components/provenance/ProvenanceModal';
 import { SUPPORTED_TAX_YEARS, isSupportedTaxYear, type TaxYear } from '@/lib/tax/types';
 import type { QuarterStatus } from '@/lib/tax/estimated-quarters';
+import { EntityYearStatusNotice } from '@/components/tax/EntityYearStatusNotice';
 
 const MONO = { fontFeatureSettings: "'tnum'" } as const;
 
@@ -288,6 +289,8 @@ export default function EstimatedTaxPage() {
           </label>
         </div>
       </header>
+
+      <EntityYearStatusNotice year={year} />
 
       {/* Prior-year inputs */}
       <div className="rounded-lg border border-border bg-surface/30 p-4">

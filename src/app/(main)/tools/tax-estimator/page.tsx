@@ -38,6 +38,7 @@ import TaxMappingPanel, {
   type MappingSuggestion,
 } from '@/components/tools/tax/TaxMappingPanel';
 import ScenarioPanel from '@/components/tools/tax/ScenarioPanel';
+import { EntityYearStatusNotice } from '@/components/tax/EntityYearStatusNotice';
 
 /* ------------------------------------------------------------------ */
 /* API payload types                                                   */
@@ -565,6 +566,8 @@ export default function TaxEstimatorPage() {
           Federal + state estimates from your book data, with contribution scenario modeling.
         </p>
       </header>
+
+      <EntityYearStatusNotice year={year} />
 
       {/* Tax settings */}
       <CollapsibleConfigSection

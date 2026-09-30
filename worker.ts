@@ -848,6 +848,22 @@ async function main() {
     }
   });
 
+  // Daily entity-status sync at 06:10 UTC: when a future-dated status change
+  // (e.g. a planned S election) takes effect, re-derive the profile's
+  // entity_type for readers of that column. Idempotent; runs before the
+  // compliance reminders so they see the new status the same morning.
+  setScheduleGeneric('entity-status-sync', '06:10', async () => {
+    try {
+      const { syncAllProfileEntityTypes } = await import('./src/lib/services/entity-status.service');
+      const updated = await syncAllProfileEntityTypes();
+      if (updated.length > 0) {
+        console.log(`[${new Date().toISOString()}] Entity status sync updated ${updated.length} book profile(s)`);
+      }
+    } catch (err) {
+      console.error('Entity status sync failed:', err);
+    }
+  });
+
   // Daily compliance-deadline reminders at 06:15 UTC (deduped per
   // user/book/item/period via notification source ids, so re-runs are safe).
   setScheduleGeneric('compliance-reminders', '06:15', async () => {
