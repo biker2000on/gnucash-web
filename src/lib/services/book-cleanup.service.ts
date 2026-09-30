@@ -39,6 +39,9 @@ export const COVERED_BOOK_GUID_MODELS = [
     'gnucash_web_entity_profiles',
     'gnucash_web_entity_members',
     'gnucash_web_entity_status_history',
+    'gnucash_web_expense_report_settings',
+    'gnucash_web_expense_reports',
+    'gnucash_web_expense_report_lines',
     'gnucash_web_book_features',
     'gnucash_web_book_links',
     'gnucash_web_compliance_status',
@@ -433,6 +436,17 @@ export async function deleteBookExtensionRows(
                     { household_book_guid: bookGuid },
                 ],
             },
+        }),
+        // Owner expense reports span a book link: remove them when EITHER
+        // book goes (lines first; they reference reports).
+        db.gnucash_web_expense_report_lines.deleteMany({
+            where: { OR: [{ business_book_guid: bookGuid }, { household_book_guid: bookGuid }] },
+        }),
+        db.gnucash_web_expense_reports.deleteMany({
+            where: { OR: [{ business_book_guid: bookGuid }, { household_book_guid: bookGuid }] },
+        }),
+        db.gnucash_web_expense_report_settings.deleteMany({
+            where: { OR: [{ business_book_guid: bookGuid }, { household_book_guid: bookGuid }] },
         }),
         db.gnucash_web_compliance_status.deleteMany({ where: { book_guid: bookGuid } }),
         db.gnucash_web_vendor_tax_info.deleteMany({ where: { book_guid: bookGuid } }),

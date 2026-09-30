@@ -49,6 +49,7 @@ import LotBadge from './ledger/LotBadge';
 import LotAssignmentPopover from './ledger/LotAssignmentPopover';
 import { ReceiptIndicator } from '@/components/receipts/ReceiptIndicator';
 import { CommentCountBadge, useCommentCounts } from '@/components/transactions/CommentCountBadge';
+import { ExpenseReportBadge, useExpenseReportBadges } from '@/components/expense-reports/ExpenseReportBadge';
 import { TransactionContextMenu, type TransactionContextMenuItem } from '@/components/ledger/TransactionContextMenu';
 import { TransactionTagEditor } from '@/components/tags/TransactionTagEditor';
 import { BulkDescriptionModal, BulkTagsModal, type BulkDescriptionPayload } from '@/components/ledger/BulkEditModals';
@@ -1210,6 +1211,8 @@ export default function AccountLedger({
     // Comment counts for the rows on screen: one batched call, refreshed
     // whenever the visible set changes (filter, infinite-scroll page).
     const commentCounts = useCommentCounts(displayTransactions.map(tx => tx.guid));
+    // Owner expense report status for charges on a reimbursable account.
+    const expenseBadges = useExpenseReportBadges(displayTransactions.map(tx => tx.account_split_guid).filter(Boolean));
 
     // Build investment row data map for investment accounts
     const investmentRowMap = useMemo(() => {
@@ -2485,6 +2488,7 @@ export default function AccountLedger({
                                                 <TransactionTypeIcon type={invRow.transactionType} className="mr-0.5" />
                                                 {tx.description}
                                                 <ReceiptIndicator transactionGuid={tx.guid} transactionDescription={tx.description} receiptCount={tx.receipt_count ?? 0} />
+                                                <ExpenseReportBadge text={expenseBadges[tx.account_split_guid]} />
                                                 {tx.source && tx.source !== 'manual' && tx.match_type !== 'manual_reconciliation' && (
                                                     <span className="text-[9px] px-1.5 py-0.5 rounded bg-warning/10 text-warning border border-warning/20 uppercase tracking-wider font-bold">Imported</span>
                                                 )}
@@ -3059,6 +3063,7 @@ export default function AccountLedger({
                                                                 <TagChip key={tag.id} name={tag.name} color={tag.color} title={`#${tag.name}`} />
                                                             ))}
                                                             <CommentCountBadge count={commentCounts[tx.guid] ?? 0} />
+                                                            <ExpenseReportBadge text={expenseBadges[tx.account_split_guid]} />
                                                             {tx.source && tx.source !== 'manual' && tx.match_type !== 'manual_reconciliation' && (
                                                                 <span className="text-[9px] px-1.5 py-0.5 rounded bg-warning/10 text-warning border border-warning/20 uppercase tracking-wider font-bold">
                                                                     Imported

@@ -679,6 +679,33 @@ export async function collectFinancialEventsForBook(
   }
 
   try {
+    const { expenseReportEvents } = await import('@/lib/expense-reports/insights');
+    for (const report of await expenseReportEvents(bookGuid)) {
+      events.push({
+        id: `${bookGuid}:expense-report:${report.reportId}:${report.date}`,
+        bookGuid,
+        domain: 'reimbursement',
+        title: report.title,
+        description: `Owner expense report ${report.label} · approved, unpaid`,
+        date: report.date,
+        endDate: null,
+        cashImpact: report.cents / 100,
+        currency,
+        confidence: 0.9,
+        status: eventStatus(report.date, report.cents < 0, now),
+        href: `/expense-reports?report=${report.reportId}`,
+        sourceId: `expense-report:${report.reportId}`,
+        actionId: null,
+        planId: null,
+        evidence: [{ kind: 'assumption', id: String(report.reportId), label: `Expense report ${report.label}`, source: 'system' }],
+        metadata: { expenseReportStatus: report.status },
+      });
+    }
+  } catch (error) {
+    console.warn('Money Timeline expense report source failed:', error);
+  }
+
+  try {
     for (const goal of await listGoals(bookGuid)) {
       if (!goal.targetDate) continue;
       events.push({

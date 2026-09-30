@@ -1,3 +1,4 @@
+import { EXPENSE_REPORTS_SCHEMA_SQL } from './expense-reports/schema';
 import { query, withDatabaseAdvisoryLock } from './db';
 import { TOOL_CONFIG_PERSONAL_INDEX_SQL } from './tool-config-schema';
 import {
@@ -3015,6 +3016,7 @@ async function createExtensionTables() {
         await query(entityProfilesTaxColumnsDDL);
         await query(entityProfilesActivityColumnDDL);
         await query(entityStatusHistoryDDL);
+        await query(EXPENSE_REPORTS_SCHEMA_SQL);
         await query(bookFeaturesTableDDL);
         await query(bookLinksTableDDL);
         await query(FAMILY_OFFICE_SCHEMA_SQL);

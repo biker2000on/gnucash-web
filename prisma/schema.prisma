@@ -1100,6 +1100,86 @@ model gnucash_web_entity_status_history {
   @@map("gnucash_web_entity_status_history")
 }
 
+/// Owner expense reports (src/lib/expense-reports): per book-link settings.
+model gnucash_web_expense_report_settings {
+  business_book_guid                String   @db.VarChar(32)
+  household_book_guid               String   @db.VarChar(32)
+  reimbursable_account_guid         String?  @db.VarChar(32)
+  employee_guid                     String?  @db.VarChar(32)
+  settlement_mode                   String   @default("reimburse") @db.VarChar(20)
+  contribution_account_guid         String?  @db.VarChar(32)
+  household_investment_account_guid String?  @db.VarChar(32)
+  household_deposit_account_guid    String?  @db.VarChar(32)
+  payment_account_guid              String?  @db.VarChar(32)
+  submission_deadline_days          Int      @default(60)
+  report_since                      DateTime? @db.Date
+  created_at                        DateTime @default(now())
+  updated_at                        DateTime @default(now())
+
+  @@id([business_book_guid, household_book_guid])
+  @@map("gnucash_web_expense_report_settings")
+}
+
+/// An owner expense report (ER-<number> per business book).
+model gnucash_web_expense_reports {
+  id                   Int                               @id @default(autoincrement())
+  business_book_guid   String                            @db.VarChar(32)
+  household_book_guid  String                            @db.VarChar(32)
+  number               Int
+  status               String                            @default("submitted") @db.VarChar(20)
+  settlement_mode      String                            @default("reimburse") @db.VarChar(20)
+  title                String?                           @db.Text
+  notes                String?                           @db.Text
+  submitted_by         Int?
+  submitted_at         DateTime                          @default(now())
+  approved_by          Int?
+  approved_at          DateTime?
+  voucher_guid         String?                           @db.VarChar(32)
+  business_txn_guid    String?                           @db.VarChar(32)
+  payment_txn_guid     String?                           @db.VarChar(32)
+  paid_at              DateTime?
+  household_txn_guid   String?                           @db.VarChar(32)
+  household_settled_at DateTime?
+  rejection_reason     String?                           @db.Text
+  updated_at           DateTime                          @default(now())
+  lines                gnucash_web_expense_report_lines[]
+
+  @@unique([business_book_guid, number])
+  @@index([household_book_guid, status], map: "idx_expense_reports_household")
+  @@map("gnucash_web_expense_reports")
+}
+
+/// Allocation of a household split: a report line (kind 'business') or the
+/// record of a portion marked personal (kind 'personal', no report).
+model gnucash_web_expense_report_lines {
+  id                    Int                          @id @default(autoincrement())
+  report_id             Int?
+  kind                  String                       @default("business") @db.VarChar(10)
+  household_book_guid   String                       @db.VarChar(32)
+  business_book_guid    String                       @db.VarChar(32)
+  source_split_guid     String                       @db.VarChar(32)
+  source_tx_guid        String                       @db.VarChar(32)
+  amount                Decimal                      @db.Decimal(14, 2)
+  expense_date          DateTime                     @db.Date
+  description           String?                      @db.Text
+  business_purpose      String?                      @db.Text
+  expense_account_guid  String?                      @db.VarChar(32)
+  categorized_by        String?                      @db.VarChar(40)
+  personal_account_guid String?                      @db.VarChar(32)
+  personal_split_guid   String?                      @db.VarChar(32)
+  document_ids          Int[]                        @default([])
+  accountable_plan      Boolean                      @default(false)
+  late                  Boolean                      @default(false)
+  sort_order            Int                          @default(0)
+  created_by            Int?
+  created_at            DateTime                     @default(now())
+  report                gnucash_web_expense_reports? @relation(fields: [report_id], references: [id], onDelete: Cascade)
+
+  @@index([source_split_guid], map: "idx_expense_report_lines_source")
+  @@index([report_id, sort_order], map: "idx_expense_report_lines_report")
+  @@map("gnucash_web_expense_report_lines")
+}
+
 model gnucash_web_entity_members {
   id                       Int       @id @default(autoincrement())
   book_guid                String    @db.VarChar(32)

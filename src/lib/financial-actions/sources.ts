@@ -829,6 +829,38 @@ export async function reimbursementActions(bookGuid: string): Promise<FinancialA
   }));
 }
 
+/** Owner expense reports (src/lib/expense-reports): both sides of each book link. */
+export async function expenseReportActions(bookGuid: string): Promise<FinancialActionCandidate[]> {
+  const { expenseReportSignals } = await import('@/lib/expense-reports/insights');
+  const signals = await expenseReportSignals(bookGuid);
+  return signals.map(signal => sourceAction({
+    stableKey: signal.key,
+    lane: signal.lane,
+    origin: 'reimbursement',
+    sourceId: signal.reportId === null ? signal.key : String(signal.reportId),
+    severity: signal.severity,
+    title: signal.title,
+    summary: signal.summary,
+    dueDate: signal.dueDate,
+    impact: signal.amountCents === null
+      ? undefined
+      : { low: Math.abs(signal.amountCents) / 100, high: Math.abs(signal.amountCents) / 100, period: 'one_time' },
+    confidence: 1,
+    operations: [
+      { id: 'open', label: 'Open expense reports', kind: 'link', href: signal.href, primary: true },
+      { id: 'resolve', label: 'Mark resolved', kind: 'state', targetState: 'resolved' },
+    ],
+    evidence: [{
+      kind: 'assumption',
+      id: signal.key,
+      label: signal.title,
+      source: 'system',
+      href: signal.href,
+    }],
+    metadata: { expenseReportSignal: signal.kind },
+  }));
+}
+
 async function jobProfitabilityActions(
   bookGuid: string,
   bookAccountGuids: string[],
@@ -1330,6 +1362,7 @@ export async function loadSourceActions(input: {
     safeActionSource('Compliance', () => complianceActions(userId, bookGuid)),
     safeActionSource('Business close', () => businessCloseActions(userId, bookGuid)),
     safeActionSource('Employee reimbursements', () => reimbursementActions(bookGuid)),
+    safeActionSource('Owner expense reports', () => expenseReportActions(bookGuid)),
     safeActionSource('Job profitability', () => jobProfitabilityActions(bookGuid, bookAccountGuids)),
     safeActionSource('Contractor 1099 compliance', () => vendor1099ComplianceActions(bookGuid, bookAccountGuids)),
     safeActionSource('Tax records archive', () => taxRecordArchiveActions(bookGuid)),

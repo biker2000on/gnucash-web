@@ -57,6 +57,7 @@ docker run -p 3000:3000 -e DATABASE_URL="..." gnucash-web
 - `cost-basis.ts` - Cost basis tracing across account transfers with FIFO/LIFO/average allocation
 - `entity-status.ts` - Pure, client-safe effective-dated entity status: legal form vs federal tax classification, `resolveStatusAt` / `resolveTaxYear` (short-year segments), affected-year diffing, election deadlines. The earliest row is dated at `INCEPTION_DATE` (1900-01-01) and applies since inception.
 - `services/entity-status.service.ts` - Persistence for `gnucash_web_entity_status_history`: dry-run-able record/correct/delete under a per-book advisory lock, audit, and the profile's derived `entity_type` sync. Tax features must resolve `getEntityStatusForTaxYear` / `getEntityProfileForTaxYear` (entity.service) — never today's `entityType` — and compliance items come from `complianceItemsForHistory`.
+- `expense-reports/` - Owner expense reports across a book link: `model.ts` (pure cents math, allocation, accountable plan, badges), `ledger.ts` (book-EXPLICIT split rewrite / transaction create with scope, currency, reconciled and lock checks — use it, not the active-book transaction routes, when writing to the other book), `household.ts` / `business.ts` (workflow), `insights.ts` (Action Center + Money Timeline signals, drift, reconciliation). Never write one transaction spanning two books.
 - `types.ts` - Core TypeScript interfaces: Account, Transaction, Split
 - `format.ts` - Currency formatting utility
 - `scheduled-transactions.ts` - Shared utility: `resolveTemplateSplits()`, GnuCash date parsing

@@ -266,6 +266,32 @@ Covers work landed since 0.23.2.0 (2026-07-29).
 
 ### Added
 
+- **Owner expense reports** (`/expense-reports`, on both books of a book link):
+  an owner who pays business expenses on a personal card reports them from
+  the household book, and the linked business categorizes, approves and
+  reimburses them. The household picker lists charges on the configured
+  reimbursable account with what is left to report; a charge can be reported
+  in part (finished on a later report), split off as personal (the household
+  transaction is rewritten, previewed first), or moved onto the receivable
+  from an ordinary expense account. Receipts are copied into the business
+  book. The business categorizes each line to its own chart — pre-filled by
+  its categorization rules and payee history, with bulk assign, line splits
+  and "Remember for this payee" rules — then approves: one voucher posted to
+  A/P under the owner's employee record, or, in capital-contribution mode, a
+  business contribution transaction and a household reclass written
+  atomically. A posted report is recategorized by unpost → edit → repost;
+  payment uses the voucher engine, and the household deposit is recorded (or
+  a SimpleFIN-imported deposit is matched) and paired as an interbook
+  elimination. Lines dated while the business is taxed as a corporation
+  (from the effective-dated status history) must carry a receipt and business
+  purpose; late lines and contribution mode are flagged under the accountable
+  plan. The Action Center tracks unreported charges, reports to categorize,
+  approve, pay or settle, drift (a reported charge edited, a voucher
+  unposted) and receivable reconciliation; the Money Timeline shows expected
+  reimbursements; household ledger rows show each charge's report status. A
+  "report charges dated on or after" cutoff excludes charges reimbursed by
+  hand before the workflow existed.
+
 - **Tax Status History** (Settings): record when an entity's legal form or tax
   classification changes — an LLC's Form 2553 S election, a Form 8832
   classification election — with filed and IRS-acceptance dates and links to the
