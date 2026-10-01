@@ -82,3 +82,31 @@ describe('batching past the endpoint cap', () => {
         await waitFor(() => expect(view.latest()[guid(600)]).toBe(1));
     });
 });
+
+describe('row list changing mid-flight', () => {
+    it('keeps the answer for guids asked before the list changed', async () => {
+        // Regression: the ledger's row list changes identity right after its
+        // first load. Cleanup used to mark the in-flight request cancelled and
+        // drop its answer, while the guids stayed claimed as "asked" — so those
+        // rows never got a badge.
+        let release: () => void = () => undefined;
+        const gate = new Promise<void>(resolve => { release = resolve; });
+        vi.stubGlobal('fetch', vi.fn(async (_url: string, init: RequestInit) => {
+            const body = JSON.parse(String(init.body)) as { txnGuids: string[] };
+            requested.push(body.txnGuids);
+            if (requested.length === 1) await gate;
+            const counts = Object.fromEntries(body.txnGuids.map(g => [g, 2]));
+            return { ok: true, status: 200, json: async () => ({ counts }) } as Response;
+        }));
+        const view = harness();
+
+        await act(async () => { view.show([guid(1)]); });
+        await act(async () => { view.show([guid(1), guid(2)]); });
+        await act(async () => { release(); });
+
+        await waitFor(() => expect(view.latest()[guid(1)]).toBe(2));
+        expect(view.latest()[guid(2)]).toBe(2);
+        // guid(1) was asked exactly once.
+        expect(requested).toEqual([[guid(1)], [guid(2)]]);
+    });
+});

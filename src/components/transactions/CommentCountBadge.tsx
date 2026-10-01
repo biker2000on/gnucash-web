@@ -48,7 +48,11 @@ export function useCommentCounts(txnGuids: string[]): Record<string, number> {
         // Claimed before the request so a re-render mid-flight does not ask again.
         for (const guid of unique) asked.current.add(guid);
 
-        let cancelled = false;
+        // No cancellation when the key changes: the ledger's row list changes
+        // identity right after its first load, and dropping the in-flight answer
+        // would strand these guids as "asked" forever (no badge, never re-asked).
+        // Counts are keyed by guid, so merging a late answer is always correct,
+        // and a no-op once the component has unmounted.
         void (async () => {
             for (let start = 0; start < unique.length; start += MAX_BATCH) {
                 const batch = unique.slice(start, start + MAX_BATCH);
@@ -58,14 +62,12 @@ export function useCommentCounts(txnGuids: string[]): Record<string, number> {
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ txnGuids: batch }),
                     });
-                    if (cancelled) return;
                     if (!response.ok) {
                         // Release the claim so a later render can retry.
                         for (const guid of batch) asked.current.delete(guid);
                         continue;
                     }
                     const body = await response.json();
-                    if (cancelled) return;
                     const fresh = (body.counts ?? {}) as Record<string, number>;
                     if (Object.keys(fresh).length === 0) continue;
                     setCounts(previous => ({ ...previous, ...fresh }));
@@ -76,7 +78,6 @@ export function useCommentCounts(txnGuids: string[]): Record<string, number> {
                 }
             }
         })();
-        return () => { cancelled = true; };
     }, [key]);
 
     return counts;
