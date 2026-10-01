@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import { Modal } from '@/components/ui/Modal';
 import { ConfirmationDialog } from '@/components/ui/ConfirmationDialog';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -492,7 +493,7 @@ export default function VouchersPage() {
                 size="xl"
             >
                 <form
-                    className="space-y-4"
+                    className="space-y-4 p-6"
                     onSubmit={(e) => {
                         e.preventDefault();
                         handleSave();
@@ -662,7 +663,7 @@ export default function VouchersPage() {
                 size="sm"
             >
                 <form
-                    className="space-y-4"
+                    className="space-y-4 p-6"
                     onSubmit={(e) => {
                         e.preventDefault();
                         handlePost();
@@ -709,7 +710,7 @@ export default function VouchersPage() {
                 size="md"
             >
                 <form
-                    className="space-y-4"
+                    className="space-y-4 p-6"
                     onSubmit={(e) => {
                         e.preventDefault();
                         handlePay();
@@ -724,6 +725,14 @@ export default function VouchersPage() {
                             </span>
                         )}
                     </p>
+                    {paying?.billingId && /^ER-\d+$/.test(paying.billingId) && (
+                        <p className="rounded-md border border-warning/40 bg-warning/10 p-3 text-sm text-foreground">
+                            This voucher came from owner expense report {paying.billingId}. Settle it from{' '}
+                            <Link href="/expense-reports" className="text-primary hover:underline">Owner Expense Reports</Link>
+                            {' '}instead, so the household book&apos;s reimbursable account clears too (pay it, or settle it
+                            as a capital contribution).
+                        </p>
+                    )}
                     <div>
                         <label className={labelClass}>Pay from account *</label>
                         <AccountSelector

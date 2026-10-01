@@ -6,6 +6,7 @@ import { Modal } from '@/components/ui/Modal';
 import { INPUT, LABEL, SELECT, TNUM } from '@/components/ui/form';
 import { REPORT_STATUS_LABELS, formatCents } from '@/lib/expense-reports/model';
 import { AccountSelector } from '@/components/ui/AccountSelector';
+import { Tip } from '@/components/ui/Tooltip';
 import { ReportLinesGrid, type LineEdit } from './ReportLinesGrid';
 import {
   loadAccounts,
@@ -62,6 +63,8 @@ export function ReportPanel({
   const [approval, setApproval] = useState<ApprovalPreview | null>(null);
   const [split, setSplit] = useState<{ lineId: number; parts: Array<{ amount: string; accountGuid: string }> } | null>(null);
   const [pay, setPay] = useState<{ accountGuid: string; date: string } | null>(null);
+  const [contribute, setContribute] = useState<{ equityGuid: string; investmentGuid: string; date: string } | null>(null);
+  const [investmentAccounts, setInvestmentAccounts] = useState<AccountOption[]>([]);
   const [settle, setSettle] = useState<{ accountGuid: string; date: string; matches: DepositMatch[] | null; matchTxGuid: string } | null>(null);
   const [reject, setReject] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -236,12 +239,55 @@ export function ReportPanel({
             Pay the owner…
           </Button>
         )}
+        {isBusiness && canEdit && report.status === 'posted' && !dirty && (
+          <Tip
+            content={
+              link?.canEditOtherSide
+                ? 'No cash moves: A/P is cleared against Owner’s Contributions, and the household receivable becomes your investment in the business.'
+                : `Needs edit access to ${report.householdName} as well.`
+            }
+          >
+            <Button
+              disabled={busy || !link?.canEditOtherSide}
+              onClick={() => {
+                setContribute({
+                  equityGuid: link?.settings.contributionAccountGuid ?? '',
+                  investmentGuid: link?.settings.householdInvestmentAccountGuid ?? '',
+                  date: todayIso(),
+                });
+                loadAccounts(report.householdBookGuid, ['EQUITY', 'ASSET']).then(setInvestmentAccounts).catch(() => undefined);
+              }}
+            >
+              Settle as capital contribution…
+            </Button>
+          </Tip>
+        )}
         {!isBusiness && canEdit && report.status === 'submitted' && (
           <Button disabled={busy} onClick={() => run(() => reportAction(report.id, { action: 'withdraw' }), `${report.label} withdrawn`)}>
             Withdraw
           </Button>
         )}
-        {canSettle && (
+        {canSettle && report.settlementMode === 'contribution' && (
+          <Button
+            primary
+            disabled={busy}
+            onClick={() =>
+              run(
+                () =>
+                  reportAction(report.id, {
+                    action: 'settle',
+                    // Ignored for contributions: the server reclasses to the owner-investment account.
+                    depositAccountGuid: link?.settings.householdInvestmentAccountGuid ?? report.householdBookGuid,
+                    date: report.paidAt?.slice(0, 10) ?? todayIso(),
+                  }),
+                `${report.label} contribution recorded in ${report.householdName}`,
+              )
+            }
+          >
+            Finish recording the contribution in {report.householdName}
+          </Button>
+        )}
+        {canSettle && report.settlementMode !== 'contribution' && (
           <Button
             primary
             disabled={busy}
@@ -286,6 +332,82 @@ export function ReportPanel({
             <div className="flex justify-between">
               <Button onClick={() => setSplit({ ...split, parts: [...split.parts, { amount: '0.00', accountGuid: '' }] })}>Add part</Button>
               <Button primary disabled={busy} onClick={doSplit}>Split line</Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      <Modal
+        isOpen={contribute !== null}
+        onClose={() => setContribute(null)}
+        title={`Settle ${report.label} as a capital contribution`}
+        size="md"
+      >
+        {contribute && (
+          <div className="space-y-3 p-4">
+            <p className="text-sm text-foreground">
+              Instead of paying {formatCents(report.totalCents)} in cash, the owner contributes these expenses to the
+              business. Two transactions are recorded:
+            </p>
+            <ul className="list-disc space-y-1 pl-5 text-sm text-foreground-secondary">
+              <li>
+                {report.businessName}: debit Accounts Payable (due to owner), credit the owner-contribution account. The
+                voucher is marked paid.
+              </li>
+              <li>
+                {report.householdName}: debit the owner-investment account, credit the reimbursable account.
+              </li>
+            </ul>
+            <label className="block">
+              <span className={LABEL}>Owner contributions ({report.businessName})</span>
+              <AccountSelector
+                value={contribute.equityGuid}
+                accountTypes={['EQUITY']}
+                placeholder="Type to pick an equity account…"
+                onChange={(guid) => setContribute({ ...contribute, equityGuid: guid })}
+              />
+            </label>
+            <label className="block">
+              <span className={LABEL}>Owner investment in the business ({report.householdName})</span>
+              <select
+                className={SELECT}
+                value={contribute.investmentGuid}
+                onChange={(e) => setContribute({ ...contribute, investmentGuid: e.target.value })}
+              >
+                <option value="">Choose…</option>
+                {investmentAccounts.map((a) => (
+                  <option key={a.guid} value={a.guid}>{a.path}</option>
+                ))}
+              </select>
+            </label>
+            <label className="block">
+              <span className={LABEL}>Date</span>
+              <input
+                type="date"
+                className={INPUT}
+                value={contribute.date}
+                onChange={(e) => setContribute({ ...contribute, date: e.target.value })}
+              />
+            </label>
+            <div className="flex justify-end gap-2">
+              <Button onClick={() => setContribute(null)}>Cancel</Button>
+              <Button
+                primary
+                disabled={busy || !contribute.equityGuid || !contribute.investmentGuid}
+                onClick={() =>
+                  run(async () => {
+                    await reportAction(report.id, {
+                      action: 'contribute',
+                      contributionAccountGuid: contribute.equityGuid,
+                      householdInvestmentAccountGuid: contribute.investmentGuid,
+                      date: contribute.date,
+                    });
+                    setContribute(null);
+                  }, `${report.label} settled as a capital contribution`)
+                }
+              >
+                Record contribution
+              </Button>
             </div>
           </div>
         )}

@@ -505,6 +505,57 @@ describe('owner expense reports (real PostgreSQL)', () => {
     await svc.withdrawReport(ctx, HOUSE.book, submitted.report!.id);
   });
 
+  it('settles an approved report as a capital contribution instead of paying cash', async () => {
+    const bizCtx = { ...ctx, bookGuid: BIZ.book };
+    const herbs = await charge('Silverliningherbs refill', '2026-11-20', 8800);
+    const submitted = await svc.submitReport(ctx, {
+      householdBookGuid: HOUSE.book,
+      businessBookGuid: BIZ.book,
+      lines: [{ splitGuid: herbs, cents: 8800 }],
+    });
+    const reportId = submitted.report!.id;
+    await svc.updateReportLines(bizCtx, BIZ.book, reportId, [
+      { lineId: submitted.report!.lines[0].id, expenseAccountGuid: A.supplies },
+    ]);
+    const approved = await svc.approveReport(bizCtx, BIZ.book, reportId, { postDate: '2026-11-25' });
+    expect(approved).toMatchObject({ status: 'posted', settlementMode: 'reimburse' });
+
+    const before = {
+      contribution: await balanceCents(A.contribution),
+      investment: await balanceCents(A.investment),
+      receivable: await balanceCents(A.receivable),
+      bank: await balanceCents(A.bank),
+    };
+    await expect(
+      svc.settlePostedAsContribution(bizCtx, BIZ.book, reportId, {
+        contributionAccountGuid: A.bank, // not equity
+        householdInvestmentAccountGuid: A.investment,
+      }),
+    ).rejects.toThrow(/equity account/);
+
+    const settled = await svc.settlePostedAsContribution(bizCtx, BIZ.book, reportId, {
+      contributionAccountGuid: A.contribution,
+      householdInvestmentAccountGuid: A.investment,
+      date: '2026-11-30',
+    });
+    expect(settled).toMatchObject({ status: 'settled', settlementMode: 'contribution' });
+    expect(await balanceCents(A.contribution)).toBe(before.contribution - 8800);
+    expect(await balanceCents(A.investment)).toBe(before.investment + 8800);
+    expect(await balanceCents(A.receivable)).toBe(before.receivable - 8800);
+    expect(await balanceCents(A.bank)).toBe(before.bank); // no cash moved
+    // The voucher is fully paid: nothing left owing to the owner on it.
+    const { getVoucher } = await import('@/lib/business/vouchers');
+    const voucher = await getVoucher(BIZ.book, settled.voucherGuid!);
+    expect(Number(voucher.amountDue)).toBe(0);
+    // Cannot be settled twice.
+    await expect(
+      svc.settlePostedAsContribution(bizCtx, BIZ.book, reportId, {
+        contributionAccountGuid: A.contribution,
+        householdInvestmentAccountGuid: A.investment,
+      }),
+    ).rejects.toThrow(/approved, unpaid/);
+  });
+
   it('refuses users without edit on the other book', async () => {
     const pool = getTestPool();
     await pool.query(`DELETE FROM gnucash_web_book_permissions WHERE user_id = $1 AND book_guid = $2`, [userId, HOUSE.book]);

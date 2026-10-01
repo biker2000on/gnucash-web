@@ -38,7 +38,14 @@ import {
   type ExpenseReportContext,
   type ReportRecord,
 } from './shared';
-import { LedgerValidationError, accountCurrency, createTransaction, loadSplits, rewriteSplit } from './ledger';
+import {
+  LedgerValidationError,
+  accountCurrency,
+  assertPostableAccounts,
+  createTransaction,
+  loadSplits,
+  rewriteSplit,
+} from './ledger';
 import { linkDocumentsToTransaction } from './documents';
 import { payeePattern } from './suggestions';
 
@@ -549,6 +556,145 @@ export async function recategorizePostedReport(
   });
 }
 
+/**
+ * Settle an APPROVED (posted, unpaid) report as a capital contribution
+ * instead of paying cash: the voucher is paid from the business's owner-
+ * contribution equity account (debit A/P due to owner, credit Owner's
+ * Contributions — the engine closes the voucher's lot as for any payment),
+ * and the household receivable is reclassed to the owner's investment in
+ * the business. No cash moves. Needs edit on both books.
+ *
+ * Refused for lines dated while the business is taxed as a corporation:
+ * those must be reimbursed under the accountable plan to stay deductible.
+ */
+export async function settlePostedAsContribution(
+  ctx: ExpenseReportContext,
+  businessBookGuid: string,
+  reportId: number,
+  input: { contributionAccountGuid: string; householdInvestmentAccountGuid: string; date?: string },
+): Promise<ReportRecord> {
+  return withReportLock(reportId, async () => {
+    const report = await businessReport(ctx, businessBookGuid, reportId);
+    if (report.status !== 'posted' || !report.voucherGuid) {
+      throw new ExpenseReportError('Only an approved, unpaid report can be settled as a contribution.', 409);
+    }
+    await requireBookEdit(ctx, report.householdBookGuid, 'household');
+    const evidence = await lineEvidence(report);
+    if (report.lines.some((l) => evidence.get(l.id)?.accountablePlan)) {
+      throw new ExpenseReportError(
+        'Some lines are dated while the business is taxed as a corporation. Those must be reimbursed under the accountable plan; settling them as a capital contribution would forfeit the deduction.',
+        409,
+      );
+    }
+    const settings = await getSettings(report.businessBookGuid, report.householdBookGuid);
+    const receivable = settings.reimbursableAccountGuid;
+    if (!receivable) throw new ExpenseReportError('The reimbursable account is not set.');
+
+    // Validate both sides BEFORE paying, so a household-side problem cannot
+    // leave the business paid and the household uncleared.
+    const contribution = await prisma.accounts.findUnique({
+      where: { guid: input.contributionAccountGuid },
+      select: { account_type: true },
+    });
+    if (!contribution || contribution.account_type !== 'EQUITY') {
+      throw new ExpenseReportError('Choose the business owner-contribution equity account.');
+    }
+    const investment = await prisma.accounts.findUnique({
+      where: { guid: input.householdInvestmentAccountGuid },
+      select: { account_type: true },
+    });
+    if (!investment || !['EQUITY', 'ASSET'].includes(investment.account_type)) {
+      throw new ExpenseReportError('Choose the household owner-investment account (equity or asset).');
+    }
+    const currency = await accountCurrency(receivable);
+    if (!currency) throw new ExpenseReportError('The reimbursable account has no currency.');
+    await assertPostableAccounts(report.businessBookGuid, [input.contributionAccountGuid], currency).catch(rethrow);
+    await assertPostableAccounts(report.householdBookGuid, [input.householdInvestmentAccountGuid, receivable], currency).catch(rethrow);
+    const date = input.date ?? todayIso();
+    await assertNotLocked(report.businessBookGuid, [date]);
+    await assertNotLocked(report.householdBookGuid, [date]);
+
+    let paymentTxn: string;
+    try {
+      const payment = await payVouchers(businessBookGuid, {
+        employeeGuid: settings.employeeGuid!,
+        transferAccountGuid: input.contributionAccountGuid,
+        amount: report.totalCents / 100,
+        date,
+        num: report.label,
+        memo: `Capital contribution ${report.label}`,
+        allocations: [{ invoiceGuid: report.voucherGuid, amount: report.totalCents / 100 }],
+      });
+      paymentTxn = payment.transactionGuid;
+    } catch (error) {
+      rethrow(error);
+    }
+    // The business side is committed; record it before the household write so
+    // a failure there leaves an honest 'paid' report the owner can finish.
+    await prisma.gnucash_web_expense_reports.update({
+      where: { id: reportId },
+      data: {
+        status: 'paid',
+        settlement_mode: 'contribution',
+        payment_txn_guid: paymentTxn,
+        paid_at: new Date(`${date}T12:00:00Z`),
+        updated_at: new Date(),
+      },
+    });
+
+    const householdTxn = await prisma
+      .$transaction(async (tx) => {
+        const guid = await createTransaction(tx, {
+          bookGuid: report.householdBookGuid,
+          currencyGuid: currency,
+          postDate: date,
+          num: report.label,
+          description: `Business expenses contributed to the business ${report.label}`,
+          splits: householdSettlementSplits(
+            receivable,
+            input.householdInvestmentAccountGuid,
+            report.totalCents,
+            `Capital contribution ${report.label}`,
+          ),
+        });
+        await markSettled(tx, report.id, guid);
+        return guid;
+      })
+      .catch(rethrow);
+
+    for (const [book, txn] of [
+      [report.businessBookGuid, paymentTxn],
+      [report.householdBookGuid, householdTxn],
+    ] as const) {
+      await logAudit('CREATE', 'TRANSACTION', txn, null, await snapshotTransactionByGuid(txn), { bookGuid: book, userId: ctx.user.id });
+      afterLedgerWrite(book, 'transactions', { guid: txn, action: 'create', fromDate: new Date(`${date}T00:00:00Z`) });
+    }
+    if (!settings.contributionAccountGuid || !settings.householdInvestmentAccountGuid) {
+      await prisma.gnucash_web_expense_report_settings
+        .update({
+          where: {
+            business_book_guid_household_book_guid: {
+              business_book_guid: report.businessBookGuid,
+              household_book_guid: report.householdBookGuid,
+            },
+          },
+          data: {
+            contribution_account_guid: settings.contributionAccountGuid ?? input.contributionAccountGuid,
+            household_investment_account_guid: settings.householdInvestmentAccountGuid ?? input.householdInvestmentAccountGuid,
+          },
+        })
+        .catch(() => undefined);
+    }
+    await logAudit('UPDATE', 'REIMBURSEMENT', `expense-report:${reportId}`, { status: 'posted' }, {
+      status: 'settled',
+      mode: 'contribution',
+      paymentTxn,
+      householdTxn,
+    }, { bookGuid: businessBookGuid, userId: ctx.user.id });
+    return loadReport(reportId, businessBookGuid);
+  });
+}
+
 export async function rejectReport(
   ctx: ExpenseReportContext,
   businessBookGuid: string,
@@ -702,7 +848,15 @@ export async function settleHousehold(
     const settings = await getSettings(report.businessBookGuid, report.householdBookGuid);
     const receivable = settings.reimbursableAccountGuid!;
     const date = input.date ?? report.paidAt?.slice(0, 10) ?? todayIso();
-    const matches = await findDepositMatches(report, input.depositAccountGuid, receivable, date);
+    // A contribution settled on the business side (but not yet on the
+    // household side) reclasses the receivable to the owner's investment —
+    // no cash arrived, so there is no deposit to match or eliminate.
+    const contribution = report.settlementMode === 'contribution';
+    if (contribution && !settings.householdInvestmentAccountGuid) {
+      throw new ExpenseReportError('Choose the household owner-investment account in Setup first.');
+    }
+    const counterAccount = contribution ? settings.householdInvestmentAccountGuid! : input.depositAccountGuid;
+    const matches = contribution ? [] : await findDepositMatches(report, input.depositAccountGuid, receivable, date);
     if (input.dryRun) return { report, matches, action: 'preview' };
 
     const currency = await accountCurrency(receivable);
@@ -738,8 +892,15 @@ export async function settleHousehold(
             currencyGuid: currency,
             postDate: date,
             num: report.label,
-            description: `Reimbursement ${report.label}`,
-            splits: householdSettlementSplits(receivable, input.depositAccountGuid, report.totalCents, `Reimbursement ${report.label}`),
+            description: contribution
+              ? `Business expenses contributed to the business ${report.label}`
+              : `Reimbursement ${report.label}`,
+            splits: householdSettlementSplits(
+              receivable,
+              counterAccount,
+              report.totalCents,
+              contribution ? `Capital contribution ${report.label}` : `Reimbursement ${report.label}`,
+            ),
           });
           await markSettled(tx, report.id, guid);
           return guid;
@@ -755,7 +916,7 @@ export async function settleHousehold(
 
     // Interbook elimination: the business payment and the household deposit
     // are the same cash moving between the owner's books.
-    if (report.paymentTxnGuid) {
+    if (report.paymentTxnGuid && !contribution) {
       const mnemonic = await prisma.commodities.findUnique({ where: { guid: currency }, select: { mnemonic: true } });
       await prisma.$executeRaw`
         INSERT INTO gnucash_web_interbook_eliminations
@@ -767,7 +928,7 @@ export async function settleHousehold(
         ON CONFLICT (user_id, left_transaction_guid, right_transaction_guid) DO NOTHING
       `.catch((error) => console.warn('Interbook elimination insert failed:', error));
     }
-    if (!settings.householdDepositAccountGuid) {
+    if (!settings.householdDepositAccountGuid && !contribution) {
       await prisma.gnucash_web_expense_report_settings.update({
         where: {
           business_book_guid_household_book_guid: {

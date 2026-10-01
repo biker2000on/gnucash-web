@@ -486,7 +486,7 @@ export default function EmployeesPage() {
                 size="lg"
             >
                 <form
-                    className="space-y-4"
+                    className="space-y-4 p-6"
                     onSubmit={(e) => {
                         e.preventDefault();
                         handleSave();

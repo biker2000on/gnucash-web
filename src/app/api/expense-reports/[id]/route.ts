@@ -9,6 +9,8 @@
 //                  'approve' { postDate?, dueDate?, dryRun? }
 //                  'recategorize' { updates: [{ lineId, expenseAccountGuid?, description?, businessPurpose? }], dryRun? }
 //                  'pay' { paymentAccountGuid, date?, num? }
+//                  'contribute' { contributionAccountGuid, householdInvestmentAccountGuid, date? }
+//                    (settle an approved report as a capital contribution; edit on both books)
 //                  'reject' { reason }
 //   household side: 'withdraw'
 //   either side (household edit required): 'settle' { depositAccountGuid,
@@ -23,6 +25,7 @@ import {
   recategorizePostedReport,
   rejectReport,
   settleHousehold,
+  settlePostedAsContribution,
   splitReportLine,
   updateReportLines,
 } from '@/lib/expense-reports/business';
@@ -112,6 +115,14 @@ export async function POST(request: NextRequest, { params }: Params) {
             paymentAccountGuid: requiredStr(body.paymentAccountGuid, 'paymentAccountGuid'),
             date: isoDate(body.date, 'date'),
             num: str(body.num),
+          }),
+        });
+      case 'contribute':
+        return NextResponse.json({
+          report: await settlePostedAsContribution(ctx, book, id, {
+            contributionAccountGuid: requiredStr(body.contributionAccountGuid, 'contributionAccountGuid'),
+            householdInvestmentAccountGuid: requiredStr(body.householdInvestmentAccountGuid, 'householdInvestmentAccountGuid'),
+            date: isoDate(body.date, 'date'),
           }),
         });
       case 'reject':

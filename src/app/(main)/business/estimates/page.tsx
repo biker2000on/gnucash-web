@@ -475,7 +475,7 @@ export default function EstimatesPage() {
                 size="lg"
             >
                 <form
-                    className="space-y-4"
+                    className="space-y-4 p-6"
                     onSubmit={(e) => { e.preventDefault(); if (!editingConverted) handleSave(); }}
                 >
                     {editingConverted && (
