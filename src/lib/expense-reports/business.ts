@@ -84,6 +84,15 @@ export interface LineUpdate {
   /** Null clears back to uncategorized. Undefined leaves it unchanged. */
   expenseAccountGuid?: string | null;
   businessPurpose?: string | null;
+  /** The line's name (what the voucher entry is called). Undefined leaves it. */
+  description?: string;
+}
+
+function cleanDescription(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) throw new ExpenseReportError('A line needs a name.');
+  if (trimmed.length > 500) throw new ExpenseReportError('Line names are limited to 500 characters.');
+  return trimmed;
 }
 
 /**
@@ -116,6 +125,7 @@ export async function updateReportLines(
               ? { expense_account_guid: u.expenseAccountGuid, categorized_by: u.expenseAccountGuid ? 'manual' : null }
               : {}),
             ...(u.businessPurpose !== undefined ? { business_purpose: u.businessPurpose?.trim() || null } : {}),
+            ...(u.description !== undefined ? { description: cleanDescription(u.description) } : {}),
           },
         }),
       ),
@@ -448,7 +458,7 @@ export async function recategorizePostedReport(
   ctx: ExpenseReportContext,
   businessBookGuid: string,
   reportId: number,
-  updates: ReadonlyArray<{ lineId: number; expenseAccountGuid: string }>,
+  updates: readonly LineUpdate[],
   opts: { dryRun?: boolean } = {},
 ): Promise<{ report: ReportRecord; byAccount: ApprovalPreview['byAccount'] }> {
   return withReportLock(reportId, async () => {
@@ -464,10 +474,21 @@ export async function recategorizePostedReport(
     const lineIds = new Set(report.lines.map((l) => l.id));
     for (const u of updates) {
       if (!lineIds.has(u.lineId)) throw new ExpenseReportError('That line is not on this report.', 404);
-      await assertExpenseAccount(businessBookGuid, u.expenseAccountGuid);
+      // A posted voucher entry always has an account; it cannot go back to uncategorized.
+      if (u.expenseAccountGuid === null) throw new ExpenseReportError('An approved line needs an expense account.');
+      if (u.expenseAccountGuid) await assertExpenseAccount(businessBookGuid, u.expenseAccountGuid);
     }
-    const accountOf = new Map(updates.map((u) => [u.lineId, u.expenseAccountGuid]));
-    const nextLines = report.lines.map((l) => ({ ...l, expenseAccountGuid: accountOf.get(l.id) ?? l.expenseAccountGuid }));
+    const updateOf = new Map(updates.map((u) => [u.lineId, u]));
+    const nextLines = report.lines.map((l) => {
+      const u = updateOf.get(l.id);
+      if (!u) return l;
+      return {
+        ...l,
+        expenseAccountGuid: u.expenseAccountGuid ?? l.expenseAccountGuid,
+        description: u.description !== undefined ? cleanDescription(u.description) : l.description,
+        businessPurpose: u.businessPurpose !== undefined ? u.businessPurpose?.trim() || null : l.businessPurpose,
+      };
+    });
     const byAccount = summarizeByAccount(categorized({ ...report, lines: nextLines }));
     if (opts.dryRun) return { report, byAccount };
 
@@ -491,12 +512,19 @@ export async function recategorizePostedReport(
         description: `Expense report ${report.label}`,
       });
       await prisma.$transaction([
-        ...updates.map((u) =>
-          prisma.gnucash_web_expense_report_lines.update({
-            where: { id: u.lineId },
-            data: { expense_account_guid: u.expenseAccountGuid, categorized_by: 'manual' },
-          }),
-        ),
+        ...nextLines
+          .filter((l) => updateOf.has(l.id))
+          .map((l) =>
+            prisma.gnucash_web_expense_report_lines.update({
+              where: { id: l.id },
+              data: {
+                expense_account_guid: l.expenseAccountGuid,
+                description: l.description,
+                business_purpose: l.businessPurpose,
+                ...(updateOf.get(l.id)!.expenseAccountGuid ? { categorized_by: 'manual' } : {}),
+              },
+            }),
+          ),
         prisma.gnucash_web_expense_reports.update({
           where: { id: reportId },
           data: { business_txn_guid: posted.transactionGuid, updated_at: new Date() },
@@ -512,8 +540,8 @@ export async function recategorizePostedReport(
       rethrow(error);
     }
     await logAudit('UPDATE', 'REIMBURSEMENT', `expense-report:${reportId}`, {
-      categories: report.lines.map((l) => ({ id: l.id, account: l.expenseAccountGuid })),
-    }, { categories: nextLines.map((l) => ({ id: l.id, account: l.expenseAccountGuid })), reposted: true }, {
+      lines: report.lines.map((l) => ({ id: l.id, account: l.expenseAccountGuid, description: l.description })),
+    }, { lines: nextLines.map((l) => ({ id: l.id, account: l.expenseAccountGuid, description: l.description })), reposted: true }, {
       bookGuid: businessBookGuid,
       userId: ctx.user.id,
     });

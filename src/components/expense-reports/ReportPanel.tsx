@@ -5,6 +5,8 @@ import { useToast } from '@/contexts/ToastContext';
 import { Modal } from '@/components/ui/Modal';
 import { INPUT, LABEL, SELECT, TNUM } from '@/components/ui/form';
 import { REPORT_STATUS_LABELS, formatCents } from '@/lib/expense-reports/model';
+import { AccountSelector } from '@/components/ui/AccountSelector';
+import { ReportLinesGrid, type LineEdit } from './ReportLinesGrid';
 import {
   loadAccounts,
   reportAction,
@@ -56,22 +58,13 @@ export function ReportPanel({
   const [expenseAccounts, setExpenseAccounts] = useState<AccountOption[]>([]);
   const [paymentAccounts, setPaymentAccounts] = useState<AccountOption[]>([]);
   const [depositAccounts, setDepositAccounts] = useState<AccountOption[]>([]);
-  const [draft, setDraft] = useState<Record<number, string>>({});
-  const [remember, setRemember] = useState<Set<number>>(new Set());
-  const [checked, setChecked] = useState<Set<number>>(new Set());
-  const [bulkAccount, setBulkAccount] = useState('');
+  const [dirty, setDirty] = useState(false);
   const [approval, setApproval] = useState<ApprovalPreview | null>(null);
   const [split, setSplit] = useState<{ lineId: number; parts: Array<{ amount: string; accountGuid: string }> } | null>(null);
   const [pay, setPay] = useState<{ accountGuid: string; date: string } | null>(null);
   const [settle, setSettle] = useState<{ accountGuid: string; date: string; matches: DepositMatch[] | null; matchTxGuid: string } | null>(null);
   const [reject, setReject] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    setDraft(Object.fromEntries(report.lines.map((l) => [l.id, l.expenseAccountGuid ?? ''])));
-    setChecked(new Set());
-    setRemember(new Set());
-  }, [report]);
 
   useEffect(() => {
     if (!isBusiness) return;
@@ -107,7 +100,6 @@ export function ReportPanel({
   }, [refreshApproval]);
 
   const accountName = useMemo(() => new Map(expenseAccounts.map((a) => [a.guid, a.path])), [expenseAccounts]);
-  const dirty = report.lines.some((l) => (draft[l.id] ?? '') !== (l.expenseAccountGuid ?? '')) || remember.size > 0;
 
   const run = async (fn: () => Promise<unknown>, done: string) => {
     setBusy(true);
@@ -122,20 +114,13 @@ export function ReportPanel({
     }
   };
 
-  const saveCategories = () =>
-    run(async () => {
-      const updates = report.lines
-        .filter((l) => (draft[l.id] ?? '') !== (l.expenseAccountGuid ?? ''))
-        .map((l) => ({ lineId: l.id, expenseAccountGuid: draft[l.id] || null }));
-      if (recategorizable) {
-        await reportAction(report.id, {
-          action: 'recategorize',
-          updates: updates.filter((u) => u.expenseAccountGuid),
-        });
-      } else {
-        await reportAction(report.id, { action: 'categorize', updates, rememberLineIds: [...remember] });
-      }
-    }, recategorizable ? 'Voucher reposted with the new categories' : 'Categories saved');
+  const saveLines = async (edits: LineEdit[], rememberLineIds: number[]) => {
+    await run(async () => {
+      await reportAction(report.id, recategorizable
+        ? { action: 'recategorize', updates: edits }
+        : { action: 'categorize', updates: edits, rememberLineIds });
+    }, recategorizable ? 'Voucher reposted with your changes' : 'Lines saved');
+  };
 
   const approve = () =>
     run(() => reportAction(report.id, { action: 'approve', postDate: todayIso() }), `${report.label} approved`);
@@ -193,131 +178,23 @@ export function ReportPanel({
         <span className="font-mono text-lg text-foreground" style={TNUM}>{formatCents(report.totalCents)}</span>
       </div>
 
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead className="text-xs uppercase tracking-wider text-foreground-secondary">
-            <tr>
-              {editable && <th className="w-6 px-1 py-1" />}
-              <th className="px-2 py-1 text-left">Date</th>
-              <th className="px-2 py-1 text-left">Line</th>
-              <th className="px-2 py-1 text-right">Amount</th>
-              <th className="px-2 py-1 text-left">{isBusiness ? 'Expense account' : 'Categorized as'}</th>
-              {editable && <th className="px-2 py-1" />}
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-border">
-            {report.lines.map((l) => (
-              <tr key={l.id}>
-                {editable && (
-                  <td className="px-1 py-1">
-                    <input
-                      type="checkbox"
-                      aria-label={`Select line ${l.description}`}
-                      checked={checked.has(l.id)}
-                      onChange={() => {
-                        const next = new Set(checked);
-                        if (next.has(l.id)) next.delete(l.id);
-                        else next.add(l.id);
-                        setChecked(next);
-                      }}
-                    />
-                  </td>
-                )}
-                <td className="px-2 py-1 font-mono text-xs text-foreground-secondary" style={TNUM}>{l.expenseDate}</td>
-                <td className="px-2 py-1">
-                  <div className="text-foreground">{l.description}</div>
-                  <div className="text-xs text-foreground-muted">
-                    {l.businessPurpose ?? ''}
-                    {l.documentIds.length > 0 && `${l.businessPurpose ? ' · ' : ''}${l.documentIds.length} receipt${l.documentIds.length === 1 ? '' : 's'}`}
-                    {l.accountablePlan && ' · accountable plan'}
-                    {l.late && <span className="text-warning"> · past deadline</span>}
-                  </div>
-                </td>
-                <td className="px-2 py-1 text-right font-mono" style={TNUM}>{formatCents(l.amountCents)}</td>
-                <td className="px-2 py-1">
-                  {editable || recategorizable ? (
-                    <div className="space-y-0.5">
-                      <select
-                        aria-label={`Expense account for ${l.description}`}
-                        className={SELECT}
-                        value={draft[l.id] ?? ''}
-                        onChange={(e) => setDraft({ ...draft, [l.id]: e.target.value })}
-                      >
-                        <option value="">{recategorizable ? 'Keep current' : 'Uncategorized'}</option>
-                        {expenseAccounts.map((a) => (
-                          <option key={a.guid} value={a.guid}>{a.path}</option>
-                        ))}
-                      </select>
-                      <div className="flex items-center gap-2 text-[11px] text-foreground-muted">
-                        <span>{l.categorizedByLabel}</span>
-                        {editable && draft[l.id] && (
-                          <label className="flex items-center gap-1">
-                            <input
-                              type="checkbox"
-                              checked={remember.has(l.id)}
-                              onChange={() => {
-                                const next = new Set(remember);
-                                if (next.has(l.id)) next.delete(l.id);
-                                else next.add(l.id);
-                                setRemember(next);
-                              }}
-                            />
-                            Remember for this payee
-                          </label>
-                        )}
-                      </div>
-                    </div>
-                  ) : (
-                    <span className="text-foreground-secondary">{l.expenseAccountName ?? 'Uncategorized'}</span>
-                  )}
-                </td>
-                {editable && (
-                  <td className="px-2 py-1 text-right">
-                    <button
-                      type="button"
-                      className="text-xs text-foreground-secondary hover:text-foreground"
-                      onClick={() =>
-                        setSplit({
-                          lineId: l.id,
-                          parts: [
-                            { amount: (Math.floor(l.amountCents / 2) / 100).toFixed(2), accountGuid: draft[l.id] ?? '' },
-                            { amount: (Math.ceil(l.amountCents / 2) / 100).toFixed(2), accountGuid: '' },
-                          ],
-                        })
-                      }
-                    >
-                      Split…
-                    </button>
-                  </td>
-                )}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      {editable && checked.size > 0 && (
-        <div className="flex flex-wrap items-end gap-2">
-          <label className="block flex-1">
-            <span className={LABEL}>Assign {checked.size} selected line{checked.size === 1 ? '' : 's'} to</span>
-            <select className={SELECT} value={bulkAccount} onChange={(e) => setBulkAccount(e.target.value)}>
-              <option value="">Choose…</option>
-              {expenseAccounts.map((a) => (
-                <option key={a.guid} value={a.guid}>{a.path}</option>
-              ))}
-            </select>
-          </label>
-          <Button
-            disabled={!bulkAccount}
-            onClick={() => {
-              setDraft({ ...draft, ...Object.fromEntries([...checked].map((id) => [id, bulkAccount])) });
-              setChecked(new Set());
-            }}
-          >
-            Apply
-          </Button>
-        </div>
-      )}
+      <ReportLinesGrid
+        key={report.lines.map((l) => `${l.id}:${l.expenseAccountGuid ?? ''}:${l.description}:${l.businessPurpose ?? ''}:${l.amountCents}`).join('|')}
+        lines={report.lines}
+        mode={editable ? 'categorize' : recategorizable ? 'recategorize' : 'readonly'}
+        busy={busy}
+        onSave={saveLines}
+        onDirtyChange={setDirty}
+        onSplit={(l) =>
+          setSplit({
+            lineId: l.id,
+            parts: [
+              { amount: (Math.floor(l.amountCents / 2) / 100).toFixed(2), accountGuid: l.expenseAccountGuid ?? '' },
+              { amount: (Math.ceil(l.amountCents / 2) / 100).toFixed(2), accountGuid: '' },
+            ],
+          })
+        }
+      />
 
       {isBusiness && approval && (
         <div className="space-y-2 rounded-md border border-border p-3">
@@ -346,11 +223,6 @@ export function ReportPanel({
       )}
 
       <div className="flex flex-wrap justify-end gap-2">
-        {(editable || recategorizable) && dirty && (
-          <Button primary disabled={busy} onClick={saveCategories}>
-            {recategorizable ? 'Repost with new categories' : 'Save categories'}
-          </Button>
-        )}
         {editable && !dirty && (
           <>
             <Button disabled={busy} onClick={() => setReject('')}>Reject…</Button>
@@ -397,21 +269,18 @@ export function ReportPanel({
                     setSplit({ ...split, parts });
                   }}
                 />
-                <select
-                  aria-label={`Part ${i + 1} account`}
-                  className={SELECT}
-                  value={p.accountGuid}
-                  onChange={(e) => {
-                    const parts = [...split.parts];
-                    parts[i] = { ...p, accountGuid: e.target.value };
-                    setSplit({ ...split, parts });
-                  }}
-                >
-                  <option value="">Uncategorized</option>
-                  {expenseAccounts.map((a) => (
-                    <option key={a.guid} value={a.guid}>{a.path}</option>
-                  ))}
-                </select>
+                <div className="flex-1" aria-label={`Part ${i + 1} account`}>
+                  <AccountSelector
+                    value={p.accountGuid}
+                    accountTypes={['EXPENSE', 'ASSET']}
+                    placeholder="Uncategorized — type to pick"
+                    onChange={(guid) => {
+                      const parts = [...split.parts];
+                      parts[i] = { ...p, accountGuid: guid };
+                      setSplit({ ...split, parts });
+                    }}
+                  />
+                </div>
               </div>
             ))}
             <div className="flex justify-between">

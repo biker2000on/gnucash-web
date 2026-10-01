@@ -7,7 +7,7 @@
 //                    businessPurpose? }], rememberLineIds? }
 //                  'split' { lineId, parts: [{ cents, expenseAccountGuid }] }
 //                  'approve' { postDate?, dueDate?, dryRun? }
-//                  'recategorize' { updates: [{ lineId, expenseAccountGuid }], dryRun? }
+//                  'recategorize' { updates: [{ lineId, expenseAccountGuid?, description?, businessPurpose? }], dryRun? }
 //                  'pay' { paymentAccountGuid, date?, num? }
 //                  'reject' { reason }
 //   household side: 'withdraw'
@@ -68,6 +68,7 @@ function lineUpdates(raw: unknown) {
       lineId,
       expenseAccountGuid: optionalGuid(r.expenseAccountGuid),
       businessPurpose: r.businessPurpose === undefined ? undefined : (str(r.businessPurpose) ?? null),
+      description: typeof r.description === 'string' ? r.description : undefined,
     };
   });
 }
@@ -101,13 +102,10 @@ export async function POST(request: NextRequest, { params }: Params) {
           report: await approveReport(ctx, book, id, { postDate, dueDate: isoDate(body.dueDate, 'dueDate') }),
         });
       }
-      case 'recategorize': {
-        const updates = lineUpdates(body.updates).map((u) => {
-          if (!u.expenseAccountGuid) throw new ExpenseReportError('Each update needs an expense account.');
-          return { lineId: u.lineId, expenseAccountGuid: u.expenseAccountGuid };
-        });
-        return NextResponse.json(await recategorizePostedReport(ctx, book, id, updates, { dryRun: body.dryRun === true }));
-      }
+      case 'recategorize':
+        return NextResponse.json(
+          await recategorizePostedReport(ctx, book, id, lineUpdates(body.updates), { dryRun: body.dryRun === true })
+        );
       case 'pay':
         return NextResponse.json({
           report: await payReport(ctx, book, id, {

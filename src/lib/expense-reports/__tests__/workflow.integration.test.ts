@@ -320,12 +320,15 @@ describe('owner expense reports (real PostgreSQL)', () => {
       svc.updateReportLines(bizCtx, BIZ.book, reportId, [{ lineId: line('Google').id, expenseAccountGuid: A.uncategorized }]),
     ).rejects.toThrow(/placeholder/);
 
+    await expect(
+      svc.updateReportLines(bizCtx, BIZ.book, reportId, [{ lineId: line('Google').id, description: '  ' }]),
+    ).rejects.toThrow(/needs a name/);
     await svc.updateReportLines(
       bizCtx,
       BIZ.book,
       reportId,
       [
-        { lineId: line('Google').id, expenseAccountGuid: A.software },
+        { lineId: line('Google').id, expenseAccountGuid: A.software, description: 'Google Workspace Lotus' },
         { lineId: line('Golden').id, expenseAccountGuid: A.supplies },
         { lineId: line('Silver').id, expenseAccountGuid: A.supplies },
         { lineId: line('Protrainings').id, expenseAccountGuid: A.education },
@@ -361,9 +364,23 @@ describe('owner expense reports (real PostgreSQL)', () => {
     const dry = await svc.recategorizePostedReport(bizCtx, BIZ.book, reportId, [{ lineId: cpr.id, expenseAccountGuid: A.supplies }], { dryRun: true });
     expect(dry.byAccount.find((a) => a.accountGuid === A.supplies)?.cents).toBe(19547 + 6400);
     expect(await balanceCents(A.education)).toBe(7900);
-    await svc.recategorizePostedReport(bizCtx, BIZ.book, reportId, [{ lineId: cpr.id, expenseAccountGuid: A.supplies }]);
+    await svc.recategorizePostedReport(bizCtx, BIZ.book, reportId, [
+      { lineId: cpr.id, expenseAccountGuid: A.supplies, description: 'CPR recertification' },
+    ]);
     expect(await balanceCents(A.education)).toBe(1500);
     expect(await balanceCents(A.supplies)).toBe(19547 + 6400);
+    // The rename reached both the report line and the reposted voucher entry.
+    const renamed = await svc.loadReport(reportId, BIZ.book);
+    expect(renamed.lines.find((l) => l.id === cpr.id)?.description).toBe('CPR recertification');
+    const entry = await getTestPool().query(
+      `SELECT description FROM entries WHERE bill = $1 AND description LIKE 'CPR recertification%'`,
+      [renamed.voucherGuid],
+    );
+    expect(entry.rows).toHaveLength(1);
+    // An approved line cannot go back to uncategorized.
+    await expect(
+      svc.recategorizePostedReport(bizCtx, BIZ.book, reportId, [{ lineId: cpr.id, expenseAccountGuid: null }]),
+    ).rejects.toThrow(/needs an expense account/);
   });
 
   it('pays the owner and settles the household receivable', async () => {
