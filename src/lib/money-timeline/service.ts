@@ -549,7 +549,10 @@ export async function collectFinancialEventsForBook(
         currency,
         confidence: 1,
         status: eventStatus(invoice.dueDate, true, now),
-        href: invoice.type === 'invoice' ? '/business/invoices' : '/business/vouchers',
+        // Vendor bills live on the invoices page; only employee vouchers are on /vouchers.
+        href: invoice.type === 'invoice'
+          ? '/business/invoices'
+          : invoice.ownerType === 'employee' ? '/business/vouchers' : '/business/invoices?type=bill',
         sourceId: invoice.guid,
         actionId: null,
         planId: null,

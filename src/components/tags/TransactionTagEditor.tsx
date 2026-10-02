@@ -67,7 +67,7 @@ export function TransactionTagEditor({ transactionGuid, isOpen, onClose, onSaved
 
     return (
         <Modal isOpen={isOpen} onClose={onClose} title="Edit Tags" size="sm">
-            <div className="space-y-4">
+            <div className="space-y-4 p-6">
                 {loading ? (
                     <div className="flex items-center justify-center py-6">
                         <div className="w-5 h-5 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />

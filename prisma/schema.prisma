@@ -1100,6 +1100,27 @@ model gnucash_web_entity_status_history {
   @@map("gnucash_web_entity_status_history")
 }
 
+/// Contractor portal links (src/lib/business/vendor-portal.service.ts): a
+/// revocable, expiring link showing ONE vendor its payments from ONE book.
+/// Only the SHA-256 hash of the token is stored.
+model gnucash_web_vendor_portal_links {
+  id             Int       @id @default(autoincrement())
+  book_guid      String    @db.VarChar(32)
+  vendor_guid    String    @db.VarChar(32)
+  token_hash     String    @unique @db.Char(64)
+  prefix         String    @db.VarChar(16)
+  label          String?   @db.VarChar(100)
+  created_by     Int?
+  created_at     DateTime  @default(now())
+  expires_at     DateTime
+  revoked_at     DateTime?
+  last_viewed_at DateTime?
+  view_count     Int       @default(0)
+
+  @@index([book_guid, vendor_guid], map: "idx_vendor_portal_links_vendor")
+  @@map("gnucash_web_vendor_portal_links")
+}
+
 /// Owner expense reports (src/lib/expense-reports): per book-link settings.
 model gnucash_web_expense_report_settings {
   business_book_guid                String   @db.VarChar(32)

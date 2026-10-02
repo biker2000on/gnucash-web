@@ -42,7 +42,8 @@ export type EntityType =
     | 'PAYMENT'
     | 'DOMAIN_COMMAND'
     | 'RESILIENCE'
-    | 'ENTITY_STATUS';
+    | 'ENTITY_STATUS'
+    | 'VENDOR_PORTAL';
 
 /**
  * Log an audit event for a mutation operation.

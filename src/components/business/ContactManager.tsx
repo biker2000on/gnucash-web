@@ -9,6 +9,7 @@ import { FilterBar } from '@/components/ui/FilterBar';
 import { ActionMenu } from '@/components/ui/ActionMenu';
 import { useToast } from '@/contexts/ToastContext';
 import { useCurrentUser, READONLY_TOOLTIP } from '@/hooks/useCurrentUser';
+import { VendorPortalSection } from './VendorPortalSection';
 import { HouseholdBookBanner } from '@/components/business/HouseholdBookBanner';
 import { extractErrorMessage } from '@/lib/api-error';
 import type {
@@ -703,7 +704,7 @@ export function ContactManager({ kind, enableStatements = false }: ContactManage
             {/* Create / edit modal */}
             <Modal isOpen={!!editing} onClose={() => setEditing(null)} title={modalTitle} size="lg">
                 <form
-                    className="space-y-4"
+                    className="space-y-4 p-6"
                     onSubmit={(e) => {
                         e.preventDefault();
                         handleSave();
@@ -837,6 +838,13 @@ export function ContactManager({ kind, enableStatements = false }: ContactManage
                         <div className="pt-2 border-t border-border">
                             <h3 className="text-sm font-semibold text-foreground mb-2">Jobs</h3>
                             <JobsSection ownerGuid={editing.guid} kind={kind} />
+                        </div>
+                    )}
+
+                    {kind === 'vendor' && editing !== 'new' && editing && (
+                        <div className="pt-2 border-t border-border">
+                            <h3 className="text-sm font-semibold text-foreground mb-2">Contractor portal</h3>
+                            <VendorPortalSection vendorGuid={editing.guid} canEdit={!isReadonly} />
                         </div>
                     )}
 

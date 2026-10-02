@@ -266,6 +266,20 @@ Covers work landed since 0.23.2.0 (2026-07-29).
 
 ### Added
 
+- **Contractor portal** (Vendors → edit a vendor → Contractor portal): give a
+  contractor a private, read-only page (`/share/vendor/<token>`) showing only
+  the payments you made them — date, amount, reference, method (Bank / Card /
+  Cash, never which account), cleared or sent — the invoices each payment
+  covered (with their own invoice numbers and jobs), bills still open, their
+  1099-NEC totals, and whether you still need their W-9. Remittance documents
+  attached to a payment download through a scoped link. Links expire (30 days
+  to 1 year), can be revoked, and can be emailed to the vendor when SMTP is
+  configured. Only a SHA-256 hash of each link is stored; unknown, revoked and
+  expired links all show the same "no longer available" page. Views are
+  counted, the company sees when the contractor last opened it, and invites,
+  revocations and views are audited. The Action Center flags expiring links
+  and payments with no reference number.
+
 - **Owner expense reports** (`/expense-reports`, on both books of a book link):
   an owner who pays business expenses on a personal card reports them from
   the household book, and the linked business categorizes, approves and

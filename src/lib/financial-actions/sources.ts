@@ -829,6 +829,33 @@ export async function reimbursementActions(bookGuid: string): Promise<FinancialA
   }));
 }
 
+/** Contractor portal links: expiring links and payments a contractor cannot match. */
+export async function vendorPortalActions(bookGuid: string): Promise<FinancialActionCandidate[]> {
+  const { portalSignals } = await import('@/lib/business/vendor-portal.service');
+  const signals = await portalSignals(bookGuid);
+  return signals.map(signal => sourceAction({
+    stableKey: signal.key,
+    lane: signal.kind === 'expiring' ? 'do' : 'fix',
+    origin: 'vendor_1099',
+    sourceId: signal.key,
+    severity: signal.kind === 'expiring' ? 'info' : 'warning',
+    title: signal.kind === 'expiring'
+      ? `${signal.vendorName}'s portal link expires ${signal.date}`
+      : `${signal.count} payment${signal.count === 1 ? '' : 's'} to ${signal.vendorName} have no reference number`,
+    summary: signal.kind === 'expiring'
+      ? 'Issue a new contractor portal link if they still need to see their payment history.'
+      : 'The contractor sees these payments in their portal without a check or transfer number to match against their records. Add the reference (num) to the payment transactions.',
+    dueDate: signal.date,
+    confidence: 1,
+    operations: [
+      { id: 'open', label: 'Open vendors', kind: 'link', href: '/business/vendors', primary: true },
+      { id: 'resolve', label: 'Mark resolved', kind: 'state', targetState: 'resolved' },
+    ],
+    evidence: [{ kind: 'assumption', id: signal.key, label: signal.vendorName, source: 'system', href: '/business/vendors' }],
+    metadata: { vendorPortalSignal: signal.kind },
+  }));
+}
+
 /** Owner expense reports (src/lib/expense-reports): both sides of each book link. */
 export async function expenseReportActions(bookGuid: string): Promise<FinancialActionCandidate[]> {
   const { expenseReportSignals } = await import('@/lib/expense-reports/insights');
@@ -1363,6 +1390,7 @@ export async function loadSourceActions(input: {
     safeActionSource('Business close', () => businessCloseActions(userId, bookGuid)),
     safeActionSource('Employee reimbursements', () => reimbursementActions(bookGuid)),
     safeActionSource('Owner expense reports', () => expenseReportActions(bookGuid)),
+    safeActionSource('Contractor portal', () => vendorPortalActions(bookGuid)),
     safeActionSource('Job profitability', () => jobProfitabilityActions(bookGuid, bookAccountGuids)),
     safeActionSource('Contractor 1099 compliance', () => vendor1099ComplianceActions(bookGuid, bookAccountGuids)),
     safeActionSource('Tax records archive', () => taxRecordArchiveActions(bookGuid)),

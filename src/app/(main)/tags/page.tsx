@@ -268,7 +268,7 @@ export default function TagsPage() {
 
             {/* Edit tag modal */}
             <Modal isOpen={!!editingTag} onClose={() => setEditingTag(null)} title="Edit Tag" size="sm">
-                <div className="space-y-4">
+                <div className="space-y-4 p-6">
                     <div>
                         <label className="block text-sm font-medium text-foreground-secondary mb-2">Name</label>
                         <input

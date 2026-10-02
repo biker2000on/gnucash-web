@@ -103,3 +103,30 @@ BEGIN
         ON gnucash_web_expense_report_lines(report_id, sort_order);
 END $$;
 `;
+
+/**
+ * Contractor portal links (src/lib/business/vendor-portal.service.ts). Lives
+ * here only so db-init has one place for this release's business tables.
+ */
+export const VENDOR_PORTAL_SCHEMA_SQL = `
+DO $$
+BEGIN
+    PERFORM pg_advisory_xact_lock(hashtext('gnucash_web_vendor_portal_schema'));
+    CREATE TABLE IF NOT EXISTS gnucash_web_vendor_portal_links (
+        id SERIAL PRIMARY KEY,
+        book_guid VARCHAR(32) NOT NULL,
+        vendor_guid VARCHAR(32) NOT NULL,
+        token_hash CHAR(64) NOT NULL UNIQUE,
+        prefix VARCHAR(16) NOT NULL,
+        label VARCHAR(100),
+        created_by INTEGER,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        expires_at TIMESTAMP NOT NULL,
+        revoked_at TIMESTAMP,
+        last_viewed_at TIMESTAMP,
+        view_count INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_vendor_portal_links_vendor
+        ON gnucash_web_vendor_portal_links(book_guid, vendor_guid);
+END $$;
+`;
