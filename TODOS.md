@@ -114,6 +114,31 @@ factor (emailed one-time code). Either way:
   their year-to-date 1099 amount and request a missing W-9.
 - Receipt/document evidence links for remittance attachments.
 
+### [P3] Owner expense reports: split a charge across businesses, S-corp analyzer link
+
+**Status:** Open · **Area:** business · **Added:** 2026-10-02 · **Effort:** M
+**Keywords:** expense report, reimbursement, owner, linked books, split charge,
+multiple businesses, per-book receivable, S-corp analyzer, accountable plan
+
+**Outcome:** The two pieces of the owner expense reports spec that did not ship
+with it (`src/lib/expense-reports/`, shipped 2026-10-01).
+
+- **One charge, two businesses.** An owner with more than one linked business
+  can split one household charge between them. The picker rewrites the
+  household split into per-book receivable portions
+  (`Reimbursable:Lotus Bud`, `Reimbursable:<other>`), with a preview, using the
+  existing `rewriteSplit` in `ledger.ts`. Each portion is then reported to its
+  own business. Today a charge on one link's receivable can only be reported to
+  that link's business.
+- **S-corp analyzer context.** The S-corp analyzer shows the owner's
+  reimbursement history for the year: what was reimbursed under the accountable
+  plan, what was contributed as capital, and lines flagged as late (possibly
+  wages). It also notes that after an S election, personally paid expenses are
+  deductible only when reimbursed under the plan.
+- **Book-link settings.** Show the business's next planned status change
+  (from the entity status history) on the book-link settings, not only on the
+  expense report setup panel.
+
 ### [P3] Home Assistant energy integration: billed vs. metered usage
 
 **Status:** Open · **Area:** utilities · **Added:** 2026-08-11 · **Effort:** M
@@ -175,24 +200,6 @@ Schedule C line 24b
 deductions. `txf-codes.ts` documents `N304` as Schedule 1 line 20, but it may
 collide with Schedule C line 24b. Confirm against an authoritative TXF
 reference, then either close this or fix `txf.ts` / `txf-codes.ts` with a test.
-
----
-
-# Blocked
-
-### [P3] Payslip: QuickBooks Online / Intuit Payroll connector
-
-**Status:** Blocked (needs Intuit developer approval and product access) ·
-**Area:** integrations · **Added:** 2026-03-24 · **Effort:** M–L
-**Keywords:** payslip, paystub, payroll, QuickBooks Online, QBO, Intuit
-Payroll, connector
-
-**Outcome:** Payslips arrive as structured data from the payroll provider
-instead of PDF/AI extraction. PDF/AI extraction and employer templates are
-already shipped. The connector must preserve SimpleFIN deposit enrichment,
-dedupe, balanced posting, and employer contribution metadata.
-
-**Design:** `docs/superpowers/specs/2026-03-24-payslip-integration-design.md`
 
 ---
 
