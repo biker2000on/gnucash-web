@@ -128,6 +128,27 @@ describe('investment split construction', () => {
         expect(splits.reduce((sum, split) => sum + valueOf(split), 0)).toBe(0);
     });
 
+    it('builds a reinvested dividend as shares bought from income with no cash split', () => {
+        const splits = buildInvestmentSplits({
+            ...BASE_INPUT,
+            action: 'Reinvest',
+            shares: 0.4321,
+            total: 42.5,
+        });
+
+        expect(splits).toHaveLength(2);
+        expect(splits.find((split) => split.account_guid === 'cash')).toBeUndefined();
+        expect(splits.find((split) => split.account_guid === 'fees')).toBeUndefined();
+        expect(splits.find((split) => split.account_guid === 'stock')).toMatchObject({
+            quantity_num: 432_100,
+            quantity_denom: 1_000_000,
+        });
+        expect(valueOf(splits.find((split) => split.account_guid === 'stock')!)).toBe(42.5);
+        expect(valueOf(splits.find((split) => split.account_guid === 'income')!)).toBe(-42.5);
+        expect(splits.reduce((sum, split) => sum + valueOf(split), 0)).toBe(0);
+        expect(() => assertValueBalanced(withTradingSplits(splits))).not.toThrow();
+    });
+
     it('balances return of capital by reducing security basis and increasing cash', () => {
         const splits = buildInvestmentSplits({
             ...BASE_INPUT,

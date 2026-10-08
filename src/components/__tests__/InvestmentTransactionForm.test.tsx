@@ -94,6 +94,17 @@ describe('InvestmentTransactionForm account pickers', () => {
         fireEvent.click(incomePicker);
         expect(screen.getByTestId('account-selector-Select income account...')).toHaveTextContent('income-guid');
 
+        // A reinvested dividend (DRIP) asks for the income account only — the
+        // dividend buys shares, so no cash or fee account is involved.
+        fireEvent.click(screen.getByRole('button', { name: 'Reinvest' }));
+        expect(screen.getByText(/Shares Received/)).toBeInTheDocument();
+        expect(screen.getByText(/Dividend Amount/)).toBeInTheDocument();
+        expect(screen.queryByTestId('account-selector-Select cash/bank account...')).not.toBeInTheDocument();
+        expect(screen.queryByTestId('account-selector-Select expense account...')).not.toBeInTheDocument();
+        visibleSelectors = accountSelectorMock.mock.calls.slice(-1).map(([props]) => props);
+        expect(visibleSelectors.map((props: { accountTypes?: string[] }) => props.accountTypes))
+            .toEqual([['INCOME']]);
+
         fireEvent.click(screen.getByRole('button', { name: 'Return of Capital' }));
         visibleSelectors = accountSelectorMock.mock.calls.slice(-1).map(([props]) => props);
         expect(visibleSelectors.map((props: { accountTypes?: string[] }) => props.accountTypes))

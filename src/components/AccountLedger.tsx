@@ -1244,6 +1244,9 @@ export default function AccountLedger({
         });
     }, [fetchTransactions]);
 
+    // Set while the Escape that just exited edit mode is still propagating.
+    const escapeConsumedRef = useRef(false);
+
     // Listen for global edit mode shortcuts
     useEffect(() => {
         const enterHandler = () => {
@@ -1253,6 +1256,13 @@ export default function AccountLedger({
         };
         const exitHandler = () => {
             if (isEditMode) {
+                // The global Escape shortcut runs on `document`, before this
+                // ledger's window keydown listener sees the same keypress.
+                // React commits the exit before the event reaches window, so
+                // without this the ledger would read that one Escape as a
+                // read-mode Escape and navigate back to the hierarchy.
+                escapeConsumedRef.current = true;
+                setTimeout(() => { escapeConsumedRef.current = false; }, 0);
                 handleToggleEditMode();
             }
         };
@@ -1919,6 +1929,7 @@ export default function AccountLedger({
                 }
                 break;
             case 'Escape':
+                if (escapeConsumedRef.current) break;
                 if (focusedRowIndex === -1) {
                     onEscape?.();
                 } else {

@@ -15,7 +15,7 @@ import { ErrorLiveRegion } from '@/components/a11y/LiveRegion';
 import { extractErrorMessage } from '@/lib/api-error';
 import { Tip } from '@/components/ui/Tooltip';
 
-export type InvestmentAction = 'Buy' | 'Sell' | 'Dividend' | 'ReturnOfCapital' | 'Split';
+export type InvestmentAction = 'Buy' | 'Sell' | 'Dividend' | 'Reinvest' | 'ReturnOfCapital' | 'Split';
 
 export interface InvestmentSplitInput {
     action: InvestmentAction;
@@ -76,6 +76,7 @@ const ACTION_OPTIONS: { value: InvestmentAction; label: string; description: str
     { value: 'Buy', label: 'Buy', description: 'Purchase shares' },
     { value: 'Sell', label: 'Sell', description: 'Sell shares' },
     { value: 'Dividend', label: 'Dividend', description: 'Cash dividend received' },
+    { value: 'Reinvest', label: 'Reinvest', description: 'Dividend reinvested in shares (DRIP)' },
     { value: 'ReturnOfCapital', label: 'Return of Capital', description: 'Reduce cost basis' },
     { value: 'Split', label: 'Stock Split', description: 'Add shares from split' },
 ];
@@ -196,6 +197,32 @@ export function buildInvestmentSplits(input: InvestmentSplitInput): CreateTransa
                 quantity_denom: amtDenom,
                 value_num: -amtNum,
                 value_denom: amtDenom,
+                memo: `Dividend: ${commoditySymbol}`,
+            });
+            break;
+        }
+
+        // Reinvested dividend (DRIP): the income buys shares directly, so no
+        // cash split — the ledger classifies shares-in + income-out with no
+        // cash movement as a reinvested dividend.
+        case 'Reinvest': {
+            const { num: valueNum, denom: valueDenom } = toNumDenom(total);
+            splits.push({
+                account_guid: accountGuid,
+                action: 'Buy',
+                quantity_num: Math.round(shares * commodityFraction),
+                quantity_denom: commodityFraction,
+                value_num: valueNum,
+                value_denom: valueDenom,
+                memo: memo || undefined,
+            });
+            splits.push({
+                account_guid: incomeAccountGuid,
+                action: '',
+                quantity_num: -valueNum,
+                quantity_denom: valueDenom,
+                value_num: -valueNum,
+                value_denom: valueDenom,
                 memo: `Dividend: ${commoditySymbol}`,
             });
             break;
@@ -476,6 +503,18 @@ export function InvestmentTransactionForm({
                 }
                 break;
 
+            case 'Reinvest':
+                if (!form.shares || parseFloat(form.shares) <= 0) {
+                    errs.push('Shares received must be a positive number');
+                }
+                if (!form.total || parseFloat(form.total) <= 0) {
+                    errs.push('Dividend amount must be a positive number');
+                }
+                if (!form.incomeAccountGuid) {
+                    errs.push('Income account is required');
+                }
+                break;
+
             case 'ReturnOfCapital':
                 if (!form.amount || parseFloat(form.amount) <= 0) {
                     errs.push('Amount must be a positive number');
@@ -555,6 +594,9 @@ export function InvestmentTransactionForm({
                 break;
             case 'Dividend':
                 description = `Dividend: ${commoditySymbol}`;
+                break;
+            case 'Reinvest':
+                description = `Dividend reinvested: ${form.shares} ${commoditySymbol} @ ${form.pricePerShare}`;
                 break;
             case 'ReturnOfCapital':
                 description = `Return of Capital: ${commoditySymbol}`;
@@ -664,7 +706,7 @@ export function InvestmentTransactionForm({
                 <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-2">
                     Transaction Type
                 </label>
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
                     {ACTION_OPTIONS.map(option => (
                         <Tip content={option.description} key={option.value}>
                         <button
@@ -709,8 +751,8 @@ export function InvestmentTransactionForm({
                 />
             </div>
 
-            {/* Buy/Sell Fields */}
-            {(form.action === 'Buy' || form.action === 'Sell') && (
+            {/* Buy/Sell/Reinvest Fields */}
+            {(form.action === 'Buy' || form.action === 'Sell' || form.action === 'Reinvest') && (
                 <>
                     <FieldGrid>
                         <div>
@@ -719,7 +761,7 @@ export function InvestmentTransactionForm({
                                     ? 'text-primary'
                                     : 'text-foreground-muted'
                             }`}>
-                                Shares {getCalculatedField() === 'shares' && '(auto)'}
+                                {form.action === 'Reinvest' ? 'Shares Received' : 'Shares'} {getCalculatedField() === 'shares' && '(auto)'}
                             </label>
                             <div className="flex gap-2">
                                 <input
@@ -779,7 +821,7 @@ export function InvestmentTransactionForm({
                                     ? 'text-primary'
                                     : 'text-foreground-muted'
                             }`}>
-                                Total {getCalculatedField() === 'total' && '(auto)'}
+                                {form.action === 'Reinvest' ? 'Dividend Amount' : 'Total'} {getCalculatedField() === 'total' && '(auto)'}
                             </label>
                             <input
                                 type="number"
@@ -797,6 +839,20 @@ export function InvestmentTransactionForm({
                         </div>
                     </FieldGrid>
 
+                    {form.action === 'Reinvest' ? (
+                        <div>
+                            <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-1">
+                                Income Account
+                            </label>
+                            <AccountSelector
+                                value={form.incomeAccountGuid}
+                                onChange={(guid) => handleAccountSelect('incomeAccountGuid', guid)}
+                                placeholder="Select income account..."
+                                accountTypes={['INCOME']}
+                            />
+                        </div>
+                    ) : (
+                    <>
                     <FieldGrid cols={2}>
                         <div>
                             <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-1">
@@ -836,6 +892,8 @@ export function InvestmentTransactionForm({
                             accountTypes={['BANK', 'ASSET', 'CASH']}
                         />
                     </div>
+                    </>
+                    )}
                 </>
             )}
 
@@ -1017,7 +1075,7 @@ export function InvestmentTransactionForm({
                             Saving...
                         </>
                     ) : (
-                        `Record ${form.action === 'ReturnOfCapital' ? 'Return of Capital' : form.action}`
+                        `Record ${form.action === 'ReturnOfCapital' ? 'Return of Capital' : form.action === 'Reinvest' ? 'Reinvested Dividend' : form.action}`
                     )}
                 </button>
             </div>
