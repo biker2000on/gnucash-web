@@ -27,6 +27,7 @@ import { deleteAvgBasisHistoryForAccounts } from '@/lib/avg-basis-history';
  */
 export const COVERED_BOOK_GUID_MODELS = [
     'gnucash_web_tool_config',
+    'gnucash_web_transaction_deletions',
     'gnucash_web_receipts',
     'gnucash_web_payslips',
     'gnucash_web_payslip_mappings',
@@ -333,6 +334,9 @@ export async function deleteBookExtensionRows(
         // raw-DDL foreign keys predate the current cascade definitions.
         db.gnucash_web_document_links.deleteMany({ where: { book_guid: bookGuid } }),
         db.gnucash_web_documents.deleteMany({ where: { book_guid: bookGuid } }),
+
+        // The beez deletion log: a deleted book has no feed left to report.
+        db.gnucash_web_transaction_deletions.deleteMany({ where: { book_guid: bookGuid } }),
 
         // Membership module (attendance → payments → members/types/meetings)
         db.gnucash_web_meeting_attendance.deleteMany({

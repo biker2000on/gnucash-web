@@ -204,6 +204,40 @@ Deletion tombstones repeat on **every** response until they are acknowledged
 with `DELETE`. That is what makes a client that was offline for a week still
 learn about the deletion.
 
+#### Deletions of transactions beez did not push
+
+The tombstones above exist only for records beez pushed. When `GET status`
+lists `"transaction-deletions"` in `capabilities`, add `include=deletions` to
+the poll and the feed also reports **every** transaction deleted from the book —
+whether it was deleted in folio, in GnuCash desktop against the same database,
+or through this API:
+
+```json
+{ "transactionGuid": "…", "externalId": null, "deleted": true,
+  "deletedAt": "2026-10-10T14:03:22.418213Z" }
+```
+
+| | Pushed-record tombstone | Deletion-stream tombstone |
+|---|---|---|
+| Keyed by | `externalId` | `transactionGuid` (`externalId` is always `null`) |
+| Covers | records beez pushed | every transaction in the book |
+| Delivery | repeats until `DELETE` acknowledges it | at least once; re-sent for two hours after a pass drains; never acknowledged |
+
+Apply deletion-stream items idempotently by `transactionGuid` and ignore guids
+you never imported. A deleted beez-pushed transaction appears in both forms;
+only the `externalId` form needs a `DELETE`.
+
+How folio knows: a deferred trigger on `splits` records each transaction that
+no longer exists when its deleting database transaction commits, into
+`gnucash_web_transaction_deletions`. Because it is a database trigger it sees
+GnuCash desktop's deletions too. It cannot report a deletion committed while the
+trigger was absent (a GnuCash desktop schema upgrade that rebuilds `splits`
+drops it; folio re-installs it at every start, and `status` stops advertising
+the capability while it is missing), nor a transaction whose splits had all been
+removed in an earlier save before its empty row was deleted. A client should
+still offer an occasional full rescan for those cases and for deletions made
+before the server was upgraded.
+
 ## What it reads and changes
 
 **Reads:** the token's book — its root commodity, its chart of accounts, its
@@ -226,6 +260,10 @@ a book while a human is working in it.
 
 **Writes, on DELETE:** removes the transaction, its splits, their slots, the
 meta row, and the link, and records an audit row.
+
+**Writes, always, outside this API:** the deletion-log trigger adds a row to
+`gnucash_web_transaction_deletions` whenever any writer deletes a transaction.
+It changes nothing in the GnuCash tables themselves.
 
 Everything in a single request commits or rolls back together, inside one
 database transaction that also holds the idempotency claim.

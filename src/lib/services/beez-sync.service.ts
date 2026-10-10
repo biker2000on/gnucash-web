@@ -76,6 +76,10 @@ import {
     type BeezTransactionInput,
     type ChangesCursor,
 } from '@/lib/integrations/beez';
+import {
+    DELETION_FEED_CAPABILITY,
+    DELETION_LOG_TRIGGER,
+} from '@/lib/integrations/beez-deletion-log';
 
 /**
  * A refusal with the status and machine-readable code the wire contract names.
@@ -147,6 +151,29 @@ export async function getBeezBookContext(bookGuid: string): Promise<BeezBookCont
         rootCommodityGuid: root.commodity_guid,
         rootCurrency: commodity?.mnemonic ?? 'USD',
     };
+}
+
+/**
+ * Optional features this server offers a beez client, for `GET status`.
+ *
+ * `transaction-deletions` means `GET changes?include=deletions` reports every
+ * transaction deleted from the book, not only the ones beez pushed. It is
+ * advertised only while the deletion-log trigger is actually installed on
+ * `splits` (src/lib/integrations/beez-deletion-log.ts) — a GnuCash desktop
+ * table upgrade can drop it until the next app start re-creates it — so a
+ * client that sees it absent knows to fall back to a full rescan rather than
+ * trust a stream that may have gaps.
+ */
+export async function getBeezCapabilities(): Promise<string[]> {
+    const rows = await prisma.$queryRaw<Array<{ installed: boolean }>>`
+        SELECT EXISTS (
+            SELECT 1 FROM pg_trigger
+            WHERE tgrelid = to_regclass('splits')
+              AND tgname = ${DELETION_LOG_TRIGGER}
+              AND tgenabled <> 'D'
+        ) AND to_regclass('gnucash_web_transaction_deletions') IS NOT NULL AS installed
+    `;
+    return rows[0]?.installed ? [DELETION_FEED_CAPABILITY] : [];
 }
 
 // ---------------------------------------------------------------------------
@@ -990,6 +1017,13 @@ export interface BeezChangeItem {
      * NOT a data problem the client must surface, unlike `unrepresentable`.
      */
     quarantined?: true;
+    /**
+     * Set only on an item from the deletion stream (`?include=deletions`):
+     * when the deletion committed, `YYYY-MM-DDTHH:MM:SS.uuuuuuZ`. Such an item
+     * carries `transactionGuid`, `externalId: null` and `deleted: true` and
+     * nothing else — see {@link getBeezChanges}.
+     */
+    deletedAt?: string;
 }
 
 export interface BeezChanges {
@@ -1165,6 +1199,27 @@ interface ChangeSplitRow {
  * a position for it. Tombstones do not count towards `limit` for the
  * transaction page or advance `nextCursor`.
  *
+ * THE DELETION STREAM (opt-in, `includeDeletions`). The tombstones above only
+ * exist for transactions beez pushed, because only those have a link row to
+ * outlive them. With `includeDeletions` the feed also pages the deletion log
+ * (src/lib/integrations/beez-deletion-log.ts), which a trigger on `splits`
+ * fills for EVERY transaction deleted from the book by any writer, GnuCash
+ * desktop included. Each becomes `{ transactionGuid, externalId: null,
+ * deleted: true, deletedAt }` — keyed by guid, never by external id, so a
+ * client that reconciles pushed records by `externalId` cannot mistake one for
+ * the acknowledged tombstone of its own record (a pushed transaction that is
+ * deleted shows up in BOTH forms; only the external-id form wants a DELETE).
+ * A logged guid whose transaction exists again (an audit undo restored it) is
+ * not reported.
+ *
+ * Delivery is the same deal as the rest of the feed — at least once, never
+ * acknowledged: the stream has its own high watermark and sweep position in
+ * the cursor ({@link DeletionCursor}), its own `limit` budget, contributes to
+ * `hasMore`, and once a pass drains the next one restarts BEEZ_FEED_OVERLAP
+ * below the high watermark, so recent deletions are re-sent for two hours.
+ * Apply them idempotently by `transactionGuid`. Without `includeDeletions` the
+ * deletion part of the cursor rides through untouched.
+ *
  * THE STAMPER, for the writers that use it. The beez mutations, the transaction
  * editor's PUT, the bulk edit, the reconcile/lot split paths, and the audit undo
  * restore stamp through `stampEnterDate`/`stampEnterDates` in
@@ -1187,7 +1242,7 @@ interface ChangeSplitRow {
  */
 export async function getBeezChanges(
     context: BeezBookContext,
-    options: { since: string | null; limit: number },
+    options: { since: string | null; limit: number; includeDeletions?: boolean },
 ): Promise<BeezChanges> {
     let cursor: ChangesCursor | null = null;
     if (options.since !== null && options.since !== '') {
@@ -1403,6 +1458,54 @@ export async function getBeezChanges(
         items.push({ externalId: tombstone.external_id, deleted: true });
     }
 
+    // The DELETION STREAM, paged on its own two positions (see the header).
+    let nextDeletions = cursor?.deletions;
+    let deletionHasMore = false;
+    if (options.includeDeletions) {
+        const held = cursor?.deletions;
+        const afterDeletion: Prisma.Sql = held && held.sweepDeletedAt !== null
+            ? Prisma.sql`(d.deleted_at, d.tx_guid) > (${held.sweepDeletedAt}::timestamp, ${held.sweepGuid})`
+            : held
+                ? Prisma.sql`d.deleted_at >= (${held.deletedAt}::timestamp - ${BEEZ_FEED_OVERLAP}::interval)`
+                : Prisma.sql`TRUE`;
+        const deletionRows = await prisma.$queryRaw<Array<{ tx_guid: string; deleted_at: string }>>`
+            SELECT d.tx_guid, to_char(d.deleted_at, ${ENTER_DATE_PG_FORMAT}::text) AS deleted_at
+            FROM gnucash_web_transaction_deletions d
+            WHERE (d.book_guid = ${context.bookGuid}
+                   OR (d.book_guid IS NULL AND d.account_guid = ANY(${bookAccountGuids}::text[])))
+              AND NOT EXISTS (SELECT 1 FROM transactions t WHERE t.guid = d.tx_guid)
+              AND ${afterDeletion}
+            ORDER BY d.deleted_at ASC, d.tx_guid ASC
+            LIMIT ${options.limit + 1}
+        `;
+        deletionHasMore = deletionRows.length > options.limit;
+        const deletionPage = deletionHasMore ? deletionRows.slice(0, options.limit) : deletionRows;
+        for (const row of deletionPage) {
+            items.push({
+                transactionGuid: row.tx_guid,
+                externalId: null,
+                deleted: true,
+                deletedAt: `${row.deleted_at}Z`,
+            });
+        }
+        const lastDeletion = deletionPage[deletionPage.length - 1];
+        const seenDeletion = lastDeletion
+            ? { enterDate: lastDeletion.deleted_at, guid: lastDeletion.tx_guid }
+            : null;
+        const heldHigh = held
+            ? { enterDate: held.deletedAt, guid: held.guid }
+            : { enterDate: null, guid: null };
+        const high = seenDeletion && isAfter(seenDeletion, heldHigh) ? seenDeletion : heldHigh;
+        nextDeletions = high.enterDate !== null && high.guid !== null
+            ? {
+                deletedAt: high.enterDate,
+                guid: high.guid,
+                sweepDeletedAt: deletionHasMore && seenDeletion ? seenDeletion.enterDate : null,
+                sweepGuid: deletionHasMore && seenDeletion ? seenDeletion.guid : null,
+            }
+            : undefined;
+    }
+
     // Each stream advances its own part of the cursor.
     //
     // The HIGH WATERMARK is the greatest position ever sent, so it takes the
@@ -1435,17 +1538,18 @@ export async function getBeezChanges(
 
     // Nothing to name in any stream — an empty book — so the client starts
     // from the beginning next time, which is where it already is.
-    const nextCursor = position.enterDate !== null || nextNullGuid !== null
+    const nextCursor = position.enterDate !== null || nextNullGuid !== null || nextDeletions
         ? encodeChangesCursor({
             ...position,
             nullGuid: nextNullGuid,
             sweepEnterDate: nextSweep?.enterDate ?? null,
             sweepGuid: nextSweep?.guid ?? null,
             sweepBase: nextCursorBase,
+            ...(nextDeletions ? { deletions: nextDeletions } : {}),
         })
         : null;
 
-    return { items, nextCursor, hasMore };
+    return { items, nextCursor, hasMore: hasMore || deletionHasMore };
 }
 
 /**

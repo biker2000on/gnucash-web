@@ -7,6 +7,7 @@
 
 import { NextResponse } from 'next/server';
 import { authorizeBeezRequest, beezErrorResponse } from '@/lib/integrations/beez-route';
+import { getBeezCapabilities } from '@/lib/services/beez-sync.service';
 
 /**
  * @openapi
@@ -33,6 +34,16 @@ import { authorizeBeezRequest, beezErrorResponse } from '@/lib/integrations/beez
  *                 bookGuid: { type: string }
  *                 bookName: { type: string, nullable: true }
  *                 rootCurrency: { type: string, example: USD }
+ *                 capabilities:
+ *                   type: array
+ *                   items: { type: string }
+ *                   example: [transaction-deletions]
+ *                   description: >
+ *                     Optional features. `transaction-deletions`: `GET changes?include=deletions`
+ *                     reports every transaction deleted from the book, not only beez-pushed ones.
+ *                     Listed only while the server's deletion-log trigger is installed, so its
+ *                     absence (an older server, or a trigger a GnuCash desktop upgrade dropped)
+ *                     means a client must detect deletions by rescanning.
  *       401:
  *         description: Missing, invalid, revoked, or expired token.
  *       403:
@@ -51,6 +62,7 @@ export async function GET() {
             bookGuid: context.bookGuid,
             bookName: context.bookName,
             rootCurrency: context.rootCurrency,
+            capabilities: await getBeezCapabilities(),
         });
     } catch (error) {
         return beezErrorResponse(error);

@@ -393,4 +393,39 @@ describe('initializeDatabase', () => {
             /DELETE FROM gnucash_web_(receipts|payslips|entity_documents|home_item_photos)/,
         );
     });
+
+    it('installs the beez deletion log as a deferred trigger on splits, only when missing', async () => {
+        await initializeDatabase();
+
+        const sqls = mocks.query.mock.calls.map((c) => String(c[0]));
+        const ddl = sqls.find((s) => s.includes('gnucash_web_transaction_deletions'));
+        expect(ddl).toBeDefined();
+        expect(ddl).toContain('CREATE TABLE IF NOT EXISTS gnucash_web_transaction_deletions');
+        // Deferred to COMMIT so both delete orders (transaction row first, as
+        // GnuCash desktop does, or splits first) are seen as one deletion.
+        expect(ddl).toMatch(/CREATE CONSTRAINT TRIGGER gnucash_web_splits_deletion_log\s+AFTER DELETE ON splits\s+DEFERRABLE INITIALLY DEFERRED/);
+        // A split removed from a surviving transaction is an edit, not a deletion.
+        expect(ddl).toContain('IF EXISTS (SELECT 1 FROM transactions WHERE guid = OLD.tx_guid)');
+        // No steady-state lock on a table GnuCash desktop may hold: the trigger
+        // is created only when absent, under a short lock timeout.
+        expect(ddl).toContain("tgname = 'gnucash_web_splits_deletion_log'");
+        expect(ddl).toContain("set_config('lock_timeout', '5s', true)");
+        expect(ddl).not.toContain('DROP TRIGGER');
+    });
+
+    it('keeps starting when the deletion log cannot be installed', async () => {
+        mocks.query.mockImplementation(async (sql: string) => {
+            if (String(sql).includes('gnucash_web_transaction_deletions')) {
+                throw new Error('permission denied for table splits');
+            }
+            return { rows: [] };
+        });
+        const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+        await expect(initializeDatabase()).resolves.toBeUndefined();
+        expect(consoleError).toHaveBeenCalledWith(
+            'Error installing the transaction deletion log:', expect.any(Error),
+        );
+        consoleError.mockRestore();
+    });
 });

@@ -13,6 +13,7 @@ import {
     CANONICAL_DOCUMENT_SCHEMA_SQL,
     LEGACY_DOCUMENT_BACKFILL_SQL,
 } from './documents/schema';
+import { TRANSACTION_DELETION_LOG_SQL } from './integrations/beez-deletion-log';
 
 /**
  * The bookkeeping tables every migration/guard below leans on. Exported so a
@@ -4211,6 +4212,26 @@ export async function backfillLegacyInventoryShipmentCosts() {
 }
 
 /**
+ * The beez change feed's deletion log (src/lib/integrations/beez-deletion-log.ts):
+ * an app-owned table plus a deferred trigger on `splits` that records every
+ * transaction deleted from a book, by any writer, GnuCash desktop included.
+ *
+ * Re-run at every start ON PURPOSE: a GnuCash desktop table upgrade rebuilds
+ * `splits` and drops the trigger with it, and this is what puts it back.
+ * Non-fatal, like the index steps: `GET /api/integrations/beez/status` only
+ * advertises the deletion capability while the trigger really exists, so a
+ * failure here degrades the integration to its full-rescan fallback instead of
+ * keeping the app down.
+ */
+async function installTransactionDeletionLog() {
+    try {
+        await query(TRANSACTION_DELETION_LOG_SQL);
+    } catch (error) {
+        console.error('Error installing the transaction deletion log:', error);
+    }
+}
+
+/**
  * Initializes the database schema by creating required views and tables.
  * This should be called once when the application starts.
  */
@@ -4226,6 +4247,7 @@ export async function initializeDatabase() {
             await backfillLegacyInventoryShipmentCosts();
             await createUniqueConstraintGuards();
             await createPerformanceIndexes();
+            await installTransactionDeletionLog();
             // After the superseding indexes exist, retire the redundant ones
             await dropRedundantIndexes();
             await tuneAutovacuum();

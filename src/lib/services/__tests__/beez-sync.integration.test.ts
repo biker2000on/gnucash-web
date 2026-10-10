@@ -209,6 +209,12 @@ async function cleanup(): Promise<void> {
         [accountGuids],
     );
     await pool.query(`DELETE FROM splits WHERE account_guid = ANY($1::text[])`, [accountGuids]);
+    // AFTER the split deletes above: the deletion-log trigger records them too.
+    await pool.query(
+        `DELETE FROM gnucash_web_transaction_deletions
+         WHERE book_guid = ANY($1::text[]) OR account_guid = ANY($2::text[])`,
+        [bookGuids, accountGuids],
+    );
     await pool.query(`DELETE FROM gnucash_web_external_links WHERE book_guid = ANY($1::text[])`, [bookGuids]);
     await pool.query(`DELETE FROM gnucash_web_webhook_idempotency WHERE book_guid = ANY($1::text[])`, [bookGuids]);
     await pool.query(`DELETE FROM gnucash_web_audit WHERE book_guid = ANY($1::text[])`, [bookGuids]);
@@ -263,6 +269,11 @@ describe.skipIf(!HAS_TEST_DATABASE)('beez-trackz sync round trip', () => {
         beez = await import('@/lib/integrations/beez');
         enterDate = await import('@/lib/enter-date');
         db = (await import('@/lib/prisma')).default;
+        // A database provisioned before the deletion log existed gets it the
+        // way production does: the idempotent db-init DDL. Before seed(), so
+        // the cleanup that deletes its rows can rely on the table.
+        const { TRANSACTION_DELETION_LOG_SQL } = await import('@/lib/integrations/beez-deletion-log');
+        await getTestPool().query(TRANSACTION_DELETION_LOG_SQL);
         await seed();
         refreshBookScope();
         context = await service.getBeezBookContext(BOOK_GUID);
@@ -1054,6 +1065,181 @@ describe.skipIf(!HAS_TEST_DATABASE)('beez-trackz sync round trip', () => {
 
             const after = await service.getBeezChanges(context, { since: null, limit: 5 });
             expect(after.items.some(item => item.deleted && item.externalId === id)).toBe(false);
+        });
+
+        describe('deletion stream (include=deletions)', () => {
+            /**
+             * A native folio transaction, written straight to SQL so it has no
+             * beez link — exactly the kind the link-derived tombstones above
+             * can never report.
+             */
+            async function insertNative(description: string): Promise<string> {
+                const txGuid = testGuid();
+                await getTestPool().query(
+                    `INSERT INTO transactions (guid, currency_guid, num, post_date, enter_date, description)
+                     VALUES ($1, $2, '', NOW(), NOW(), $3)`,
+                    [txGuid, USD_GUID, description],
+                );
+                await insertBalancedSplits(txGuid, 250);
+                return txGuid;
+            }
+
+            /**
+             * Delete a transaction the way a writer does: both tables inside ONE
+             * database transaction, in the order given. GnuCash desktop removes
+             * the transaction row first; several app paths remove splits first.
+             * The deferred trigger must log both.
+             */
+            async function deleteInOneTransaction(
+                txGuid: string, order: 'transaction-first' | 'splits-first',
+            ): Promise<void> {
+                const client = await getTestPool().connect();
+                try {
+                    await client.query('BEGIN');
+                    if (order === 'transaction-first') {
+                        await client.query(`DELETE FROM transactions WHERE guid = $1`, [txGuid]);
+                        await client.query(`DELETE FROM splits WHERE tx_guid = $1`, [txGuid]);
+                    } else {
+                        await client.query(`DELETE FROM splits WHERE tx_guid = $1`, [txGuid]);
+                        await client.query(`DELETE FROM transactions WHERE guid = $1`, [txGuid]);
+                    }
+                    await client.query('COMMIT');
+                } catch (error) {
+                    await client.query('ROLLBACK');
+                    throw error;
+                } finally {
+                    client.release();
+                }
+            }
+
+            /** Every deletion-stream guid over one complete pass from `since`. */
+            async function deletionsFrom(since: string | null): Promise<{ guids: string[]; cursor: string | null }> {
+                const guids: string[] = [];
+                let cursor = since;
+                for (let polls = 0; polls < 60; polls++) {
+                    const page = await service.getBeezChanges(context, {
+                        since: cursor, limit: 2, includeDeletions: true,
+                    });
+                    for (const item of page.items) {
+                        if (item.deleted && item.deletedAt) guids.push(item.transactionGuid as string);
+                    }
+                    cursor = page.nextCursor;
+                    if (!page.hasMore) return { guids, cursor };
+                }
+                throw new Error('deletion stream did not drain within 60 polls');
+            }
+
+            it('advertises the capability while the trigger is installed', async () => {
+                await expect(service.getBeezCapabilities()).resolves.toContain('transaction-deletions');
+            });
+
+            it('reports a native transaction deleted in either table order, keyed by guid', async () => {
+                const txFirst = await insertNative('deleted desktop-style');
+                const splitsFirst = await insertNative('deleted app-style');
+                await deleteInOneTransaction(txFirst, 'transaction-first');
+                await deleteInOneTransaction(splitsFirst, 'splits-first');
+
+                const { guids } = await deletionsFrom(null);
+                expect(guids).toEqual(expect.arrayContaining([txFirst, splitsFirst]));
+
+                const page = await service.getBeezChanges(context, {
+                    since: null, limit: 500, includeDeletions: true,
+                });
+                const item = page.items.find(entry => entry.transactionGuid === txFirst && entry.deleted);
+                expect(item).toMatchObject({ transactionGuid: txFirst, externalId: null, deleted: true });
+                expect(item?.deletedAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/);
+            });
+
+            it('is opt-in: without include=deletions neither the items nor the cursor change', async () => {
+                const txGuid = await insertNative('deleted, not asked for');
+                await deleteInOneTransaction(txGuid, 'transaction-first');
+
+                const plain = await service.getBeezChanges(context, { since: null, limit: 500 });
+                expect(plain.items.some(item => item.transactionGuid === txGuid)).toBe(false);
+                const decoded = beez.decodeChangesCursor(plain.nextCursor as string);
+                expect(decoded?.deletions).toBeUndefined();
+            });
+
+            it('does not log a split removed from a transaction that survives', async () => {
+                const txGuid = await insertNative('edited, not deleted');
+                // Replace the splits inside one transaction, as the editor does.
+                const client = await getTestPool().connect();
+                try {
+                    await client.query('BEGIN');
+                    await client.query(`DELETE FROM splits WHERE tx_guid = $1`, [txGuid]);
+                    await client.query(
+                        `INSERT INTO splits (guid, tx_guid, account_guid, memo, action, reconcile_state,
+                                             value_num, value_denom, quantity_num, quantity_denom)
+                         VALUES ($1, $3, $4, '', '', 'n', 300, 100, 300, 100),
+                                ($2, $3, $5, '', '', 'n', -300, 100, -300, 100)`,
+                        [testGuid(), testGuid(), txGuid, EXPENSE_GUID, CHECKING_GUID],
+                    );
+                    await client.query('COMMIT');
+                } finally {
+                    client.release();
+                }
+                const logged = await getTestPool().query(
+                    `SELECT 1 FROM gnucash_web_transaction_deletions WHERE tx_guid = $1`, [txGuid],
+                );
+                expect(logged.rowCount).toBe(0);
+                await dropTransaction(txGuid);
+            });
+
+            it('resumes after the high watermark and re-sends only the overlap band', async () => {
+                const before = await deletionsFrom(null);
+                const later = await insertNative('deleted after the first pass');
+                await deleteInOneTransaction(later, 'splits-first');
+
+                const next = await deletionsFrom(before.cursor);
+                expect(next.guids).toContain(later);
+                // Everything re-sent sits inside the two-hour overlap below
+                // the old watermark, so older history is not replayed. All of
+                // this run's deletions are recent, so assert on the cursor
+                // instead: the high watermark only moves forward.
+                const oldHigh = beez.decodeChangesCursor(before.cursor as string)?.deletions?.deletedAt ?? '';
+                const newHigh = beez.decodeChangesCursor(next.cursor as string)?.deletions?.deletedAt ?? '';
+                expect(newHigh >= oldHigh).toBe(true);
+                expect(beez.decodeChangesCursor(next.cursor as string)?.deletions?.sweepDeletedAt).toBeNull();
+            });
+
+            it('stops reporting a deletion once the transaction exists again', async () => {
+                const txGuid = await insertNative('deleted then restored');
+                await deleteInOneTransaction(txGuid, 'transaction-first');
+                expect((await deletionsFrom(null)).guids).toContain(txGuid);
+
+                // An audit undo restores the same guid.
+                await getTestPool().query(
+                    `INSERT INTO transactions (guid, currency_guid, num, post_date, enter_date, description)
+                     VALUES ($1, $2, '', NOW(), NOW(), 'restored')`,
+                    [txGuid, USD_GUID],
+                );
+                await insertBalancedSplits(txGuid, 250);
+                expect((await deletionsFrom(null)).guids).not.toContain(txGuid);
+                await dropTransaction(txGuid);
+            });
+
+            it('does not report another book\'s deletions', async () => {
+                const txGuid = testGuid();
+                const pool = getTestPool();
+                await pool.query(
+                    `INSERT INTO transactions (guid, currency_guid, num, post_date, enter_date, description)
+                     VALUES ($1, $2, '', NOW(), NOW(), 'other book')`,
+                    [txGuid, USD_GUID],
+                );
+                await pool.query(
+                    `INSERT INTO splits (guid, tx_guid, account_guid, memo, action, reconcile_state,
+                                         value_num, value_denom, quantity_num, quantity_denom)
+                     VALUES ($1, $3, $4, '', '', 'n', 100, 100, 100, 100),
+                            ($2, $3, $4, '', '', 'n', -100, 100, -100, 100)`,
+                    [testGuid(), testGuid(), txGuid, OTHER_ACCOUNT_GUID],
+                );
+                await deleteInOneTransaction(txGuid, 'transaction-first');
+                const logged = await pool.query<{ book_guid: string }>(
+                    `SELECT book_guid FROM gnucash_web_transaction_deletions WHERE tx_guid = $1`, [txGuid],
+                );
+                expect(logged.rows[0]?.book_guid).toBe(OTHER_BOOK_GUID);
+                expect((await deletionsFrom(null)).guids).not.toContain(txGuid);
+            });
         });
 
         it('rejects a cursor it did not issue instead of replaying the whole ledger', async () => {

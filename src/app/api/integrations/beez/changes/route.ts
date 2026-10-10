@@ -36,7 +36,7 @@
 // `transactionGuid + enterDate` is a usable dedup key.
 
 import { NextResponse } from 'next/server';
-import { parseChangesLimit } from '@/lib/integrations/beez';
+import { parseChangesInclude, parseChangesLimit } from '@/lib/integrations/beez';
 import { authorizeBeezRequest, beezErrorResponse } from '@/lib/integrations/beez-route';
 import { getBeezChanges } from '@/lib/services/beez-sync.service';
 
@@ -93,6 +93,19 @@ import { getBeezChanges } from '@/lib/services/beez-sync.service';
  *       every response until the client calls
  *       `DELETE /api/integrations/beez/transactions/{externalId}`, which is how
  *       the acknowledgement is recorded.
+ *
+ *
+ *       With `include=deletions` (servers whose `GET status` lists the
+ *       `transaction-deletions` capability) the feed also reports EVERY
+ *       transaction deleted from the book — entered in folio, in GnuCash
+ *       desktop, or by beez — as `{ transactionGuid, externalId: null,
+ *       deleted: true, deletedAt }`. These are keyed by guid, are never
+ *       acknowledged, and follow the at-least-once rule of the rest of the
+ *       feed: they page on their own part of the cursor, count towards
+ *       `hasMore`, and a drained pass re-sends the last two hours. Apply them
+ *       idempotently by `transactionGuid`; a guid you never imported can be
+ *       ignored. A beez-pushed transaction that is deleted appears in both
+ *       forms; only the `externalId` form wants a DELETE.
  *     security:
  *       - bearerAuth: []
  *     parameters:
@@ -103,6 +116,13 @@ import { getBeezChanges } from '@/lib/services/beez-sync.service';
  *       - in: query
  *         name: limit
  *         schema: { type: integer, default: 100, minimum: 1, maximum: 500 }
+ *       - in: query
+ *         name: include
+ *         schema: { type: string, example: deletions }
+ *         description: >
+ *           Comma-separated optional streams. `deletions` adds guid-keyed
+ *           tombstones for every transaction deleted from the book. An unknown
+ *           name is a 422, never silently ignored.
  *     responses:
  *       200:
  *         description: A page of changes.
@@ -124,6 +144,7 @@ import { getBeezChanges } from '@/lib/services/beez-sync.service';
  *                       deleted: { type: boolean }
  *                       unrepresentable: { type: boolean }
  *                       quarantined: { type: boolean }
+ *                       deletedAt: { type: string, format: date-time, description: "Deletion-stream items only." }
  *                       splits:
  *                         type: array
  *                         items:
@@ -155,11 +176,16 @@ export async function GET(request: Request) {
     if (!limit.ok) {
         return NextResponse.json({ error: 'validation', detail: limit.detail }, { status: 422 });
     }
+    const include = parseChangesInclude(searchParams.get('include'));
+    if (!include.ok) {
+        return NextResponse.json({ error: 'validation', detail: include.detail }, { status: 422 });
+    }
 
     try {
         const changes = await getBeezChanges(authorized.context, {
             since: searchParams.get('since'),
             limit: limit.limit,
+            includeDeletions: include.deletions,
         });
         return NextResponse.json(changes);
     } catch (error) {
