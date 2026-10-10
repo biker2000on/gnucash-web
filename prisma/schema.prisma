@@ -964,6 +964,24 @@ model gnucash_web_external_links {
   @@index([book_guid, source, entity_type], map: "idx_external_links_book_source")
 }
 
+// Every transaction deleted from a book, by any writer (GnuCash desktop
+// included), recorded by a deferred trigger on `splits` that db-init installs
+// (src/lib/integrations/beez-deletion-log.ts). The beez change feed reads it to
+// report deletions of transactions beez did NOT push. One row per transaction
+// guid; a re-deletion moves the row forward. No FK on tx_guid: the row exists
+// precisely because the transaction does not.
+model gnucash_web_transaction_deletions {
+  tx_guid      String   @id @db.VarChar(32)
+  /// Resolved from the deleted split's account at commit time; NULL when the
+  /// account was gone too.
+  book_guid    String?  @db.VarChar(32)
+  account_guid String   @db.VarChar(32)
+  /// clock_timestamp() at commit, on the UTC scale enter_date uses.
+  deleted_at   DateTime @db.Timestamp(6)
+
+  @@index([book_guid, deleted_at, tx_guid], map: "idx_transaction_deletions_book_deleted")
+}
+
 model gnucash_web_simplefin_connections {
   id                 Int       @id @default(autoincrement())
   user_id            Int

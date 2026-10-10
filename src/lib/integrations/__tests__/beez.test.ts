@@ -25,6 +25,7 @@ import {
     normalizeExternalId,
     parseBeezTransactionInput,
     parseBeezVerifyInput,
+    parseChangesInclude,
     parseChangesLimit,
     postDateToTimestamp,
     splitValueToCents,
@@ -511,6 +512,62 @@ describe('change cursor', () => {
         expect(decodeChangesCursor(legacy)).toEqual(at(STAMP, GUID));
     });
 
+    describe('deletion stream position', () => {
+        const DEL_GUID = 'f'.repeat(32);
+        const DEL_STAMP = '2026-10-10T14:03:22.418213';
+        const raw = (value: Record<string, unknown>) =>
+            Buffer.from(JSON.stringify(value), 'utf8').toString('base64url');
+
+        it('round-trips a deletion high watermark and sweep position', () => {
+            const cursor = {
+                ...at(STAMP, GUID),
+                deletions: {
+                    deletedAt: DEL_STAMP, guid: DEL_GUID,
+                    sweepDeletedAt: DEL_STAMP, sweepGuid: DEL_GUID,
+                },
+            };
+            expect(decodeChangesCursor(encodeChangesCursor(cursor))).toEqual(cursor);
+        });
+
+        it('leaves a cursor that never opted in byte-identical to the pre-deletion encoding', () => {
+            // A client that never asks for deletions must not see its cursor
+            // change shape: the deletion keys are written only when present.
+            const encoded = encodeChangesCursor(at(STAMP, GUID));
+            const json = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8'));
+            expect(Object.keys(json)).toEqual(['e', 'g', 'n', 'se', 'sg', 'sb']);
+            expect(decodeChangesCursor(encoded)).not.toHaveProperty('deletions');
+        });
+
+        it('accepts a position that names only the deletion stream', () => {
+            // A book whose every transaction was deleted still pages deletions.
+            const cursor = {
+                enterDate: null, guid: null, nullGuid: null,
+                sweepEnterDate: null, sweepGuid: null, sweepBase: SWEEP_STAMP,
+                deletions: { deletedAt: DEL_STAMP, guid: DEL_GUID, sweepDeletedAt: null, sweepGuid: null },
+            };
+            expect(decodeChangesCursor(encodeChangesCursor(cursor))).toEqual(cursor);
+        });
+
+        it('normalizes the deletion guid', () => {
+            const decoded = decodeChangesCursor(raw({ e: STAMP, g: GUID, de: DEL_STAMP, dg: 'F'.repeat(32) }));
+            expect(decoded?.deletions?.guid).toBe(DEL_GUID);
+        });
+
+        it('refuses a half-written or impossible deletion position', () => {
+            for (const value of [
+                { e: STAMP, g: GUID, de: DEL_STAMP },
+                { e: STAMP, g: GUID, dg: DEL_GUID },
+                { e: STAMP, g: GUID, de: '2026-99-99T99:99:99.999999', dg: DEL_GUID },
+                { e: STAMP, g: GUID, de: DEL_STAMP, dg: 'short' },
+                // A sweep with no high watermark: nothing was ever read.
+                { e: STAMP, g: GUID, dse: DEL_STAMP, dsg: DEL_GUID },
+                { e: STAMP, g: GUID, de: DEL_STAMP, dg: DEL_GUID, dse: DEL_STAMP },
+            ]) {
+                expect(decodeChangesCursor(raw(value)), JSON.stringify(value)).toBeNull();
+            }
+        });
+    });
+
     it('rejects anything it did not mint, rather than restarting the feed', () => {
         for (const raw of [
             'not-base64!!',
@@ -606,6 +663,24 @@ describe('isEnterDateStamp', () => {
         ]) {
             expect(isEnterDateStamp(raw), raw).toBe(true);
         }
+    });
+});
+
+describe('parseChangesInclude', () => {
+    it('defaults to no optional streams', () => {
+        expect(parseChangesInclude(null)).toEqual({ ok: true, deletions: false });
+        expect(parseChangesInclude('')).toEqual({ ok: true, deletions: false });
+    });
+
+    it('opts in to the deletion stream, case- and whitespace-tolerant', () => {
+        expect(parseChangesInclude('deletions')).toEqual({ ok: true, deletions: true });
+        expect(parseChangesInclude(' Deletions , ')).toEqual({ ok: true, deletions: true });
+    });
+
+    it('refuses a stream it does not offer instead of pretending to send it', () => {
+        const result = parseChangesInclude('deletions,attachments');
+        expect(result.ok).toBe(false);
+        if (!result.ok) expect(result.detail).toContain('attachments');
     });
 });
 

@@ -511,6 +511,37 @@ export interface ChangesCursor {
      * generation — bounded re-reading on upgrade, never a skip.
      */
     sweepBase: string | null;
+    /**
+     * Position in the DELETION stream (`?include=deletions`), or absent when
+     * the client has never read one. Absent — not null — so a cursor that never
+     * opted in encodes exactly as it did before the stream existed.
+     */
+    deletions?: DeletionCursor;
+}
+
+/**
+ * Position in the deletion-log stream: `(deleted_at, tx_guid)` order over
+ * `gnucash_web_transaction_deletions` (src/lib/integrations/beez-deletion-log.ts).
+ *
+ * The same two-position shape as the ordered transaction stream, for the same
+ * reason: the HIGH WATERMARK is the greatest row ever sent (monotone), the
+ * SWEEP POSITION is how far the current pass has read (cleared when it
+ * drains). A drained pass restarts `BEEZ_FEED_OVERLAP` below the high
+ * watermark, which re-sends recent deletions on later polls — bounded
+ * repetition, at-least-once delivery, idempotent apply by `transactionGuid`.
+ * There is no pinned base here: a log row's stamp is taken at commit time, so
+ * it can only land behind an issued watermark by the length of a commit, not
+ * by the hours a bare-clock `enter_date` writer can.
+ */
+export interface DeletionCursor {
+    /** High watermark stamp, in {@link ENTER_DATE_PG_FORMAT}. */
+    deletedAt: string;
+    /** Tie-break guid at {@link DeletionCursor.deletedAt}. */
+    guid: string;
+    /** Sweep position stamp, or null when the last pass drained. */
+    sweepDeletedAt: string | null;
+    /** Tie-break guid at the sweep stamp; null exactly when that is null. */
+    sweepGuid: string | null;
 }
 
 /**
@@ -522,7 +553,9 @@ export interface ChangesCursor {
  * nothing that a different `since` value would not.
  *
  * All six keys are always written, so an unchanged position re-encodes to a
- * byte-identical string and a client can compare cursors for equality.
+ * byte-identical string and a client can compare cursors for equality. The
+ * four deletion-stream keys are written only when that stream has a position,
+ * so a client that never asked for deletions keeps byte-identical cursors.
  */
 export function encodeChangesCursor(cursor: ChangesCursor): string {
     const json = JSON.stringify({
@@ -532,6 +565,14 @@ export function encodeChangesCursor(cursor: ChangesCursor): string {
         se: cursor.sweepEnterDate,
         sg: cursor.sweepGuid,
         sb: cursor.sweepBase,
+        ...(cursor.deletions
+            ? {
+                de: cursor.deletions.deletedAt,
+                dg: cursor.deletions.guid,
+                dse: cursor.deletions.sweepDeletedAt,
+                dsg: cursor.deletions.sweepGuid,
+            }
+            : {}),
     });
     return Buffer.from(json, 'utf8').toString('base64url');
 }
@@ -560,7 +601,28 @@ export function decodeChangesCursor(raw: string): ChangesCursor | null {
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
     const candidate = parsed as {
         e?: unknown; g?: unknown; n?: unknown; se?: unknown; sg?: unknown; sb?: unknown;
+        de?: unknown; dg?: unknown; dse?: unknown; dsg?: unknown;
     };
+
+    // The deletion stream's position: absent on every cursor that never
+    // opted in. When present its high watermark is a full pair (a sweep is
+    // only ever recorded after a row was read, so a sweep without one names
+    // nothing this endpoint issued).
+    let deletions: DeletionCursor | undefined;
+    const deletionKeys = [candidate.de, candidate.dg, candidate.dse, candidate.dsg];
+    if (deletionKeys.some(value => value !== undefined && value !== null)) {
+        const high = readPosition(candidate.de, candidate.dg);
+        const deletionSweep = readPosition(candidate.dse, candidate.dsg);
+        if (high === null || deletionSweep === null || high.enterDate === null) return null;
+        deletions = {
+            deletedAt: high.enterDate,
+            guid: high.guid as string,
+            sweepDeletedAt: deletionSweep.enterDate,
+            sweepGuid: deletionSweep.guid,
+        };
+    }
+    const withDeletions = <T extends ChangesCursor>(cursor: T): T =>
+        deletions ? { ...cursor, deletions } : cursor;
 
     let nullGuid: string | null = null;
     if (candidate.n !== undefined && candidate.n !== null) {
@@ -591,14 +653,18 @@ export function decodeChangesCursor(raw: string): ChangesCursor | null {
     if (!hasEnterDate) {
         // No high watermark means no floor to sweep down from, so a sweep
         // position here names nothing this endpoint could have issued.
-        if (nullGuid === null || sweep.enterDate !== null) return null;
+        if (sweep.enterDate !== null) return null;
+        // A position must name SOMETHING: the NULL set, or the deletion stream
+        // (a book whose every transaction has been deleted still pages its
+        // deletions).
+        if (nullGuid === null && deletions === undefined) return null;
         // A sweep base without a watermark IS one this endpoint mints: a brand
         // new client whose ordered stream is still empty records the clock it
         // started at, so its first drained generation still has a floor.
-        return {
+        return withDeletions({
             enterDate: null, guid: null, nullGuid,
             sweepEnterDate: null, sweepGuid: null, sweepBase,
-        };
+        });
     }
 
     if (typeof candidate.g !== 'string' || !isValidGuid(candidate.g)) return null;
@@ -607,14 +673,14 @@ export function decodeChangesCursor(raw: string): ChangesCursor | null {
     // out-of-range fields by rolling them over instead of refusing them.
     if (typeof candidate.e !== 'string' || !isEnterDateStamp(candidate.e)) return null;
 
-    return {
+    return withDeletions({
         enterDate: candidate.e,
         guid: candidate.g.toLowerCase(),
         nullGuid,
         sweepEnterDate: sweep.enterDate,
         sweepGuid: sweep.guid,
         sweepBase,
-    };
+    });
 }
 
 /**
@@ -656,4 +722,30 @@ export function parseChangesLimit(raw: string | null): LimitParseResult {
         return { ok: false, detail: `limit: must be at most ${MAX_CHANGES_LIMIT}` };
     }
     return { ok: true, limit };
+}
+
+export type IncludeParseResult =
+    | { ok: true; deletions: boolean }
+    | { ok: false; detail: string };
+
+/**
+ * Parse `?include=`, a comma-separated list of optional streams. The only one
+ * today is `deletions`: every transaction deleted from the book, beez-pushed or
+ * not, from the deletion log. Opt-in so a client that predates it keeps the
+ * exact payload (and cursor) it always had. An unknown name is an error, never
+ * ignored — a client asking for a stream this server cannot give must not
+ * conclude it received it.
+ */
+export function parseChangesInclude(raw: string | null): IncludeParseResult {
+    if (raw === null || raw.trim() === '') return { ok: true, deletions: false };
+    let deletions = false;
+    for (const token of raw.split(',')) {
+        const name = token.trim().toLowerCase();
+        if (name === '') continue;
+        if (name !== 'deletions') {
+            return { ok: false, detail: `include: unknown stream "${token.trim()}"` };
+        }
+        deletions = true;
+    }
+    return { ok: true, deletions };
 }
